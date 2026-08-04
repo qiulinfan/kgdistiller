@@ -131,12 +131,23 @@ and query it without loading the graph into an Agent context:
 kgdistiller agent status
 kgdistiller agent resolve "Measure space" "sigma algebra"
 kgdistiller agent search "countably additive measure" --type knowledge --limit 10
+kgdistiller agent get measure-space
+kgdistiller agent expand measure-space --direction incoming --depth 2
+kgdistiller agent context "How does a measure depend on a sigma algebra?" \
+  --budget 6000 --depth 2
 ```
 
 The index stores nodes, normalized IDs/labels/aliases, structured entry text,
 typed edges with evidence, and reference occurrences. Exact and alias resolution
 refuses ambiguous identities; FTS input is tokenized and quoted before reaching
 SQLite.
+
+Agent search fuses exact resolution, FTS, and bounded typed graph traversal with
+deterministic reciprocal-rank fusion. Every result explains which retrieval lane
+selected it. `agent context` returns a `qlkg-context-bundle-v1` evidence package
+whose nodes, edge evidence, backlinks, sources, omissions, and retrieval paths
+fit the requested conservative token budget; it does not ask an LLM to generate
+an answer.
 
 See [the Agentic Knowledge Base specification](docs/agentic-knowledge-base-spec.md)
 for the snapshot contract, planned retrieval pipeline, token-budget context

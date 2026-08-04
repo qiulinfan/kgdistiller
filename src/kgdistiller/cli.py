@@ -2818,6 +2818,37 @@ def parse_args() -> argparse.Namespace:
     agent_search_command.add_argument("--namespace", default="personal")
     agent_search_command.add_argument("--type", action="append", dest="node_types")
     agent_search_command.add_argument("--limit", type=int, default=20)
+    agent_search_command.add_argument("--depth", type=int, default=1)
+    agent_search_command.add_argument("--include-taxonomy", action="store_true")
+    agent_search_command.add_argument("--include-stale", action="store_true")
+    agent_search_command.add_argument("--include-orphaned", action="store_true")
+    get_command = agent_commands.add_parser("get")
+    get_command.add_argument("id")
+    get_command.add_argument("--namespace", default="personal")
+    expand_command = agent_commands.add_parser("expand")
+    expand_command.add_argument("id", nargs="+")
+    expand_command.add_argument("--namespace", default="personal")
+    expand_command.add_argument(
+        "--direction",
+        choices=("incoming", "outgoing", "both"),
+        default="both",
+    )
+    expand_command.add_argument("--relation", action="append", dest="edge_types")
+    expand_command.add_argument("--depth", type=int, default=1)
+    expand_command.add_argument("--limit", type=int, default=50)
+    expand_command.add_argument("--include-taxonomy", action="store_true")
+    expand_command.add_argument("--include-stale", action="store_true")
+    expand_command.add_argument("--include-orphaned", action="store_true")
+    context_command = agent_commands.add_parser("context")
+    context_command.add_argument("query")
+    context_command.add_argument("--namespace", default="personal")
+    context_command.add_argument("--type", action="append", dest="node_types")
+    context_command.add_argument("--budget", type=int, default=6000)
+    context_command.add_argument("--limit", type=int, default=50)
+    context_command.add_argument("--depth", type=int, default=1)
+    context_command.add_argument("--include-taxonomy", action="store_true")
+    context_command.add_argument("--include-stale", action="store_true")
+    context_command.add_argument("--include-orphaned", action="store_true")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
@@ -3009,7 +3040,14 @@ def main() -> int:
             )
             return 0
         if args.command == "agent":
-            from kgdistiller.agent import index_status, resolve_concepts, search_index
+            from kgdistiller.agent import (
+                build_context_bundle,
+                expand_index,
+                get_index_node,
+                index_status,
+                resolve_concepts,
+                retrieve_index,
+            )
 
             if args.agent_command == "status":
                 result = index_status(database)
@@ -3019,13 +3057,49 @@ def main() -> int:
                     list(args.concept),
                     namespace=args.namespace,
                 )
-            else:
-                result = search_index(
+            elif args.agent_command == "search":
+                result = retrieve_index(
                     database,
                     args.query,
                     namespace=args.namespace,
                     node_types=args.node_types,
                     limit=args.limit,
+                    max_depth=args.depth,
+                    include_taxonomy=args.include_taxonomy,
+                    include_stale=args.include_stale,
+                    include_orphaned=args.include_orphaned,
+                )
+            elif args.agent_command == "get":
+                result = get_index_node(
+                    database,
+                    args.id,
+                    namespace=args.namespace,
+                )
+            elif args.agent_command == "expand":
+                result = expand_index(
+                    database,
+                    list(args.id),
+                    namespace=args.namespace,
+                    direction=args.direction,
+                    edge_types=args.edge_types,
+                    max_depth=args.depth,
+                    limit=args.limit,
+                    include_taxonomy=args.include_taxonomy,
+                    include_stale=args.include_stale,
+                    include_orphaned=args.include_orphaned,
+                )
+            else:
+                result = build_context_bundle(
+                    database,
+                    args.query,
+                    token_budget=args.budget,
+                    namespace=args.namespace,
+                    node_types=args.node_types,
+                    result_limit=args.limit,
+                    max_depth=args.depth,
+                    include_taxonomy=args.include_taxonomy,
+                    include_stale=args.include_stale,
+                    include_orphaned=args.include_orphaned,
                 )
             print(pretty_json(result), end="")
             return 0

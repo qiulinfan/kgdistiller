@@ -9,6 +9,7 @@ import re
 import sqlite3
 import tempfile
 import unicodedata
+from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -23,6 +24,16 @@ MAX_QUERY_LENGTH = 4096
 MAX_QUERY_TERMS = 64
 MAX_BATCH_CONCEPTS = 512
 MAX_LIMIT = 500
+MAX_GRAPH_DEPTH = 5
+MAX_CONTEXT_BUDGET = 200_000
+CONTEXT_SCHEMA = "qlkg-context-bundle-v1"
+DEFAULT_SEMANTIC_RELATIONS = {
+    "prerequisite-for",
+    "implies",
+    "generalizes",
+    "contrasts-with",
+    "derived-from",
+}
 
 
 class AgentIndexError(ValueError):
@@ -442,7 +453,7 @@ def _fts_expression(query: str) -> str:
     terms = terms[:MAX_QUERY_TERMS]
     if not terms:
         raise AgentIndexError("query contains no searchable terms")
-    return " AND ".join(f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms)
+    return " OR ".join(f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms)
 
 
 def search_index(
@@ -495,3 +506,569 @@ def search_index(
         return results
     finally:
         connection.close()
+
+
+def _edge_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return json.loads(row["payload"])
+
+
+def _reference_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return json.loads(row["payload"])
+
+
+def _node_allowed(
+    node: dict[str, Any],
+    *,
+    include_stale: bool,
+    include_orphaned: bool,
+) -> bool:
+    properties = node.get("properties") or {}
+    if not include_stale and properties.get("curation_status") == "needs-review":
+        return False
+    if not include_orphaned and properties.get("source_status") == "orphaned":
+        return False
+    return True
+
+
+def _edge_allowed(edge: dict[str, Any], *, include_stale: bool) -> bool:
+    return include_stale or edge.get("curation_status") != "needs-review"
+
+
+def get_index_node(
+    path: Path,
+    node_id: str,
+    *,
+    namespace: str = "personal",
+) -> dict[str, Any]:
+    """Return one node with direct typed edges, backlinks, and provenance."""
+    _validate_namespace(namespace)
+    connection = _connect(path)
+    try:
+        node = _node_by_id(connection, namespace, node_id)
+        if node is None:
+            raise AgentIndexError(f"unknown concept: {namespace}:{node_id}")
+        incoming = [
+            _edge_payload(row)
+            for row in connection.execute(
+                """
+                SELECT payload FROM edges
+                WHERE namespace = ? AND target = ?
+                ORDER BY relation, source, edge_id
+                """,
+                (namespace, node_id),
+            )
+        ]
+        outgoing = [
+            _edge_payload(row)
+            for row in connection.execute(
+                """
+                SELECT payload FROM edges
+                WHERE namespace = ? AND source = ?
+                ORDER BY relation, target, edge_id
+                """,
+                (namespace, node_id),
+            )
+        ]
+        backlinks = [
+            _reference_payload(row)
+            for row in connection.execute(
+                """
+                SELECT payload FROM refs
+                WHERE namespace = ? AND target = ?
+                ORDER BY authority, line, ref_id
+                """,
+                (namespace, node_id),
+            )
+        ]
+        return {
+            "namespace": namespace,
+            "node": node,
+            "incoming": incoming,
+            "outgoing": outgoing,
+            "backlinks": backlinks,
+        }
+    finally:
+        connection.close()
+
+
+def _validate_traversal(
+    *,
+    direction: str,
+    max_depth: int,
+    limit: int,
+) -> int:
+    if direction not in {"incoming", "outgoing", "both"}:
+        raise AgentIndexError(f"invalid graph direction: {direction!r}")
+    if max_depth < 0 or max_depth > MAX_GRAPH_DEPTH:
+        raise AgentIndexError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH}")
+    return _validated_limit(limit)
+
+
+def _neighbor_rows(
+    connection: sqlite3.Connection,
+    namespace: str,
+    node_id: str,
+    direction: str,
+) -> list[tuple[sqlite3.Row, str, str]]:
+    rows: list[tuple[sqlite3.Row, str, str]] = []
+    if direction in {"outgoing", "both"}:
+        rows.extend(
+            (row, str(row["target"]), "outgoing")
+            for row in connection.execute(
+                """
+                SELECT * FROM edges
+                WHERE namespace = ? AND source = ?
+                ORDER BY relation, target, edge_id
+                """,
+                (namespace, node_id),
+            )
+        )
+    if direction in {"incoming", "both"}:
+        rows.extend(
+            (row, str(row["source"]), "incoming")
+            for row in connection.execute(
+                """
+                SELECT * FROM edges
+                WHERE namespace = ? AND target = ?
+                ORDER BY relation, source, edge_id
+                """,
+                (namespace, node_id),
+            )
+        )
+    return sorted(
+        rows,
+        key=lambda item: (
+            str(item[0]["relation"]),
+            item[1],
+            item[2],
+            str(item[0]["edge_id"]),
+        ),
+    )
+
+
+def expand_index(
+    path: Path,
+    seed_ids: list[str],
+    *,
+    namespace: str = "personal",
+    direction: str = "both",
+    edge_types: list[str] | None = None,
+    max_depth: int = 1,
+    limit: int = 50,
+    include_taxonomy: bool = False,
+    include_stale: bool = False,
+    include_orphaned: bool = False,
+) -> dict[str, Any]:
+    """Traverse a bounded, typed neighborhood with deterministic paths."""
+    _validate_namespace(namespace)
+    limit = _validate_traversal(direction=direction, max_depth=max_depth, limit=limit)
+    seeds = list(dict.fromkeys(str(seed).strip() for seed in seed_ids if str(seed).strip()))
+    if not seeds:
+        raise AgentIndexError("at least one graph seed is required")
+    if len(seeds) > 128:
+        raise AgentIndexError("graph seed batch exceeds 128")
+    relations = set(edge_types or DEFAULT_SEMANTIC_RELATIONS)
+    if include_taxonomy:
+        relations.add("contains")
+    else:
+        relations.discard("contains")
+
+    connection = _connect(path)
+    try:
+        seed_nodes: dict[str, dict[str, Any]] = {}
+        for seed in seeds:
+            node = _node_by_id(connection, namespace, seed)
+            if node is None:
+                raise AgentIndexError(f"unknown graph seed: {namespace}:{seed}")
+            seed_nodes[seed] = node
+
+        queue: deque[tuple[str, int, list[dict[str, Any]]]] = deque(
+            (seed, 0, []) for seed in seeds
+        )
+        visited: dict[str, tuple[int, list[dict[str, Any]]]] = {
+            seed: (0, []) for seed in seeds
+        }
+        traversed_edges: dict[str, dict[str, Any]] = {}
+        while queue and len(visited) < limit:
+            current, depth, path_steps = queue.popleft()
+            if depth >= max_depth:
+                continue
+            for row, neighbor_id, edge_direction in _neighbor_rows(
+                connection, namespace, current, direction
+            ):
+                relation = str(row["relation"])
+                if relation not in relations:
+                    continue
+                edge = _edge_payload(row)
+                if not _edge_allowed(edge, include_stale=include_stale):
+                    continue
+                neighbor = _node_by_id(connection, namespace, neighbor_id)
+                if neighbor is None or not _node_allowed(
+                    neighbor,
+                    include_stale=include_stale,
+                    include_orphaned=include_orphaned,
+                ):
+                    continue
+                edge_id = str(row["edge_id"])
+                traversed_edges[edge_id] = edge
+                if neighbor_id in visited:
+                    continue
+                step = {
+                    "source": str(row["source"]),
+                    "relation": relation,
+                    "target": str(row["target"]),
+                    "direction": edge_direction,
+                }
+                next_path = [*path_steps, step]
+                visited[neighbor_id] = (depth + 1, next_path)
+                queue.append((neighbor_id, depth + 1, next_path))
+                if len(visited) >= limit:
+                    break
+
+        records: list[dict[str, Any]] = []
+        for node_id, (depth, traversal_path) in visited.items():
+            node = seed_nodes.get(node_id) or _node_by_id(connection, namespace, node_id)
+            if node is None:
+                continue
+            records.append(
+                {
+                    "node": node,
+                    "depth": depth,
+                    "path": traversal_path,
+                    "seed": node_id in seed_nodes,
+                }
+            )
+        records.sort(
+            key=lambda item: (
+                int(item["depth"]),
+                str(item["node"].get("label", "")),
+                str(item["node"]["id"]),
+            )
+        )
+        return {
+            "namespace": namespace,
+            "seeds": seeds,
+            "policy": {
+                "direction": direction,
+                "edge_types": sorted(relations),
+                "max_depth": max_depth,
+                "limit": limit,
+                "include_taxonomy": include_taxonomy,
+                "include_stale": include_stale,
+                "include_orphaned": include_orphaned,
+            },
+            "nodes": records,
+            "edges": [traversed_edges[key] for key in sorted(traversed_edges)],
+        }
+    finally:
+        connection.close()
+
+
+def retrieve_index(
+    path: Path,
+    query: str,
+    *,
+    namespace: str = "personal",
+    node_types: list[str] | None = None,
+    limit: int = 20,
+    max_depth: int = 1,
+    include_taxonomy: bool = False,
+    include_stale: bool = False,
+    include_orphaned: bool = False,
+) -> list[dict[str, Any]]:
+    """Fuse exact, lexical, and graph lanes using deterministic RRF."""
+    limit = _validated_limit(limit)
+    _validate_traversal(direction="both", max_depth=max_depth, limit=limit)
+    allowed_types = set(node_types or [])
+    lane_nodes: dict[str, list[str]] = {"exact": [], "fts": [], "graph": []}
+    nodes: dict[str, dict[str, Any]] = {}
+    reasons: dict[str, list[dict[str, Any]]] = {}
+
+    resolution = resolve_concepts(path, [query], namespace=namespace)[0]
+    if resolution["status"] in {"exact", "alias", "ambiguous"}:
+        for rank, node in enumerate(resolution["matches"], start=1):
+            if allowed_types and node.get("type") not in allowed_types:
+                continue
+            if not _node_allowed(
+                node,
+                include_stale=include_stale,
+                include_orphaned=include_orphaned,
+            ):
+                continue
+            node_id = str(node["id"])
+            lane_nodes["exact"].append(node_id)
+            nodes[node_id] = node
+            reasons.setdefault(node_id, []).append(
+                {
+                    "method": "exact",
+                    "rank": rank,
+                    "resolution": resolution["status"],
+                    "match_kind": resolution.get("match_kind"),
+                }
+            )
+
+    fts_results = search_index(
+        path,
+        query,
+        namespace=namespace,
+        node_types=node_types,
+        limit=min(MAX_LIMIT, max(limit * 3, 20)),
+    )
+    for result in fts_results:
+        node = result["node"]
+        if not _node_allowed(
+            node,
+            include_stale=include_stale,
+            include_orphaned=include_orphaned,
+        ):
+            continue
+        node_id = str(node["id"])
+        lane_nodes["fts"].append(node_id)
+        nodes[node_id] = node
+        reasons.setdefault(node_id, []).extend(result["reasons"])
+
+    graph_seeds = list(dict.fromkeys([*lane_nodes["exact"], *lane_nodes["fts"]]))[:8]
+    if graph_seeds and max_depth > 0:
+        expansion = expand_index(
+            path,
+            graph_seeds,
+            namespace=namespace,
+            max_depth=max_depth,
+            limit=min(MAX_LIMIT, max(limit * 4, 40)),
+            include_taxonomy=include_taxonomy,
+            include_stale=include_stale,
+            include_orphaned=include_orphaned,
+        )
+        graph_records = [record for record in expansion["nodes"] if not record["seed"]]
+        graph_records.sort(
+            key=lambda item: (
+                int(item["depth"]),
+                str(item["node"].get("label", "")),
+                str(item["node"]["id"]),
+            )
+        )
+        for rank, record in enumerate(graph_records, start=1):
+            node = record["node"]
+            if allowed_types and node.get("type") not in allowed_types:
+                continue
+            node_id = str(node["id"])
+            lane_nodes["graph"].append(node_id)
+            nodes[node_id] = node
+            reasons.setdefault(node_id, []).append(
+                {
+                    "method": "graph",
+                    "rank": rank,
+                    "depth": record["depth"],
+                    "path": record["path"],
+                }
+            )
+
+    lane_weights = {"exact": 3.0, "fts": 1.0, "graph": 0.7}
+    scores: dict[str, float] = {}
+    for lane, ordered_ids in lane_nodes.items():
+        for rank, node_id in enumerate(dict.fromkeys(ordered_ids), start=1):
+            scores[node_id] = scores.get(node_id, 0.0) + lane_weights[lane] / (60 + rank)
+    ordered = sorted(
+        scores,
+        key=lambda node_id: (
+            -scores[node_id],
+            str(nodes[node_id].get("label", "")),
+            node_id,
+        ),
+    )[:limit]
+    return [
+        {
+            "rank": rank,
+            "score": round(scores[node_id], 12),
+            "node": nodes[node_id],
+            "reasons": reasons.get(node_id, []),
+        }
+        for rank, node_id in enumerate(ordered, start=1)
+    ]
+
+
+def estimate_tokens(value: Any) -> int:
+    """Conservatively estimate tokens as canonical JSON Unicode characters."""
+    return len(canonical_json(value))
+
+
+def _source_record(node: dict[str, Any]) -> dict[str, Any] | None:
+    provenance = node.get("provenance") or {}
+    authority = str(provenance.get("authority", ""))
+    if not authority:
+        return None
+    result = {
+        "node_id": node["id"],
+        "authority": authority,
+    }
+    for key in (
+        "line",
+        "definition_start_line",
+        "definition_end_line",
+        "source_format",
+        "web",
+        "definition_sha256",
+    ):
+        if provenance.get(key) not in {None, ""}:
+            result[key] = provenance[key]
+    return result
+
+
+def _index_digest(path: Path) -> str:
+    return str(index_status(path)["snapshot_sha256"])
+
+
+def build_context_bundle(
+    path: Path,
+    query: str,
+    *,
+    token_budget: int = 6000,
+    namespace: str = "personal",
+    node_types: list[str] | None = None,
+    result_limit: int = 50,
+    max_depth: int = 1,
+    include_taxonomy: bool = False,
+    include_stale: bool = False,
+    include_orphaned: bool = False,
+) -> dict[str, Any]:
+    """Pack a deterministic evidence bundle without calling a language model."""
+    if token_budget < 1 or token_budget > MAX_CONTEXT_BUDGET:
+        raise AgentIndexError(
+            f"token_budget must be between 1 and {MAX_CONTEXT_BUDGET}"
+        )
+    results = retrieve_index(
+        path,
+        query,
+        namespace=namespace,
+        node_types=node_types,
+        limit=result_limit,
+        max_depth=max_depth,
+        include_taxonomy=include_taxonomy,
+        include_stale=include_stale,
+        include_orphaned=include_orphaned,
+    )
+    policy = {
+        "node_types": sorted(set(node_types or [])),
+        "max_depth": max_depth,
+        "include_taxonomy": include_taxonomy,
+        "include_stale": include_stale,
+        "include_orphaned": include_orphaned,
+    }
+    bundle: dict[str, Any] = {
+        "schema": CONTEXT_SCHEMA,
+        "snapshot_sha256": _index_digest(path),
+        "namespace": namespace,
+        "query": query,
+        "budget": {
+            "requested_tokens": token_budget,
+            "estimated_tokens": token_budget,
+            "estimator": "conservative-char-v1",
+        },
+        "seeds": [],
+        "nodes": [],
+        "edges": [],
+        "references": [],
+        "sources": [],
+        "omissions": [],
+        "retrieval": {"policy": policy, "explanations": []},
+    }
+    if estimate_tokens(bundle) > token_budget:
+        raise AgentIndexError("budget-too-small for the context bundle envelope")
+
+    included: set[str] = set()
+    for result in results:
+        node = result["node"]
+        node_id = str(node["id"])
+        source = _source_record(node)
+        candidate = json.loads(canonical_json(bundle))
+        candidate["nodes"].append(node)
+        if source is not None:
+            candidate["sources"].append(source)
+        candidate["retrieval"]["explanations"].append(
+            {
+                "node_id": node_id,
+                "rank": result["rank"],
+                "score": result["score"],
+                "reasons": result["reasons"],
+            }
+        )
+        if any(reason["method"] == "exact" for reason in result["reasons"]):
+            candidate["seeds"].append(node_id)
+        if estimate_tokens(candidate) <= token_budget:
+            bundle = candidate
+            included.add(node_id)
+        else:
+            bundle["omissions"].append(
+                {"kind": "node", "id": node_id, "reason": "token-budget"}
+            )
+
+    if included:
+        connection = _connect(path)
+        try:
+            placeholders = ",".join("?" for _ in included)
+            parameters: list[Any] = [namespace, *sorted(included), *sorted(included)]
+            edge_rows = connection.execute(
+                f"""
+                SELECT payload FROM edges
+                WHERE namespace = ?
+                  AND source IN ({placeholders})
+                  AND target IN ({placeholders})
+                ORDER BY relation, source, target, edge_id
+                """,
+                parameters,
+            ).fetchall()
+            for row in edge_rows:
+                edge = _edge_payload(row)
+                if not _edge_allowed(edge, include_stale=include_stale):
+                    continue
+                candidate = json.loads(canonical_json(bundle))
+                candidate["edges"].append(edge)
+                if estimate_tokens(candidate) <= token_budget:
+                    bundle = candidate
+                else:
+                    bundle["omissions"].append(
+                        {
+                            "kind": "edge",
+                            "id": f"{edge.get('source')}:{edge.get('relation')}:{edge.get('target')}",
+                            "reason": "token-budget",
+                        }
+                    )
+            ref_rows = connection.execute(
+                f"""
+                SELECT payload FROM refs
+                WHERE namespace = ? AND target IN ({placeholders})
+                ORDER BY authority, line, ref_id
+                """,
+                [namespace, *sorted(included)],
+            ).fetchall()
+            for row in ref_rows:
+                reference = _reference_payload(row)
+                candidate = json.loads(canonical_json(bundle))
+                candidate["references"].append(reference)
+                if estimate_tokens(candidate) <= token_budget:
+                    bundle = candidate
+                else:
+                    bundle["omissions"].append(
+                        {
+                            "kind": "reference",
+                            "id": str(reference.get("id", "")),
+                            "reason": "token-budget",
+                        }
+                    )
+        finally:
+            connection.close()
+
+    # Omission records also consume budget. Remove them from the tail if needed,
+    # while retaining at least the selected evidence package.
+    while bundle["omissions"] and estimate_tokens(bundle) > token_budget:
+        bundle["omissions"].pop()
+    estimated = estimate_tokens(bundle)
+    bundle["budget"]["estimated_tokens"] = estimated
+    while estimate_tokens(bundle) > token_budget and bundle["omissions"]:
+        bundle["omissions"].pop()
+        bundle["budget"]["estimated_tokens"] = estimate_tokens(bundle)
+    final_estimate = estimate_tokens(bundle)
+    bundle["budget"]["estimated_tokens"] = final_estimate
+    if estimate_tokens(bundle) > token_budget:
+        raise AgentIndexError("budget-too-small after context packing")
+    return bundle

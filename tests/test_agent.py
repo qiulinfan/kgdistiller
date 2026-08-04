@@ -12,8 +12,13 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.agent import (  # noqa: E402
     AgentIndexError,
+    build_context_bundle,
+    estimate_tokens,
+    expand_index,
+    get_index_node,
     index_status,
     resolve_concepts,
+    retrieve_index,
     search_index,
     sha256_json,
     write_agent_index,
@@ -147,6 +152,75 @@ class AgentIndexTest(unittest.TestCase):
             write_agent_index(self.database, snapshot)
 
         self.assertEqual(original, self.database.read_bytes())
+
+    def test_typed_expansion_returns_paths_edges_and_backlinks(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+
+        expansion = expand_index(
+            self.database,
+            ["alpha"],
+            direction="outgoing",
+            edge_types=["prerequisite-for"],
+            max_depth=1,
+        )
+        self.assertEqual(["alpha", "beta"], [item["node"]["id"] for item in expansion["nodes"]])
+        self.assertEqual("prerequisite-for", expansion["nodes"][1]["path"][0]["relation"])
+        self.assertEqual(1, len(expansion["edges"]))
+        node = get_index_node(self.database, "alpha")
+        self.assertEqual(1, len(node["outgoing"]))
+        self.assertEqual(1, len(node["backlinks"]))
+
+    def test_retrieval_fuses_fts_with_graph_expansion(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+
+        results = retrieve_index(
+            self.database,
+            "countable closure",
+            max_depth=1,
+        )
+
+        self.assertEqual("alpha", results[0]["node"]["id"])
+        beta = next(result for result in results if result["node"]["id"] == "beta")
+        self.assertTrue(any(reason["method"] == "graph" for reason in beta["reasons"]))
+
+    def test_stale_nodes_are_excluded_unless_policy_allows_them(self) -> None:
+        snapshot = fixture_snapshot()
+        snapshot["nodes"][1]["properties"]["curation_status"] = "needs-review"
+        snapshot["snapshot_sha256"] = sha256_json(
+            {key: value for key, value in snapshot.items() if key != "snapshot_sha256"}
+        )
+        write_agent_index(self.database, snapshot)
+
+        default = expand_index(self.database, ["alpha"], max_depth=1)
+        allowed = expand_index(
+            self.database,
+            ["alpha"],
+            max_depth=1,
+            include_stale=True,
+        )
+
+        self.assertEqual(["alpha"], [item["node"]["id"] for item in default["nodes"]])
+        self.assertEqual(["alpha", "beta"], [item["node"]["id"] for item in allowed["nodes"]])
+
+    def test_context_bundle_obeys_budget_and_keeps_edge_endpoints(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+
+        bundle = build_context_bundle(
+            self.database,
+            "countable closure",
+            token_budget=5000,
+            max_depth=1,
+        )
+
+        self.assertEqual("qlkg-context-bundle-v1", bundle["schema"])
+        self.assertLessEqual(estimate_tokens(bundle), 5000)
+        self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
+        node_ids = {node["id"] for node in bundle["nodes"]}
+        for edge in bundle["edges"]:
+            self.assertIn(edge["source"], node_ids)
+            self.assertIn(edge["target"], node_ids)
+        with self.assertRaisesRegex(AgentIndexError, "budget-too-small"):
+            build_context_bundle(self.database, "alpha", token_budget=10)
 
 
 if __name__ == "__main__":
