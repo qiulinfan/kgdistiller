@@ -111,6 +111,13 @@ for a knowledge name.
 
 ## Incremental workflow
 
+The high-level write path is the transactional API documented in
+[`transactional-ingest.md`](transactional-ingest.md). It applies the reviewed
+source patch and delta together, rejects stale preconditions, and returns a
+canonical receipt. The commands below remain deterministic low-level
+primitives for development and compatibility; Agent Skills must not compose
+them into a substitute transaction.
+
 ```sh
 kgdistiller scan --file notes/chapter.typ
 kgdistiller apply knowledge/reviews/chapter.delta.json

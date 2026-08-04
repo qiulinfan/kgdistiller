@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kgdistiller"
-version = "0.2.1"
+version = "0.3.0"
 description = "Local-first agentic distillation of Markdown, Typst, and LaTeX sources into a source-backed knowledge graph."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,5 +33,6 @@ packages = ["src/kgdistiller"]
 [tool.hatch.build]
 include = [
   "src/kgdistiller/**/*.py",
+  "src/kgdistiller/schemas/*.json",
   "src/kgdistiller/static/*",
 ]

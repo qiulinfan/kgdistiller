@@ -22,9 +22,10 @@ Use the read-only MCP tools when available. Otherwise use the corresponding
 `kgdistiller --repo-root PROJECT`.
 
 Start with `kg_status` or `agent status`. Require `qlkg-agent-index-v2`,
-`qlkg-agent-snapshot-v1`, and `qlkg-alignments-v1`. Record the target
-`snapshot_sha256` and `graph_sha256` in the handoff so a later writer can reject
-a stale decision.
+`qlkg-agent-snapshot-v1`, `qlkg-alignments-v1`, and the
+`transactional-ingest-v1` capability when a later write is possible. Record the
+target `snapshot_sha256`, `graph_sha256`, and `alignment_sha256` in the handoff
+so a later writer can reject a stale decision.
 
 ## Accept one bounded handoff
 

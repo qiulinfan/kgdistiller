@@ -56,7 +56,7 @@ class MCPServerTest(unittest.TestCase):
 
         initialized = self.initialize(server)
         self.assertEqual("2025-06-18", initialized["result"]["protocolVersion"])
-        self.assertEqual("0.2.0", initialized["result"]["serverInfo"]["version"])
+        self.assertEqual("0.3.0", initialized["result"]["serverInfo"]["version"])
         listed = server.handle(
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
         )

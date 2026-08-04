@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-candidate-graph-v1.schema.json",
+  "title": "kgdistiller isolated candidate graph v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "namespace", "nodes", "edges", "references", "diagnostics"],
+  "properties": {
+    "schema": {"const": "qlkg-candidate-graph-v1"},
+    "namespace": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$", "not": {"const": "personal"}},
+    "nodes": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/node"}},
+    "edges": {"type": "array", "maxItems": 500000, "items": {"$ref": "#/$defs/edge"}},
+    "references": {"type": "array", "maxItems": 500000, "items": {"$ref": "#/$defs/reference"}},
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings"],
+      "properties": {
+        "errors": {"type": "array"},
+        "warnings": {"type": "array"}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "node": {
+      "type": "object",
+      "required": ["id", "type", "label", "provenance"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"enum": ["knowledge", "field", "topic"]},
+        "label": {"type": "string", "minLength": 1},
+        "text": {"type": "string"},
+        "entry": {"type": "object"},
+        "properties": {"type": "object"},
+        "provenance": {
+          "type": "object",
+          "required": ["authority"],
+          "properties": {
+            "authority": {"type": "string", "minLength": 1},
+            "line": {"type": "integer", "minimum": 1},
+            "page": {"type": "integer", "minimum": 1},
+            "section": {"type": "string"},
+            "equation": {"type": "string"},
+            "source_format": {"type": "string"}
+          }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source", "relation", "target"],
+      "properties": {
+        "source": {"$ref": "#/$defs/id"},
+        "relation": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+        "target": {"$ref": "#/$defs/id"},
+        "origin": {"type": "string"},
+        "confidence": {"type": "string"},
+        "evidence": {"type": "string"}
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["id", "target", "authority"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "target": {"$ref": "#/$defs/id"},
+        "authority": {"type": "string", "minLength": 1},
+        "line": {"type": "integer", "minimum": 1},
+        "page": {"type": "integer", "minimum": 1},
+        "context": {"type": "string"},
+        "source_format": {"type": "string"}
+      }
+    }
+  }
+}

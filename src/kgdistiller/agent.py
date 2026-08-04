@@ -169,6 +169,17 @@ def _validated_snapshot(snapshot: dict[str, Any]) -> tuple[str, dict[str, int]]:
     return namespace, counts
 
 
+def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Validate the public Agent snapshot contract without indexing it."""
+    namespace, counts = _validated_snapshot(snapshot)
+    return {
+        "schema": SNAPSHOT_SCHEMA,
+        "namespace": namespace,
+        "counts": counts,
+        "snapshot_sha256": snapshot["snapshot_sha256"],
+    }
+
+
 def _node_payload(row: sqlite3.Row) -> dict[str, Any]:
     node: dict[str, Any] = {
         "id": row["id"],
@@ -348,6 +359,7 @@ def write_agent_index(
             "namespace": namespace,
             "counts": counts,
             "retrieval_lanes": ["exact", "scoped-alias", "fts", "graph", "ppr"],
+            "capabilities": ["read-only-query-v2", "transactional-ingest-v1"],
             "alignment_schema": ALIGNMENT_SCHEMA,
             "alignment_sha256": alignment_sha256_json(validated_alignments),
             "alignment_counts": {

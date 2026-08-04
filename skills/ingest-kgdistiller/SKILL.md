@@ -1,109 +1,79 @@
 ---
 name: ingest-kgdistiller
-description: Apply a reviewed, source-backed knowledge update to a kgdistiller project and return a validation receipt. Use after query-kgdistiller or another extractor has already decided identities, authority markers, refs, entries, aliases, and direct semantic edges; when changed Markdown, Typst, or LaTeX knowledge must enter the personal graph; when an explicitly selected paper concept must be imported with provenance; or when a reviewed cross-namespace alignment must be persisted.
+description: Apply a reviewed, source-backed knowledge update through kgdistiller's transactional ingest API and return a canonical receipt. Use after query-kgdistiller or another extractor has decided identities, native authority markers, refs, entries, aliases, direct semantic edges, and optional mappings; for changed Markdown, Typst, or LaTeX knowledge; for explicitly authorized paper imports; or for reviewed cross-namespace alignment persistence.
 ---
 
 # Ingest into kgdistiller
 
-Be the only Skill that mutates the personal knowledge base. Execute an already
-reviewed write decision; do not rediscover concepts or repeat graph retrieval.
+Be the only Skill that mutates the personal knowledge base. Execute reviewed
+decisions; do not rediscover concepts, repeat GraphRAG, or call the legacy write
+commands as a substitute for the transaction API.
 
-## Require a complete handoff
+## Load the write contract
 
-Before writing, require:
-
-- the exact authority file scope and its unique source registration;
-- the reviewed format-native source edit or its already-applied diff;
-- the query target `snapshot_sha256` and `graph_sha256`;
-- a decision for every candidate: reuse, add, update, reject, or defer;
-- a reviewed `qlkg-agent-delta-v2`, or a candidate snapshot from which
-  `agent propose` can create one;
-- source evidence for every entry and semantic edge;
-- explicit user authorization for paper import or alignment persistence.
-
-Reject unresolved `uncertain` or `conflict` identities. Do not convert them into
-new nodes. Reject a write based on a stale target digest and send it back to
-`$query-kgdistiller`.
-
-Read `docs/graph-contract.md` completely before the first write in a task. In
-qlblog use `vendor/kgdistiller/docs/graph-contract.md` and the command
-`python3 knowledge/kgd.py`; elsewhere use
+Read `docs/graph-contract.md` and `docs/transactional-ingest.md` completely
+before the first write. In qlblog read the copies under
+`vendor/kgdistiller/docs/` and use `python3 knowledge/kgd.py`; elsewhere use
 `kgdistiller --repo-root PROJECT`.
 
-## Keep semantic authorship upstream
+Start with `agent status`. Require `transactional-ingest-v1`,
+`qlkg-ingest-request-v1`, and the exact target graph, snapshot, and alignment
+digests from `$query-kgdistiller`. Return to query if any precondition is stale.
 
-The caller owns concept discovery and the semantic source patch. Apply only the
-exact reviewed marker/ref changes supplied by the caller. Preserve unrelated
-prose and user-authored markers.
+## Require a reviewed handoff
 
-This Skill may validate and commit:
+Require one bounded request containing:
 
-- a native authority marker or ref;
-- a source-grounded entry or structured research dossier;
-- a reviewed alias on an existing node;
-- a direct typed edge with confidence and evidence;
-- an explicit removal or identity reconciliation;
-- a reviewed fingerprint-bound cross-namespace mapping.
+- a decision for every candidate: reuse, add, update, reject, or defer;
+- exact registered authority paths, expected source hashes, native patch
+  contents, and complete post-patch marker/ref state;
+- the candidate snapshot and query report paths with canonical digests;
+- one reviewed `qlkg-agent-delta-v2`;
+- optional reviewed alignment decisions with evidence and justification;
+- review evidence and source provenance.
 
-It must not invent any of them from headings, co-occurrence, document order,
-similarity, or an unreviewed proposal.
+Reject unresolved `uncertain` or `conflict` candidates. Never convert them into
+new identities. Preserve unrelated prose and user-authored markers. Paper
+snapshots remain read-only unless the user explicitly authorizes selected
+knowledge or mappings for import.
 
-## Select the write mode
+## Plan, review, then apply
 
-- **Changed note:** normal ingestion is authorized by a request to update or
-  publish that note. Known concepts become refs; only new identities receive
-  entries.
-- **Paper snapshot:** do nothing by default. Import only explicitly selected
-  `new` or missing `partial` knowledge into a registered research authority.
-  Known paper concepts remain refs.
-- **Alignment only:** persist a reviewed or rejected mapping only when evidence
-  and justification are supplied. This does not merge either graph.
-- **Rename/removal:** require an explicit identity decision; never infer one
-  from a Git move or matching text.
-
-## Apply the guarded workflow
-
-1. Run `agent status` and compare both target digests with the query handoff.
-2. Confirm every authority matches exactly one bounded source glob.
-3. Apply or verify the reviewed source patch, then run scoped `scan`.
-4. For new source markers, run scoped `sync` once to materialize their stable
-   IDs before generating the final proposal.
-5. When a candidate snapshot is present, run `agent propose` with the exact
-   target authority and inspect both `qlkg-agent-proposal-v1` and the generated
-   delta. Never apply conflict or review operations.
-6. Apply the reviewed delta, synchronize the same scope, and run file-level
-   curation plus the global graph check:
+1. Build a canonical `qlkg-ingest-request-v1` in `plan` mode. Compute
+   `request_sha256` over canonical JSON excluding that field.
+2. Run:
 
    ```sh
-   python3 knowledge/kgd.py apply REVIEWED_DELTA
-   python3 knowledge/kgd.py sync --file AUTHORITY
-   python3 knowledge/kgd.py curate-check --file AUTHORITY
-   python3 knowledge/kgd.py check
+   kgdistiller ingest plan REQUEST.json --output PLAN.json
    ```
 
-7. Rebuild or inspect the disposable Agent index with `agent status` and record
-   the resulting digests.
+3. Review the predicted source, node, edge, ref, alignment, and digest changes.
+   Planning must leave authority, graph, alignment, and index bytes unchanged.
+4. Change only `mode` to `apply`, recompute `request_sha256`, then run:
 
-If the write contains refs only and no delta, skip `apply` but still run scoped
-`sync`, `curate-check`, and `check`. If any command fails, stop; never weaken a
-validator, delete evidence, or add a contextless ref to obtain a green result.
+   ```sh
+   kgdistiller ingest apply REQUEST.json --receipt RECEIPT.json
+   ```
 
-For a reviewed mapping, use `reconcile alignment` with the candidate snapshot,
-both node IDs, predicate, evidence, and justification, then verify `agent
-status`. Paper-local abbreviations never become global aliases.
+5. Accept success only when the returned `qlkg-ingest-receipt-v1` has
+   `status: committed`, every validation passed, its canonical digest verifies,
+   and its `after` digests match `agent status`.
+
+The engine owns locking, optimistic concurrency, staging, scan, delta apply,
+sync, curation, global validation, atomic installation, crash recovery,
+idempotency, and disposable-index rebuild. Do not reproduce those steps in this
+Skill. A failed transaction must return its stable error code and leave
+authority, graph, and alignment hashes unchanged.
 
 ## Return the receipt
 
-Return a compact ingestion receipt containing:
+Return the receipt path and a compact summary of:
 
-- engine/index/schema versions;
-- authority paths and source hashes;
-- before and after graph/snapshot digests;
+- request, engine, schema, and capability versions;
+- before/after graph, alignment, and authority hashes;
 - nodes added, reused, updated, orphaned, or removed;
-- refs, entries, aliases, alignments, and edges changed;
-- every validation command and result;
-- warnings and any unapplied review operation.
+- refs, edges, alignments, and source patches changed;
+- validation results, warnings, and unapplied review decisions.
 
-Use the shape planned as `qlkg-ingest-receipt-v1` even while the compatibility
-workflow consists of the guarded commands above. Do not read the whole graph to
-construct the receipt; use command outputs and scoped diffs.
+Do not include full authority content, paper text, credentials, or unbounded
+evidence in the response.

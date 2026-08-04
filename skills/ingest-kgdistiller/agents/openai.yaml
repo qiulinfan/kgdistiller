@@ -1,4 +1,4 @@
 interface:
   display_name: "Ingest into kgdistiller"
-  short_description: "Apply reviewed source-backed knowledge updates safely"
-  default_prompt: "Use $ingest-kgdistiller to apply this reviewed knowledge update and return a validated receipt."
+  short_description: "Commit reviewed knowledge as one transaction"
+  default_prompt: "Use $ingest-kgdistiller to plan and transactionally apply this reviewed knowledge update, then return its canonical receipt."

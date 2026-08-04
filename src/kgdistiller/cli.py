@@ -2146,6 +2146,20 @@ def ensure_database(
     from kgdistiller.agent import AgentIndexError, index_status, write_agent_index
     from kgdistiller.alignment import load_alignment_set, sha256_json
 
+    journal_path = path.parent / "kgdistiller-ingest/journal.json"
+    journal = read_json(journal_path, {}) if journal_path.is_file() else {}
+    if journal.get("schema") == "qlkg-ingest-journal-v1" and journal.get(
+        "status"
+    ) == "installing":
+        try:
+            index_status(path)
+        except (AgentIndexError, OSError, sqlite3.Error, json.JSONDecodeError) as error:
+            raise KnowledgeError(
+                "transactional ingest is installing a new generation; retry the query"
+            ) from error
+        # Readers keep using the last complete disposable index until the
+        # transaction atomically replaces it and commits its journal.
+        return False
     alignment_set = load_alignment_set(alignments)
     try:
         status = index_status(path)
@@ -3006,6 +3020,15 @@ def parse_args() -> argparse.Namespace:
     snapshot_command = commands.add_parser("snapshot")
     snapshot_command.add_argument("--namespace", default="personal")
     snapshot_command.add_argument("--output", type=Path)
+    candidate_command = commands.add_parser("candidate")
+    candidate_commands = candidate_command.add_subparsers(
+        dest="candidate_command", required=True
+    )
+    candidate_build = candidate_commands.add_parser("build")
+    candidate_build.add_argument("source", type=Path)
+    candidate_build.add_argument("--output", type=Path)
+    candidate_validate = candidate_commands.add_parser("validate")
+    candidate_validate.add_argument("snapshot", type=Path)
     agent_command = commands.add_parser("agent")
     agent_commands = agent_command.add_subparsers(dest="agent_command", required=True)
     agent_commands.add_parser("status")
@@ -3078,6 +3101,16 @@ def parse_args() -> argparse.Namespace:
     propose_command.add_argument("--target-authority")
     propose_command.add_argument("--output", type=Path)
     propose_command.add_argument("--delta-output", type=Path)
+    ingest_command = commands.add_parser("ingest")
+    ingest_commands = ingest_command.add_subparsers(
+        dest="ingest_command", required=True
+    )
+    ingest_plan = ingest_commands.add_parser("plan")
+    ingest_plan.add_argument("request", type=Path)
+    ingest_plan.add_argument("--output", type=Path)
+    ingest_apply = ingest_commands.add_parser("apply")
+    ingest_apply.add_argument("request", type=Path)
+    ingest_apply.add_argument("--receipt", type=Path)
     commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -3096,6 +3129,126 @@ def main() -> int:
     database = defaults(repo_root, args.database)
     typst_registry = defaults(repo_root, args.typst_registry)
     try:
+        if args.command == "candidate":
+            from .agent import validate_agent_snapshot
+            from .candidate import build_candidate_snapshot
+
+            source_argument = (
+                args.source
+                if args.candidate_command == "build"
+                else args.snapshot
+            )
+            source_path = (
+                source_argument.resolve()
+                if source_argument.is_absolute()
+                else (repo_root / source_argument).resolve()
+            )
+            payload = read_json(source_path, {})
+            if args.candidate_command == "build":
+                result = build_candidate_snapshot(payload)
+                output_argument = args.output
+                content = pretty_json(result)
+                if output_argument is None:
+                    print(content, end="")
+                else:
+                    output = (
+                        output_argument.resolve()
+                        if output_argument.is_absolute()
+                        else (repo_root / output_argument).resolve()
+                    )
+                    atomic_write(output, content)
+                    print(
+                        pretty_json(
+                            {
+                                "schema": result["schema"],
+                                "namespace": result["namespace"],
+                                "snapshot_sha256": result["snapshot_sha256"],
+                                "counts": result["graph"]["counts"],
+                                "output": str(output),
+                            }
+                        ),
+                        end="",
+                    )
+            else:
+                print(pretty_json(validate_agent_snapshot(payload)), end="")
+            return 0
+        if args.command == "ingest":
+            from .ingest import (
+                IngestError,
+                IngestPaths,
+                apply_ingest,
+                load_request,
+                plan_ingest,
+            )
+
+            request_path = (
+                args.request.resolve()
+                if args.request.is_absolute()
+                else (repo_root / args.request).resolve()
+            )
+            paths = IngestPaths(
+                repo_root=repo_root,
+                registry=registry,
+                graph_dir=graph_dir,
+                identities=identities,
+                alignments=alignments,
+                database=database,
+                typst_registry=typst_registry,
+            )
+            fail_stage = os.environ.get("KGDISTILLER_INGEST_FAIL_STAGE", "")
+            crash_stage = os.environ.get("KGDISTILLER_INGEST_CRASH_STAGE", "")
+
+            def inject(stage: str) -> None:
+                if crash_stage and stage == crash_stage:
+                    os._exit(86)
+                if fail_stage and stage == fail_stage:
+                    raise IngestError(
+                        "injected-failure",
+                        f"failure injected at {stage}",
+                        stage=stage,
+                    )
+
+            try:
+                request = load_request(request_path, mode=args.ingest_command)
+                if args.ingest_command == "plan":
+                    result = plan_ingest(
+                        paths,
+                        request,
+                        failure_injector=inject if fail_stage or crash_stage else None,
+                    )
+                    destination = args.output
+                else:
+                    result = apply_ingest(
+                        paths,
+                        request,
+                        failure_injector=inject if fail_stage or crash_stage else None,
+                    )
+                    destination = args.receipt
+                content = pretty_json(result)
+                if destination is None:
+                    print(content, end="")
+                else:
+                    output = (
+                        destination.resolve()
+                        if destination.is_absolute()
+                        else (repo_root / destination).resolve()
+                    )
+                    atomic_write(output, content)
+                    print(
+                        pretty_json(
+                            {
+                                "schema": result["schema"],
+                                "request_sha256": result["request_sha256"],
+                                "status": result["status"],
+                                "output": str(output),
+                            }
+                        ),
+                        end="",
+                    )
+                return 0
+            except IngestError as error:
+                print(pretty_json(error.payload()), end="", file=sys.stderr)
+                return 1
         if args.command == "init":
             from .project import initialize_project
 

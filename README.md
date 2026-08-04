@@ -129,6 +129,20 @@ edges with evidence, reference occurrences, provenance, diagnostics, authority
 graph identity, and its own canonical digest. It is derived data: deleting it
 does not affect source documents or the `qlkg-v2` graph.
 
+Domain extractors do not hand-write the snapshot envelope. They emit a bounded,
+source-located `qlkg-candidate-graph-v1`, then use the deterministic builder:
+
+```sh
+kgdistiller candidate build knowledge/build/paper.candidate.json \
+  --output knowledge/build/paper.snapshot.json
+kgdistiller candidate validate knowledge/build/paper.snapshot.json
+```
+
+The builder validates the packaged JSON Schema, isolated namespace, node IDs,
+source locations, typed edge evidence, endpoints, counts, ordering, and both
+graph and snapshot digests. Similar names remain separate candidate nodes; the
+builder performs no identity inference or personal-graph query.
+
 Every `sync` also atomically rebuilds the provider-neutral Agent index. Inspect
 and query it without loading the graph into an Agent context:
 
@@ -227,20 +241,37 @@ remain persisted so the same false match is not repeatedly proposed.
 receive native marker suggestions but are blocked from the delta until an
 authority marker is reviewed. Conflicts and uncertain identities become review
 operations. Safe entry and edge candidates are copied into a separate
-`qlkg-agent-delta-v2` preview. The command does not apply it; after review, use
-the existing guarded workflow explicitly:
+`qlkg-agent-delta-v2` preview. The command does not apply it. After reviewing
+the native authority patch, candidate decisions, delta, mappings, and evidence,
+package them as `qlkg-ingest-request-v1` and run the transactional writer:
 
 ```sh
-kgdistiller apply knowledge/reviews/paper.delta.json
-kgdistiller sync
-kgdistiller curate-check --file notes/research/paper.md
-kgdistiller check
+kgdistiller ingest plan knowledge/reviews/paper.ingest.json \
+  --output knowledge/build/paper.ingest-plan.json
+# Change mode to apply, recompute request_sha256, and review again.
+kgdistiller ingest apply knowledge/reviews/paper.ingest.json \
+  --receipt knowledge/build/paper.ingest-receipt.json
 ```
 
+`ingest plan` runs source patching, marker verification, delta application,
+synchronization, curation, and global validation in isolated staging without
+changing the project. `ingest apply` revalidates all graph, alignment, query,
+candidate, and source digests under a single-writer lock, installs the complete
+result, rebuilds disposable SQLite, and returns `qlkg-ingest-receipt-v1`.
+Canonical requests are idempotent. A journal restores authority, graph, and
+alignment bytes after failure or process termination. The read-only MCP remains
+read-only.
+
+See [the transactional ingest contract](docs/transactional-ingest.md) for the
+versioned JSON Schemas, Python API, bounds, stable errors, rollback behavior,
+and request example. Low-level `apply`, `sync`, `reconcile`, and validation
+commands remain available for engine development and compatibility, but Agent
+Skills do not compose them into a write transaction.
+
 See [the Agentic Knowledge Base specification](docs/agentic-knowledge-base-spec.md)
-for the snapshot contract, planned retrieval pipeline, token-budget context
-bundles, MCP tools, paper comparison statuses, security boundaries, and phased
-implementation plan.
+for the snapshot contract, retrieval pipeline, token-budget context bundles,
+MCP tools, paper comparison statuses, transaction boundary, security rules, and
+implementation phases.
 
 ## Agent Skills
 

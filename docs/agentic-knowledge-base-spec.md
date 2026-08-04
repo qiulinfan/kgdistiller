@@ -1,6 +1,6 @@
 # kgdistiller Agentic Knowledge Base Specification
 
-Status: Implemented v0.2 deterministic baseline; Phases 1-7 complete
+Status: Implemented v0.3 deterministic baseline; Phases 1-8 complete
 Contract owner: kgdistiller deterministic core  
 Initial implementation target: local single-user research repositories
 
@@ -84,6 +84,12 @@ provenance, curation state, and graph validation. The rules in
 validated graph. It is the only supported input contract for Agent indexes and
 external retrieval adapters. Consumers MUST NOT scrape internal graph files or
 authority documents to infer a second graph identity system.
+
+Host extractors construct isolated snapshots through the
+`qlkg-candidate-graph-v1` builder. The builder validates explicit candidate
+IDs, bounded source locations, typed relations and evidence, endpoints, schema,
+ordering, counts, and digests. It MUST NOT infer identity from labels or query
+the personal graph.
 
 ### 4.4 Derived state
 
@@ -592,11 +598,11 @@ higher.
 Its proposals contain endpoint fingerprints, evidence signals, mapping
 justifications, and scores, but remain `proposed` until explicitly reconciled.
 
-## 12. Write proposals
+## 12. Write proposals and transactional ingestion
 
-Read-only retrieval and authority mutation are separate capabilities. A future
-writer MAY emit `qlkg-agent-proposal-v1`, but MUST NOT edit source files or
-apply graph deltas without an explicit review/apply action.
+Read-only retrieval and authority mutation are separate capabilities. A writer
+MAY emit `qlkg-agent-proposal-v1`, but MUST NOT edit source files or apply graph
+deltas without an explicit review/apply action.
 
 A proposal can contain:
 
@@ -610,6 +616,16 @@ Applying a proposal MUST pass the existing kgdistiller scan, graph validation,
 curation checks, and stale-definition rules. The proposal format never bypasses
 `qlkg-agent-delta-v2`; it packages review intent around existing deterministic
 operations.
+
+Personal-graph writes use `qlkg-ingest-request-v1` and return
+`qlkg-ingest-receipt-v1`. The transaction MUST verify the query target, source,
+candidate, report, and alignment digests; acquire a repository single-writer
+lock; validate a complete staged state; and either install all authority,
+graph, alignment, registry, and index results or restore their prior hashes.
+Requests are content-addressed and idempotent. Interrupted installation is
+recovered from a durable journal before the next writer runs. The read-only MCP
+remains read-only; the initial writer is a local Python/CLI capability. See
+`docs/transactional-ingest.md`.
 
 ## 13. Provider adapters
 
@@ -772,6 +788,26 @@ evidence coverage, context size, indexing time, and query latency.
 - add disposable similarity edges and weighted PPR retrieval;
 - expose alignment and PPR through CLI and read-only MCP;
 - integrate alignment reports into paper comparison and proposal generation.
+
+### Phase 8: Transactional ingest
+
+- define and package `qlkg-ingest-request-v1` and
+  `qlkg-ingest-receipt-v1` JSON Schemas;
+- expose matching Python APIs and `ingest plan` / `ingest apply` commands;
+- validate optimistic graph, alignment, source, candidate, and query
+  preconditions;
+- stage source patches, delta application, synchronization, curation, and
+  global validation before installation;
+- serialize writers, journal installation, recover interrupted transactions,
+  and make canonical requests idempotent;
+- rebuild the disposable index only after committed graph installation;
+- test stale requests, lock conflicts, every installation failure stage, and
+  real process termination/recovery.
+
+The stable candidate builder shipped with this phase accepts
+`qlkg-candidate-graph-v1` and emits a validated
+`qlkg-agent-snapshot-v1`, so host Skills do not reproduce snapshot envelope or
+digest logic.
 
 ## 19. Phase 1 acceptance criteria
 
