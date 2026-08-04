@@ -2056,10 +2056,19 @@ def write_registry(path: Path, state: GraphState) -> None:
     atomic_write(path, "\n".join(lines) + "\n")
 
 
-def write_database(path: Path, state: GraphState) -> None:
+def write_database(
+    path: Path,
+    state: GraphState,
+    alignments: Path | None = None,
+) -> None:
     from kgdistiller.agent import write_agent_index
+    from kgdistiller.alignment import load_alignment_set
 
-    write_agent_index(path, make_agent_snapshot(state))
+    write_agent_index(
+        path,
+        make_agent_snapshot(state),
+        load_alignment_set(alignments),
+    )
 
 
 def synchronize(
@@ -2070,6 +2079,7 @@ def synchronize(
     typst_registry: Path,
     *,
     identities: Path | None = None,
+    alignments: Path | None = None,
     files: list[Path],
     course: str | None,
     subject: str | None,
@@ -2207,7 +2217,7 @@ def synchronize(
     if write:
         write_artifacts(graph_dir, artifacts)
         write_registry(typst_registry, state)
-        write_database(database, state)
+        write_database(database, state, alignments)
     return state, artifacts, report
 
 
@@ -2216,6 +2226,7 @@ def apply_delta(
     database: Path,
     typst_registry: Path,
     delta_path: Path,
+    alignments: Path | None = None,
 ) -> dict[str, Any]:
     delta = read_json(delta_path, {})
     if delta.get("schema") != DELTA_SCHEMA:
@@ -2325,7 +2336,7 @@ def apply_delta(
     state.manifest = json.loads(artifacts["manifest.json"])
     write_artifacts(graph_dir, artifacts)
     write_registry(typst_registry, state)
-    write_database(database, state)
+    write_database(database, state, alignments)
     after = state.manifest["counts"]
     return {
         "nodes_removed": removed_nodes,
@@ -2396,6 +2407,75 @@ def reconcile_node_name(
         "new_name": canonical_name,
         "identity_registry": str(identity_path),
         "next": "run kgdistiller sync to apply the reconciled source marker",
+    }
+
+
+def reconcile_alignment_mapping(
+    state: GraphState,
+    database: Path,
+    alignment_path: Path,
+    candidate_snapshot: dict[str, Any],
+    candidate_id: str,
+    target_id: str,
+    *,
+    predicate: str,
+    status: str,
+    justification: str,
+    evidence: str,
+    target_namespace: str,
+) -> dict[str, Any]:
+    """Persist one reviewed cross-namespace decision with content fingerprints."""
+    from kgdistiller.agent import align_graph, get_index_node
+    from kgdistiller.alignment import (
+        load_alignment_set,
+        make_reviewed_mapping,
+        upsert_mapping,
+    )
+
+    candidate_namespace = str(candidate_snapshot.get("namespace", ""))
+    align_graph(
+        database,
+        candidate_snapshot,
+        target_namespace=target_namespace,
+        limit_per_node=1,
+    )
+    candidate = next(
+        (
+            node
+            for node in candidate_snapshot.get("nodes") or []
+            if str(node.get("id", "")) == candidate_id
+        ),
+        None,
+    )
+    if candidate is None:
+        raise KnowledgeError(
+            f"candidate snapshot has no node {candidate_namespace}:{candidate_id}"
+        )
+    target = get_index_node(
+        database,
+        target_id,
+        namespace=target_namespace,
+    )["node"]
+    mapping = make_reviewed_mapping(
+        subject_namespace=candidate_namespace,
+        subject_node=candidate,
+        predicate=predicate,
+        object_namespace=target_namespace,
+        object_node=target,
+        status=status,
+        justification=justification,
+        evidence=evidence,
+    )
+    alignment_set = upsert_mapping(load_alignment_set(alignment_path), mapping)
+    alignment_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(alignment_path, pretty_json(alignment_set))
+    write_database(database, state, alignment_path)
+    return {
+        "schema": alignment_set["schema"],
+        "mapping": mapping,
+        "alignment_registry": str(alignment_path),
+        "mappings": len(alignment_set["mappings"]),
+        "index_rebuilt": str(database),
     }
 
 
@@ -2768,6 +2848,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--registry", default="knowledge/sources.json")
     parser.add_argument("--graph", default="knowledge/graph")
     parser.add_argument("--identities", default="knowledge/identities.json")
+    parser.add_argument("--alignments", default="knowledge/alignments.json")
     parser.add_argument("--database", default="knowledge/build/knowledge.sqlite")
     parser.add_argument(
         "--typst-registry",
@@ -2787,6 +2868,30 @@ def parse_args() -> argparse.Namespace:
     rename_command = reconcile_commands.add_parser("rename-node")
     rename_command.add_argument("id")
     rename_command.add_argument("new_name")
+    alignment_command = reconcile_commands.add_parser("alignment")
+    alignment_command.add_argument("candidate", type=Path)
+    alignment_command.add_argument("candidate_id")
+    alignment_command.add_argument("target_id")
+    alignment_command.add_argument(
+        "--predicate",
+        choices=(
+            "exact-match",
+            "close-match",
+            "broad-match",
+            "narrow-match",
+            "related-match",
+            "different-from",
+        ),
+        default="exact-match",
+    )
+    alignment_command.add_argument(
+        "--status", choices=("reviewed", "rejected"), default="reviewed"
+    )
+    alignment_command.add_argument(
+        "--justification", default="manual-mapping-curation"
+    )
+    alignment_command.add_argument("--evidence", required=True)
+    alignment_command.add_argument("--target-namespace", default="personal")
     commands.add_parser("check")
     search_command = commands.add_parser("search")
     search_command.add_argument("query")
@@ -2822,6 +2927,9 @@ def parse_args() -> argparse.Namespace:
     agent_search_command.add_argument("--include-taxonomy", action="store_true")
     agent_search_command.add_argument("--include-stale", action="store_true")
     agent_search_command.add_argument("--include-orphaned", action="store_true")
+    agent_search_command.add_argument(
+        "--graph-strategy", choices=("bfs", "ppr", "hybrid"), default="hybrid"
+    )
     get_command = agent_commands.add_parser("get")
     get_command.add_argument("id")
     get_command.add_argument("--namespace", default="personal")
@@ -2839,6 +2947,16 @@ def parse_args() -> argparse.Namespace:
     expand_command.add_argument("--include-taxonomy", action="store_true")
     expand_command.add_argument("--include-stale", action="store_true")
     expand_command.add_argument("--include-orphaned", action="store_true")
+    ppr_command = agent_commands.add_parser("ppr")
+    ppr_command.add_argument("id", nargs="+")
+    ppr_command.add_argument("--namespace", default="personal")
+    ppr_command.add_argument("--type", action="append", dest="node_types")
+    ppr_command.add_argument("--relation", action="append", dest="edge_types")
+    ppr_command.add_argument("--limit", type=int, default=50)
+    ppr_command.add_argument("--include-taxonomy", action="store_true")
+    ppr_command.add_argument("--no-similarity", action="store_true")
+    ppr_command.add_argument("--include-stale", action="store_true")
+    ppr_command.add_argument("--include-orphaned", action="store_true")
     context_command = agent_commands.add_parser("context")
     context_command.add_argument("query")
     context_command.add_argument("--namespace", default="personal")
@@ -2849,6 +2967,14 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument("--include-taxonomy", action="store_true")
     context_command.add_argument("--include-stale", action="store_true")
     context_command.add_argument("--include-orphaned", action="store_true")
+    context_command.add_argument(
+        "--graph-strategy", choices=("bfs", "ppr", "hybrid"), default="hybrid"
+    )
+    align_command = agent_commands.add_parser("align")
+    align_command.add_argument("candidate", type=Path)
+    align_command.add_argument("--target-namespace", default="personal")
+    align_command.add_argument("--limit", type=int, default=10)
+    align_command.add_argument("--output", type=Path)
     compare_command = agent_commands.add_parser("compare")
     compare_command.add_argument("candidate", type=Path)
     compare_command.add_argument("--target-namespace", default="personal")
@@ -2872,6 +2998,7 @@ def main() -> int:
     registry = defaults(repo_root, args.registry)
     graph_dir = defaults(repo_root, args.graph)
     identities = defaults(repo_root, args.identities)
+    alignments = defaults(repo_root, args.alignments)
     database = defaults(repo_root, args.database)
     typst_registry = defaults(repo_root, args.typst_registry)
     try:
@@ -2882,6 +3009,7 @@ def main() -> int:
                 repo_root,
                 registry,
                 source_root=args.source_root,
+                alignments=alignments,
                 force=args.force,
             )
             _, _, report = synchronize(
@@ -2891,6 +3019,7 @@ def main() -> int:
                 database,
                 typst_registry,
                 identities=identities,
+                alignments=alignments,
                 files=[],
                 course=None,
                 subject=None,
@@ -2956,6 +3085,7 @@ def main() -> int:
                 database,
                 typst_registry,
                 identities=identities,
+                alignments=alignments,
                 files=pairs_files,
                 course=args.course,
                 subject=args.subject,
@@ -2965,7 +3095,18 @@ def main() -> int:
             return 0
         if args.command == "apply":
             delta = args.delta if args.delta.is_absolute() else (repo_root / args.delta)
-            print(pretty_json(apply_delta(graph_dir, database, typst_registry, delta)), end="")
+            print(
+                pretty_json(
+                    apply_delta(
+                        graph_dir,
+                        database,
+                        typst_registry,
+                        delta,
+                        alignments,
+                    )
+                ),
+                end="",
+            )
             return 0
         if args.command == "reconcile":
             state = load_state(graph_dir)
@@ -2973,6 +3114,30 @@ def main() -> int:
                 print(
                     pretty_json(
                         reconcile_node_name(state, identities, args.id, args.new_name)
+                    ),
+                    end="",
+                )
+            else:
+                candidate_path = (
+                    args.candidate.resolve()
+                    if args.candidate.is_absolute()
+                    else (repo_root / args.candidate).resolve()
+                )
+                print(
+                    pretty_json(
+                        reconcile_alignment_mapping(
+                            state,
+                            database,
+                            alignments,
+                            read_json(candidate_path, {}),
+                            args.candidate_id,
+                            args.target_id,
+                            predicate=args.predicate,
+                            status=args.status,
+                            justification=args.justification,
+                            evidence=args.evidence,
+                            target_namespace=args.target_namespace,
+                        )
                     ),
                     end="",
                 )
@@ -2985,6 +3150,7 @@ def main() -> int:
                 database,
                 typst_registry,
                 identities=identities,
+                alignments=alignments,
                 files=[],
                 course=None,
                 subject=None,
@@ -3022,6 +3188,7 @@ def main() -> int:
                     database,
                     typst_registry,
                     identities=identities,
+                    alignments=alignments,
                     files=selected_paths,
                     course=None,
                     subject=None,
@@ -3057,12 +3224,14 @@ def main() -> int:
         if args.command == "agent":
             from kgdistiller.agent import (
                 PROPOSAL_SCHEMA,
+                align_graph,
                 build_context_bundle,
                 compare_graph,
                 create_proposal,
                 expand_index,
                 get_index_node,
                 index_status,
+                personalized_pagerank,
                 resolve_concepts,
                 retrieve_index,
             )
@@ -3086,6 +3255,7 @@ def main() -> int:
                     include_taxonomy=args.include_taxonomy,
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
+                    graph_strategy=args.graph_strategy,
                 )
             elif args.agent_command == "get":
                 result = get_index_node(
@@ -3106,6 +3276,19 @@ def main() -> int:
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
                 )
+            elif args.agent_command == "ppr":
+                result = personalized_pagerank(
+                    database,
+                    {str(node_id): 1.0 for node_id in args.id},
+                    namespace=args.namespace,
+                    node_types=args.node_types,
+                    edge_types=args.edge_types,
+                    limit=args.limit,
+                    include_taxonomy=args.include_taxonomy,
+                    include_similarity=not args.no_similarity,
+                    include_stale=args.include_stale,
+                    include_orphaned=args.include_orphaned,
+                )
             elif args.agent_command == "context":
                 result = build_context_bundle(
                     database,
@@ -3118,7 +3301,37 @@ def main() -> int:
                     include_taxonomy=args.include_taxonomy,
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
+                    graph_strategy=args.graph_strategy,
                 )
+            elif args.agent_command == "align":
+                candidate_path = (
+                    args.candidate.resolve()
+                    if args.candidate.is_absolute()
+                    else (repo_root / args.candidate).resolve()
+                )
+                alignment_report = align_graph(
+                    database,
+                    read_json(candidate_path, {}),
+                    target_namespace=args.target_namespace,
+                    limit_per_node=args.limit,
+                )
+                if args.output:
+                    output = (
+                        args.output.resolve()
+                        if args.output.is_absolute()
+                        else (repo_root / args.output).resolve()
+                    )
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write(output, pretty_json(alignment_report))
+                    result = {
+                        "schema": alignment_report["schema"],
+                        "report_sha256": alignment_report["report_sha256"],
+                        "summary": alignment_report["summary"],
+                        "proposals": len(alignment_report["proposals"]),
+                        "output": str(output),
+                    }
+                else:
+                    result = alignment_report
             elif args.agent_command == "compare":
                 candidate_path = (
                     args.candidate.resolve()

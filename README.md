@@ -67,9 +67,10 @@ cd your-notes-repository
 kgdistiller init --source-root notes
 ```
 
-This creates `knowledge/sources.json`, a bounded source registry, and the first
-graph snapshot. Adjust fields, sources, file globs, topics, and canonical web
-locations in that registry.
+This creates `knowledge/sources.json`, an empty
+`knowledge/alignments.json` review registry, a bounded source registry, and the
+first graph snapshot. Adjust fields, sources, file globs, topics, and canonical
+web locations in the source registry.
 
 Then run:
 
@@ -130,11 +131,15 @@ and query it without loading the graph into an Agent context:
 ```sh
 kgdistiller agent status
 kgdistiller agent resolve "Measure space" "sigma algebra"
-kgdistiller agent search "countably additive measure" --type knowledge --limit 10
+kgdistiller agent search "countably additive measure" --type knowledge \
+  --graph-strategy hybrid --limit 10
 kgdistiller agent get measure-space
 kgdistiller agent expand measure-space --direction incoming --depth 2
+kgdistiller agent ppr measure-space --limit 20
 kgdistiller agent context "How does a measure depend on a sigma algebra?" \
   --budget 6000 --depth 2
+kgdistiller agent align knowledge/build/paper.snapshot.json \
+  --output knowledge/reviews/paper.alignment.json
 kgdistiller agent compare knowledge/build/paper.snapshot.json
 kgdistiller agent propose knowledge/build/paper.snapshot.json \
   --target-authority notes/research/paper.md \
@@ -142,17 +147,20 @@ kgdistiller agent propose knowledge/build/paper.snapshot.json \
   --delta-output knowledge/reviews/paper.delta.json
 ```
 
-The index stores nodes, normalized IDs/labels/aliases, structured entry text,
-typed edges with evidence, and reference occurrences. Exact and alias resolution
+The `qlkg-agent-index-v2` index stores nodes, normalized IDs/labels/global
+aliases, explicit scoped abbreviations, reviewed cross-namespace mappings,
+structured entry text, typed edges with evidence, reference occurrences, and
+optional disposable embeddings/similarity edges. Exact and alias resolution
 refuses ambiguous identities; FTS input is tokenized and quoted before reaching
 SQLite.
 
-Agent search fuses exact resolution, FTS, and bounded typed graph traversal with
-deterministic reciprocal-rank fusion. Every result explains which retrieval lane
-selected it. `agent context` returns a `qlkg-context-bundle-v1` evidence package
-whose nodes, edge evidence, backlinks, sources, omissions, and retrieval paths
-fit the requested conservative token budget; it does not ask an LLM to generate
-an answer.
+Agent search fuses exact/scoped resolution, FTS, bounded typed traversal, and
+weighted Personalized PageRank with deterministic reciprocal-rank fusion.
+`--graph-strategy` selects `bfs`, `ppr`, or the `hybrid` default. Every result
+explains which retrieval lane selected it. `agent context` returns a
+`qlkg-context-bundle-v1` evidence package whose nodes, edge evidence, backlinks,
+sources, omissions, and retrieval paths fit the requested conservative token
+budget; it does not ask an LLM to generate an answer.
 
 ### Connect an Agent over MCP
 
@@ -176,8 +184,8 @@ A typical MCP client entry is:
 ```
 
 The server exposes `kg_status`, `kg_resolve_concepts`, `kg_search`,
-`kg_get_node`, `kg_expand`, `kg_build_context`, `kg_compare_graph`, and
-`kg_create_proposal`. All tools are declared read-only and return both
+`kg_get_node`, `kg_expand`, `kg_ppr`, `kg_build_context`, `kg_align_graph`,
+`kg_compare_graph`, and `kg_create_proposal`. All tools are declared read-only and return both
 structured JSON and a backwards-compatible text content block. The
 implementation uses newline-delimited stdio JSON-RPC, supports stable MCP
 revisions through `2025-11-25`, bounds messages and tool arguments, and never
@@ -187,7 +195,24 @@ Paper snapshots use an isolated namespace such as `paper:<digest>`. Comparison
 never imports them into `personal`: deterministic ID/label/alias resolution,
 missing entries and aligned relations, and optional structured claims produce
 `known`, `partial`, `new`, `conflict`, or `uncertain` results with evidence.
-Ambiguous labels remain uncertain; similarity is never promoted into identity.
+Ambiguous labels and abbreviations remain uncertain; similarity is never
+promoted into identity. For example, `AC` may retrieve both `absolutely
+continuous` and `alternating current`. Explicit local definitions and graph
+consistency rank these senses for review without silently merging them.
+
+Approved decisions live in `knowledge/alignments.json`, not in global aliases.
+Record one review decision and atomically rebuild the derived index with:
+
+```sh
+kgdistiller reconcile alignment knowledge/build/paper.snapshot.json ac \
+  absolutely-continuous --predicate exact-match --status reviewed \
+  --evidence "The paper explicitly defines AC and uses the same measure relation."
+```
+
+A reviewed exact mapping or rejection is trusted only while both endpoint
+fingerprints still match. If either paper or personal concept changes, the
+decision automatically returns to the candidate-review path. Fresh rejections
+remain persisted so the same false match is not repeatedly proposed.
 
 `agent propose` turns the comparison into `qlkg-agent-proposal-v1`. New concepts
 receive native marker suggestions but are blocked from the delta until an

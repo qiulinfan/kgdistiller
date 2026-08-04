@@ -13,7 +13,11 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.agent import write_agent_index  # noqa: E402
 from kgdistiller.mcp import MCPServer, TOOL_DEFINITIONS, serve_stdio  # noqa: E402
-from tests.test_agent import candidate_snapshot, fixture_snapshot  # noqa: E402
+from tests.test_agent import (  # noqa: E402
+    ac_candidate_snapshot,
+    candidate_snapshot,
+    fixture_snapshot,
+)
 
 
 class MCPServerTest(unittest.TestCase):
@@ -51,6 +55,7 @@ class MCPServerTest(unittest.TestCase):
 
         initialized = self.initialize(server)
         self.assertEqual("2025-06-18", initialized["result"]["protocolVersion"])
+        self.assertEqual("0.2.0", initialized["result"]["serverInfo"]["version"])
         listed = server.handle(
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
         )
@@ -62,7 +67,9 @@ class MCPServerTest(unittest.TestCase):
                 "kg_search",
                 "kg_get_node",
                 "kg_expand",
+                "kg_ppr",
                 "kg_build_context",
+                "kg_align_graph",
                 "kg_compare_graph",
                 "kg_create_proposal",
             ],
@@ -135,6 +142,44 @@ class MCPServerTest(unittest.TestCase):
         self.assertEqual(1, result["structuredContent"]["summary"]["new"])
         self.assertEqual("paper:fixture", result["structuredContent"]["candidate"]["namespace"])
 
+    def test_ppr_and_alignment_tools_are_explainable_and_read_only(self) -> None:
+        server = MCPServer(self.database)
+        self.initialize(server)
+        before = self.database.read_bytes()
+
+        ppr_response = server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "name": "kg_ppr",
+                    "arguments": {"ids": ["alpha"], "limit": 2},
+                },
+            }
+        )
+        alignment_response = server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "tools/call",
+                "params": {
+                    "name": "kg_align_graph",
+                    "arguments": {"candidate_snapshot": ac_candidate_snapshot()},
+                },
+            }
+        )
+
+        ppr = ppr_response["result"]
+        alignment = alignment_response["result"]
+        self.assertFalse(ppr["isError"])
+        self.assertEqual("qlkg-ppr-result-v1", ppr["structuredContent"]["schema"])
+        self.assertFalse(alignment["isError"])
+        self.assertEqual(
+            "qlkg-alignment-report-v1", alignment["structuredContent"]["schema"]
+        )
+        self.assertEqual(before, self.database.read_bytes())
+
     def test_proposal_tool_generates_review_data_without_writing(self) -> None:
         server = MCPServer(self.database)
         self.initialize(server)
@@ -189,7 +234,7 @@ class MCPServerTest(unittest.TestCase):
         self.assertEqual(2, len(lines))
         responses = [json.loads(line) for line in lines]
         self.assertEqual("2025-11-25", responses[0]["result"]["protocolVersion"])
-        self.assertEqual("qlkg-agent-index-v1", responses[1]["result"]["structuredContent"]["schema"])
+        self.assertEqual("qlkg-agent-index-v2", responses[1]["result"]["structuredContent"]["schema"])
 
 
 if __name__ == "__main__":

@@ -4,18 +4,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
+import struct
 import tempfile
 import unicodedata
 from collections import deque
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
+from .alignment import (
+    ALIGNMENT_REPORT_SCHEMA,
+    ALIGNMENT_SCHEMA,
+    AlignmentError,
+    canonical_acronym,
+    extract_scoped_aliases,
+    mapping_id,
+    node_fingerprint,
+    normalize_surface,
+    sha256_json as alignment_sha256_json,
+    validate_alignment_set,
+)
+
 
 SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
-INDEX_SCHEMA = "qlkg-agent-index-v1"
+INDEX_SCHEMA = "qlkg-agent-index-v2"
 NAMESPACE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
 )
@@ -29,6 +44,7 @@ MAX_CONTEXT_BUDGET = 200_000
 CONTEXT_SCHEMA = "qlkg-context-bundle-v1"
 COMPARISON_SCHEMA = "qlkg-graph-comparison-v1"
 PROPOSAL_SCHEMA = "qlkg-agent-proposal-v1"
+PPR_SCHEMA = "qlkg-ppr-result-v1"
 DEFAULT_SEMANTIC_RELATIONS = {
     "prerequisite-for",
     "implies",
@@ -141,6 +157,15 @@ def _validated_snapshot(snapshot: dict[str, Any]) -> tuple[str, dict[str, int]]:
     claimed_counts = graph.get("counts") or {}
     if any(int(claimed_counts.get(key, -1)) != value for key, value in counts.items()):
         raise AgentIndexError("snapshot counts do not match its records")
+    node_ids = [str(node.get("id", "")) for node in snapshot.get("nodes") or []]
+    if any(not node_id for node_id in node_ids) or len(node_ids) != len(set(node_ids)):
+        raise AgentIndexError("snapshot contains an empty or duplicate node ID")
+    known_ids = set(node_ids)
+    for edge in snapshot.get("edges") or []:
+        if str(edge.get("source", "")) not in known_ids or str(
+            edge.get("target", "")
+        ) not in known_ids:
+            raise AgentIndexError("snapshot contains a dangling edge")
     return namespace, counts
 
 
@@ -244,20 +269,66 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             PRIMARY KEY (namespace, node_id, provider, model),
             FOREIGN KEY (namespace, node_id) REFERENCES nodes(namespace, id)
         );
+        CREATE TABLE scoped_aliases (
+            alias_id TEXT PRIMARY KEY,
+            namespace TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            surface TEXT NOT NULL,
+            normalized_surface TEXT NOT NULL,
+            expansion TEXT NOT NULL,
+            authority TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            FOREIGN KEY (namespace, node_id) REFERENCES nodes(namespace, id)
+        );
+        CREATE INDEX scoped_aliases_lookup
+            ON scoped_aliases(namespace, normalized_surface, node_id);
+        CREATE TABLE alignment_mappings (
+            mapping_id TEXT PRIMARY KEY,
+            subject_namespace TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            subject_sha256 TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object_namespace TEXT NOT NULL,
+            object_id TEXT NOT NULL,
+            object_sha256 TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload TEXT NOT NULL
+        );
+        CREATE INDEX alignment_subject_lookup
+            ON alignment_mappings(subject_namespace, subject_id, object_namespace, status);
+        CREATE INDEX alignment_object_lookup
+            ON alignment_mappings(object_namespace, object_id, subject_namespace, status);
+        CREATE TABLE similarity_edges (
+            namespace TEXT NOT NULL,
+            source TEXT NOT NULL,
+            target TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            score REAL NOT NULL,
+            evidence TEXT NOT NULL,
+            PRIMARY KEY (namespace, source, target, provider, model),
+            FOREIGN KEY (namespace, source) REFERENCES nodes(namespace, id),
+            FOREIGN KEY (namespace, target) REFERENCES nodes(namespace, id)
+        );
+        CREATE INDEX similarity_edges_source
+            ON similarity_edges(namespace, source, score DESC, target);
         """
     )
 
 
-def write_agent_index(path: Path, snapshot: dict[str, Any]) -> None:
+def write_agent_index(
+    path: Path,
+    snapshot: dict[str, Any],
+    alignment_set: dict[str, Any] | None = None,
+) -> None:
     """Atomically rebuild a provider-neutral SQLite index from a snapshot."""
     namespace, counts = _validated_snapshot(snapshot)
+    try:
+        validated_alignments = validate_alignment_set(alignment_set)
+        scoped_aliases = extract_scoped_aliases(snapshot)
+    except AlignmentError as error:
+        raise AgentIndexError(str(error)) from error
     nodes = list(snapshot.get("nodes") or [])
-    node_ids = {str(node.get("id", "")) for node in nodes}
-    if "" in node_ids or len(node_ids) != len(nodes):
-        raise AgentIndexError("snapshot contains an empty or duplicate node ID")
-    for edge in snapshot.get("edges") or []:
-        if edge.get("source") not in node_ids or edge.get("target") not in node_ids:
-            raise AgentIndexError("snapshot contains a dangling edge")
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -276,7 +347,14 @@ def write_agent_index(path: Path, snapshot: dict[str, Any]) -> None:
             "graph_sha256": snapshot["graph"]["sha256"],
             "namespace": namespace,
             "counts": counts,
-            "retrieval_lanes": ["exact", "fts", "graph"],
+            "retrieval_lanes": ["exact", "scoped-alias", "fts", "graph", "ppr"],
+            "alignment_schema": ALIGNMENT_SCHEMA,
+            "alignment_sha256": alignment_sha256_json(validated_alignments),
+            "alignment_counts": {
+                "mappings": len(validated_alignments["mappings"]),
+                "scoped_aliases": int(scoped_aliases["count"]),
+                "similarity_edges": 0,
+            },
             "provider_config_sha256": None,
             "providers": {
                 "embedding": None,
@@ -387,6 +465,39 @@ def write_agent_index(path: Path, snapshot: dict[str, Any]) -> None:
                     canonical_json(reference),
                 ),
             )
+        for alias in scoped_aliases["aliases"]:
+            scope = alias.get("scope") or {}
+            connection.execute(
+                "INSERT INTO scoped_aliases VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(alias["id"]),
+                    namespace,
+                    str(alias["node_id"]),
+                    str(alias["surface"]),
+                    str(alias["normalized_surface"]),
+                    str(alias["expansion"]),
+                    str(scope.get("authority", "")),
+                    canonical_json(alias),
+                ),
+            )
+        for mapping in validated_alignments["mappings"]:
+            subject = mapping["subject"]
+            object_ = mapping["object"]
+            connection.execute(
+                "INSERT INTO alignment_mappings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(mapping["id"]),
+                    str(subject["namespace"]),
+                    str(subject["node_id"]),
+                    str(subject.get("node_sha256", "")),
+                    str(mapping["predicate"]),
+                    str(object_["namespace"]),
+                    str(object_["node_id"]),
+                    str(object_.get("node_sha256", "")),
+                    str(mapping["status"]),
+                    canonical_json(mapping),
+                ),
+            )
         connection.commit()
     except BaseException:
         connection.close()
@@ -488,6 +599,39 @@ def resolve_concepts(
                 if node is not None:
                     matches.append(node)
             if not matches:
+                scoped_rows = connection.execute(
+                    """
+                    SELECT node_id, payload
+                    FROM scoped_aliases
+                    WHERE namespace = ? AND normalized_surface = ?
+                    ORDER BY node_id, alias_id
+                    """,
+                    (namespace, normalize_surface(raw)),
+                ).fetchall()
+                scoped_evidence: dict[str, list[dict[str, Any]]] = {}
+                for row in scoped_rows:
+                    node_id = str(row["node_id"])
+                    scoped_evidence.setdefault(node_id, []).append(json.loads(row["payload"]))
+                for node_id in sorted(scoped_evidence):
+                    node = _node_by_id(connection, namespace, node_id)
+                    if node is not None:
+                        matches.append(node)
+                if matches:
+                    results.append(
+                        {
+                            "query": raw,
+                            "status": "scoped-alias" if len(matches) == 1 else "ambiguous",
+                            "match_kind": "scoped-alias",
+                            "matches": matches,
+                            "evidence": [
+                                evidence
+                                for node_id in sorted(scoped_evidence)
+                                for evidence in scoped_evidence[node_id]
+                            ],
+                        }
+                    )
+                    continue
+            if not matches:
                 results.append({"query": raw, "status": "missing", "matches": []})
             elif len(matches) > 1:
                 results.append({"query": raw, "status": "ambiguous", "matches": matches})
@@ -570,6 +714,270 @@ def search_index(
                 }
             )
         return results
+    finally:
+        connection.close()
+
+
+def _embedding_text(node: dict[str, Any]) -> str:
+    properties = node.get("properties") or {}
+    entry = node.get("entry") or {}
+    parts = [
+        str(node.get("label", "")),
+        *[str(item) for item in properties.get("aliases", []) if str(item).strip()],
+        str(node.get("text", "")),
+        *_json_strings(entry),
+    ]
+    return "\n".join(dict.fromkeys(part.strip() for part in parts if part.strip()))
+
+
+def _validate_vector(vector: list[float], dimensions: int) -> list[float]:
+    if len(vector) != dimensions:
+        raise AgentIndexError(
+            f"embedding dimensions mismatch: expected {dimensions}, got {len(vector)}"
+        )
+    normalized = [float(value) for value in vector]
+    if not all(math.isfinite(value) for value in normalized):
+        raise AgentIndexError("embedding contains a non-finite value")
+    if not any(value != 0.0 for value in normalized):
+        raise AgentIndexError("embedding vector cannot be all zero")
+    return normalized
+
+
+def _pack_vector(vector: list[float]) -> bytes:
+    return struct.pack(f"<{len(vector)}f", *vector)
+
+
+def _unpack_vector(payload: bytes, dimensions: int) -> list[float]:
+    expected = dimensions * 4
+    if len(payload) != expected:
+        raise AgentIndexError("stored embedding has an invalid byte length")
+    return list(struct.unpack(f"<{dimensions}f", payload))
+
+
+def _cosine(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right):
+        raise AgentIndexError("cannot compare embeddings with different dimensions")
+    numerator = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return numerator / (left_norm * right_norm)
+
+
+def index_embeddings(
+    path: Path,
+    provider: EmbeddingProvider,
+    *,
+    namespace: str = "personal",
+    build_similarity_edges: bool = True,
+    similarity_top_k: int = 5,
+    similarity_threshold: float = 0.78,
+) -> dict[str, Any]:
+    """Cache provider embeddings and optional soft edges in disposable index state."""
+    _validate_namespace(namespace)
+    provider_name = str(getattr(provider, "name", "")).strip()
+    model = str(getattr(provider, "model", "")).strip()
+    dimensions = int(getattr(provider, "dimensions", 0))
+    if not provider_name or not model or dimensions < 1:
+        raise AgentIndexError("embedding provider metadata is incomplete")
+    if similarity_top_k < 1 or similarity_top_k > 100:
+        raise AgentIndexError("similarity_top_k must be between 1 and 100")
+    if similarity_threshold < -1.0 or similarity_threshold > 1.0:
+        raise AgentIndexError("similarity_threshold must be between -1 and 1")
+    connection = _connect(path)
+    try:
+        rows = connection.execute(
+            "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
+        ).fetchall()
+        nodes = [_node_payload(row) for row in rows]
+        texts = [_embedding_text(node) for node in nodes]
+        digests = [hashlib.sha256(text.encode("utf-8")).hexdigest() for text in texts]
+        pending_indices: list[int] = []
+        for index, (node, digest) in enumerate(zip(nodes, digests)):
+            cached = connection.execute(
+                """
+                SELECT content_sha256, dimensions FROM embeddings
+                WHERE namespace = ? AND node_id = ? AND provider = ? AND model = ?
+                """,
+                (namespace, str(node["id"]), provider_name, model),
+            ).fetchone()
+            if (
+                cached is None
+                or str(cached["content_sha256"]) != digest
+                or int(cached["dimensions"]) != dimensions
+            ):
+                pending_indices.append(index)
+        if pending_indices:
+            vectors = provider.embed([texts[index] for index in pending_indices])
+            if len(vectors) != len(pending_indices):
+                raise AgentIndexError("embedding provider returned the wrong vector count")
+            for index, vector in zip(pending_indices, vectors):
+                normalized = _validate_vector(vector, dimensions)
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO embeddings
+                    (namespace, node_id, provider, model, dimensions, content_sha256, vector)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        namespace,
+                        str(nodes[index]["id"]),
+                        provider_name,
+                        model,
+                        dimensions,
+                        digests[index],
+                        _pack_vector(normalized),
+                    ),
+                )
+        soft_edge_count = 0
+        if build_similarity_edges:
+            connection.execute(
+                "DELETE FROM similarity_edges WHERE namespace = ? AND provider = ? AND model = ?",
+                (namespace, provider_name, model),
+            )
+            vector_rows = connection.execute(
+                """
+                SELECT node_id, vector FROM embeddings
+                WHERE namespace = ? AND provider = ? AND model = ? AND dimensions = ?
+                ORDER BY node_id
+                """,
+                (namespace, provider_name, model, dimensions),
+            ).fetchall()
+            vectors_by_id = {
+                str(row["node_id"]): _unpack_vector(row["vector"], dimensions)
+                for row in vector_rows
+            }
+            node_ids = sorted(vectors_by_id)
+            for source in node_ids:
+                candidates = sorted(
+                    (
+                        (_cosine(vectors_by_id[source], vectors_by_id[target]), target)
+                        for target in node_ids
+                        if target != source
+                    ),
+                    key=lambda item: (-item[0], item[1]),
+                )
+                for score, target in candidates[:similarity_top_k]:
+                    if score < similarity_threshold:
+                        continue
+                    evidence = {
+                        "kind": "embedding-similarity",
+                        "provider": provider_name,
+                        "model": model,
+                        "score": round(score, 12),
+                        "identity_authority": False,
+                    }
+                    connection.execute(
+                        "INSERT INTO similarity_edges VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            namespace,
+                            source,
+                            target,
+                            provider_name,
+                            model,
+                            score,
+                            canonical_json(evidence),
+                        ),
+                    )
+                    soft_edge_count += 1
+        provider_meta = {
+            "name": provider_name,
+            "model": model,
+            "dimensions": dimensions,
+        }
+        providers_row = connection.execute(
+            "SELECT value FROM index_meta WHERE key = 'providers'"
+        ).fetchone()
+        providers = json.loads(providers_row["value"]) if providers_row else {}
+        providers["embedding"] = provider_meta
+        connection.execute(
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('providers', ?)",
+            (canonical_json(providers),),
+        )
+        counts_row = connection.execute(
+            "SELECT value FROM index_meta WHERE key = 'alignment_counts'"
+        ).fetchone()
+        alignment_counts = json.loads(counts_row["value"]) if counts_row else {}
+        alignment_counts["similarity_edges"] = connection.execute(
+            "SELECT count(*) FROM similarity_edges WHERE namespace = ?", (namespace,)
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('alignment_counts', ?)",
+            (canonical_json(alignment_counts),),
+        )
+        connection.commit()
+        return {
+            "namespace": namespace,
+            "provider": provider_meta,
+            "nodes": len(nodes),
+            "embedded": len(pending_indices),
+            "cached": len(nodes) - len(pending_indices),
+            "similarity_edges": soft_edge_count,
+        }
+    finally:
+        connection.close()
+
+
+def semantic_search(
+    path: Path,
+    query: str,
+    provider: EmbeddingProvider,
+    *,
+    namespace: str = "personal",
+    node_types: list[str] | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Retrieve semantic candidates; scores are evidence, never identity decisions."""
+    limit = _validated_limit(limit)
+    if not str(query).strip():
+        raise AgentIndexError("semantic query cannot be empty")
+    index_embeddings(path, provider, namespace=namespace)
+    provider_name = str(provider.name)
+    model = str(provider.model)
+    dimensions = int(provider.dimensions)
+    query_vectors = provider.embed([str(query)])
+    if len(query_vectors) != 1:
+        raise AgentIndexError("embedding provider returned the wrong query vector count")
+    query_vector = _validate_vector(query_vectors[0], dimensions)
+    allowed_types = set(node_types or [])
+    connection = _connect(path)
+    try:
+        rows = connection.execute(
+            """
+            SELECT e.node_id, e.vector, n.*
+            FROM embeddings AS e
+            JOIN nodes AS n ON n.namespace = e.namespace AND n.id = e.node_id
+            WHERE e.namespace = ? AND e.provider = ? AND e.model = ? AND e.dimensions = ?
+            ORDER BY e.node_id
+            """,
+            (namespace, provider_name, model, dimensions),
+        ).fetchall()
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for row in rows:
+            node = _node_payload(row)
+            if allowed_types and node.get("type") not in allowed_types:
+                continue
+            score = _cosine(query_vector, _unpack_vector(row["vector"], dimensions))
+            scored.append((score, node))
+        scored.sort(key=lambda item: (-item[0], str(item[1].get("label", "")), str(item[1]["id"])))
+        return [
+            {
+                "rank": rank,
+                "node": node,
+                "reasons": [
+                    {
+                        "method": "semantic",
+                        "rank": rank,
+                        "score": round(score, 12),
+                        "provider": provider_name,
+                        "model": model,
+                        "identity_authority": False,
+                    }
+                ],
+            }
+            for rank, (score, node) in enumerate(scored[:limit], start=1)
+        ]
     finally:
         connection.close()
 
@@ -830,6 +1238,170 @@ def expand_index(
         connection.close()
 
 
+def personalized_pagerank(
+    path: Path,
+    seeds: dict[str, float],
+    *,
+    namespace: str = "personal",
+    node_types: list[str] | None = None,
+    edge_types: list[str] | None = None,
+    include_taxonomy: bool = False,
+    include_similarity: bool = True,
+    include_stale: bool = False,
+    include_orphaned: bool = False,
+    damping: float = 0.85,
+    max_iterations: int = 60,
+    tolerance: float = 1e-10,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Run deterministic weighted PPR over trusted edges and disposable soft edges."""
+    _validate_namespace(namespace)
+    limit = _validated_limit(limit)
+    if not 0.0 < damping < 1.0:
+        raise AgentIndexError("PPR damping must be between 0 and 1")
+    if max_iterations < 1 or max_iterations > 1000:
+        raise AgentIndexError("PPR max_iterations must be between 1 and 1000")
+    if tolerance <= 0.0:
+        raise AgentIndexError("PPR tolerance must be positive")
+    relations = set(edge_types or DEFAULT_SEMANTIC_RELATIONS)
+    if include_taxonomy:
+        relations.add("contains")
+    else:
+        relations.discard("contains")
+    allowed_types = set(node_types or [])
+    connection = _connect(path)
+    try:
+        nodes: dict[str, dict[str, Any]] = {}
+        for row in connection.execute(
+            "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
+        ):
+            node = _node_payload(row)
+            if allowed_types and node.get("type") not in allowed_types:
+                continue
+            if not _node_allowed(
+                node,
+                include_stale=include_stale,
+                include_orphaned=include_orphaned,
+            ):
+                continue
+            nodes[str(node["id"])] = node
+        positive_seeds = {
+            str(node_id): float(weight)
+            for node_id, weight in seeds.items()
+            if str(node_id) in nodes and math.isfinite(float(weight)) and float(weight) > 0.0
+        }
+        if not positive_seeds:
+            raise AgentIndexError("PPR requires at least one positive indexed seed")
+        seed_total = sum(positive_seeds.values())
+        reset = {
+            node_id: positive_seeds.get(node_id, 0.0) / seed_total for node_id in nodes
+        }
+        adjacency: dict[str, dict[str, float]] = {node_id: {} for node_id in nodes}
+        relation_weights = {
+            "prerequisite-for": 1.0,
+            "implies": 1.0,
+            "generalizes": 0.9,
+            "derived-from": 0.9,
+            "contrasts-with": 0.7,
+            "contains": 0.3,
+        }
+        trusted_edge_count = 0
+        for row in connection.execute(
+            "SELECT * FROM edges WHERE namespace = ? ORDER BY edge_id", (namespace,)
+        ):
+            relation = str(row["relation"])
+            source = str(row["source"])
+            target = str(row["target"])
+            if relation not in relations or source not in nodes or target not in nodes:
+                continue
+            edge = _edge_payload(row)
+            if not _edge_allowed(edge, include_stale=include_stale):
+                continue
+            weight = relation_weights.get(relation, 0.8)
+            adjacency[source][target] = adjacency[source].get(target, 0.0) + weight
+            adjacency[target][source] = adjacency[target].get(source, 0.0) + weight
+            trusted_edge_count += 1
+        similarity_edge_count = 0
+        if include_similarity:
+            for row in connection.execute(
+                """
+                SELECT source, target, score FROM similarity_edges
+                WHERE namespace = ? ORDER BY source, score DESC, target
+                """,
+                (namespace,),
+            ):
+                source = str(row["source"])
+                target = str(row["target"])
+                if source not in nodes or target not in nodes:
+                    continue
+                weight = max(0.0, float(row["score"])) * 0.35
+                if weight == 0.0:
+                    continue
+                adjacency[source][target] = adjacency[source].get(target, 0.0) + weight
+                similarity_edge_count += 1
+        rank = dict(reset)
+        converged = False
+        iterations = 0
+        for iteration in range(1, max_iterations + 1):
+            next_rank = {node_id: (1.0 - damping) * reset[node_id] for node_id in nodes}
+            sink_mass = 0.0
+            for source, source_rank in rank.items():
+                neighbors = adjacency[source]
+                total_weight = sum(neighbors.values())
+                if total_weight == 0.0:
+                    sink_mass += source_rank
+                    continue
+                for target, weight in neighbors.items():
+                    next_rank[target] += damping * source_rank * weight / total_weight
+            if sink_mass:
+                for node_id in nodes:
+                    next_rank[node_id] += damping * sink_mass * reset[node_id]
+            delta = sum(abs(next_rank[node_id] - rank[node_id]) for node_id in nodes)
+            rank = next_rank
+            iterations = iteration
+            if delta <= tolerance:
+                converged = True
+                break
+        ordered = sorted(
+            (node_id for node_id in nodes if rank[node_id] > 0.0),
+            key=lambda node_id: (
+                -rank[node_id],
+                str(nodes[node_id].get("label", "")),
+                node_id,
+            ),
+        )[:limit]
+        return {
+            "schema": PPR_SCHEMA,
+            "namespace": namespace,
+            "seeds": [
+                {"id": node_id, "weight": positive_seeds[node_id], "reset": reset[node_id]}
+                for node_id in sorted(positive_seeds)
+            ],
+            "policy": {
+                "damping": damping,
+                "max_iterations": max_iterations,
+                "tolerance": tolerance,
+                "edge_types": sorted(relations),
+                "include_similarity": include_similarity,
+                "trusted_edges": trusted_edge_count,
+                "similarity_edges": similarity_edge_count,
+            },
+            "iterations": iterations,
+            "converged": converged,
+            "results": [
+                {
+                    "rank": position,
+                    "score": round(rank[node_id], 15),
+                    "node": nodes[node_id],
+                    "seed": node_id in positive_seeds,
+                }
+                for position, node_id in enumerate(ordered, start=1)
+            ],
+        }
+    finally:
+        connection.close()
+
+
 def retrieve_index(
     path: Path,
     query: str,
@@ -841,17 +1413,28 @@ def retrieve_index(
     include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
+    graph_strategy: str = "hybrid",
+    embedding_provider: EmbeddingProvider | None = None,
+    rerank_provider: RerankProvider | None = None,
 ) -> list[dict[str, Any]]:
-    """Fuse exact, lexical, and graph lanes using deterministic RRF."""
+    """Fuse exact, lexical, semantic, BFS, and PPR lanes using deterministic RRF."""
     limit = _validated_limit(limit)
     _validate_traversal(direction="both", max_depth=max_depth, limit=limit)
+    if graph_strategy not in {"bfs", "ppr", "hybrid"}:
+        raise AgentIndexError(f"unsupported graph strategy: {graph_strategy!r}")
     allowed_types = set(node_types or [])
-    lane_nodes: dict[str, list[str]] = {"exact": [], "fts": [], "graph": []}
+    lane_nodes: dict[str, list[str]] = {
+        "exact": [],
+        "fts": [],
+        "semantic": [],
+        "graph": [],
+        "ppr": [],
+    }
     nodes: dict[str, dict[str, Any]] = {}
     reasons: dict[str, list[dict[str, Any]]] = {}
 
     resolution = resolve_concepts(path, [query], namespace=namespace)[0]
-    if resolution["status"] in {"exact", "alias", "ambiguous"}:
+    if resolution["status"] in {"exact", "alias", "scoped-alias", "ambiguous"}:
         for rank, node in enumerate(resolution["matches"], start=1):
             if allowed_types and node.get("type") not in allowed_types:
                 continue
@@ -870,6 +1453,11 @@ def retrieve_index(
                     "rank": rank,
                     "resolution": resolution["status"],
                     "match_kind": resolution.get("match_kind"),
+                    **(
+                        {"evidence": resolution.get("evidence", [])}
+                        if resolution.get("match_kind") == "scoped-alias"
+                        else {}
+                    ),
                 }
             )
 
@@ -893,8 +1481,32 @@ def retrieve_index(
         nodes[node_id] = node
         reasons.setdefault(node_id, []).extend(result["reasons"])
 
-    graph_seeds = list(dict.fromkeys([*lane_nodes["exact"], *lane_nodes["fts"]]))[:8]
-    if graph_seeds and max_depth > 0:
+    if embedding_provider is not None:
+        semantic_results = semantic_search(
+            path,
+            query,
+            embedding_provider,
+            namespace=namespace,
+            node_types=node_types,
+            limit=min(MAX_LIMIT, max(limit * 3, 20)),
+        )
+        for result in semantic_results:
+            node = result["node"]
+            if not _node_allowed(
+                node,
+                include_stale=include_stale,
+                include_orphaned=include_orphaned,
+            ):
+                continue
+            node_id = str(node["id"])
+            lane_nodes["semantic"].append(node_id)
+            nodes[node_id] = node
+            reasons.setdefault(node_id, []).extend(result["reasons"])
+
+    graph_seeds = list(
+        dict.fromkeys([*lane_nodes["exact"], *lane_nodes["fts"], *lane_nodes["semantic"]])
+    )[:8]
+    if graph_seeds and max_depth > 0 and graph_strategy in {"bfs", "hybrid"}:
         expansion = expand_index(
             path,
             graph_seeds,
@@ -929,7 +1541,45 @@ def retrieve_index(
                 }
             )
 
-    lane_weights = {"exact": 3.0, "fts": 1.0, "graph": 0.7}
+    if graph_seeds and max_depth > 0 and graph_strategy in {"ppr", "hybrid"}:
+        seed_weights: dict[str, float] = {}
+        for lane, weight in (("exact", 3.0), ("fts", 1.0), ("semantic", 0.8)):
+            for rank, node_id in enumerate(dict.fromkeys(lane_nodes[lane]), start=1):
+                seed_weights[node_id] = seed_weights.get(node_id, 0.0) + weight / rank
+        ppr = personalized_pagerank(
+            path,
+            seed_weights,
+            namespace=namespace,
+            node_types=node_types,
+            include_taxonomy=include_taxonomy,
+            include_similarity=True,
+            include_stale=include_stale,
+            include_orphaned=include_orphaned,
+            limit=min(MAX_LIMIT, max(limit * 4, 40)),
+        )
+        for result in ppr["results"]:
+            node = result["node"]
+            node_id = str(node["id"])
+            lane_nodes["ppr"].append(node_id)
+            nodes[node_id] = node
+            reasons.setdefault(node_id, []).append(
+                {
+                    "method": "ppr",
+                    "rank": result["rank"],
+                    "score": result["score"],
+                    "seed": result["seed"],
+                    "trusted_edges": ppr["policy"]["trusted_edges"],
+                    "similarity_edges": ppr["policy"]["similarity_edges"],
+                }
+            )
+
+    lane_weights = {
+        "exact": 3.0,
+        "fts": 1.0,
+        "semantic": 0.9,
+        "graph": 0.7,
+        "ppr": 0.6,
+    }
     scores: dict[str, float] = {}
     for lane, ordered_ids in lane_nodes.items():
         for rank, node_id in enumerate(dict.fromkeys(ordered_ids), start=1):
@@ -942,7 +1592,7 @@ def retrieve_index(
             node_id,
         ),
     )[:limit]
-    return [
+    results = [
         {
             "rank": rank,
             "score": round(scores[node_id], 12),
@@ -951,6 +1601,32 @@ def retrieve_index(
         }
         for rank, node_id in enumerate(ordered, start=1)
     ]
+    if rerank_provider is None or not results:
+        return results
+    reranked = rerank_provider.rerank(query, list(results))
+    expected = {str(result["node"]["id"]): result for result in results}
+    ordered_ids: list[str] = []
+    for item in reranked:
+        node = item.get("node") if isinstance(item, dict) else None
+        node_id = str((node or {}).get("id", ""))
+        if node_id in expected and node_id not in ordered_ids:
+            ordered_ids.append(node_id)
+    ordered_ids.extend(node_id for node_id in ordered if node_id not in ordered_ids)
+    final: list[dict[str, Any]] = []
+    for rank, node_id in enumerate(ordered_ids[:limit], start=1):
+        result = dict(expected[node_id])
+        result["rank"] = rank
+        result["reasons"] = [
+            *result["reasons"],
+            {
+                "method": "rerank",
+                "rank": rank,
+                "provider": str(rerank_provider.name),
+                "model": str(rerank_provider.model),
+            },
+        ]
+        final.append(result)
+    return final
 
 
 def estimate_tokens(value: Any) -> int:
@@ -996,6 +1672,7 @@ def build_context_bundle(
     include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
+    graph_strategy: str = "hybrid",
 ) -> dict[str, Any]:
     """Pack a deterministic evidence bundle without calling a language model."""
     if token_budget < 1 or token_budget > MAX_CONTEXT_BUDGET:
@@ -1012,6 +1689,7 @@ def build_context_bundle(
         include_taxonomy=include_taxonomy,
         include_stale=include_stale,
         include_orphaned=include_orphaned,
+        graph_strategy=graph_strategy,
     )
     policy = {
         "node_types": sorted(set(node_types or [])),
@@ -1019,6 +1697,7 @@ def build_context_bundle(
         "include_taxonomy": include_taxonomy,
         "include_stale": include_stale,
         "include_orphaned": include_orphaned,
+        "graph_strategy": graph_strategy,
     }
     bundle: dict[str, Any] = {
         "schema": CONTEXT_SCHEMA,
@@ -1140,18 +1819,22 @@ def build_context_bundle(
     return bundle
 
 
-def _candidate_matches(
+def _trusted_resolution_matches(
     path: Path,
     candidate: dict[str, Any],
     target_namespace: str,
-) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
     properties = candidate.get("properties") or {}
-    explicit_target = str(properties.get("target_id", "")).strip()
     probes: list[tuple[str, str]] = []
+    explicit_target = str(properties.get("target_id", "")).strip()
     if explicit_target:
         probes.append((explicit_target, "explicit-target-id"))
-    probes.append((str(candidate.get("id", "")), "id"))
-    probes.append((str(candidate.get("label", "")), "label"))
+    probes.extend(
+        [
+            (str(candidate.get("id", "")), "id"),
+            (str(candidate.get("label", "")), "label"),
+        ]
+    )
     probes.extend(
         (str(alias), "alias")
         for alias in properties.get("aliases", [])
@@ -1166,6 +1849,8 @@ def _candidate_matches(
         resolution = resolve_concepts(path, [probe], namespace=target_namespace)[0]
         if resolution["status"] == "ambiguous":
             ambiguous = True
+        if resolution["status"] not in {"exact", "alias", "ambiguous"}:
+            continue
         for node in resolution.get("matches", []):
             node_id = str(node["id"])
             matches[node_id] = node
@@ -1176,18 +1861,584 @@ def _candidate_matches(
                     "probe_source": source,
                     "status": resolution["status"],
                     "target_id": node_id,
+                    "identity_authority": resolution["status"] in {"exact", "alias"},
                 }
             )
         if explicit_target and source == "explicit-target-id":
-            if len(matches) == 1:
-                return "matched", list(matches.values()), evidence
-            return "missing", [], evidence
+            return list(matches.values()), evidence, len(matches) != 1
         if source == "id" and resolution["status"] == "exact":
-            return "matched", list(matches.values()), evidence
+            return list(matches.values()), evidence, False
+    return list(matches.values()), evidence, ambiguous or len(matches) > 1
+
+
+def _indexed_alignment_mappings(
+    path: Path,
+    subject_namespace: str,
+    subject_id: str,
+    object_namespace: str,
+) -> list[dict[str, Any]]:
+    connection = _connect(path)
+    try:
+        return [
+            json.loads(row["payload"])
+            for row in connection.execute(
+                """
+                SELECT payload FROM alignment_mappings
+                WHERE subject_namespace = ? AND subject_id = ? AND object_namespace = ?
+                ORDER BY status, predicate, object_id, mapping_id
+                """,
+                (subject_namespace, subject_id, object_namespace),
+            )
+        ]
+    finally:
+        connection.close()
+
+
+def _mapping_freshness(
+    mapping: dict[str, Any],
+    candidate: dict[str, Any],
+    target: dict[str, Any] | None,
+) -> dict[str, Any]:
+    subject = mapping.get("subject") or {}
+    object_ = mapping.get("object") or {}
+    subject_expected = str(subject.get("node_sha256", ""))
+    object_expected = str(object_.get("node_sha256", ""))
+    subject_actual = node_fingerprint(candidate)
+    object_actual = node_fingerprint(target) if target is not None else ""
+    return {
+        "subject_fresh": not subject_expected or subject_expected == subject_actual,
+        "object_fresh": target is not None and (
+            not object_expected or object_expected == object_actual
+        ),
+        "subject_expected": subject_expected,
+        "subject_actual": subject_actual,
+        "object_expected": object_expected,
+        "object_actual": object_actual,
+    }
+
+
+def _candidate_probe_texts(
+    candidate: dict[str, Any], scoped_aliases: list[dict[str, Any]]
+) -> list[tuple[str, str]]:
+    properties = candidate.get("properties") or {}
+    probes = [
+        (str(candidate.get("label", "")), "label"),
+        *[
+            (str(alias), "declared-alias")
+            for alias in properties.get("aliases", [])
+            if str(alias).strip()
+        ],
+        *[
+            (str(alias.get("expansion", "")), "scoped-alias-expansion")
+            for alias in scoped_aliases
+            if str(alias.get("expansion", "")).strip()
+        ],
+    ]
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for probe, source in probes:
+        normalized = normalize_name(probe)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append((probe, source))
+    return result
+
+
+def _alignment_lexical_overlap(probe: str, target: dict[str, Any]) -> float:
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "concept",
+        "in",
+        "of",
+        "paper",
+        "the",
+        "theorem",
+    }
+    probe_terms = {
+        term.casefold()
+        for term in QUERY_TERM_RE.findall(unicodedata.normalize("NFKC", probe))
+        if term.casefold() not in stopwords and len(term) > 1
+    }
+    properties = target.get("properties") or {}
+    target_text = " ".join(
+        [
+            str(target.get("label", "")),
+            *[str(alias) for alias in properties.get("aliases", [])],
+        ]
+    )
+    target_terms = {
+        term.casefold()
+        for term in QUERY_TERM_RE.findall(unicodedata.normalize("NFKC", target_text))
+        if term.casefold() not in stopwords and len(term) > 1
+    }
+    if not probe_terms or not target_terms:
+        return 0.0
+    return len(probe_terms & target_terms) / len(probe_terms | target_terms)
+
+
+def _target_graph_edges(path: Path, namespace: str) -> set[tuple[str, str, str]]:
+    connection = _connect(path)
+    try:
+        return {
+            (str(row["source"]), str(row["relation"]), str(row["target"]))
+            for row in connection.execute(
+                "SELECT source, relation, target FROM edges WHERE namespace = ?",
+                (namespace,),
+            )
+        }
+    finally:
+        connection.close()
+
+
+def _all_index_nodes(path: Path, namespace: str) -> list[dict[str, Any]]:
+    connection = _connect(path)
+    try:
+        return [
+            _node_payload(row)
+            for row in connection.execute(
+                "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
+            )
+        ]
+    finally:
+        connection.close()
+
+
+def align_graph(
+    path: Path,
+    candidate_snapshot: dict[str, Any],
+    *,
+    target_namespace: str = "personal",
+    limit_per_node: int = 10,
+    embedding_provider: EmbeddingProvider | None = None,
+    rerank_provider: RerankProvider | None = None,
+    candidate_analyzer: CandidateAnalyzer | None = None,
+) -> dict[str, Any]:
+    """Propose explainable cross-namespace mappings without committing identity."""
+    candidate_namespace, _ = _validated_snapshot(candidate_snapshot)
+    _validate_namespace(target_namespace)
+    limit_per_node = _validated_limit(limit_per_node)
+    if candidate_namespace == target_namespace:
+        raise AgentIndexError("candidate and target namespaces must be distinct")
+    status = index_status(path)
+    if status.get("namespace") != target_namespace:
+        raise AgentIndexError(f"target namespace is not indexed: {target_namespace!r}")
+    try:
+        scoped = extract_scoped_aliases(candidate_snapshot)
+    except AlignmentError as error:
+        raise AgentIndexError(str(error)) from error
+    aliases_by_node: dict[str, list[dict[str, Any]]] = {}
+    for alias in scoped["aliases"]:
+        aliases_by_node.setdefault(str(alias["node_id"]), []).append(alias)
+    target_nodes = _all_index_nodes(path, target_namespace)
+    targets_by_id = {str(node["id"]): node for node in target_nodes}
+    target_edges = _target_graph_edges(path, target_namespace)
+    candidate_nodes = sorted(
+        candidate_snapshot.get("nodes") or [], key=lambda item: str(item.get("id", ""))
+    )
+    hard_anchors: dict[str, str] = {}
+    trusted_evidence: dict[str, list[dict[str, Any]]] = {}
+    mapping_evidence: dict[str, list[dict[str, Any]]] = {}
+    rejected_targets: dict[str, set[str]] = {}
+    for candidate in candidate_nodes:
+        candidate_id = str(candidate["id"])
+        matches, evidence, ambiguous = _trusted_resolution_matches(
+            path, candidate, target_namespace
+        )
+        trusted_evidence[candidate_id] = evidence
+        if len(matches) == 1 and not ambiguous:
+            hard_anchors[candidate_id] = str(matches[0]["id"])
+        for mapping in _indexed_alignment_mappings(
+            path, candidate_namespace, candidate_id, target_namespace
+        ):
+            object_id = str((mapping.get("object") or {}).get("node_id", ""))
+            target = targets_by_id.get(object_id)
+            freshness = _mapping_freshness(mapping, candidate, target)
+            decision_fresh = all(
+                (freshness["subject_fresh"], freshness["object_fresh"])
+            )
+            record = {
+                "kind": "alignment-registry",
+                "mapping_id": mapping["id"],
+                "predicate": mapping["predicate"],
+                "status": mapping["status"],
+                "target_id": object_id,
+                "freshness": freshness,
+                "decision_fresh": decision_fresh,
+                "identity_authority": False,
+            }
+            mapping_evidence.setdefault(candidate_id, []).append(record)
+            if (
+                mapping["status"] == "reviewed"
+                and mapping["predicate"] == "exact-match"
+                and decision_fresh
+            ):
+                hard_anchors[candidate_id] = object_id
+                record["identity_authority"] = True
+            if decision_fresh and (
+                mapping["status"] == "rejected"
+                or (
+                    mapping["status"] == "reviewed"
+                    and mapping["predicate"] == "different-from"
+                )
+            ):
+                rejected_targets.setdefault(candidate_id, set()).add(object_id)
+        if hard_anchors.get(candidate_id) in rejected_targets.get(candidate_id, set()):
+            hard_anchors.pop(candidate_id, None)
+
+    raw_candidates: dict[str, dict[str, dict[str, Any]]] = {}
+    for candidate in candidate_nodes:
+        candidate_id = str(candidate["id"])
+        pool: dict[str, dict[str, Any]] = {}
+
+        def add_target(target: dict[str, Any], signal: dict[str, Any], rank_points: float) -> None:
+            target_id = str(target["id"])
+            if target_id in rejected_targets.get(candidate_id, set()):
+                return
+            record = pool.setdefault(
+                target_id,
+                {
+                    "target": {
+                        "namespace": target_namespace,
+                        "id": target_id,
+                        "label": target.get("label", ""),
+                        "type": target.get("type", ""),
+                    },
+                    "rank_score": 0.0,
+                    "signals": [],
+                },
+            )
+            if signal not in record["signals"]:
+                record["signals"].append(signal)
+                record["rank_score"] += rank_points
+
+        for target_id, target in targets_by_id.items():
+            if target_id == hard_anchors.get(candidate_id):
+                add_target(
+                    target,
+                    {
+                        "kind": "trusted-identity",
+                        "identity_authority": True,
+                        "evidence": [
+                            *trusted_evidence.get(candidate_id, []),
+                            *mapping_evidence.get(candidate_id, []),
+                        ],
+                    },
+                    1000.0,
+                )
+        for registry_signal in mapping_evidence.get(candidate_id, []):
+            if registry_signal.get("status") == "deprecated":
+                continue
+            target_id = str(registry_signal.get("target_id", ""))
+            target = targets_by_id.get(target_id)
+            if target is None:
+                continue
+            add_target(
+                target,
+                {
+                    **registry_signal,
+                    "kind": "stale-or-nonidentity-alignment",
+                    "identity_authority": False,
+                },
+                (
+                    500.0
+                    if registry_signal.get("status") == "reviewed"
+                    and registry_signal.get("decision_fresh")
+                    else 180.0
+                ),
+            )
+        for probe, probe_source in _candidate_probe_texts(
+            candidate, aliases_by_node.get(candidate_id, [])
+        ):
+            resolution = resolve_concepts(path, [probe], namespace=target_namespace)[0]
+            for target in resolution.get("matches", []):
+                identity_authority = probe_source != "scoped-alias-expansion" and resolution[
+                    "status"
+                ] in {"exact", "alias"}
+                points = 900.0 if identity_authority else 700.0
+                add_target(
+                    target,
+                    {
+                        "kind": (
+                            "name-resolution"
+                            if identity_authority
+                            else "explicit-scoped-alias"
+                        ),
+                        "probe": probe,
+                        "probe_source": probe_source,
+                        "resolution": resolution["status"],
+                        "identity_authority": identity_authority,
+                    },
+                    points,
+                )
+            try:
+                lexical = search_index(
+                    path,
+                    probe,
+                    namespace=target_namespace,
+                    limit=min(MAX_LIMIT, max(limit_per_node * 2, 10)),
+                )
+            except AgentIndexError:
+                lexical = []
+            for result in lexical:
+                overlap = _alignment_lexical_overlap(probe, result["node"])
+                if overlap <= 0.0:
+                    continue
+                add_target(
+                    result["node"],
+                    {
+                        "kind": "lexical-candidate",
+                        "probe": probe,
+                        "probe_source": probe_source,
+                        "rank": result["rank"],
+                        "overlap": round(overlap, 12),
+                        "identity_authority": False,
+                    },
+                    240.0 / max(1, int(result["rank"])),
+                )
+        surfaces = [
+            str(candidate.get("label", "")),
+            *[
+                str(alias)
+                for alias in (candidate.get("properties") or {}).get("aliases", [])
+            ],
+            *[str(alias.get("surface", "")) for alias in aliases_by_node.get(candidate_id, [])],
+        ]
+        short_forms = {
+            re.sub(r"[^A-Za-z0-9]", "", surface).upper()
+            for surface in surfaces
+            if re.fullmatch(r"[A-Z][A-Z0-9-]{1,15}", surface.strip())
+        }
+        for short in sorted(short_forms):
+            for target in target_nodes:
+                target_names = [
+                    str(target.get("label", "")),
+                    *[
+                        str(alias)
+                        for alias in (target.get("properties") or {}).get("aliases", [])
+                    ],
+                ]
+                if any(canonical_acronym(name) == short for name in target_names):
+                    add_target(
+                        target,
+                        {
+                            "kind": "acronym-candidate",
+                            "surface": short,
+                            "identity_authority": False,
+                        },
+                        350.0,
+                    )
+        if embedding_provider is not None:
+            semantic_query = _embedding_text(candidate)
+            for result in semantic_search(
+                path,
+                semantic_query,
+                embedding_provider,
+                namespace=target_namespace,
+                limit=min(MAX_LIMIT, max(limit_per_node * 2, 10)),
+            ):
+                reason = result["reasons"][0]
+                add_target(
+                    result["node"],
+                    {
+                        "kind": "semantic-candidate",
+                        "rank": result["rank"],
+                        "score": reason["score"],
+                        "provider": reason["provider"],
+                        "model": reason["model"],
+                        "identity_authority": False,
+                    },
+                    180.0 / max(1, int(result["rank"])),
+                )
+        for record in pool.values():
+            target = targets_by_id[str(record["target"]["id"])]
+            same_type = str(candidate.get("type", "")) == str(target.get("type", ""))
+            record["signals"].append(
+                {
+                    "kind": "type-compatibility",
+                    "compatible": same_type,
+                    "candidate_type": str(candidate.get("type", "")),
+                    "target_type": str(target.get("type", "")),
+                    "identity_authority": False,
+                }
+            )
+            record["rank_score"] += 40.0 if same_type else -100.0
+            if candidate_analyzer is not None:
+                analysis = candidate_analyzer.compare(
+                    candidate,
+                    target,
+                    list(record["signals"]),
+                )
+                record["signals"].append(
+                    {
+                        "kind": "analyzer-proposal",
+                        "provider": str(candidate_analyzer.name),
+                        "analysis": analysis,
+                        "identity_authority": False,
+                    }
+                )
+        raw_candidates[candidate_id] = pool
+
+    candidate_edges = candidate_snapshot.get("edges") or []
+    for candidate_id, pool in raw_candidates.items():
+        for target_id, record in pool.items():
+            checked = 0
+            matched = 0
+            evidence: list[dict[str, Any]] = []
+            for edge in candidate_edges:
+                source = str(edge.get("source", ""))
+                target = str(edge.get("target", ""))
+                relation = str(edge.get("relation", ""))
+                expected: tuple[str, str, str] | None = None
+                neighbor_id = ""
+                if source == candidate_id and target in hard_anchors:
+                    neighbor_id = target
+                    expected = (target_id, relation, hard_anchors[target])
+                elif target == candidate_id and source in hard_anchors:
+                    neighbor_id = source
+                    expected = (hard_anchors[source], relation, target_id)
+                if expected is None:
+                    continue
+                checked += 1
+                is_match = expected in target_edges
+                matched += int(is_match)
+                evidence.append(
+                    {
+                        "candidate_neighbor": neighbor_id,
+                        "mapped_neighbor": hard_anchors[neighbor_id],
+                        "relation": relation,
+                        "direction": "outgoing" if source == candidate_id else "incoming",
+                        "matched": is_match,
+                    }
+                )
+            if checked:
+                record["signals"].append(
+                    {
+                        "kind": "graph-consistency",
+                        "matched": matched,
+                        "checked": checked,
+                        "evidence": evidence,
+                        "identity_authority": False,
+                    }
+                )
+                record["rank_score"] += matched * 120.0 - (checked - matched) * 25.0
+
+    results: list[dict[str, Any]] = []
+    proposals: list[dict[str, Any]] = []
+    for candidate in candidate_nodes:
+        candidate_id = str(candidate["id"])
+        ordered = sorted(
+            raw_candidates[candidate_id].values(),
+            key=lambda item: (
+                -float(item["rank_score"]),
+                str(item["target"].get("label", "")),
+                str(item["target"]["id"]),
+            ),
+        )
+        if rerank_provider is not None and ordered:
+            reranked = rerank_provider.rerank(_embedding_text(candidate), list(ordered))
+            by_id = {str(item["target"]["id"]): item for item in ordered}
+            ordered_ids: list[str] = []
+            for item in reranked:
+                target_id = str((item.get("target") or {}).get("id", ""))
+                if target_id in by_id and target_id not in ordered_ids:
+                    ordered_ids.append(target_id)
+            ordered_ids.extend(target_id for target_id in by_id if target_id not in ordered_ids)
+            ordered = [by_id[target_id] for target_id in ordered_ids]
+        ordered = ordered[:limit_per_node]
+        for rank, item in enumerate(ordered, start=1):
+            item["rank"] = rank
+            item["rank_score"] = round(float(item["rank_score"]), 12)
+        identity_target = hard_anchors.get(candidate_id)
+        if identity_target:
+            alignment_status = "exact"
+        elif not ordered:
+            alignment_status = "unresolved"
+        elif len(ordered) == 1:
+            alignment_status = "candidate"
+        else:
+            alignment_status = "ambiguous"
+        result = {
+            "candidate": {
+                "namespace": candidate_namespace,
+                "id": candidate_id,
+                "label": candidate.get("label", ""),
+                "type": candidate.get("type", ""),
+                "node_sha256": node_fingerprint(candidate),
+            },
+            "status": alignment_status,
+            "identity_target_id": identity_target,
+            "candidates": ordered,
+            "scoped_aliases": aliases_by_node.get(candidate_id, []),
+            "registry_evidence": mapping_evidence.get(candidate_id, []),
+            "rejected_target_ids": sorted(rejected_targets.get(candidate_id, set())),
+        }
+        results.append(result)
+        if not identity_target:
+            for item in ordered[:3]:
+                target_id = str(item["target"]["id"])
+                proposal = {
+                    "subject": {
+                        "namespace": candidate_namespace,
+                        "node_id": candidate_id,
+                        "node_sha256": node_fingerprint(candidate),
+                    },
+                    "predicate": "exact-match",
+                    "object": {
+                        "namespace": target_namespace,
+                        "node_id": target_id,
+                        "node_sha256": node_fingerprint(targets_by_id[target_id]),
+                    },
+                    "status": "proposed",
+                    "mapping_justification": sorted(
+                        {
+                            str(signal["kind"])
+                            for signal in item["signals"]
+                            if signal["kind"] != "type-compatibility"
+                        }
+                    ),
+                    "evidence": item["signals"],
+                    "scores": {"rank_score": item["rank_score"]},
+                }
+                proposal["id"] = mapping_id(proposal)
+                proposals.append(proposal)
+    summary = {
+        name: sum(result["status"] == name for result in results)
+        for name in ("exact", "candidate", "ambiguous", "unresolved")
+    }
+    summary["total"] = len(results)
+    report = {
+        "schema": ALIGNMENT_REPORT_SCHEMA,
+        "candidate": {
+            "namespace": candidate_namespace,
+            "snapshot_sha256": candidate_snapshot["snapshot_sha256"],
+        },
+        "target": {
+            "namespace": target_namespace,
+            "snapshot_sha256": status["snapshot_sha256"],
+        },
+        "scoped_aliases": scoped,
+        "results": results,
+        "proposals": sorted(proposals, key=lambda item: str(item["id"])),
+        "summary": summary,
+    }
+    report["report_sha256"] = sha256_json(report)
+    return report
+
+
+def _candidate_matches(
+    path: Path,
+    candidate: dict[str, Any],
+    target_namespace: str,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    matches, evidence, ambiguous = _trusted_resolution_matches(
+        path, candidate, target_namespace
+    )
     if len(matches) == 1 and not ambiguous:
-        return "matched", list(matches.values()), evidence
+        return "matched", matches, evidence
     if matches or ambiguous:
-        return "ambiguous", list(matches.values()), evidence
+        return "ambiguous", matches, evidence
     return "missing", [], evidence
 
 
@@ -1217,13 +2468,46 @@ def compare_graph(
     candidate_nodes = sorted(
         candidate_snapshot.get("nodes") or [], key=lambda node: str(node.get("id", ""))
     )
+    alignment = align_graph(
+        path,
+        candidate_snapshot,
+        target_namespace=target_namespace,
+    )
+    alignments_by_id = {
+        str(item["candidate"]["id"]): item for item in alignment["results"]
+    }
+    indexed_targets = {
+        str(node["id"]): node for node in _all_index_nodes(path, target_namespace)
+    }
     target_map: dict[str, str] = {}
     records: dict[str, dict[str, Any]] = {}
     for candidate in candidate_nodes:
         candidate_id = str(candidate["id"])
-        match_status, matches, evidence = _candidate_matches(
-            path, candidate, target_namespace
-        )
+        alignment_record = alignments_by_id[candidate_id]
+        identity_target_id = alignment_record.get("identity_target_id")
+        if identity_target_id and str(identity_target_id) in indexed_targets:
+            match_status = "matched"
+            matches = [indexed_targets[str(identity_target_id)]]
+        elif alignment_record["candidates"]:
+            match_status = "ambiguous"
+            matches = [
+                indexed_targets[str(item["target"]["id"])]
+                for item in alignment_record["candidates"]
+                if str(item["target"]["id"]) in indexed_targets
+            ]
+        else:
+            match_status = "missing"
+            matches = []
+        evidence = [
+            {
+                "kind": "alignment",
+                "alignment_status": alignment_record["status"],
+                "scoped_aliases": alignment_record["scoped_aliases"],
+                "registry_evidence": alignment_record["registry_evidence"],
+                "rejected_target_ids": alignment_record["rejected_target_ids"],
+                "candidates": alignment_record["candidates"],
+            }
+        ]
         match_records = [
             {
                 "namespace": target_namespace,
@@ -1328,7 +2612,10 @@ def compare_graph(
         elif record["status"] == "known" and record["missing"]:
             record["status"] = "partial"
         results.append(record)
-    summary = {status_name: 0 for status_name in ("known", "partial", "new", "conflict", "uncertain")}
+    summary = {
+        status_name: 0
+        for status_name in ("known", "partial", "new", "conflict", "uncertain")
+    }
     for record in results:
         summary[record["status"]] += 1
     summary["total"] = len(results)
@@ -1346,6 +2633,7 @@ def compare_graph(
         },
         "results": results,
         "summary": summary,
+        "alignment_report_sha256": alignment["report_sha256"],
     }
 
 

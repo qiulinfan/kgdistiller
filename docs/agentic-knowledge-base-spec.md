@@ -1,6 +1,6 @@
 # kgdistiller Agentic Knowledge Base Specification
 
-Status: Implemented v0.1 deterministic baseline; Phases 1-6 complete
+Status: Implemented v0.2 deterministic baseline; Phases 1-7 complete
 Contract owner: kgdistiller deterministic core  
 Initial implementation target: local single-user research repositories
 
@@ -120,6 +120,25 @@ Namespaces MUST match:
 The namespace is part of retrieval and comparison identity, but MUST NOT be
 prepended to the original qlkg node ID in stored source data.
 
+### 5.3 Three name and identity layers
+
+The implementation MUST keep these records distinct:
+
+1. **Global names and aliases** belong to one qlkg node and participate in
+   deterministic identity resolution. They MUST remain collision-free inside
+   their namespace.
+2. **Scoped aliases** are explicit abbreviations defined by source text, such
+   as `absolutely continuous (AC)` or `AC denotes absolutely continuous`.
+   They are indexed with namespace, node, source field/span, and a bounded
+   evidence quote. They MAY retrieve candidates but MUST NOT enter the global
+   name table or independently create identity.
+3. **Cross-namespace mappings** relate two already-existing nodes. They are
+   review data, not aliases and not qlkg semantic edges.
+
+This separation is required because a surface such as `AC` can mean
+`absolutely continuous`, `alternating current`, or another concept depending
+on the paper and field.
+
 ## 6. Agent snapshot contract
 
 ### 6.1 Envelope
@@ -223,7 +242,7 @@ The default index SHOULD use SQLite because kgdistiller is local-first and
 already produces a SQLite artifact. Alternative backends MAY implement the same
 logical contract.
 
-The logical index contains:
+The `qlkg-agent-index-v2` logical index contains:
 
 ```text
 index_meta(
@@ -250,6 +269,21 @@ embeddings(
   namespace, node_id, provider, model, dimensions,
   content_sha256, vector
 )
+
+scoped_aliases(
+  alias_id, namespace, node_id, surface, normalized_surface,
+  expansion, authority, payload_json
+)
+
+alignment_mappings(
+  mapping_id, subject_namespace, subject_id, subject_sha256,
+  predicate, object_namespace, object_id, object_sha256,
+  status, payload_json
+)
+
+similarity_edges(
+  namespace, source, target, provider, model, score, evidence_json
+)
 ```
 
 An implementation MAY add materialized adjacency, degree, community, or cache
@@ -261,6 +295,8 @@ tables. Those tables are never part of authority.
 - A node embedding is reusable only when its canonical embedding input digest,
   provider, model, and dimensions are unchanged.
 - A changed edge set invalidates affected adjacency and graph-ranking caches.
+- A reviewed mapping becomes stale when either stored endpoint fingerprint no
+  longer matches the current node content.
 - Changing an embedding provider MUST NOT change node IDs or graph structure.
 - Provider credentials and generated vectors MUST NOT be committed to the
   kgdistiller repository.
@@ -275,6 +311,10 @@ the stages and explanations.
 Resolve exact machine IDs, canonical labels, and registered aliases first.
 Resolution returns zero, one, or multiple candidates. An ambiguous name MUST
 remain ambiguous and MUST NOT be resolved by document order.
+
+Explicit scoped aliases form a lower-authority resolution lane. A single
+scoped-alias result MUST be labeled `scoped-alias`, not `exact` or `alias`.
+Multiple senses MUST remain `ambiguous`.
 
 ### 8.2 Stage B: lexical retrieval
 
@@ -298,16 +338,21 @@ Expansion starts from resolved or retrieved seed nodes. A query policy controls:
 - whether taxonomy edges are included;
 - whether stale or orphaned material is included.
 
-The first implementation SHOULD use bounded breadth-first or best-first
-traversal. Personalized PageRank MAY be added later for associative multi-hop
-retrieval.
+The implementation supports bounded breadth-first traversal and weighted
+Personalized PageRank (PPR). PPR MUST start from explicit retrieval seeds. It
+uses reviewed qlkg semantic edges as the trusted topology and MAY include
+embedding-similarity edges at a lower weight. Similarity edges MUST carry
+`identity_authority: false`, remain disposable, and never enter `qlkg-v2`.
+
+The query policy selects `bfs`, `ppr`, or `hybrid`. The hybrid default fuses
+both graph lanes and retains a separate explanation for each.
 
 ### 8.5 Stage E: fusion and diversity
 
-Results from exact, lexical, semantic, and graph lanes SHOULD be combined by a
-rank-fusion method such as reciprocal rank fusion. Diversity-aware reranking
+Results from exact, lexical, semantic, BFS, and PPR lanes SHOULD be combined by
+a rank-fusion method such as reciprocal rank fusion. Diversity-aware reranking
 MAY reduce redundant neighboring results. Provider-specific reranking MUST live
-behind an adapter.
+behind an adapter and can reorder only the already retrieved candidate set.
 
 ### 8.6 Explanation
 
@@ -415,10 +460,25 @@ Input: seed IDs, direction, edge types, maximum depth, result limit, and stale
 content policy.  
 Output: a bounded subgraph with traversal paths.
 
+### `kg_ppr`
+
+Input: explicit seed IDs, node/edge filters, result limit, and similarity-edge
+policy.
+Output: `qlkg-ppr-result-v1` with convergence information, ranked nodes, seed
+flags, topology counts, and policy.
+
 ### `kg_build_context`
 
 Input: query, token budget, filters, and retrieval policy.  
 Output: `qlkg-context-bundle-v1`.
+
+### `kg_align_graph`
+
+Input: an isolated candidate snapshot, target namespace, and per-node candidate
+limit.
+Output: `qlkg-alignment-report-v1`, including scoped aliases, candidate signals,
+review proposals, rejected targets, and the report digest. The tool is
+read-only.
 
 ### `kg_compare_graph`
 
@@ -471,6 +531,66 @@ The comparison record is:
 
 Only explicit identity registries or reviewed comparison decisions can promote
 an `uncertain` match into a durable cross-namespace mapping.
+
+### 11.1 Alignment registry
+
+Durable cross-namespace decisions use `qlkg-alignments-v1`. Each mapping is
+SSSOM-inspired and contains:
+
+```json
+{
+  "id": "<endpoint-addressed mapping id>",
+  "subject": {
+    "namespace": "paper:example",
+    "node_id": "ac",
+    "node_sha256": "<candidate node fingerprint>"
+  },
+  "predicate": "exact-match",
+  "object": {
+    "namespace": "personal",
+    "node_id": "absolutely-continuous",
+    "node_sha256": "<personal node fingerprint>"
+  },
+  "status": "reviewed",
+  "mapping_justification": ["explicit abbreviation and matching definition"],
+  "evidence": [{"kind": "review", "text": "..."}]
+}
+```
+
+Supported predicates are `exact-match`, `close-match`, `broad-match`,
+`narrow-match`, `related-match`, and `different-from`. Supported states are
+`proposed`, `reviewed`, `rejected`, `ambiguous`, and `deprecated`.
+
+Only a `reviewed` + `exact-match` mapping with both endpoint fingerprints fresh
+is identity authority. Fresh `rejected` decisions and fresh reviewed
+`different-from` mappings exclude the recorded target. A stale positive or
+negative decision remains visible as evidence but MUST NOT anchor or exclude an
+identity. Reviewed and rejected mappings require both a human justification
+and evidence.
+
+### 11.2 Candidate generation and decision boundary
+
+Alignment candidate generation MAY combine:
+
+1. deterministic ID, label, registered-alias, and explicit target resolution;
+2. fresh reviewed mappings;
+3. explicit scoped-alias expansions;
+4. lexical retrieval and acronym matching;
+5. optional embedding similarity;
+6. node-type compatibility;
+7. consistency with edges whose neighboring endpoints are already hard
+   anchors;
+8. an optional provider-neutral `CandidateAnalyzer` proposal.
+
+Every signal MUST say whether it has identity authority. Lexical, acronym,
+embedding, type, graph-consistency, and model-analyzer signals never do. They
+rank candidates for review; they cannot merge nodes. When multiple candidates
+remain, the result is `ambiguous` even if the first candidate scores much
+higher.
+
+`qlkg-alignment-report-v1` is deterministic when optional providers are absent.
+Its proposals contain endpoint fingerprints, evidence signals, mapping
+justifications, and scores, but remain `proposed` until explicitly reconciled.
 
 ## 12. Write proposals
 
@@ -575,6 +695,10 @@ The evaluation suite MUST cover:
 8. deterministic output;
 9. paper-to-personal `known/partial/new/conflict/uncertain` classification;
 10. resistance to false identity merges.
+11. scoped abbreviations with multiple domain senses;
+12. graph-consistency ranking without automatic identity promotion;
+13. reviewed mapping acceptance, rejection, and fingerprint invalidation;
+14. PPR retrieval over trusted and disposable soft edges.
 
 The `solvablemodel` paper workflow SHOULD become the first end-to-end benchmark.
 Quality measurements SHOULD include retrieval recall, false alignment rate,
@@ -638,6 +762,17 @@ evidence coverage, context size, indexing time, and query latency.
 - integrate existing scan, delta, reconcile, sync, and curation checks;
 - keep application explicit and reviewable.
 
+### Phase 7: Scoped aliases, graph alignment, and GraphRAG
+
+- add evidence-backed scoped abbreviation extraction;
+- add `qlkg-alignments-v1` and reviewed mapping reconciliation;
+- generate multi-lane alignment candidates without similarity-based merging;
+- invalidate reviewed identity decisions when endpoint fingerprints change;
+- add provider-neutral embedding, reranking, and candidate-analyzer interfaces;
+- add disposable similarity edges and weighted PPR retrieval;
+- expose alignment and PPR through CLI and read-only MCP;
+- integrate alignment reports into paper comparison and proposal generation.
+
 ## 19. Phase 1 acceptance criteria
 
 Phase 1 is complete when:
@@ -667,6 +802,10 @@ project's authority model:
   through Personalized PageRank;
 - [Graphiti](https://github.com/getzep/graphiti): hybrid keyword/semantic/graph
   retrieval, provenance, and graph-distance reranking;
+- [SSSOM](https://mapping-commons.github.io/sssom/): explicit mapping
+  predicates, justification, evidence, and review metadata;
+- [DeepOnto](https://github.com/KRR-Oxford/DeepOnto): lexical, semantic, and
+  structural evidence for ontology alignment;
 - [LightRAG](https://github.com/HKUDS/LightRAG): local/global/mixed retrieval
   modes, custom graph import, and explicit context budgets;
 - [Cognee](https://github.com/topoteretes/cognee): Agent-facing MCP and pluggable

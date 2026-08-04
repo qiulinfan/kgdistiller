@@ -11,6 +11,7 @@ def initialize_project(
     registry: Path,
     *,
     source_root: Path,
+    alignments: Path | None = None,
     force: bool = False,
 ) -> None:
     if registry.exists() and not force:
@@ -49,3 +50,16 @@ def initialize_project(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    alignment_path = alignments or registry.parent / "alignments.json"
+    # Reviewed mappings are user curation. Even --force must not erase them.
+    if not alignment_path.exists():
+        alignment_path.parent.mkdir(parents=True, exist_ok=True)
+        alignment_path.write_text(
+            json.dumps(
+                {"schema": "qlkg-alignments-v1", "mappings": []},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )

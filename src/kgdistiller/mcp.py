@@ -8,8 +8,10 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from . import __version__
 from .agent import (
     AgentIndexError,
+    align_graph,
     build_context_bundle,
     canonical_json,
     compare_graph,
@@ -17,6 +19,7 @@ from .agent import (
     expand_index,
     get_index_node,
     index_status,
+    personalized_pagerank,
     resolve_concepts,
     retrieve_index,
 )
@@ -59,6 +62,11 @@ COMMON_RETRIEVAL_PROPERTIES = {
     "include_taxonomy": {"type": "boolean", "default": False},
     "include_stale": {"type": "boolean", "default": False},
     "include_orphaned": {"type": "boolean", "default": False},
+    "graph_strategy": {
+        "type": "string",
+        "enum": ["bfs", "ppr", "hybrid"],
+        "default": "hybrid",
+    },
 }
 
 
@@ -73,7 +81,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "kg_resolve_concepts",
         "title": "Resolve Knowledge Concepts",
-        "description": "Batch-resolve IDs, canonical labels, and aliases without inferring identity from similarity.",
+        "description": "Batch-resolve IDs, canonical labels, global aliases, and evidence-backed scoped aliases without inferring identity from similarity.",
         "inputSchema": _object_schema(
             {
                 "concepts": {
@@ -91,7 +99,7 @@ TOOL_DEFINITIONS = [
     {
         "name": "kg_search",
         "title": "Search Knowledge Graph",
-        "description": "Fuse exact, full-text, and typed graph retrieval with per-result explanations.",
+        "description": "Fuse exact, scoped-alias, full-text, BFS, and PPR retrieval with per-result explanations.",
         "inputSchema": _object_schema(
             {
                 "query": {"type": "string", "minLength": 1, "maxLength": 4096},
@@ -145,6 +153,31 @@ TOOL_DEFINITIONS = [
         "annotations": READ_ONLY_ANNOTATIONS,
     },
     {
+        "name": "kg_ppr",
+        "title": "Run Knowledge Graph PPR",
+        "description": "Run weighted Personalized PageRank from explicit seeds over trusted graph edges and disposable similarity edges.",
+        "inputSchema": _object_schema(
+            {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 128,
+                },
+                "namespace": {"type": "string", "default": "personal"},
+                "node_types": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
+                "edge_types": {"type": "array", "items": {"type": "string"}, "maxItems": 32},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+                "include_taxonomy": {"type": "boolean", "default": False},
+                "include_similarity": {"type": "boolean", "default": True},
+                "include_stale": {"type": "boolean", "default": False},
+                "include_orphaned": {"type": "boolean", "default": False},
+            },
+            ["ids"],
+        ),
+        "annotations": READ_ONLY_ANNOTATIONS,
+    },
+    {
         "name": "kg_build_context",
         "title": "Build Knowledge Context",
         "description": "Build a deterministic evidence bundle under an explicit conservative token budget.",
@@ -166,6 +199,25 @@ TOOL_DEFINITIONS = [
                 **COMMON_RETRIEVAL_PROPERTIES,
             },
             ["query"],
+        ),
+        "annotations": READ_ONLY_ANNOTATIONS,
+    },
+    {
+        "name": "kg_align_graph",
+        "title": "Align Candidate Knowledge Graph",
+        "description": "Propose source-backed cross-namespace concept mappings without committing graph identity.",
+        "inputSchema": _object_schema(
+            {
+                "candidate_snapshot": {"type": "object"},
+                "target_namespace": {"type": "string", "default": "personal"},
+                "limit_per_node": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "default": 10,
+                },
+            },
+            ["candidate_snapshot"],
         ),
         "annotations": READ_ONLY_ANNOTATIONS,
     },
@@ -296,6 +348,7 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
                 include_taxonomy=bool(arguments.get("include_taxonomy", False)),
                 include_stale=bool(arguments.get("include_stale", False)),
                 include_orphaned=bool(arguments.get("include_orphaned", False)),
+                graph_strategy=str(arguments.get("graph_strategy", "hybrid")),
             )
         }
     if name == "kg_get_node":
@@ -312,6 +365,26 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
             include_taxonomy=bool(arguments.get("include_taxonomy", False)),
             include_stale=bool(arguments.get("include_stale", False)),
             include_orphaned=bool(arguments.get("include_orphaned", False)),
+        )
+    if name == "kg_ppr":
+        return personalized_pagerank(
+            database,
+            {str(node_id): 1.0 for node_id in arguments["ids"]},
+            namespace=namespace,
+            node_types=arguments.get("node_types"),
+            edge_types=arguments.get("edge_types"),
+            limit=int(arguments.get("limit", 50)),
+            include_taxonomy=bool(arguments.get("include_taxonomy", False)),
+            include_similarity=bool(arguments.get("include_similarity", True)),
+            include_stale=bool(arguments.get("include_stale", False)),
+            include_orphaned=bool(arguments.get("include_orphaned", False)),
+        )
+    if name == "kg_align_graph":
+        return align_graph(
+            database,
+            dict(arguments["candidate_snapshot"]),
+            target_namespace=str(arguments.get("target_namespace", "personal")),
+            limit_per_node=int(arguments.get("limit_per_node", 10)),
         )
     if name == "kg_compare_graph":
         return compare_graph(
@@ -341,6 +414,7 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
         include_taxonomy=bool(arguments.get("include_taxonomy", False)),
         include_stale=bool(arguments.get("include_stale", False)),
         include_orphaned=bool(arguments.get("include_orphaned", False)),
+        graph_strategy=str(arguments.get("graph_strategy", "hybrid")),
     )
 
 
@@ -382,7 +456,7 @@ class MCPServer:
                 {
                     "protocolVersion": self.protocol_version,
                     "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": "kgdistiller", "version": "0.1.0"},
+                    "serverInfo": {"name": "kgdistiller", "version": __version__},
                     "instructions": (
                         "Read-only access to a source-backed personal knowledge graph. "
                         "Resolve identities before assuming equivalence and retain evidence."
