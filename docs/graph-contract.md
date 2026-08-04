@@ -121,7 +121,9 @@ kgdistiller check
 
 Repository, subject, course, directory, and file scopes are supported. A scoped
 sync replaces only definition and reference occurrences from the selected
-authorities and retains unrelated state.
+authorities and retains unrelated state. An explicit file must match exactly
+one bounded registry pattern; a shared directory root alone is not source
+registration, and overlapping source ownership is rejected.
 
 The graph manifest records the last usable Git revision alongside the complete
 source hash map. A later sync includes deleted authorities and both sides of a
@@ -152,6 +154,7 @@ refreshes those fingerprints.
 - changed definitions and their affected semantic edges remain visible review
   diagnostics rather than being silently trusted or deleted;
 - a scoped sync never rewrites unrelated source state;
+- an explicit file scope has exactly one bounded registry owner;
 - examples and headings create no implicit nodes.
 
 Run `kgdistiller audit` for entry coverage, topology, relation counts,

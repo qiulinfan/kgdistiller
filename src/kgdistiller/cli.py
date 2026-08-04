@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import fnmatch
 import hashlib
 import json
 import os
@@ -346,6 +347,60 @@ def expand_source(spec: SourceSpec) -> list[Path]:
     for pattern in spec.patterns:
         files.update(path.resolve() for path in spec.root.glob(pattern) if path.is_file())
     return sorted(files, key=lambda item: item.as_posix())
+
+
+def glob_matches_path(relative: Path, pattern: str) -> bool:
+    """Match one relative path with ``Path.glob`` segment semantics."""
+    path_parts = relative.as_posix().split("/")
+    pattern_parts = Path(pattern).as_posix().split("/")
+
+    def matches(path_index: int, pattern_index: int) -> bool:
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+        segment = pattern_parts[pattern_index]
+        if segment == "**":
+            return matches(path_index, pattern_index + 1) or (
+                path_index < len(path_parts)
+                and matches(path_index + 1, pattern_index)
+            )
+        return (
+            path_index < len(path_parts)
+            and fnmatch.fnmatchcase(path_parts[path_index], segment)
+            and matches(path_index + 1, pattern_index + 1)
+        )
+
+    return matches(0, 0)
+
+
+def source_matches_path(spec: SourceSpec, path: Path) -> bool:
+    """Return whether a file path is admitted by a source's bounded patterns."""
+    try:
+        relative = path.resolve().relative_to(spec.root)
+    except ValueError:
+        return False
+    return any(glob_matches_path(relative, pattern) for pattern in spec.patterns)
+
+
+def matching_sources(specs: list[SourceSpec], path: Path) -> list[SourceSpec]:
+    return [spec for spec in specs if source_matches_path(spec, path)]
+
+
+def unique_source_for_path(specs: list[SourceSpec], path: Path) -> SourceSpec:
+    owners = matching_sources(specs, path)
+    if len(owners) == 1:
+        return owners[0]
+    if len(owners) > 1:
+        raise KnowledgeError(
+            f"source file matches multiple registry sources: {path} "
+            f"({', '.join(sorted(spec.id for spec in owners))})"
+        )
+    roots = [spec.id for spec in specs if path == spec.root or spec.root in path.parents]
+    if roots:
+        raise KnowledgeError(
+            f"file is inside a configured source root but is not admitted by its "
+            f"file patterns: {path} ({', '.join(sorted(roots))})"
+        )
+    raise KnowledgeError(f"file is outside configured source roots: {path}")
 
 
 def topic_for(spec: SourceSpec, path: Path) -> tuple[str, str, tuple[str, ...]] | None:
@@ -1019,30 +1074,41 @@ def select_scope(
     if files:
         for raw in files:
             path = (repo_root / raw).resolve() if not raw.is_absolute() else raw.resolve()
-            owner = next(
-                (spec for spec in specs if path == spec.root or spec.root in path.parents),
-                None,
-            )
-            if owner is None:
-                raise KnowledgeError(f"file is outside configured source roots: {raw}")
             if path.is_file():
-                pairs.append((owner, path))
+                pairs.append((unique_source_for_path(specs, path), path))
             elif path.is_dir():
-                pairs.extend(
-                    (owner, candidate)
-                    for candidate in expand_source(owner)
-                    if path == candidate.parent or path in candidate.parents
-                )
+                selected: list[tuple[SourceSpec, Path]] = []
+                for spec in specs:
+                    selected.extend(
+                        (spec, candidate)
+                        for candidate in expand_source(spec)
+                        if path == candidate.parent or path in candidate.parents
+                    )
+                if not selected and not any(
+                    path == spec.root
+                    or path in spec.root.parents
+                    or spec.root in path.parents
+                    for spec in specs
+                ):
+                    raise KnowledgeError(f"directory is outside configured source roots: {raw}")
+                pairs.extend(selected)
             elif path.exists():
                 raise KnowledgeError(f"scope path is not a file or directory: {raw}")
             else:
-                pairs.append((owner, path))
+                pairs.append((unique_source_for_path(specs, path), path))
     else:
         for spec in selected_specs:
             pairs.extend((spec, path) for path in expand_source(spec))
     unique: dict[str, tuple[SourceSpec, Path]] = {}
     for spec, path in pairs:
-        unique[relative_path(repo_root, path)] = (spec, path)
+        key = relative_path(repo_root, path)
+        existing = unique.get(key)
+        if existing is not None and existing[0].id != spec.id:
+            raise KnowledgeError(
+                f"source file matches multiple registry sources: {key} "
+                f"({existing[0].id}, {spec.id})"
+            )
+        unique[key] = (spec, path)
     return list(unique.values()), set(unique), full
 
 
@@ -2069,6 +2135,34 @@ def write_database(
         make_agent_snapshot(state),
         load_alignment_set(alignments),
     )
+
+
+def ensure_database(
+    path: Path,
+    state: GraphState,
+    alignments: Path | None = None,
+) -> bool:
+    """Create or refresh the disposable Agent index only when inputs changed."""
+    from kgdistiller.agent import AgentIndexError, index_status, write_agent_index
+    from kgdistiller.alignment import load_alignment_set, sha256_json
+
+    alignment_set = load_alignment_set(alignments)
+    try:
+        status = index_status(path)
+    except (AgentIndexError, OSError, sqlite3.Error, json.JSONDecodeError):
+        status = {}
+    if state.manifest.get("schema") != GRAPH_SCHEMA:
+        if status:
+            return False
+        raise KnowledgeError("expected a qlkg-v2 graph before Agent index bootstrap")
+    snapshot = make_agent_snapshot(state)
+    if (
+        status.get("snapshot_sha256") == snapshot["snapshot_sha256"]
+        and status.get("alignment_sha256") == sha256_json(alignment_set)
+    ):
+        return False
+    write_agent_index(path, snapshot, alignment_set)
+    return True
 
 
 def synchronize(
@@ -3219,6 +3313,7 @@ def main() -> int:
         if args.command == "mcp":
             from kgdistiller.mcp import serve_stdio
 
+            ensure_database(database, load_state(graph_dir), alignments)
             serve_stdio(database)
             return 0
         if args.command == "agent":
@@ -3235,6 +3330,8 @@ def main() -> int:
                 resolve_concepts,
                 retrieve_index,
             )
+
+            ensure_database(database, load_state(graph_dir), alignments)
 
             if args.agent_command == "status":
                 result = index_status(database)

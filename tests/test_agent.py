@@ -589,6 +589,15 @@ class AgentIndexTest(unittest.TestCase):
             item for item in comparison["results"] if item["candidate"]["id"] == "ac"
         )
         self.assertEqual("known", compared_ac["status"])
+        proposal = create_proposal(
+            self.database,
+            candidate,
+            target_authority="notes/research/ac-paper.md",
+        )
+        self.assertTrue(proposal["fully_resolved"])
+        self.assertEqual([], proposal["blockers"])
+        self.assertEqual([], proposal["delta_preview"]["nodes"])
+        self.assertEqual([], proposal["delta_preview"]["edges"])
 
         changed = json.loads(json.dumps(candidate))
         changed["nodes"][0]["text"] += " Updated by a later paper revision."

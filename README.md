@@ -86,6 +86,10 @@ Synchronization remembers the Git revision and source hashes behind the last
 snapshot. Deleted paths and both sides of a Git rename are included in the next
 scope, so an unchanged `kn` is rehomed instead of duplicated and obsolete refs
 are retired. An exact-content rename is also recognized before it is staged.
+An explicit `--file` must match exactly one configured source pattern; merely
+living below a source root is not registration. Overlapping source patterns are
+rejected instead of silently assigning the file to whichever source was read
+first.
 
 Each definition occurrence carries a hash of its enclosing authored statement.
 Changing only a ref outside that statement rebuilds backlinks without affecting
@@ -146,6 +150,11 @@ kgdistiller agent propose knowledge/build/paper.snapshot.json \
   --output knowledge/reviews/paper.proposal.json \
   --delta-output knowledge/reviews/paper.delta.json
 ```
+
+The SQLite index is disposable. If it is absent or stale while the committed
+graph is current, any `agent` command or the `mcp` command rebuilds it before
+serving the request. A fresh clone therefore does not need to commit or preload
+`knowledge/build/knowledge.sqlite`.
 
 The `qlkg-agent-index-v2` index stores nodes, normalized IDs/labels/global
 aliases, explicit scoped abbreviations, reviewed cross-namespace mappings,

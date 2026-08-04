@@ -153,6 +153,52 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertRegex(manifest["graph_sha256"], r"^[0-9a-f]{64}$")
         self.assertNotIn("generated_at", manifest)
 
+    def test_explicit_file_scope_must_match_a_bounded_source_pattern(self) -> None:
+        excluded = self.source_root / "README.typ"
+        excluded.write_text("#kn[Must not be ingested]", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            knowledge.KnowledgeError,
+            "not admitted by its file patterns",
+        ):
+            self.sync(files=[excluded.relative_to(self.repo)])
+
+    def test_overlapping_source_patterns_are_rejected(self) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        duplicate = dict(payload["sources"][0])
+        duplicate["id"] = "math:duplicate"
+        payload["sources"].append(duplicate)
+        self.registry.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            knowledge.KnowledgeError,
+            "matches multiple registry sources",
+        ):
+            self.sync()
+
+    def test_glob_matching_uses_segments_and_double_star(self) -> None:
+        self.assertTrue(
+            knowledge.glob_matches_path(Path("chapters/a.typ"), "chapters/*.typ")
+        )
+        self.assertFalse(
+            knowledge.glob_matches_path(
+                Path("chapters/nested/a.typ"), "chapters/*.typ"
+            )
+        )
+        self.assertTrue(knowledge.glob_matches_path(Path("a.md"), "**/*.md"))
+        self.assertTrue(
+            knowledge.glob_matches_path(Path("nested/a.md"), "**/*.md")
+        )
+
+    def test_agent_index_is_bootstrapped_and_reused_from_committed_graph(self) -> None:
+        state, _, _ = self.sync()
+        self.database.unlink()
+
+        self.assertTrue(knowledge.ensure_database(self.database, state))
+        first = self.database.read_bytes()
+        self.assertFalse(knowledge.ensure_database(self.database, state))
+        self.assertEqual(first, self.database.read_bytes())
+
     def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
         self.sync()
         delta = self.repo / "knowledge/build/snapshot-entry.json"
