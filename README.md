@@ -77,6 +77,7 @@ Then run:
 kgdistiller sync
 kgdistiller check
 kgdistiller search "measure space"
+kgdistiller snapshot --output knowledge/build/agent-snapshot.json
 kgdistiller serve
 ```
 
@@ -105,6 +106,28 @@ name becomes an alias, and the definition change still requires curation review.
 
 `serve` opens <http://127.0.0.1:8765/>. It exposes the graph and bounded source
 excerpts only to the local machine unless another host is explicitly selected.
+
+## Agent snapshot
+
+Agent indexes and retrieval adapters consume a deterministic, self-contained
+snapshot instead of rereading the complete authority repository:
+
+```sh
+kgdistiller snapshot > /tmp/personal-knowledge.json
+kgdistiller snapshot \
+  --namespace paper:example \
+  --output knowledge/build/paper-example.snapshot.json
+```
+
+The `qlkg-agent-snapshot-v1` envelope contains hydrated node entries, typed
+edges with evidence, reference occurrences, provenance, diagnostics, authority
+graph identity, and its own canonical digest. It is derived data: deleting it
+does not affect source documents or the `qlkg-v2` graph.
+
+See [the Agentic Knowledge Base specification](docs/agentic-knowledge-base-spec.md)
+for the snapshot contract, planned retrieval pipeline, token-budget context
+bundles, MCP tools, paper comparison statuses, security boundaries, and phased
+implementation plan.
 
 ## Agentic distillation
 

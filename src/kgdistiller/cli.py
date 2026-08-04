@@ -26,9 +26,13 @@ SOURCE_SCHEMA = "qlkg-sources-v2"
 DELTA_SCHEMA = "qlkg-agent-delta-v2"
 IDENTITY_SCHEMA = "qlkg-identities-v1"
 ENTRY_STORE_SCHEMA = "qlkg-entry-shards-v1"
+AGENT_SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
 ENTRY_SHARD_LIMIT = 48 * 1024 * 1024
 KNOWLEDGE_ORIGINS = {"personal-note", "research"}
 ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+NAMESPACE_RE = re.compile(
+    r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
+)
 KN_RE = re.compile(r"#kn\s*\[")
 REF_RE = re.compile(r"#ref\s*\[")
 LATEX_KN_RE = re.compile(r"\\kn\s*\{")
@@ -1721,6 +1725,80 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def make_agent_snapshot(
+    state: GraphState,
+    namespace: str = "personal",
+) -> dict[str, Any]:
+    """Create the deterministic, self-contained Agent index input contract."""
+    if not NAMESPACE_RE.fullmatch(namespace):
+        raise KnowledgeError(f"invalid Agent snapshot namespace: {namespace!r}")
+    if state.manifest.get("schema") != GRAPH_SCHEMA:
+        raise KnowledgeError(f"expected a {GRAPH_SCHEMA} graph before snapshot export")
+    graph_sha256 = str(state.manifest.get("graph_sha256", ""))
+    if not re.fullmatch(r"[0-9a-f]{64}", graph_sha256):
+        raise KnowledgeError("authority graph has no valid graph_sha256")
+
+    diagnostics = validate_state(state)
+    if diagnostics["errors"]:
+        codes = ", ".join(item["code"] for item in diagnostics["errors"])
+        raise KnowledgeError(f"cannot export invalid authority graph: {codes}")
+
+    nodes = sorted(
+        (copy.deepcopy(node) for node in state.nodes.values()),
+        key=lambda item: item["id"],
+    )
+    edges = sorted(
+        (copy.deepcopy(edge) for edge in state.edges.values()),
+        key=lambda item: (item["source"], item["relation"], item["target"]),
+    )
+    references = sorted(
+        (copy.deepcopy(reference) for reference in state.references),
+        key=lambda item: (
+            str(item.get("authority", "")),
+            int(item.get("line", 0)),
+            str(item.get("target", "")),
+            str(item.get("id", "")),
+        ),
+    )
+    counts = {
+        "nodes": len(nodes),
+        "edges": len(edges),
+        "references": len(references),
+    }
+    manifest_counts = state.manifest.get("counts") or {}
+    if any(int(manifest_counts.get(key, -1)) != value for key, value in counts.items()):
+        raise KnowledgeError(
+            "authority graph manifest counts do not match the exported snapshot"
+        )
+    computed_artifacts = make_artifacts(
+        copy.deepcopy(state),
+        dict(state.manifest.get("source_hashes") or {}),
+        identity_sha256=str(state.manifest.get("identity_sha256", "")) or None,
+        git_revision=str(state.manifest.get("git_revision", "")) or None,
+    )
+    computed_manifest = json.loads(computed_artifacts["manifest.json"])
+    if computed_manifest.get("graph_sha256") != graph_sha256:
+        raise KnowledgeError(
+            "authority graph digest does not match its hydrated graph content"
+        )
+
+    snapshot: dict[str, Any] = {
+        "schema": AGENT_SNAPSHOT_SCHEMA,
+        "namespace": namespace,
+        "graph": {
+            "schema": GRAPH_SCHEMA,
+            "sha256": graph_sha256,
+            "counts": counts,
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "references": references,
+        "diagnostics": diagnostics,
+    }
+    snapshot["snapshot_sha256"] = sha256_text(json_text(snapshot))
+    return snapshot
+
+
 def make_artifacts(
     state: GraphState,
     source_hashes: dict[str, str],
@@ -2751,6 +2829,9 @@ def parse_args() -> argparse.Namespace:
     )
     commands.add_parser("audit")
     commands.add_parser("stats")
+    snapshot_command = commands.add_parser("snapshot")
+    snapshot_command.add_argument("--namespace", default="personal")
+    snapshot_command.add_argument("--output", type=Path)
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
@@ -2946,6 +3027,31 @@ def main() -> int:
             print(pretty_json(search_graph(state, args.query, args.limit)), end="")
         elif args.command == "show":
             print(pretty_json(show_node(state, args.id)), end="")
+        elif args.command == "snapshot":
+            snapshot = make_agent_snapshot(state, args.namespace)
+            content = pretty_json(snapshot)
+            if args.output is None:
+                print(content, end="")
+            else:
+                output = (
+                    args.output.resolve()
+                    if args.output.is_absolute()
+                    else (repo_root / args.output).resolve()
+                )
+                output.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write(output, content)
+                print(
+                    pretty_json(
+                        {
+                            "schema": AGENT_SNAPSHOT_SCHEMA,
+                            "namespace": args.namespace,
+                            "snapshot_sha256": snapshot["snapshot_sha256"],
+                            "counts": snapshot["graph"]["counts"],
+                            "output": str(output),
+                        }
+                    ),
+                    end="",
+                )
         elif args.command == "curate-check":
             specs = load_sources(repo_root, registry)
             pairs, authorities, _ = select_scope(

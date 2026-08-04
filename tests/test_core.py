@@ -153,6 +153,125 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertRegex(manifest["graph_sha256"], r"^[0-9a-f]{64}$")
         self.assertNotIn("generated_at", manifest)
 
+    def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
+        self.sync()
+        delta = self.repo / "knowledge/build/snapshot-entry.json"
+        delta.parent.mkdir(parents=True, exist_ok=True)
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "qlkg-agent-delta-v2",
+                    "nodes": [
+                        {
+                            "id": "sigma-algebra",
+                            "entry": {
+                                "summary": "A collection closed under complements and countable unions.",
+                                "sources": ["01-foundations.typ:3"],
+                            },
+                        }
+                    ],
+                    "edges": [
+                        {
+                            "source": "sigma-algebra",
+                            "relation": "prerequisite-for",
+                            "target": "measure-space",
+                            "confidence": "high",
+                            "evidence": "The measure-space definition uses a sigma-algebra.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        state = knowledge.load_state(self.graph)
+
+        first = knowledge.make_agent_snapshot(state, "paper:fixture")
+        second = knowledge.make_agent_snapshot(state, "paper:fixture")
+
+        self.assertEqual(first, second)
+        self.assertEqual("qlkg-agent-snapshot-v1", first["schema"])
+        self.assertEqual("paper:fixture", first["namespace"])
+        self.assertEqual(state.manifest["graph_sha256"], first["graph"]["sha256"])
+        self.assertEqual(len(state.nodes), first["graph"]["counts"]["nodes"])
+        self.assertEqual(len(state.edges), first["graph"]["counts"]["edges"])
+        self.assertEqual(len(state.references), first["graph"]["counts"]["references"])
+        self.assertEqual([], first["diagnostics"]["errors"])
+        sigma = next(node for node in first["nodes"] if node["id"] == "sigma-algebra")
+        self.assertEqual(
+            "A collection closed under complements and countable unions.",
+            sigma["entry"]["summary"],
+        )
+        semantic_edge = next(
+            edge
+            for edge in first["edges"]
+            if edge["relation"] == "prerequisite-for"
+        )
+        self.assertEqual(
+            "The measure-space definition uses a sigma-algebra.",
+            semantic_edge["evidence"],
+        )
+        digest_payload = dict(first)
+        digest = digest_payload.pop("snapshot_sha256")
+        self.assertEqual(
+            knowledge.sha256_text(knowledge.json_text(digest_payload)),
+            digest,
+        )
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_agent_snapshot_rejects_invalid_namespace_counts_and_graph(self) -> None:
+        self.sync()
+        state = knowledge.load_state(self.graph)
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "invalid Agent snapshot namespace"):
+            knowledge.make_agent_snapshot(state, "Paper With Spaces")
+
+        state.manifest["counts"]["nodes"] += 1
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "manifest counts"):
+            knowledge.make_agent_snapshot(state)
+        state.manifest["counts"]["nodes"] -= 1
+
+        original_label = state.nodes["sigma-algebra"]["label"]
+        state.nodes["sigma-algebra"]["label"] = "Uncommitted label"
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "graph digest"):
+            knowledge.make_agent_snapshot(state)
+        state.nodes["sigma-algebra"]["label"] = original_label
+
+        state.edges[("missing", "implies", "measure-space")] = {
+            "source": "missing",
+            "relation": "implies",
+            "target": "measure-space",
+            "origin": "agent",
+            "confidence": "high",
+            "evidence": "Invalid fixture edge.",
+        }
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "cannot export invalid authority graph"):
+            knowledge.make_agent_snapshot(state)
+
+    def test_snapshot_command_writes_machine_readable_file(self) -> None:
+        self.sync()
+        output = self.repo / "knowledge/build/agent/snapshot.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "--repo-root",
+                str(self.repo),
+                "snapshot",
+                "--output",
+                str(output),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        report = json.loads(result.stdout)
+        snapshot = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual("qlkg-agent-snapshot-v1", report["schema"])
+        self.assertEqual(snapshot["snapshot_sha256"], report["snapshot_sha256"])
+        self.assertEqual("personal", snapshot["namespace"])
+
     def test_entries_are_sharded_by_authority_and_hydrated_on_load(self) -> None:
         self.sync()
         delta = self.repo / "knowledge/build/structured-entry.json"
