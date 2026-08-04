@@ -2057,36 +2057,9 @@ def write_registry(path: Path, state: GraphState) -> None:
 
 
 def write_database(path: Path, state: GraphState) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute(
-            "CREATE TABLE nodes (id TEXT PRIMARY KEY, type TEXT, label TEXT, text TEXT, properties TEXT, provenance TEXT)"
-        )
-        connection.execute("CREATE VIRTUAL TABLE node_fts USING fts5(id, label, text, aliases)")
-        for node in sorted(state.nodes.values(), key=lambda item: item["id"]):
-            properties = node.get("properties") or {}
-            aliases = " ".join(str(item) for item in properties.get("aliases", []))
-            connection.execute(
-                "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    node["id"],
-                    node["type"],
-                    node.get("label", ""),
-                    node.get("text", ""),
-                    json_text(properties),
-                    json_text(node.get("provenance") or {}),
-                ),
-            )
-            connection.execute(
-                "INSERT INTO node_fts VALUES (?, ?, ?, ?)",
-                (node["id"], node.get("label", ""), node.get("text", ""), aliases),
-            )
-        connection.commit()
-    finally:
-        connection.close()
+    from kgdistiller.agent import write_agent_index
+
+    write_agent_index(path, make_agent_snapshot(state))
 
 
 def synchronize(
@@ -2195,6 +2168,7 @@ def synchronize(
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
     old_counts = previous.manifest.get("counts") or {"nodes": 0, "edges": 0, "references": 0}
     new_manifest = json.loads(artifacts["manifest.json"])
+    state.manifest = new_manifest
     new_counts = new_manifest["counts"]
     report = {
         "scope": "repository" if full else "incremental",
@@ -2348,10 +2322,11 @@ def apply_delta(
     diagnostics = json.loads(artifacts["diagnostics.json"])
     if diagnostics["errors"]:
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
+    state.manifest = json.loads(artifacts["manifest.json"])
     write_artifacts(graph_dir, artifacts)
     write_registry(typst_registry, state)
     write_database(database, state)
-    after = json.loads(artifacts["manifest.json"])["counts"]
+    after = state.manifest["counts"]
     return {
         "nodes_removed": removed_nodes,
         "nodes_upserted": len(delta.get("nodes", [])),
@@ -2832,6 +2807,17 @@ def parse_args() -> argparse.Namespace:
     snapshot_command = commands.add_parser("snapshot")
     snapshot_command.add_argument("--namespace", default="personal")
     snapshot_command.add_argument("--output", type=Path)
+    agent_command = commands.add_parser("agent")
+    agent_commands = agent_command.add_subparsers(dest="agent_command", required=True)
+    agent_commands.add_parser("status")
+    resolve_command = agent_commands.add_parser("resolve")
+    resolve_command.add_argument("concept", nargs="+")
+    resolve_command.add_argument("--namespace", default="personal")
+    agent_search_command = agent_commands.add_parser("search")
+    agent_search_command.add_argument("query")
+    agent_search_command.add_argument("--namespace", default="personal")
+    agent_search_command.add_argument("--type", action="append", dest="node_types")
+    agent_search_command.add_argument("--limit", type=int, default=20)
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
@@ -3021,6 +3007,27 @@ def main() -> int:
                 port=args.port,
                 open_browser=not args.no_open,
             )
+            return 0
+        if args.command == "agent":
+            from kgdistiller.agent import index_status, resolve_concepts, search_index
+
+            if args.agent_command == "status":
+                result = index_status(database)
+            elif args.agent_command == "resolve":
+                result = resolve_concepts(
+                    database,
+                    list(args.concept),
+                    namespace=args.namespace,
+                )
+            else:
+                result = search_index(
+                    database,
+                    args.query,
+                    namespace=args.namespace,
+                    node_types=args.node_types,
+                    limit=args.limit,
+                )
+            print(pretty_json(result), end="")
             return 0
         state = load_state(graph_dir)
         if args.command == "search":

@@ -124,6 +124,20 @@ edges with evidence, reference occurrences, provenance, diagnostics, authority
 graph identity, and its own canonical digest. It is derived data: deleting it
 does not affect source documents or the `qlkg-v2` graph.
 
+Every `sync` also atomically rebuilds the provider-neutral Agent index. Inspect
+and query it without loading the graph into an Agent context:
+
+```sh
+kgdistiller agent status
+kgdistiller agent resolve "Measure space" "sigma algebra"
+kgdistiller agent search "countably additive measure" --type knowledge --limit 10
+```
+
+The index stores nodes, normalized IDs/labels/aliases, structured entry text,
+typed edges with evidence, and reference occurrences. Exact and alias resolution
+refuses ambiguous identities; FTS input is tokenized and quoted before reaching
+SQLite.
+
 See [the Agentic Knowledge Base specification](docs/agentic-knowledge-base-spec.md)
 for the snapshot contract, planned retrieval pipeline, token-budget context
 bundles, MCP tools, paper comparison statuses, security boundaries, and phased
