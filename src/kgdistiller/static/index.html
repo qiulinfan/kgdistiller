@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Browse a local source-backed knowledge graph." />
+    <title>kgdistiller</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div><span class="mark">KG</span><strong>kgdistiller</strong></div>
+      <p id="stats">Loading local graph…</p>
+    </header>
+    <main>
+      <aside class="browser">
+        <label for="query">Search the graph</label>
+        <input id="query" type="search" autocomplete="off" placeholder="Name, alias, entry, field…" />
+        <div class="filters" role="group" aria-label="Node type">
+          <button class="active" data-type="all">All</button>
+          <button data-type="field">Fields</button>
+          <button data-type="topic">Topics</button>
+          <button data-type="knowledge">Knowledge</button>
+        </div>
+        <ol id="results" aria-live="polite"></ol>
+      </aside>
+      <section class="workspace">
+        <div class="graph-panel">
+          <header><span>LOCAL NEIGHBORHOOD</span><p>Click a node to follow its relations.</p></header>
+          <svg id="graph" role="img" aria-label="Selected node neighborhood"></svg>
+        </div>
+        <article id="detail" class="detail">
+          <p class="empty">Choose a node to inspect its source-backed entry.</p>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

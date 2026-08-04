@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f5f5f2;
+  --panel: rgba(255, 255, 255, 0.78);
+  --text: #181816;
+  --muted: #706f68;
+  --line: rgba(24, 24, 22, 0.13);
+  --accent: #5b4dde;
+  --field: #e4572e;
+  --topic: #168aad;
+  --knowledge: #5b4dde;
+  --code: #ecece7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11110f;
+    --panel: rgba(28, 28, 25, 0.84);
+    --text: #f1f0ea;
+    --muted: #aaa89f;
+    --line: rgba(255, 255, 255, 0.13);
+    --accent: #a79cff;
+    --field: #ff825c;
+    --topic: #67c9e6;
+    --knowledge: #a79cff;
+    --code: #1c1c19;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 32%), var(--bg); color: var(--text); font: 15px/1.55 Inter, ui-sans-serif, system-ui, sans-serif; }
+button, input { font: inherit; }
+.topbar { height: 64px; padding: 0 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(18px); }
+.topbar div { display: flex; align-items: center; gap: 10px; }
+.topbar p { color: var(--muted); font: 12px/1.3 ui-monospace, monospace; }
+.mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: var(--accent); color: var(--bg); font: 800 11px/1 ui-monospace, monospace; }
+main { min-height: calc(100vh - 64px); display: grid; grid-template-columns: minmax(260px, 330px) 1fr; }
+.browser { min-height: 0; padding: 20px 16px; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 72%, transparent); }
+.browser label, .graph-panel header span, .kicker { display: block; margin-bottom: 8px; color: var(--muted); font: 700 10px/1.3 ui-monospace, monospace; letter-spacing: .12em; }
+input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; outline: none; background: var(--panel); color: var(--text); }
+input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
+.filters { display: flex; gap: 5px; margin: 11px 0 14px; overflow-x: auto; }
+.filters button { padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; }
+.filters button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+#results { max-height: calc(100vh - 210px); margin: 0; padding: 0; overflow: auto; list-style: none; }
+#results button { width: 100%; padding: 10px; display: grid; grid-template-columns: 9px 1fr; gap: 9px; border: 0; border-radius: 9px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+#results button:hover, #results button.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--knowledge); }
+.dot.field { background: var(--field); }.dot.topic { background: var(--topic); }
+.result-copy { min-width: 0; }.result-copy strong, .result-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-copy strong { font-size: 13px; }.result-copy small { color: var(--muted); font: 10px/1.5 ui-monospace, monospace; }
+.workspace { min-width: 0; display: grid; grid-template-columns: minmax(360px, 1.1fr) minmax(320px, .9fr); }
+.graph-panel { position: sticky; top: 0; min-height: calc(100vh - 64px); border-right: 1px solid var(--line); overflow: hidden; }
+.graph-panel header { position: absolute; z-index: 1; top: 18px; left: 20px; }.graph-panel header p { margin: 0; color: var(--muted); font-size: 12px; }
+#graph { width: 100%; height: calc(100vh - 68px); }
+.edge { stroke: var(--line); stroke-width: 1.2; }.edge.semantic { stroke: color-mix(in srgb, var(--accent) 50%, var(--line)); stroke-width: 1.7; }
+.edge-label { fill: var(--muted); font: 8px ui-monospace, monospace; }
+.node { cursor: pointer; }.node circle { stroke: var(--panel); stroke-width: 3; }.node text { fill: var(--text); font: 10px ui-sans-serif, system-ui; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+.detail { min-width: 0; padding: clamp(24px, 4vw, 48px); overflow-wrap: anywhere; }
+.empty { color: var(--muted); }
+.type { display: inline-flex; padding: 4px 7px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font: 700 10px/1 ui-monospace, monospace; text-transform: uppercase; }
+h1 { margin: 14px 0 6px; font-size: clamp(28px, 4vw, 46px); line-height: 1.02; letter-spacing: -.045em; }
+.node-id { color: var(--muted); font: 11px/1.5 ui-monospace, monospace; }
+.entry { margin: 28px 0; font-size: 16px; line-height: 1.75; }
+.section { margin-top: 28px; }.section h2 { padding-bottom: 8px; border-bottom: 1px solid var(--line); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+.relations, .refs { display: grid; gap: 7px; padding: 0; list-style: none; }
+.relations button { width: 100%; padding: 9px 10px; display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.relations button:hover { border-color: var(--accent); }.relations small, .refs small { color: var(--muted); }
+.source { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--code); font: 11px/1.55 ui-monospace, monospace; overflow: auto; }
+.source div { display: grid; grid-template-columns: 3.5em 1fr; gap: 1em; white-space: pre; }.source .focus { color: var(--accent); font-weight: 700; }
+@media (max-width: 1050px) { .workspace { grid-template-columns: 1fr; }.graph-panel { position: relative; min-height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); }#graph { height: 55vh; } }
+@media (max-width: 720px) { .topbar p { display: none; }main { display: block; }.browser { border-right: 0; border-bottom: 1px solid var(--line); }#results { max-height: 260px; }.workspace { display: block; } }
