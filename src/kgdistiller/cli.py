@@ -24,6 +24,7 @@ from urllib.parse import quote
 GRAPH_SCHEMA = "qlkg-v2"
 SOURCE_SCHEMA = "qlkg-sources-v2"
 DELTA_SCHEMA = "qlkg-agent-delta-v2"
+IDENTITY_SCHEMA = "qlkg-identities-v1"
 ENTRY_STORE_SCHEMA = "qlkg-entry-shards-v1"
 ENTRY_SHARD_LIMIT = 48 * 1024 * 1024
 KNOWLEDGE_ORIGINS = {"personal-note", "research"}
@@ -60,6 +61,7 @@ SEMANTIC_RELATIONS = {
     "derived-from",
 }
 ACYCLIC_RELATIONS = {"contains", "prerequisite-for"}
+CURATION_STATUSES = {"current", "pending", "needs-review"}
 CROSS_FILE_REF_ENDPOINTS = {
     "prerequisite-for": ("target", "source"),
     "generalizes": ("source", "target"),
@@ -118,6 +120,9 @@ class DefinitionOccurrence:
     fields: tuple[str, ...]
     position: int
     statement: StatementRange | None
+    definition_sha256: str
+    definition_start_line: int
+    definition_end_line: int
 
 
 @dataclass(frozen=True)
@@ -221,6 +226,42 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def load_identity_registry(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None or not path.is_file():
+        return {}
+    payload = read_json(path, {})
+    if payload.get("schema") != IDENTITY_SCHEMA:
+        raise KnowledgeError(f"expected {IDENTITY_SCHEMA} identity registry: {path}")
+    result: dict[str, dict[str, Any]] = {}
+    names: dict[str, str] = {}
+    for raw in payload.get("identities", []):
+        node_id = str(raw.get("id", ""))
+        if not ID_RE.fullmatch(node_id) or node_id in result:
+            raise KnowledgeError(f"duplicate or invalid identity id: {node_id!r}")
+        canonical_name = str(raw.get("canonical_name", "")).strip()
+        aliases = list(dict.fromkeys(str(item).strip() for item in raw.get("aliases", []) if str(item).strip()))
+        if not canonical_name:
+            raise KnowledgeError(f"identity {node_id} has no canonical_name")
+        for name in (canonical_name, *aliases):
+            key = identity_key(name)
+            existing = names.get(key)
+            if existing and existing != node_id:
+                raise KnowledgeError(
+                    f"ambiguous registered knowledge name {name!r}: {existing!r} and {node_id!r}"
+                )
+            names[key] = node_id
+        result[node_id] = {
+            "id": node_id,
+            "canonical_name": canonical_name,
+            "aliases": aliases,
+        }
+    return result
+
+
+def identity_registry_sha256(path: Path | None) -> str | None:
+    return sha256_file(path) if path is not None and path.is_file() else None
 
 
 def load_fields(registry: Path) -> list[FieldSpec]:
@@ -446,7 +487,17 @@ def latex_statement_ranges(text: str) -> list[StatementRange]:
 
 
 def identity_key(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value).casefold()).strip()
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    for symbol, name in {
+        "σ": " sigma ",
+        "π": " pi ",
+        "λ": " lambda ",
+        "μ": " mu ",
+        "ρ": " rho ",
+        "ω": " omega ",
+    }.items():
+        normalized = normalized.replace(symbol, name)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def generated_id(value: str) -> str:
@@ -456,7 +507,10 @@ def generated_id(value: str) -> str:
     return candidate or f"knowledge-{sha256_text(identity_key(value))[:16]}"
 
 
-def build_identity_index(state: GraphState) -> dict[str, str]:
+def build_identity_index(
+    state: GraphState,
+    registered: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str]:
     result: dict[str, str] = {}
     for node in state.nodes.values():
         if node.get("type") != "knowledge":
@@ -473,12 +527,40 @@ def build_identity_index(state: GraphState) -> dict[str, str]:
                     f"ambiguous knowledge name {raw!r}: {existing!r} and {node['id']!r}"
                 )
             result[key] = node["id"]
+    for node_id, record in sorted((registered or {}).items()):
+        for raw in (record.get("canonical_name", ""), *record.get("aliases", [])):
+            key = identity_key(str(raw))
+            if not key:
+                continue
+            existing = result.get(key)
+            if existing and existing != node_id:
+                raise KnowledgeError(
+                    f"registered knowledge name {raw!r} conflicts with {existing!r} and {node_id!r}"
+                )
+            result[key] = node_id
     return result
 
 
 def containing_statement(ranges: list[StatementRange], position: int) -> StatementRange | None:
     candidates = [item for item in ranges if item.start <= position < item.end]
     return min(candidates, key=lambda item: item.end - item.start) if candidates else None
+
+
+def definition_fingerprint(
+    text: str,
+    position: int,
+    statement: StatementRange | None,
+) -> tuple[str, int, int]:
+    start = statement.start if statement else text.rfind("\n", 0, position) + 1
+    if statement:
+        end = statement.end
+    else:
+        line_end = text.find("\n", position)
+        end = len(text) if line_end < 0 else line_end
+    content = text[start:end].replace("\r\n", "\n").replace("\r", "\n")
+    start_line = text.count("\n", 0, start) + 1
+    end_line = start_line + content.count("\n")
+    return sha256_text(content), start_line, end_line
 
 
 def scan_typst(
@@ -517,6 +599,9 @@ def scan_typst(
         node_id = identities.get(key) or generated_id(label)
         identities.setdefault(key, node_id)
         statement = containing_statement(ranges, match.start())
+        fingerprint, definition_start_line, definition_end_line = definition_fingerprint(
+            text, match.start(), statement
+        )
         line = text.count("\n", 0, match.start()) + 1
         anchor = f"kn-{node_id}"
         definitions.append(
@@ -538,6 +623,9 @@ def scan_typst(
                 fields=topic[2] if topic else spec.fields,
                 position=match.start(),
                 statement=statement,
+                definition_sha256=fingerprint,
+                definition_start_line=definition_start_line,
+                definition_end_line=definition_end_line,
             )
         )
     statement_nodes: dict[tuple[int, int], list[str]] = defaultdict(list)
@@ -599,6 +687,36 @@ def markdown_kind_at(text: str, position: int) -> str:
     return match.group(1).lower() if match else "concept"
 
 
+def markdown_definition_range(text: str, position: int) -> StatementRange:
+    """Return the smallest conservative Markdown block containing a marker."""
+    line_start = text.rfind("\n", 0, position) + 1
+    line_end = text.find("\n", position)
+    line_end = len(text) if line_end < 0 else line_end + 1
+    line = text[line_start:line_end]
+    if re.match(r"\s*>", line):
+        start = line_start
+        while start > 0:
+            previous_end = start - 1
+            previous_start = text.rfind("\n", 0, previous_end) + 1
+            if not re.match(r"\s*>", text[previous_start:previous_end]):
+                break
+            start = previous_start
+        end = line_end
+        while end < len(text):
+            next_end = text.find("\n", end)
+            next_end = len(text) if next_end < 0 else next_end + 1
+            if not re.match(r"\s*>", text[end:next_end]):
+                break
+            end = next_end
+        return StatementRange(start, end, markdown_kind_at(text, position))
+
+    start_break = text.rfind("\n\n", 0, position)
+    end_break = text.find("\n\n", position)
+    start = 0 if start_break < 0 else start_break + 2
+    end = len(text) if end_break < 0 else end_break
+    return StatementRange(start, end, markdown_kind_at(text, position))
+
+
 def scan_markdown(
     repo_root: Path,
     spec: SourceSpec,
@@ -631,6 +749,10 @@ def scan_markdown(
         key = identity_key(label)
         node_id = identities.get(key) or generated_id(label)
         identities.setdefault(key, node_id)
+        statement = markdown_definition_range(text, match.start())
+        fingerprint, definition_start_line, definition_end_line = definition_fingerprint(
+            text, match.start(), statement
+        )
         line = text.count("\n", 0, match.start()) + 1
         definitions.append(
             DefinitionOccurrence(
@@ -638,7 +760,7 @@ def scan_markdown(
                 label=label,
                 label_markup=target_markup,
                 source_format="markdown",
-                kind=markdown_kind_at(text, match.start()),
+                kind=statement.kind,
                 authority=authority,
                 line=line,
                 anchor=f"kn-{node_id}",
@@ -650,7 +772,10 @@ def scan_markdown(
                 topic=topic[0] if topic else None,
                 fields=topic[2] if topic else spec.fields,
                 position=match.start(),
-                statement=None,
+                statement=statement,
+                definition_sha256=fingerprint,
+                definition_start_line=definition_start_line,
+                definition_end_line=definition_end_line,
             )
         )
 
@@ -730,6 +855,9 @@ def scan_latex(
         node_id = identities.get(key) or generated_id(label)
         identities.setdefault(key, node_id)
         statement = containing_statement(ranges, match.start())
+        fingerprint, definition_start_line, definition_end_line = definition_fingerprint(
+            text, match.start(), statement
+        )
         line = text.count("\n", 0, match.start()) + 1
         definitions.append(
             DefinitionOccurrence(
@@ -750,6 +878,9 @@ def scan_latex(
                 fields=topic[2] if topic else spec.fields,
                 position=match.start(),
                 statement=statement,
+                definition_sha256=fingerprint,
+                definition_start_line=definition_start_line,
+                definition_end_line=definition_end_line,
             )
         )
 
@@ -857,7 +988,9 @@ def load_state(graph_dir: Path) -> GraphState:
         for item in read_jsonl(graph_dir / "edges.jsonl")
     }
     references = read_jsonl(graph_dir / "references.jsonl")
-    return GraphState(nodes, edges, references, manifest)
+    state = GraphState(nodes, edges, references, manifest)
+    refresh_node_curation_defaults(state)
+    return state
 
 
 def select_scope(
@@ -907,6 +1040,146 @@ def select_scope(
     for spec, path in pairs:
         unique[relative_path(repo_root, path)] = (spec, path)
     return list(unique.values()), set(unique), full
+
+
+def git_source_context(
+    repo_root: Path,
+    base_revision: str | None,
+    specs: list[SourceSpec],
+) -> dict[str, Any]:
+    """Describe source changes relative to the last synchronized Git revision."""
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return {"head": None, "dirty": False, "changes": []}
+
+    roots = [relative_path(repo_root, spec.root) for spec in specs]
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *roots],
+        cwd=repo_root,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    ).stdout
+    changes: list[dict[str, str]] = []
+    if base_revision:
+        try:
+            raw = subprocess.run(
+                ["git", "diff", "--name-status", "-z", "-M", base_revision, "--", *roots],
+                cwd=repo_root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ).stdout.decode("utf-8", errors="strict")
+            parts = raw.split("\0")
+            cursor = 0
+            while cursor < len(parts) and parts[cursor]:
+                code = parts[cursor]
+                cursor += 1
+                if code.startswith(("R", "C")):
+                    old_path, new_path = parts[cursor], parts[cursor + 1]
+                    cursor += 2
+                else:
+                    old_path = parts[cursor]
+                    new_path = old_path
+                    cursor += 1
+                changes.append(
+                    {"status": code, "old_path": old_path, "new_path": new_path}
+                )
+        except (OSError, subprocess.CalledProcessError, UnicodeError):
+            changes = []
+    return {"head": head, "dirty": bool(status.strip()), "changes": changes}
+
+
+def source_owner(
+    repo_root: Path,
+    specs: list[SourceSpec],
+    authority: str,
+) -> SourceSpec | None:
+    path = (repo_root / authority).resolve()
+    return next(
+        (spec for spec in specs if path == spec.root or spec.root in path.parents),
+        None,
+    )
+
+
+def include_previous_authorities(
+    repo_root: Path,
+    specs: list[SourceSpec],
+    pairs: list[tuple[SourceSpec, Path]],
+    selected_keys: set[str],
+    previous: GraphState,
+    git_context: dict[str, Any],
+    *,
+    files: list[Path],
+    course: str | None,
+    subject: str | None,
+    full: bool,
+) -> tuple[list[tuple[SourceSpec, Path]], set[str]]:
+    """Include deleted/renamed old paths so their occurrences can be retired."""
+    unique = {relative_path(repo_root, path): (spec, path) for spec, path in pairs}
+    previous_paths = set((previous.manifest.get("source_hashes") or {}).keys())
+    selected_specs = {
+        spec.id
+        for spec in specs
+        if (course is None or spec.course == course)
+        and (subject is None or spec.subject == subject)
+    }
+    requested = [
+        (repo_root / raw).resolve() if not raw.is_absolute() else raw.resolve()
+        for raw in files
+    ]
+
+    def requested_path(authority: str) -> bool:
+        candidate = (repo_root / authority).resolve()
+        return any(root == candidate or root in candidate.parents for root in requested)
+
+    candidates: set[str] = set()
+    for authority in previous_paths:
+        owner = source_owner(repo_root, specs, authority)
+        if owner is None:
+            continue
+        if full or ((course or subject) and owner.id in selected_specs) or requested_path(authority):
+            candidates.add(authority)
+
+    if files:
+        for change in git_context.get("changes", []):
+            old_path = str(change.get("old_path", ""))
+            new_path = str(change.get("new_path", ""))
+            if new_path in selected_keys or requested_path(new_path):
+                candidates.add(old_path)
+        previous_hashes = previous.manifest.get("source_hashes") or {}
+        for _, path in pairs:
+            if not path.is_file():
+                continue
+            current_key = relative_path(repo_root, path)
+            current_hash = sha256_file(path)
+            exact_old_paths = [
+                authority
+                for authority, digest in previous_hashes.items()
+                if authority != current_key
+                and digest == current_hash
+                and not (repo_root / authority).is_file()
+            ]
+            if len(exact_old_paths) == 1:
+                candidates.add(exact_old_paths[0])
+
+    for authority in sorted(candidates):
+        owner = source_owner(repo_root, specs, authority)
+        if owner is None:
+            continue
+        path = (repo_root / authority).resolve()
+        unique.setdefault(authority, (owner, path))
+        selected_keys.add(authority)
+    return list(unique.values()), selected_keys
 
 
 def scan_scope(
@@ -969,6 +1242,22 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
             "source_name": definition.label_markup,
         }
     )
+    previous_provenance = previous.get("provenance") or {}
+    previous_fingerprint = str(previous_provenance.get("definition_sha256", ""))
+    curated_fingerprint = str(properties.get("curated_definition_sha256", ""))
+    has_entry = bool(str(previous.get("text", "")).strip() or previous.get("entry"))
+    if not has_entry:
+        properties["curation_status"] = "pending"
+        properties.pop("curated_definition_sha256", None)
+    elif previous_fingerprint and previous_fingerprint != definition.definition_sha256:
+        properties["curation_status"] = "needs-review"
+        if not curated_fingerprint:
+            properties["curated_definition_sha256"] = previous_fingerprint
+    elif properties.get("curation_status") == "needs-review" and curated_fingerprint != definition.definition_sha256:
+        properties["curation_status"] = "needs-review"
+    else:
+        properties["curation_status"] = "current"
+        properties["curated_definition_sha256"] = definition.definition_sha256
     if definition.source_format == "typst":
         properties["typst_name"] = definition.label_markup
     else:
@@ -986,6 +1275,9 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
         "provenance": {
             "authority": definition.authority,
             "line": definition.line,
+            "definition_start_line": definition.definition_start_line,
+            "definition_end_line": definition.definition_end_line,
+            "definition_sha256": definition.definition_sha256,
             "anchor": definition.anchor,
             "web": definition.web,
             "active": True,
@@ -1192,6 +1484,59 @@ def ensure_taxonomy_nodes_and_edges(
             state.edges[edge_key(edge)] = edge
 
 
+def refresh_node_curation_defaults(state: GraphState) -> None:
+    for node in state.nodes.values():
+        if node.get("type") != "knowledge":
+            continue
+        properties = dict(node.get("properties") or {})
+        if properties.get("curation_status") not in CURATION_STATUSES:
+            has_entry = bool(str(node.get("text", "")).strip() or node.get("entry"))
+            properties["curation_status"] = "current" if has_entry else "pending"
+            fingerprint = str((node.get("provenance") or {}).get("definition_sha256", ""))
+            if has_entry and fingerprint:
+                properties["curated_definition_sha256"] = fingerprint
+        node["properties"] = properties
+
+
+def refresh_semantic_edge_curation(state: GraphState) -> None:
+    """Keep reviewed edges, but make source changes visible instead of silently trusting them."""
+    for edge in state.edges.values():
+        if edge.get("relation") == "contains":
+            continue
+        current: dict[str, str] = {}
+        inactive: list[str] = []
+        for endpoint in (str(edge.get("source", "")), str(edge.get("target", ""))):
+            node = state.nodes.get(endpoint) or {}
+            if node.get("type") != "knowledge":
+                continue
+            provenance = node.get("provenance") or {}
+            fingerprint = str(provenance.get("definition_sha256", ""))
+            if fingerprint:
+                current[endpoint] = fingerprint
+            if provenance and provenance.get("active") is False:
+                inactive.append(endpoint)
+        recorded = {
+            str(key): str(value)
+            for key, value in (edge.get("evidence_fingerprints") or {}).items()
+        }
+        if not recorded:
+            recorded = dict(current)
+            edge["evidence_fingerprints"] = recorded
+        stale = sorted(
+            set(inactive)
+            | {
+                node_id
+                for node_id, fingerprint in recorded.items()
+                if current.get(node_id) != fingerprint
+            }
+        )
+        if stale:
+            edge["curation_status"] = "needs-review"
+            edge["stale_endpoints"] = stale
+        else:
+            edge["curation_status"] = "current"
+            edge.pop("stale_endpoints", None)
+
 def graph_cycles(nodes: set[str], edges: Iterable[dict[str, Any]], relation: str) -> list[list[str]]:
     adjacency: dict[str, list[str]] = defaultdict(list)
     for edge in edges:
@@ -1292,6 +1637,14 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                         node=str(edge.get("target", "")),
                     )
                 )
+        if edge.get("relation") != "contains" and edge.get("curation_status") == "needs-review":
+            warnings.append(
+                diagnostic(
+                    "stale-semantic-edge",
+                    "semantic edge evidence predates a changed or orphaned authority",
+                    node=str(edge.get("source", "")),
+                )
+            )
     for relation in ACYCLIC_RELATIONS:
         for cycle in graph_cycles(node_ids, state.edges.values(), relation):
             errors.append(
@@ -1304,6 +1657,15 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
     field_memberships = knowledge_field_memberships(state)
     for node in state.nodes.values():
         properties = node.get("properties") or {}
+        curation_status = properties.get("curation_status")
+        if node.get("type") == "knowledge" and curation_status not in CURATION_STATUSES:
+            errors.append(
+                diagnostic(
+                    "invalid-curation-status",
+                    f"unsupported knowledge curation status: {curation_status!r}",
+                    node=str(node.get("id", "")),
+                )
+            )
         if node.get("type") == "knowledge" and properties.get("typst_name") and not properties.get("label_html"):
             errors.append(
                 diagnostic(
@@ -1334,6 +1696,15 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                     node=node["id"],
                 )
             )
+        elif curation_status == "needs-review":
+            warnings.append(
+                diagnostic(
+                    "stale-node-entry",
+                    "knowledge entry predates the current authoritative definition",
+                    source=(node.get("provenance") or {}).get("authority"),
+                    node=node["id"],
+                )
+            )
     for reference in state.references:
         if reference.get("target") not in node_ids:
             warnings.append(
@@ -1353,7 +1724,11 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
 def make_artifacts(
     state: GraphState,
     source_hashes: dict[str, str],
+    *,
+    identity_sha256: str | None = None,
+    git_revision: str | None = None,
 ) -> dict[str, str]:
+    refresh_node_curation_defaults(state)
     nodes = sorted(state.nodes.values(), key=lambda item: item["id"])
     edges = sorted(
         state.edges.values(),
@@ -1421,6 +1796,11 @@ def make_artifacts(
     node_types = Counter(item["type"] for item in nodes)
     relations = Counter(item["relation"] for item in edges)
     statuses = Counter((item.get("properties") or {}).get("source_status", "") for item in nodes)
+    curation_statuses = Counter(
+        (item.get("properties") or {}).get("curation_status", "")
+        for item in nodes
+        if item.get("type") == "knowledge"
+    )
     knowledge_origins = Counter(
         (item.get("properties") or {}).get("knowledge_origin", "personal-note")
         for item in nodes
@@ -1438,6 +1818,7 @@ def make_artifacts(
         "node_types": dict(sorted(node_types.items())),
         "relations": dict(sorted(relations.items())),
         "statuses": dict(sorted(statuses.items())),
+        "curation_statuses": dict(sorted(curation_statuses.items())),
         "knowledge_origins": dict(sorted(knowledge_origins.items())),
         "source_hashes": dict(sorted(source_hashes.items())),
         "entry_store": {
@@ -1446,6 +1827,10 @@ def make_artifacts(
             "shards": entry_shards,
         },
     }
+    if identity_sha256:
+        manifest["identity_sha256"] = identity_sha256
+    if git_revision:
+        manifest["git_revision"] = git_revision
     return {
         "manifest.json": pretty_json(manifest),
         "nodes.jsonl": nodes_text,
@@ -1633,6 +2018,7 @@ def synchronize(
     database: Path,
     typst_registry: Path,
     *,
+    identities: Path | None = None,
     files: list[Path],
     course: str | None,
     subject: str | None,
@@ -1640,10 +2026,32 @@ def synchronize(
 ) -> tuple[GraphState, dict[str, str], dict[str, Any]]:
     fields = load_fields(registry)
     specs = load_sources(repo_root, registry)
-    pairs, selected_keys, full = select_scope(repo_root, specs, files, course, subject)
     previous = load_state(graph_dir)
+    registered_identities = load_identity_registry(identities)
+    git_context = git_source_context(
+        repo_root,
+        str(previous.manifest.get("git_revision", "")) or None,
+        specs,
+    )
+    pairs, selected_keys, full = select_scope(repo_root, specs, files, course, subject)
+    pairs, selected_keys = include_previous_authorities(
+        repo_root,
+        specs,
+        pairs,
+        selected_keys,
+        previous,
+        git_context,
+        files=files,
+        course=course,
+        subject=subject,
+        full=full,
+    )
     state = copy.deepcopy(previous)
-    scan = scan_scope(repo_root, pairs, build_identity_index(previous))
+    scan = scan_scope(
+        repo_root,
+        pairs,
+        build_identity_index(previous, registered_identities),
+    )
     if scan.errors:
         raise KnowledgeError("\n".join(item["message"] for item in scan.errors))
     outside = {
@@ -1679,7 +2087,8 @@ def synchronize(
         found_ids | set(orphaned),
         prune=full,
     )
-    source_hashes = dict(previous.manifest.get("source_hashes") or {})
+    previous_source_hashes = dict(previous.manifest.get("source_hashes") or {})
+    source_hashes = dict(previous_source_hashes)
     if full:
         source_hashes = {}
     for _, path in pairs:
@@ -1688,8 +2097,21 @@ def synchronize(
             source_hashes[key] = sha256_file(path)
         else:
             source_hashes.pop(key, None)
+    refresh_semantic_edge_curation(state)
     render_typst_labels(state)
-    artifacts = make_artifacts(state, source_hashes)
+    previous_git_revision = str(previous.manifest.get("git_revision", "")) or None
+    git_revision = previous_git_revision
+    if git_context.get("head") and (
+        not previous_git_revision
+        or (not git_context.get("dirty") and source_hashes != previous_source_hashes)
+    ):
+        git_revision = str(git_context["head"])
+    artifacts = make_artifacts(
+        state,
+        source_hashes,
+        identity_sha256=identity_registry_sha256(identities),
+        git_revision=git_revision,
+    )
     diagnostics = json.loads(artifacts["diagnostics.json"])
     if diagnostics["errors"]:
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
@@ -1708,6 +2130,27 @@ def synchronize(
         },
         "counts": new_counts,
         "warnings": len(diagnostics["warnings"]),
+        "needs_review": {
+            "nodes": sum(
+                (node.get("properties") or {}).get("curation_status") == "needs-review"
+                for node in state.nodes.values()
+                if node.get("type") == "knowledge"
+            ),
+            "edges": sum(
+                edge.get("curation_status") == "needs-review"
+                for edge in state.edges.values()
+                if edge.get("relation") != "contains"
+            ),
+        },
+        "source_changes": {
+            "added": sorted(set(source_hashes) - set(previous_source_hashes)),
+            "deleted": sorted(set(previous_source_hashes) - set(source_hashes)),
+            "modified": sorted(
+                path
+                for path in set(source_hashes) & set(previous_source_hashes)
+                if source_hashes[path] != previous_source_hashes[path]
+            ),
+        },
     }
     if write:
         write_artifacts(graph_dir, artifacts)
@@ -1784,6 +2227,22 @@ def apply_delta(
             node["entry"] = copy.deepcopy(raw_entry)
         if existing.get("provenance"):
             node["provenance"] = existing["provenance"]
+        if node_type == "knowledge":
+            reviewed_content = "text" in raw or "entry" in raw
+            if reviewed_content and (text_value.strip() or raw_entry):
+                fingerprint = str(
+                    (node.get("provenance") or {}).get("definition_sha256", "")
+                )
+                properties["curation_status"] = "current"
+                if fingerprint:
+                    properties["curated_definition_sha256"] = fingerprint
+            elif reviewed_content:
+                properties["curation_status"] = "pending"
+                properties.pop("curated_definition_sha256", None)
+            else:
+                properties.setdefault(
+                    "curation_status", "current" if text_value.strip() or raw_entry else "pending"
+                )
         state.nodes[node_id] = node
     for raw in delta.get("remove_edges", []):
         state.edges.pop(
@@ -1800,8 +2259,14 @@ def apply_delta(
             "evidence": str(raw.get("evidence", "agent semantic extraction")),
         }
         state.edges[edge_key(edge)] = edge
+    refresh_semantic_edge_curation(state)
     render_typst_labels(state)
-    artifacts = make_artifacts(state, dict(state.manifest.get("source_hashes") or {}))
+    artifacts = make_artifacts(
+        state,
+        dict(state.manifest.get("source_hashes") or {}),
+        identity_sha256=state.manifest.get("identity_sha256"),
+        git_revision=state.manifest.get("git_revision"),
+    )
     diagnostics = json.loads(artifacts["diagnostics.json"])
     if diagnostics["errors"]:
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
@@ -1820,6 +2285,64 @@ def apply_delta(
         },
         "counts": after,
         "warnings": len(diagnostics["warnings"]),
+    }
+
+
+def reconcile_node_name(
+    state: GraphState,
+    identity_path: Path,
+    node_id_or_name: str,
+    new_name: str,
+) -> dict[str, Any]:
+    """Record an explicit authored-name change without changing the stable node ID."""
+    registered = load_identity_registry(identity_path)
+    graph_index = build_identity_index(state, registered)
+    node_id = node_id_or_name if node_id_or_name in state.nodes else graph_index.get(
+        identity_key(node_id_or_name), ""
+    )
+    node = state.nodes.get(node_id) if node_id else None
+    if node is None or node.get("type") != "knowledge":
+        raise KnowledgeError(f"unknown knowledge node for reconciliation: {node_id_or_name}")
+    canonical_name = unicodedata.normalize("NFKC", new_name).strip()
+    if not canonical_name:
+        raise KnowledgeError("new knowledge name must not be empty")
+    existing = graph_index.get(identity_key(canonical_name))
+    if existing and existing != node_id:
+        raise KnowledgeError(
+            f"new knowledge name {canonical_name!r} already resolves to {existing!r}"
+        )
+
+    previous = registered.get(node_id) or {}
+    names = [
+        str(previous.get("canonical_name", "")),
+        *previous.get("aliases", []),
+        str(node.get("label", "")),
+        *((node.get("properties") or {}).get("aliases", [])),
+    ]
+    aliases = list(
+        dict.fromkeys(
+            name.strip()
+            for name in names
+            if name.strip() and identity_key(name) != identity_key(canonical_name)
+        )
+    )
+    registered[node_id] = {
+        "id": node_id,
+        "canonical_name": canonical_name,
+        "aliases": aliases,
+    }
+    payload = {
+        "schema": IDENTITY_SCHEMA,
+        "identities": [registered[key] for key in sorted(registered)],
+    }
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(identity_path, pretty_json(payload))
+    return {
+        "id": node_id,
+        "old_name": str(node.get("label", "")),
+        "new_name": canonical_name,
+        "identity_registry": str(identity_path),
+        "next": "run kgdistiller sync to apply the reconciled source marker",
     }
 
 
@@ -1877,6 +2400,15 @@ def curation_report(
     errors: list[dict[str, Any]] = []
     entries = 0
     for node_id, node in selected.items():
+        if (node.get("properties") or {}).get("curation_status") == "needs-review":
+            errors.append(
+                diagnostic(
+                    "stale-node-entry",
+                    "active knowledge node changed after its entry was curated",
+                    source=(node.get("provenance") or {}).get("authority"),
+                    node=node_id,
+                )
+            )
         if str(node.get("text", "")).strip():
             entries += 1
             continue
@@ -1951,6 +2483,20 @@ def curation_report(
                     f"direct external dependency has no file-level #ref: {raw['target']}",
                     source=raw["authority"],
                     node=raw["target"],
+                )
+            )
+
+    for edge in state.edges.values():
+        if (
+            edge.get("relation") != "contains"
+            and edge.get("curation_status") == "needs-review"
+            and ({str(edge.get("source", "")), str(edge.get("target", ""))} & set(selected))
+        ):
+            errors.append(
+                diagnostic(
+                    "stale-semantic-edge",
+                    "semantic edge must be reviewed against the current authority",
+                    node=str(edge.get("source", "")),
                 )
             )
 
@@ -2088,6 +2634,17 @@ def audit_report(state: GraphState) -> dict[str, Any]:
         },
         "curation": {
             "entry_ratio": round(entry_count / len(active), 6) if active else 1.0,
+            "node_statuses": dict(
+                sorted(
+                    Counter(
+                        str((node.get("properties") or {}).get("curation_status", "pending"))
+                        for node in active.values()
+                    ).items()
+                )
+            ),
+            "stale_semantic_edges": sum(
+                edge.get("curation_status") == "needs-review" for edge in semantic_edges
+            ),
             "authorities": len(authorities),
             "complete_authorities": complete_authorities,
             "partial_authorities": partial_authorities,
@@ -2157,6 +2714,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--registry", default="knowledge/sources.json")
     parser.add_argument("--graph", default="knowledge/graph")
+    parser.add_argument("--identities", default="knowledge/identities.json")
     parser.add_argument("--database", default="knowledge/build/knowledge.sqlite")
     parser.add_argument(
         "--typst-registry",
@@ -2171,6 +2729,11 @@ def parse_args() -> argparse.Namespace:
         add_scope_arguments(command)
     apply_command = commands.add_parser("apply")
     apply_command.add_argument("delta", type=Path)
+    reconcile_command = commands.add_parser("reconcile")
+    reconcile_commands = reconcile_command.add_subparsers(dest="reconcile_command", required=True)
+    rename_command = reconcile_commands.add_parser("rename-node")
+    rename_command.add_argument("id")
+    rename_command.add_argument("new_name")
     commands.add_parser("check")
     search_command = commands.add_parser("search")
     search_command.add_argument("query")
@@ -2200,6 +2763,7 @@ def main() -> int:
     repo_root = args.repo_root.resolve()
     registry = defaults(repo_root, args.registry)
     graph_dir = defaults(repo_root, args.graph)
+    identities = defaults(repo_root, args.identities)
     database = defaults(repo_root, args.database)
     typst_registry = defaults(repo_root, args.typst_registry)
     try:
@@ -2218,6 +2782,7 @@ def main() -> int:
                 graph_dir,
                 database,
                 typst_registry,
+                identities=identities,
                 files=[],
                 course=None,
                 subject=None,
@@ -2229,11 +2794,31 @@ def main() -> int:
             pairs_files = list(args.file)
             if args.command == "scan":
                 specs = load_sources(repo_root, registry)
+                state = load_state(graph_dir)
                 pairs, selected, full = select_scope(
                     repo_root, specs, pairs_files, args.course, args.subject
                 )
-                state = load_state(graph_dir)
-                result = scan_scope(repo_root, pairs, build_identity_index(state))
+                pairs, selected = include_previous_authorities(
+                    repo_root,
+                    specs,
+                    pairs,
+                    selected,
+                    state,
+                    git_source_context(
+                        repo_root,
+                        str(state.manifest.get("git_revision", "")) or None,
+                        specs,
+                    ),
+                    files=pairs_files,
+                    course=args.course,
+                    subject=args.subject,
+                    full=full,
+                )
+                result = scan_scope(
+                    repo_root,
+                    pairs,
+                    build_identity_index(state, load_identity_registry(identities)),
+                )
                 found = {item.id for item in result.definitions}
                 orphaned = sorted(
                     node_id
@@ -2262,6 +2847,7 @@ def main() -> int:
                 graph_dir,
                 database,
                 typst_registry,
+                identities=identities,
                 files=pairs_files,
                 course=args.course,
                 subject=args.subject,
@@ -2273,6 +2859,16 @@ def main() -> int:
             delta = args.delta if args.delta.is_absolute() else (repo_root / args.delta)
             print(pretty_json(apply_delta(graph_dir, database, typst_registry, delta)), end="")
             return 0
+        if args.command == "reconcile":
+            state = load_state(graph_dir)
+            if args.reconcile_command == "rename-node":
+                print(
+                    pretty_json(
+                        reconcile_node_name(state, identities, args.id, args.new_name)
+                    ),
+                    end="",
+                )
+            return 0
         if args.command == "check":
             _, artifacts, report = synchronize(
                 repo_root,
@@ -2280,6 +2876,7 @@ def main() -> int:
                 graph_dir,
                 database,
                 typst_registry,
+                identities=identities,
                 files=[],
                 course=None,
                 subject=None,
@@ -2316,6 +2913,7 @@ def main() -> int:
                     graph_dir,
                     database,
                     typst_registry,
+                    identities=identities,
                     files=selected_paths,
                     course=None,
                     subject=None,

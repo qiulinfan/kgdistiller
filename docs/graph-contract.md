@@ -20,6 +20,12 @@ Removing or moving a definition may temporarily orphan its node; accumulated
 Agent metadata is preserved until the same identity is rehomed or explicitly
 removed.
 
+Changing an authored name is an explicit identity decision. The deterministic
+scanner does not infer it from document order, proximity, a matching Git hunk,
+or textual similarity. `kgdistiller reconcile rename-node <id> <new-name>`
+records the new canonical name and prior aliases in the optional
+`qlkg-identities-v1` registry before the source is synchronized.
+
 ## Node selection
 
 A knowledge node should be independently teachable, searchable, reusable across
@@ -117,6 +123,21 @@ Repository, subject, course, directory, and file scopes are supported. A scoped
 sync replaces only definition and reference occurrences from the selected
 authorities and retains unrelated state.
 
+The graph manifest records the last usable Git revision alongside the complete
+source hash map. A later sync includes deleted authorities and both sides of a
+staged Git rename; full sync also compares the previous source map, so rename
+handling does not depend on Git similarity detection. An exact-content rename
+can be paired before staging. A file path is provenance, never graph identity.
+
+Every definition stores a hash and source span for its enclosing authored
+statement (or the smallest conservative source block when no formal statement
+wrapper exists). If that hash changes, an existing curated entry becomes
+`needs-review`. Semantic edges retain the endpoint hashes against which their
+evidence was reviewed and likewise become `needs-review` if an endpoint changes
+or becomes orphaned. The data is retained for review, while `curate-check` and
+publication reject stale curation. Reapplying reviewed node and edge deltas
+refreshes those fingerprints.
+
 ## Required invariants
 
 - at most one active authority marker per global knowledge name;
@@ -128,6 +149,8 @@ authorities and retains unrelated state.
 - Typst label HTML contains no active or unsafe content;
 - entry shards are bounded and referenced from the manifest;
 - unresolved references and orphaned nodes remain visible diagnostics;
+- changed definitions and their affected semantic edges remain visible review
+  diagnostics rather than being silently trusted or deleted;
 - a scoped sync never rewrites unrelated source state;
 - examples and headings create no implicit nodes.
 

@@ -83,6 +83,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.graph = self.repo / "knowledge/graph"
+        self.identities = self.repo / "knowledge/identities.json"
         self.database = self.repo / "knowledge/build/knowledge.sqlite"
         self.typst_registry = self.repo / "notes/math/toolchain/generated/knowledge-registry.typ"
 
@@ -96,6 +97,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             self.graph,
             self.database,
             self.typst_registry,
+            identities=self.identities,
             files=files or [],
             course=None,
             subject=None,
@@ -289,6 +291,182 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual("notes/math/demo/chapters/02-rehomed.typ", node["provenance"]["authority"])
         self.assertEqual("Durable agent summary.", node["text"])
         self.assertIn(("sigma-algebra", "prerequisite-for", "measure-space"), state.edges)
+
+    def test_git_rename_in_incremental_scope_rehomes_nodes_and_references(self) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "user.email", "tests@example.test"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "user.name", "kgdistiller tests"], cwd=self.repo, check=True)
+        subprocess.run(["git", "add", "notes", "knowledge/sources.json"], cwd=self.repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "initial authority"], cwd=self.repo, check=True)
+        self.sync()
+
+        entry = self.repo / "knowledge/build/rename-entry.json"
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text(
+            json.dumps(
+                {
+                    "schema": "qlkg-agent-delta-v2",
+                    "nodes": [{"id": "sigma-algebra", "text": "Durable entry."}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, self.database, self.typst_registry, entry)
+
+        renamed = self.chapter.with_name("01-renamed-foundations.typ")
+        subprocess.run(
+            ["git", "mv", str(self.chapter.relative_to(self.repo)), str(renamed.relative_to(self.repo))],
+            cwd=self.repo,
+            check=True,
+        )
+        state, _, report = self.sync(
+            files=[Path("notes/math/demo/chapters/01-renamed-foundations.typ")]
+        )
+
+        self.assertEqual(
+            "notes/math/demo/chapters/01-renamed-foundations.typ",
+            state.nodes["sigma-algebra"]["provenance"]["authority"],
+        )
+        self.assertEqual("active", state.nodes["sigma-algebra"]["properties"]["source_status"])
+        self.assertEqual("Durable entry.", state.nodes["sigma-algebra"]["text"])
+        self.assertEqual(
+            "notes/math/demo/chapters/01-renamed-foundations.typ",
+            state.references[0]["authority"],
+        )
+        self.assertEqual(
+            ["notes/math/demo/chapters/01-foundations.typ"],
+            report["source_changes"]["deleted"],
+        )
+        self.assertEqual(
+            ["notes/math/demo/chapters/01-renamed-foundations.typ"],
+            report["source_changes"]["added"],
+        )
+        self.assertFalse(
+            self.graph.joinpath(
+                "entries/by-source/notes/math/demo/chapters/01-foundations.typ.jsonl"
+            ).exists()
+        )
+
+    def test_definition_change_marks_entries_and_edges_for_review(self) -> None:
+        self.sync()
+        delta = self.repo / "knowledge/build/reviewed.json"
+        delta.parent.mkdir(parents=True, exist_ok=True)
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "qlkg-agent-delta-v2",
+                    "nodes": [
+                        {"id": "sigma-algebra", "text": "Reviewed sigma entry."},
+                        {"id": "measure-space", "text": "Reviewed measure entry."},
+                    ],
+                    "edges": [
+                        {
+                            "source": "sigma-algebra",
+                            "relation": "prerequisite-for",
+                            "target": "measure-space",
+                            "evidence": "A measure space uses a sigma-algebra.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        self.chapter.write_text(
+            self.chapter.read_text(encoding="utf-8").replace(
+                "A family of sets closed under complement and countable union.",
+                "A revised family of sets closed under complements and countable unions.",
+            ),
+            encoding="utf-8",
+        )
+
+        state, _, report = self.sync(
+            files=[Path("notes/math/demo/chapters/01-foundations.typ")]
+        )
+
+        self.assertEqual("needs-review", state.nodes["sigma-algebra"]["properties"]["curation_status"])
+        self.assertEqual("current", state.nodes["measure-space"]["properties"]["curation_status"])
+        edge = state.edges[("sigma-algebra", "prerequisite-for", "measure-space")]
+        self.assertEqual("needs-review", edge["curation_status"])
+        self.assertEqual(["sigma-algebra"], edge["stale_endpoints"])
+        self.assertEqual({"nodes": 1, "edges": 1}, report["needs_review"])
+
+        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        refreshed = knowledge.load_state(self.graph)
+        self.assertEqual("current", refreshed.nodes["sigma-algebra"]["properties"]["curation_status"])
+        self.assertEqual(
+            "current",
+            refreshed.edges[("sigma-algebra", "prerequisite-for", "measure-space")]["curation_status"],
+        )
+
+    def test_ref_only_change_does_not_stale_node_curation(self) -> None:
+        self.sync()
+        delta = self.repo / "knowledge/build/ref-only.json"
+        delta.parent.mkdir(parents=True, exist_ok=True)
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "qlkg-agent-delta-v2",
+                    "nodes": [
+                        {"id": "sigma-algebra", "text": "Reviewed sigma entry."},
+                        {"id": "measure-space", "text": "Reviewed measure entry."},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        self.chapter.write_text(
+            self.chapter.read_text(encoding="utf-8").replace(
+                "Later we use #ref[measure space].\n", ""
+            ),
+            encoding="utf-8",
+        )
+
+        state, _, _ = self.sync(
+            files=[Path("notes/math/demo/chapters/01-foundations.typ")]
+        )
+
+        self.assertEqual([], state.references)
+        self.assertEqual("current", state.nodes["sigma-algebra"]["properties"]["curation_status"])
+        self.assertEqual("current", state.nodes["measure-space"]["properties"]["curation_status"])
+
+    def test_explicit_name_reconciliation_preserves_stable_node_id(self) -> None:
+        self.sync()
+        delta = self.repo / "knowledge/build/name-entry.json"
+        delta.parent.mkdir(parents=True, exist_ok=True)
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "qlkg-agent-delta-v2",
+                    "nodes": [{"id": "sigma-algebra", "text": "Reviewed identity entry."}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        state = knowledge.load_state(self.graph)
+        result = knowledge.reconcile_node_name(
+            state, self.identities, "sigma-algebra", "sigma field"
+        )
+        self.assertEqual("sigma-algebra", result["id"])
+        self.chapter.write_text(
+            self.chapter.read_text(encoding="utf-8").replace(
+                "#kn[$sigma$-algebra]", "#kn[sigma field]"
+            ),
+            encoding="utf-8",
+        )
+
+        state, _, _ = self.sync(
+            files=[Path("notes/math/demo/chapters/01-foundations.typ")]
+        )
+
+        self.assertIn("sigma-algebra", state.nodes)
+        self.assertNotIn("sigma-field", state.nodes)
+        self.assertEqual("σ field", state.nodes["sigma-algebra"]["label"])
+        self.assertIn("σ-algebra", state.nodes["sigma-algebra"]["properties"]["aliases"])
+        self.assertEqual("Reviewed identity entry.", state.nodes["sigma-algebra"]["text"])
+        self.assertEqual("needs-review", state.nodes["sigma-algebra"]["properties"]["curation_status"])
 
     def test_multiple_explicit_kn_markers_in_one_title_create_multiple_nodes(self) -> None:
         self.chapter.write_text(
@@ -707,8 +885,8 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertFalse(report["required_refs"][0]["covered"])
 
         application.write_text(
-            "= Application\n#theorem(title: [#kn[completion theorem]])["
-            "By #ref[$sigma$-algebra], a completion exists.]\n",
+            "= Application\n#theorem(title: [#kn[completion theorem]])[A completion exists.]\n"
+            "By #ref[$sigma$-algebra], the construction can proceed.\n",
             encoding="utf-8",
         )
         state, _, _ = self.sync(files=[Path(application_authority)])

@@ -80,6 +80,29 @@ kgdistiller search "measure space"
 kgdistiller serve
 ```
 
+Synchronization remembers the Git revision and source hashes behind the last
+snapshot. Deleted paths and both sides of a Git rename are included in the next
+scope, so an unchanged `kn` is rehomed instead of duplicated and obsolete refs
+are retired. An exact-content rename is also recognized before it is staged.
+
+Each definition occurrence carries a hash of its enclosing authored statement.
+Changing only a ref outside that statement rebuilds backlinks without affecting
+node curation. Changing the definition keeps the stable node and its Agent data,
+but marks its entry and affected semantic edges `needs-review` until a reviewed
+delta refreshes them.
+
+An authored-name change is intentionally never inferred from line position or a
+Git hunk. Record that identity decision explicitly before synchronizing:
+
+```sh
+kgdistiller reconcile rename-node sigma-algebra "sigma field"
+kgdistiller sync --file notes/chapter.typ
+```
+
+The command writes `knowledge/identities.json` using the
+`qlkg-identities-v1` schema. The old machine ID remains stable, the old authored
+name becomes an alias, and the definition change still requires curation review.
+
 `serve` opens <http://127.0.0.1:8765/>. It exposes the graph and bounded source
 excerpts only to the local machine unless another host is explicitly selected.
 
