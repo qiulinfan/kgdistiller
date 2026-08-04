@@ -95,24 +95,29 @@ notes. Agent integrations use a reviewable workflow:
 5. validate the source diff and graph delta;
 6. apply, synchronize, and run file-level curation checks.
 
-The repository includes a reusable Agent Skill at
-[`skills/kgdistiller/SKILL.md`](skills/kgdistiller/SKILL.md). It works with
-repository-aware coding agents instead of coupling the graph engine to one model
-provider. Review-first operation is the default; fully automatic application is
-an explicit user choice.
+The reusable
+[`kgdistiller-distill` Agent Skill](https://github.com/qiulinfan/qiulinfan.github.io/tree/main/skills/kgdistiller-distill)
+is maintained in the author's public knowledge repository, which is the single
+authority for all of their Skills. Local Codex and kgdistiller development
+checkouts consume it through symlinks. The Skill works with repository-aware
+coding agents instead of coupling the graph engine to one model provider.
+Review-first operation is the default; fully automatic application is an
+explicit user choice.
 
 ## Use as a Git submodule
 
 Keeping the engine separate from personal data is a first-class workflow:
 
 ```sh
-git submodule add https://github.com/qiulinfan/kgdistiller.git vendor/kgdistiller
+git submodule add -b main https://github.com/qiulinfan/kgdistiller.git vendor/kgdistiller
+git submodule update --remote --merge vendor/kgdistiller
 PYTHONPATH=vendor/kgdistiller/src python3 -m kgdistiller --repo-root . sync
 ```
 
 The host repository owns `knowledge/sources.json`, `knowledge/graph/`, the source
-documents, and any site integration. The submodule owns scanners, schemas,
-validation, Agent workflow instructions, and the local browser.
+documents, Skills, and any site integration. The submodule owns scanners,
+schemas, validation, and the local browser. A host that wants a moving engine
+can track `main` and update the submodule before local use or deployment.
 
 ## Compatibility
 
