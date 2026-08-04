@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ingest into kgdistiller"
+  short_description: "Apply reviewed source-backed knowledge updates safely"
+  default_prompt: "Use $ingest-kgdistiller to apply this reviewed knowledge update and return a validated receipt."

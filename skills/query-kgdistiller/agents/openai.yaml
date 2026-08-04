@@ -1,0 +1,4 @@
+interface:
+  display_name: "Query kgdistiller"
+  short_description: "Query and align an external-brain knowledge graph"
+  default_prompt: "Use $query-kgdistiller to resolve these concepts against the external-brain graph without modifying it."

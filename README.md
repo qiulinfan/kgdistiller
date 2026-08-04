@@ -242,26 +242,29 @@ for the snapshot contract, planned retrieval pipeline, token-budget context
 bundles, MCP tools, paper comparison statuses, security boundaries, and phased
 implementation plan.
 
-## Agentic distillation
+## Agent Skills
 
-The deterministic engine does not silently ask a hosted model to rewrite your
-notes. Agent integrations use a reviewable workflow:
+kgdistiller ships two narrow, provider-neutral Agent Skills alongside the
+engine:
 
-1. scan one changed authority and inspect its existing graph neighborhood;
-2. preserve author-written markers;
-3. propose any missing `kn` and meaningful cross-file `ref` markers;
-4. distill source-grounded entries and direct semantic edges;
-5. validate the source diff and graph delta;
-6. apply, synchronize, and run file-level curation checks.
+- [`query-kgdistiller`](skills/query-kgdistiller/SKILL.md) performs only batch
+  resolution, bounded GraphRAG retrieval, candidate alignment, and graph
+  comparison. It never reads raw graph files into model context and never
+  mutates a knowledge project.
+- [`ingest-kgdistiller`](skills/ingest-kgdistiller/SKILL.md) is the guarded write
+  boundary for already reviewed authority markers, refs, entries, mappings,
+  and semantic edges. It does not discover concepts or decide ambiguous
+  identity.
 
-The reusable
-[`kgdistiller-distill` Agent Skill](https://github.com/qiulinfan/qiulinfan.github.io/tree/main/skills/kgdistiller-distill)
-is maintained in the author's public knowledge repository, which is the single
-authority for all of their Skills. Local Codex and kgdistiller development
-checkouts consume it through symlinks. The Skill works with repository-aware
-coding agents instead of coupling the graph engine to one model provider.
-Review-first operation is the default; fully automatic application is an
-explicit user choice.
+Host-specific extraction Skills produce candidates and call these two engine
+Skills. A note exporter normally queries, turns known concepts into refs, then
+requests ingestion before publishing. A paper extractor queries before writing
+full entries and returns a cross-namespace snapshot by default; it requests
+ingestion only when the user explicitly authorizes import.
+
+This separation keeps model-specific semantic reading outside the deterministic
+core while preventing each host Skill from loading or reimplementing the whole
+knowledge graph. Review-first operation remains the default.
 
 ## Use as a Git submodule
 
@@ -273,10 +276,11 @@ git submodule update --remote --merge vendor/kgdistiller
 PYTHONPATH=vendor/kgdistiller/src python3 -m kgdistiller --repo-root . sync
 ```
 
-The host repository owns `knowledge/sources.json`, `knowledge/graph/`, the source
-documents, Skills, and any site integration. The submodule owns scanners,
-schemas, validation, and the local browser. A host that wants a moving engine
-can track `main` and update the submodule before local use or deployment.
+The host repository owns `knowledge/sources.json`, `knowledge/graph/`, source
+documents, domain extraction Skills, and site integration. The submodule owns
+scanners, schemas, validation, the local browser, and the query/ingest Skills.
+A host that wants a moving engine can track `main` and update the submodule
+before local use or deployment.
 
 ## Compatibility
 
