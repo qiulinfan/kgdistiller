@@ -136,6 +136,10 @@ kgdistiller agent expand measure-space --direction incoming --depth 2
 kgdistiller agent context "How does a measure depend on a sigma algebra?" \
   --budget 6000 --depth 2
 kgdistiller agent compare knowledge/build/paper.snapshot.json
+kgdistiller agent propose knowledge/build/paper.snapshot.json \
+  --target-authority notes/research/paper.md \
+  --output knowledge/reviews/paper.proposal.json \
+  --delta-output knowledge/reviews/paper.delta.json
 ```
 
 The index stores nodes, normalized IDs/labels/aliases, structured entry text,
@@ -172,17 +176,32 @@ A typical MCP client entry is:
 ```
 
 The server exposes `kg_status`, `kg_resolve_concepts`, `kg_search`,
-`kg_get_node`, `kg_expand`, `kg_build_context`, and `kg_compare_graph`. All tools are declared
-read-only and return both structured JSON and a backwards-compatible text
-content block. The implementation uses newline-delimited stdio JSON-RPC,
-supports stable MCP revisions through `2025-11-25`, bounds messages and tool
-arguments, and never writes logs to protocol stdout.
+`kg_get_node`, `kg_expand`, `kg_build_context`, `kg_compare_graph`, and
+`kg_create_proposal`. All tools are declared read-only and return both
+structured JSON and a backwards-compatible text content block. The
+implementation uses newline-delimited stdio JSON-RPC, supports stable MCP
+revisions through `2025-11-25`, bounds messages and tool arguments, and never
+writes logs to protocol stdout.
 
 Paper snapshots use an isolated namespace such as `paper:<digest>`. Comparison
 never imports them into `personal`: deterministic ID/label/alias resolution,
 missing entries and aligned relations, and optional structured claims produce
 `known`, `partial`, `new`, `conflict`, or `uncertain` results with evidence.
 Ambiguous labels remain uncertain; similarity is never promoted into identity.
+
+`agent propose` turns the comparison into `qlkg-agent-proposal-v1`. New concepts
+receive native marker suggestions but are blocked from the delta until an
+authority marker is reviewed. Conflicts and uncertain identities become review
+operations. Safe entry and edge candidates are copied into a separate
+`qlkg-agent-delta-v2` preview. The command does not apply it; after review, use
+the existing guarded workflow explicitly:
+
+```sh
+kgdistiller apply knowledge/reviews/paper.delta.json
+kgdistiller sync
+kgdistiller curate-check --file notes/research/paper.md
+kgdistiller check
+```
 
 See [the Agentic Knowledge Base specification](docs/agentic-knowledge-base-spec.md)
 for the snapshot contract, planned retrieval pipeline, token-budget context

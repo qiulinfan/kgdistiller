@@ -64,6 +64,7 @@ class MCPServerTest(unittest.TestCase):
                 "kg_expand",
                 "kg_build_context",
                 "kg_compare_graph",
+                "kg_create_proposal",
             ],
             names,
         )
@@ -133,6 +134,31 @@ class MCPServerTest(unittest.TestCase):
         self.assertFalse(result["isError"])
         self.assertEqual(1, result["structuredContent"]["summary"]["new"])
         self.assertEqual("paper:fixture", result["structuredContent"]["candidate"]["namespace"])
+
+    def test_proposal_tool_generates_review_data_without_writing(self) -> None:
+        server = MCPServer(self.database)
+        self.initialize(server)
+        before = self.database.read_bytes()
+
+        response = server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "kg_create_proposal",
+                    "arguments": {
+                        "candidate_snapshot": candidate_snapshot(),
+                        "target_authority": "notes/research/paper.md",
+                    },
+                },
+            }
+        )
+
+        result = response["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual("qlkg-agent-proposal-v1", result["structuredContent"]["schema"])
+        self.assertEqual(before, self.database.read_bytes())
 
     def test_stdio_is_newline_delimited_json_rpc_without_notification_output(self) -> None:
         messages = [

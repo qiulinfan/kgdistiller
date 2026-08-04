@@ -2852,6 +2852,12 @@ def parse_args() -> argparse.Namespace:
     compare_command = agent_commands.add_parser("compare")
     compare_command.add_argument("candidate", type=Path)
     compare_command.add_argument("--target-namespace", default="personal")
+    propose_command = agent_commands.add_parser("propose")
+    propose_command.add_argument("candidate", type=Path)
+    propose_command.add_argument("--target-namespace", default="personal")
+    propose_command.add_argument("--target-authority")
+    propose_command.add_argument("--output", type=Path)
+    propose_command.add_argument("--delta-output", type=Path)
     commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -3050,8 +3056,10 @@ def main() -> int:
             return 0
         if args.command == "agent":
             from kgdistiller.agent import (
+                PROPOSAL_SCHEMA,
                 build_context_bundle,
                 compare_graph,
+                create_proposal,
                 expand_index,
                 get_index_node,
                 index_status,
@@ -3111,7 +3119,7 @@ def main() -> int:
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
                 )
-            else:
+            elif args.agent_command == "compare":
                 candidate_path = (
                     args.candidate.resolve()
                     if args.candidate.is_absolute()
@@ -3121,6 +3129,49 @@ def main() -> int:
                     database,
                     read_json(candidate_path, {}),
                     target_namespace=args.target_namespace,
+                )
+            else:
+                candidate_path = (
+                    args.candidate.resolve()
+                    if args.candidate.is_absolute()
+                    else (repo_root / args.candidate).resolve()
+                )
+                proposal = create_proposal(
+                    database,
+                    read_json(candidate_path, {}),
+                    target_namespace=args.target_namespace,
+                    target_authority=args.target_authority,
+                )
+                written: dict[str, str] = {}
+                if args.output:
+                    output = (
+                        args.output.resolve()
+                        if args.output.is_absolute()
+                        else (repo_root / args.output).resolve()
+                    )
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write(output, pretty_json(proposal))
+                    written["proposal"] = str(output)
+                if args.delta_output:
+                    delta_output = (
+                        args.delta_output.resolve()
+                        if args.delta_output.is_absolute()
+                        else (repo_root / args.delta_output).resolve()
+                    )
+                    delta_output.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write(delta_output, pretty_json(proposal["delta_preview"]))
+                    written["delta"] = str(delta_output)
+                result = (
+                    {
+                        "schema": PROPOSAL_SCHEMA,
+                        "proposal_sha256": proposal["proposal_sha256"],
+                        "comparison_summary": proposal["comparison_summary"],
+                        "delta_ready": proposal["delta_ready"],
+                        "fully_resolved": proposal["fully_resolved"],
+                        "written": written,
+                    }
+                    if written
+                    else proposal
                 )
             print(pretty_json(result), end="")
             return 0

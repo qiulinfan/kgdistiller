@@ -13,6 +13,7 @@ from .agent import (
     build_context_bundle,
     canonical_json,
     compare_graph,
+    create_proposal,
     expand_index,
     get_index_node,
     index_status,
@@ -181,6 +182,20 @@ TOOL_DEFINITIONS = [
         ),
         "annotations": READ_ONLY_ANNOTATIONS,
     },
+    {
+        "name": "kg_create_proposal",
+        "title": "Create Knowledge Review Proposal",
+        "description": "Create a deterministic review package and delta preview without writing authority data.",
+        "inputSchema": _object_schema(
+            {
+                "candidate_snapshot": {"type": "object"},
+                "target_namespace": {"type": "string", "default": "personal"},
+                "target_authority": {"type": "string"},
+            },
+            ["candidate_snapshot"],
+        ),
+        "annotations": READ_ONLY_ANNOTATIONS,
+    },
 ]
 
 
@@ -303,6 +318,17 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
             database,
             dict(arguments["candidate_snapshot"]),
             target_namespace=str(arguments.get("target_namespace", "personal")),
+        )
+    if name == "kg_create_proposal":
+        return create_proposal(
+            database,
+            dict(arguments["candidate_snapshot"]),
+            target_namespace=str(arguments.get("target_namespace", "personal")),
+            target_authority=(
+                str(arguments["target_authority"])
+                if arguments.get("target_authority")
+                else None
+            ),
         )
     return build_context_bundle(
         database,

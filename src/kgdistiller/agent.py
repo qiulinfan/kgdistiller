@@ -11,7 +11,7 @@ import tempfile
 import unicodedata
 from collections import deque
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 
 SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
@@ -28,6 +28,7 @@ MAX_GRAPH_DEPTH = 5
 MAX_CONTEXT_BUDGET = 200_000
 CONTEXT_SCHEMA = "qlkg-context-bundle-v1"
 COMPARISON_SCHEMA = "qlkg-graph-comparison-v1"
+PROPOSAL_SCHEMA = "qlkg-agent-proposal-v1"
 DEFAULT_SEMANTIC_RELATIONS = {
     "prerequisite-for",
     "implies",
@@ -39,6 +40,52 @@ DEFAULT_SEMANTIC_RELATIONS = {
 
 class AgentIndexError(ValueError):
     """Raised when an Agent snapshot or derived index is invalid."""
+
+
+class EmbeddingProvider(Protocol):
+    """Optional semantic candidate provider; never an identity authority."""
+
+    name: str
+    model: str
+    dimensions: int
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        ...
+
+
+class RerankProvider(Protocol):
+    """Optional provider for ordering already-retrieved candidates."""
+
+    name: str
+    model: str
+
+    def rerank(
+        self, query: str, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        ...
+
+
+class TokenEstimator(Protocol):
+    """Optional tokenizer-specific budget estimator."""
+
+    name: str
+
+    def count(self, text: str) -> int:
+        ...
+
+
+class CandidateAnalyzer(Protocol):
+    """Optional analyzer that may propose, but never commit, alignments."""
+
+    name: str
+
+    def compare(
+        self,
+        candidate: dict[str, Any],
+        target: dict[str, Any],
+        evidence: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        ...
 
 
 def canonical_json(value: Any) -> str:
@@ -186,6 +233,17 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX refs_target
             ON refs(namespace, target, authority, line);
+        CREATE TABLE embeddings (
+            namespace TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            PRIMARY KEY (namespace, node_id, provider, model),
+            FOREIGN KEY (namespace, node_id) REFERENCES nodes(namespace, id)
+        );
         """
     )
 
@@ -219,6 +277,13 @@ def write_agent_index(path: Path, snapshot: dict[str, Any]) -> None:
             "namespace": namespace,
             "counts": counts,
             "retrieval_lanes": ["exact", "fts", "graph"],
+            "provider_config_sha256": None,
+            "providers": {
+                "embedding": None,
+                "reranker": None,
+                "token_estimator": "conservative-char-v1",
+                "candidate_analyzer": None,
+            },
         }
         connection.executemany(
             "INSERT INTO index_meta(key, value) VALUES (?, ?)",
@@ -1282,3 +1347,185 @@ def compare_graph(
         "results": results,
         "summary": summary,
     }
+
+
+def _marker_suggestions(label: str) -> dict[str, str]:
+    return {
+        "markdown": f"--[[{label}]]--",
+        "typst": f"#kn[{label}]",
+        "latex": f"\\kn{{{label}}}",
+    }
+
+
+def _candidate_by_id(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(node["id"]): node
+        for node in snapshot.get("nodes") or []
+    }
+
+
+def create_proposal(
+    path: Path,
+    candidate_snapshot: dict[str, Any],
+    *,
+    target_namespace: str = "personal",
+    target_authority: str | None = None,
+) -> dict[str, Any]:
+    """Create a deterministic review package without mutating authority data."""
+    comparison = compare_graph(
+        path,
+        candidate_snapshot,
+        target_namespace=target_namespace,
+    )
+    candidates = _candidate_by_id(candidate_snapshot)
+    operations: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    delta_nodes: dict[str, dict[str, Any]] = {}
+    delta_edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    for record in comparison["results"]:
+        candidate_id = str(record["candidate"]["id"])
+        candidate = candidates[candidate_id]
+        status_name = str(record["status"])
+        if status_name == "new":
+            label = str(candidate.get("label", candidate_id))
+            operation: dict[str, Any] = {
+                "op": "propose-node",
+                "candidate": {
+                    "namespace": candidate_snapshot["namespace"],
+                    "id": candidate_id,
+                },
+                "label": label,
+                "markers": _marker_suggestions(label),
+                "content": {
+                    "text": str(candidate.get("text", "")),
+                    "entry": candidate.get("entry") or {},
+                },
+                "evidence": record.get("evidence") or [],
+                "requires_source_marker": True,
+            }
+            if target_authority:
+                operation["target_authority"] = target_authority
+            operations.append(operation)
+            blockers.append(
+                {
+                    "code": "source-marker-required",
+                    "candidate_id": candidate_id,
+                    "message": "Add and review an authority marker before applying node curation.",
+                }
+            )
+            continue
+        if status_name == "uncertain":
+            operations.append(
+                {
+                    "op": "review-identity",
+                    "candidate": record["candidate"],
+                    "matches": record.get("matches") or [],
+                    "evidence": record.get("evidence") or [],
+                }
+            )
+            blockers.append(
+                {
+                    "code": "identity-review-required",
+                    "candidate_id": candidate_id,
+                    "message": "Ambiguous identity cannot be applied automatically.",
+                }
+            )
+            continue
+        if status_name == "conflict":
+            operations.append(
+                {
+                    "op": "review-conflict",
+                    "candidate": record["candidate"],
+                    "matches": record.get("matches") or [],
+                    "conflicts": record.get("conflicts") or [],
+                    "evidence": record.get("evidence") or [],
+                }
+            )
+            blockers.append(
+                {
+                    "code": "conflict-review-required",
+                    "candidate_id": candidate_id,
+                    "message": "Conflicting source-backed claims require a human decision.",
+                }
+            )
+            continue
+        if status_name != "partial":
+            continue
+
+        target_id = str(record["matches"][0]["id"])
+        missing_entry = any(
+            item.get("kind") in {"entry", "curation"}
+            for item in record.get("missing") or []
+        )
+        if missing_entry and (
+            str(candidate.get("text", "")).strip() or candidate.get("entry")
+        ):
+            node_delta: dict[str, Any] = {
+                "id": target_id,
+                "text": str(candidate.get("text", "")),
+                "properties": {"origin": "agent-paper-comparison"},
+            }
+            if isinstance(candidate.get("entry"), dict) and candidate["entry"]:
+                node_delta["entry"] = candidate["entry"]
+            delta_nodes[target_id] = node_delta
+            operations.append(
+                {
+                    "op": "propose-entry",
+                    "target_id": target_id,
+                    "candidate_id": candidate_id,
+                    "delta": node_delta,
+                    "evidence": record.get("evidence") or [],
+                }
+            )
+        for missing in record.get("missing") or []:
+            if missing.get("kind") != "edge":
+                continue
+            key = (
+                str(missing["source"]),
+                str(missing["relation"]),
+                str(missing["target"]),
+            )
+            edge_delta = {
+                "source": key[0],
+                "relation": key[1],
+                "target": key[2],
+                "origin": "agent-paper-comparison",
+                "confidence": "medium",
+                "evidence": str(missing.get("evidence", "")),
+            }
+            delta_edges[key] = edge_delta
+            operations.append(
+                {
+                    "op": "propose-edge",
+                    "candidate_id": candidate_id,
+                    "delta": edge_delta,
+                }
+            )
+
+    delta_preview = {
+        "schema": "qlkg-agent-delta-v2",
+        "remove_nodes": [],
+        "nodes": [delta_nodes[key] for key in sorted(delta_nodes)],
+        "edges": [delta_edges[key] for key in sorted(delta_edges)],
+        "remove_edges": [],
+    }
+    proposal: dict[str, Any] = {
+        "schema": PROPOSAL_SCHEMA,
+        "candidate": comparison["candidate"],
+        "target": comparison["target"],
+        "comparison_sha256": sha256_json(comparison),
+        "comparison_summary": comparison["summary"],
+        "operations": operations,
+        "delta_preview": delta_preview,
+        "blockers": blockers,
+        "delta_ready": bool(delta_preview["nodes"] or delta_preview["edges"]),
+        "fully_resolved": not blockers,
+        "instructions": [
+            "Review source-marker, identity, and conflict operations.",
+            "Review delta_preview and save it as a qlkg-agent-delta-v2 file.",
+            "Run kgdistiller apply, sync, curate-check, and check explicitly.",
+        ],
+    }
+    proposal["proposal_sha256"] = sha256_json(proposal)
+    return proposal

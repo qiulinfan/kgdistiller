@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +17,7 @@ from kgdistiller.agent import (  # noqa: E402
     AgentIndexError,
     build_context_bundle,
     compare_graph,
+    create_proposal,
     estimate_tokens,
     expand_index,
     get_index_node,
@@ -181,6 +185,7 @@ class AgentIndexTest(unittest.TestCase):
         try:
             self.assertEqual(1, connection.execute("SELECT count(*) FROM edges").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT count(*) FROM refs").fetchone()[0])
+            self.assertEqual(0, connection.execute("SELECT count(*) FROM embeddings").fetchone()[0])
             self.assertEqual(
                 "Beta explicitly requires alpha.",
                 connection.execute("SELECT evidence FROM edges").fetchone()[0],
@@ -324,6 +329,87 @@ class AgentIndexTest(unittest.TestCase):
                 {key: value for key, value in same_namespace.items() if key != "snapshot_sha256"}
             )
             compare_graph(self.database, same_namespace)
+
+    def test_proposal_separates_safe_delta_from_review_blockers(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+
+        first = create_proposal(
+            self.database,
+            candidate_snapshot(),
+            target_authority="notes/research/paper.md",
+        )
+        second = create_proposal(
+            self.database,
+            candidate_snapshot(),
+            target_authority="notes/research/paper.md",
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual("qlkg-agent-proposal-v1", first["schema"])
+        self.assertTrue(first["delta_ready"])
+        self.assertFalse(first["fully_resolved"])
+        self.assertEqual(
+            ["conflict-review-required", "identity-review-required", "source-marker-required"],
+            sorted(blocker["code"] for blocker in first["blockers"]),
+        )
+        operation_names = {operation["op"] for operation in first["operations"]}
+        self.assertEqual(
+            {"propose-edge", "propose-node", "review-conflict", "review-identity"},
+            operation_names,
+        )
+        new_operation = next(
+            operation for operation in first["operations"] if operation["op"] == "propose-node"
+        )
+        self.assertEqual("notes/research/paper.md", new_operation["target_authority"])
+        self.assertEqual("--[[Novel paper concept]]--", new_operation["markers"]["markdown"])
+        delta = first["delta_preview"]
+        self.assertEqual("qlkg-agent-delta-v2", delta["schema"])
+        self.assertEqual([], delta["nodes"])
+        self.assertEqual("derived-from", delta["edges"][0]["relation"])
+        digest_payload = dict(first)
+        digest = digest_payload.pop("proposal_sha256")
+        self.assertEqual(sha256_json(digest_payload), digest)
+
+    def test_proposal_cli_writes_review_and_delta_files(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+        candidate = self.root / "paper.snapshot.json"
+        candidate.write_text(
+            json.dumps(candidate_snapshot(), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        proposal = self.root / "reviews/paper.proposal.json"
+        delta = self.root / "reviews/paper.delta.json"
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "kgdistiller",
+                "--repo-root",
+                str(self.root),
+                "--database",
+                str(self.database.relative_to(self.root)),
+                "agent",
+                "propose",
+                str(candidate),
+                "--output",
+                str(proposal),
+                "--delta-output",
+                str(delta),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual("qlkg-agent-proposal-v1", report["schema"])
+        self.assertEqual("qlkg-agent-proposal-v1", json.loads(proposal.read_text())["schema"])
+        self.assertEqual("qlkg-agent-delta-v2", json.loads(delta.read_text())["schema"])
 
 
 if __name__ == "__main__":

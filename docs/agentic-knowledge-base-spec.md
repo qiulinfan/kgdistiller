@@ -1,6 +1,6 @@
 # kgdistiller Agentic Knowledge Base Specification
 
-Status: Draft v0.1; Phases 1-5 implemented
+Status: Implemented v0.1 deterministic baseline; Phases 1-6 complete
 Contract owner: kgdistiller deterministic core  
 Initial implementation target: local single-user research repositories
 
