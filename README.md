@@ -149,6 +149,34 @@ whose nodes, edge evidence, backlinks, sources, omissions, and retrieval paths
 fit the requested conservative token budget; it does not ask an LLM to generate
 an answer.
 
+### Connect an Agent over MCP
+
+Start the read-only stdio server with the repository and generated index paths:
+
+```sh
+kgdistiller --repo-root /absolute/path/to/notes mcp
+```
+
+A typical MCP client entry is:
+
+```json
+{
+  "mcpServers": {
+    "kgdistiller": {
+      "command": "kgdistiller",
+      "args": ["--repo-root", "/absolute/path/to/notes", "mcp"]
+    }
+  }
+}
+```
+
+The server exposes `kg_status`, `kg_resolve_concepts`, `kg_search`,
+`kg_get_node`, `kg_expand`, and `kg_build_context`. All tools are declared
+read-only and return both structured JSON and a backwards-compatible text
+content block. The implementation uses newline-delimited stdio JSON-RPC,
+supports stable MCP revisions through `2025-11-25`, bounds messages and tool
+arguments, and never writes logs to protocol stdout.
+
 See [the Agentic Knowledge Base specification](docs/agentic-knowledge-base-spec.md)
 for the snapshot contract, planned retrieval pipeline, token-budget context
 bundles, MCP tools, paper comparison statuses, security boundaries, and phased

@@ -2849,6 +2849,7 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument("--include-taxonomy", action="store_true")
     context_command.add_argument("--include-stale", action="store_true")
     context_command.add_argument("--include-orphaned", action="store_true")
+    commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
@@ -3038,6 +3039,11 @@ def main() -> int:
                 port=args.port,
                 open_browser=not args.no_open,
             )
+            return 0
+        if args.command == "mcp":
+            from kgdistiller.mcp import serve_stdio
+
+            serve_stdio(database)
             return 0
         if args.command == "agent":
             from kgdistiller.agent import (
