@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from kgdistiller.agent import (  # noqa: E402
     AgentIndexError,
     build_context_bundle,
+    compare_graph,
     estimate_tokens,
     expand_index,
     get_index_node,
@@ -43,6 +44,7 @@ def fixture_snapshot() -> dict:
                 "entry": {
                     "summary": "Alpha summary.",
                     "common_confusions": ["Not the coefficient alpha."],
+                    "claims": {"dimension": 1},
                 },
                 "properties": {
                     "aliases": ["First concept", "Α"],
@@ -84,6 +86,74 @@ def fixture_snapshot() -> dict:
                 "context": "beta",
             }
         ],
+        "diagnostics": {"errors": [], "warnings": []},
+    }
+    payload["snapshot_sha256"] = sha256_json(payload)
+    return payload
+
+
+def candidate_snapshot() -> dict:
+    payload = {
+        "schema": "qlkg-agent-snapshot-v1",
+        "namespace": "paper:fixture",
+        "graph": {
+            "schema": "qlkg-v2",
+            "sha256": "b" * 64,
+            "counts": {"nodes": 5, "edges": 2, "references": 0},
+        },
+        "nodes": [
+            {
+                "id": "alpha",
+                "type": "knowledge",
+                "label": "Alpha in the paper",
+                "text": "A conflicting alpha claim.",
+                "entry": {"claims": {"dimension": 2}},
+                "properties": {"aliases": []},
+            },
+            {
+                "id": "beta",
+                "type": "knowledge",
+                "label": "Beta in the paper",
+                "text": "The paper's beta entry.",
+                "properties": {"aliases": []},
+            },
+            {
+                "id": "novel",
+                "type": "knowledge",
+                "label": "Novel paper concept",
+                "text": "Not present in the personal graph.",
+                "properties": {"aliases": []},
+            },
+            {
+                "id": "ambiguous-paper-node",
+                "type": "knowledge",
+                "label": "Shared concept",
+                "text": "The label maps to two personal nodes.",
+                "properties": {"aliases": []},
+            },
+            {
+                "id": "paper-alpha",
+                "type": "knowledge",
+                "label": "First concept",
+                "text": "An alias-backed known concept.",
+                "properties": {"aliases": []},
+            },
+        ],
+        "edges": [
+            {
+                "source": "paper-alpha",
+                "relation": "prerequisite-for",
+                "target": "beta",
+                "evidence": "Matches the personal relation.",
+            },
+            {
+                "source": "beta",
+                "relation": "derived-from",
+                "target": "alpha",
+                "evidence": "Missing from the personal graph.",
+            },
+        ],
+        "references": [],
         "diagnostics": {"errors": [], "warnings": []},
     }
     payload["snapshot_sha256"] = sha256_json(payload)
@@ -221,6 +291,39 @@ class AgentIndexTest(unittest.TestCase):
             self.assertIn(edge["target"], node_ids)
         with self.assertRaisesRegex(AgentIndexError, "budget-too-small"):
             build_context_bundle(self.database, "alpha", token_budget=10)
+
+    def test_candidate_graph_comparison_is_isolated_and_explainable(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+
+        comparison = compare_graph(self.database, candidate_snapshot())
+
+        self.assertEqual("qlkg-graph-comparison-v1", comparison["schema"])
+        self.assertEqual(
+            {
+                "known": 1,
+                "partial": 1,
+                "new": 1,
+                "conflict": 1,
+                "uncertain": 1,
+                "total": 5,
+            },
+            comparison["summary"],
+        )
+        by_id = {item["candidate"]["id"]: item for item in comparison["results"]}
+        self.assertEqual("conflict", by_id["alpha"]["status"])
+        self.assertEqual("claim", by_id["alpha"]["conflicts"][0]["kind"])
+        self.assertEqual("partial", by_id["beta"]["status"])
+        self.assertEqual("edge", by_id["beta"]["missing"][0]["kind"])
+        self.assertEqual("new", by_id["novel"]["status"])
+        self.assertEqual("uncertain", by_id["ambiguous-paper-node"]["status"])
+        self.assertEqual("known", by_id["paper-alpha"]["status"])
+        with self.assertRaisesRegex(AgentIndexError, "must be distinct"):
+            same_namespace = candidate_snapshot()
+            same_namespace["namespace"] = "personal"
+            same_namespace["snapshot_sha256"] = sha256_json(
+                {key: value for key, value in same_namespace.items() if key != "snapshot_sha256"}
+            )
+            compare_graph(self.database, same_namespace)
 
 
 if __name__ == "__main__":

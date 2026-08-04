@@ -27,6 +27,7 @@ MAX_LIMIT = 500
 MAX_GRAPH_DEPTH = 5
 MAX_CONTEXT_BUDGET = 200_000
 CONTEXT_SCHEMA = "qlkg-context-bundle-v1"
+COMPARISON_SCHEMA = "qlkg-graph-comparison-v1"
 DEFAULT_SEMANTIC_RELATIONS = {
     "prerequisite-for",
     "implies",
@@ -1072,3 +1073,212 @@ def build_context_bundle(
     if estimate_tokens(bundle) > token_budget:
         raise AgentIndexError("budget-too-small after context packing")
     return bundle
+
+
+def _candidate_matches(
+    path: Path,
+    candidate: dict[str, Any],
+    target_namespace: str,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    properties = candidate.get("properties") or {}
+    explicit_target = str(properties.get("target_id", "")).strip()
+    probes: list[tuple[str, str]] = []
+    if explicit_target:
+        probes.append((explicit_target, "explicit-target-id"))
+    probes.append((str(candidate.get("id", "")), "id"))
+    probes.append((str(candidate.get("label", "")), "label"))
+    probes.extend(
+        (str(alias), "alias")
+        for alias in properties.get("aliases", [])
+        if str(alias).strip()
+    )
+    matches: dict[str, dict[str, Any]] = {}
+    evidence: list[dict[str, Any]] = []
+    ambiguous = False
+    for probe, source in probes:
+        if not probe.strip():
+            continue
+        resolution = resolve_concepts(path, [probe], namespace=target_namespace)[0]
+        if resolution["status"] == "ambiguous":
+            ambiguous = True
+        for node in resolution.get("matches", []):
+            node_id = str(node["id"])
+            matches[node_id] = node
+            evidence.append(
+                {
+                    "kind": "identity-resolution",
+                    "probe": probe,
+                    "probe_source": source,
+                    "status": resolution["status"],
+                    "target_id": node_id,
+                }
+            )
+        if explicit_target and source == "explicit-target-id":
+            if len(matches) == 1:
+                return "matched", list(matches.values()), evidence
+            return "missing", [], evidence
+        if source == "id" and resolution["status"] == "exact":
+            return "matched", list(matches.values()), evidence
+    if len(matches) == 1 and not ambiguous:
+        return "matched", list(matches.values()), evidence
+    if matches or ambiguous:
+        return "ambiguous", list(matches.values()), evidence
+    return "missing", [], evidence
+
+
+def _claims(node: dict[str, Any]) -> dict[str, Any]:
+    entry = node.get("entry") or {}
+    claims = entry.get("claims") if isinstance(entry, dict) else None
+    return claims if isinstance(claims, dict) else {}
+
+
+def compare_graph(
+    path: Path,
+    candidate_snapshot: dict[str, Any],
+    *,
+    target_namespace: str = "personal",
+) -> dict[str, Any]:
+    """Compare an isolated candidate graph with a deterministic target index."""
+    candidate_namespace, _ = _validated_snapshot(candidate_snapshot)
+    _validate_namespace(target_namespace)
+    status = index_status(path)
+    if status.get("namespace") != target_namespace:
+        raise AgentIndexError(
+            f"target namespace is not indexed: {target_namespace!r}"
+        )
+    if candidate_namespace == target_namespace:
+        raise AgentIndexError("candidate and target namespaces must be distinct")
+
+    candidate_nodes = sorted(
+        candidate_snapshot.get("nodes") or [], key=lambda node: str(node.get("id", ""))
+    )
+    target_map: dict[str, str] = {}
+    records: dict[str, dict[str, Any]] = {}
+    for candidate in candidate_nodes:
+        candidate_id = str(candidate["id"])
+        match_status, matches, evidence = _candidate_matches(
+            path, candidate, target_namespace
+        )
+        match_records = [
+            {
+                "namespace": target_namespace,
+                "id": target["id"],
+                "label": target.get("label", ""),
+            }
+            for target in matches
+        ]
+        if match_status == "missing":
+            result_status = "new"
+        elif match_status == "ambiguous":
+            result_status = "uncertain"
+        else:
+            result_status = "known"
+            target_map[candidate_id] = str(matches[0]["id"])
+        records[candidate_id] = {
+            "candidate": {
+                "namespace": candidate_namespace,
+                "id": candidate_id,
+                "label": candidate.get("label", ""),
+            },
+            "status": result_status,
+            "matches": match_records,
+            "missing": [],
+            "conflicts": [],
+            "evidence": evidence,
+        }
+
+        if result_status != "known":
+            continue
+        target = matches[0]
+        if str(candidate.get("text", "")).strip() and not str(target.get("text", "")).strip():
+            records[candidate_id]["missing"].append(
+                {"kind": "entry", "target_id": target["id"]}
+            )
+        target_properties = target.get("properties") or {}
+        if target_properties.get("curation_status") in {"pending", "needs-review"}:
+            records[candidate_id]["missing"].append(
+                {
+                    "kind": "curation",
+                    "target_id": target["id"],
+                    "status": target_properties.get("curation_status"),
+                }
+            )
+        candidate_claims = _claims(candidate)
+        target_claims = _claims(target)
+        for key in sorted(set(candidate_claims) & set(target_claims)):
+            if canonical_json(candidate_claims[key]) != canonical_json(target_claims[key]):
+                records[candidate_id]["conflicts"].append(
+                    {
+                        "kind": "claim",
+                        "key": key,
+                        "candidate": candidate_claims[key],
+                        "target": target_claims[key],
+                        "target_id": target["id"],
+                    }
+                )
+
+    connection = _connect(path)
+    try:
+        target_edges = {
+            (str(row["source"]), str(row["relation"]), str(row["target"]))
+            for row in connection.execute(
+                "SELECT source, relation, target FROM edges WHERE namespace = ?",
+                (target_namespace,),
+            )
+        }
+    finally:
+        connection.close()
+    for edge in sorted(
+        candidate_snapshot.get("edges") or [],
+        key=lambda item: (
+            str(item.get("source", "")),
+            str(item.get("relation", "")),
+            str(item.get("target", "")),
+        ),
+    ):
+        source = str(edge["source"])
+        target = str(edge["target"])
+        relation = str(edge["relation"])
+        mapped_source = target_map.get(source)
+        mapped_target = target_map.get(target)
+        if not mapped_source or not mapped_target or relation == "contains":
+            continue
+        mapped_edge = (mapped_source, relation, mapped_target)
+        if mapped_edge not in target_edges:
+            records[source]["missing"].append(
+                {
+                    "kind": "edge",
+                    "source": mapped_source,
+                    "relation": relation,
+                    "target": mapped_target,
+                    "evidence": edge.get("evidence", ""),
+                }
+            )
+
+    results: list[dict[str, Any]] = []
+    for candidate in candidate_nodes:
+        record = records[str(candidate["id"])]
+        if record["conflicts"]:
+            record["status"] = "conflict"
+        elif record["status"] == "known" and record["missing"]:
+            record["status"] = "partial"
+        results.append(record)
+    summary = {status_name: 0 for status_name in ("known", "partial", "new", "conflict", "uncertain")}
+    for record in results:
+        summary[record["status"]] += 1
+    summary["total"] = len(results)
+    return {
+        "schema": COMPARISON_SCHEMA,
+        "candidate": {
+            "namespace": candidate_namespace,
+            "snapshot_sha256": candidate_snapshot["snapshot_sha256"],
+            "graph_sha256": candidate_snapshot["graph"]["sha256"],
+        },
+        "target": {
+            "namespace": target_namespace,
+            "snapshot_sha256": status["snapshot_sha256"],
+            "graph_sha256": status["graph_sha256"],
+        },
+        "results": results,
+        "summary": summary,
+    }

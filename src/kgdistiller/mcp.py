@@ -12,6 +12,7 @@ from .agent import (
     AgentIndexError,
     build_context_bundle,
     canonical_json,
+    compare_graph,
     expand_index,
     get_index_node,
     index_status,
@@ -167,6 +168,19 @@ TOOL_DEFINITIONS = [
         ),
         "annotations": READ_ONLY_ANNOTATIONS,
     },
+    {
+        "name": "kg_compare_graph",
+        "title": "Compare Candidate Knowledge Graph",
+        "description": "Compare an isolated candidate snapshot with the indexed personal graph without mutation.",
+        "inputSchema": _object_schema(
+            {
+                "candidate_snapshot": {"type": "object"},
+                "target_namespace": {"type": "string", "default": "personal"},
+            },
+            ["candidate_snapshot"],
+        ),
+        "annotations": READ_ONLY_ANNOTATIONS,
+    },
 ]
 
 
@@ -283,6 +297,12 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
             include_taxonomy=bool(arguments.get("include_taxonomy", False)),
             include_stale=bool(arguments.get("include_stale", False)),
             include_orphaned=bool(arguments.get("include_orphaned", False)),
+        )
+    if name == "kg_compare_graph":
+        return compare_graph(
+            database,
+            dict(arguments["candidate_snapshot"]),
+            target_namespace=str(arguments.get("target_namespace", "personal")),
         )
     return build_context_bundle(
         database,

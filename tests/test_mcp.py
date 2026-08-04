@@ -13,7 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.agent import write_agent_index  # noqa: E402
 from kgdistiller.mcp import MCPServer, TOOL_DEFINITIONS, serve_stdio  # noqa: E402
-from tests.test_agent import fixture_snapshot  # noqa: E402
+from tests.test_agent import candidate_snapshot, fixture_snapshot  # noqa: E402
 
 
 class MCPServerTest(unittest.TestCase):
@@ -63,6 +63,7 @@ class MCPServerTest(unittest.TestCase):
                 "kg_get_node",
                 "kg_expand",
                 "kg_build_context",
+                "kg_compare_graph",
             ],
             names,
         )
@@ -111,6 +112,27 @@ class MCPServerTest(unittest.TestCase):
 
         self.assertTrue(response["result"]["isError"])
         self.assertIn("unexpected tool arguments", response["result"]["structuredContent"]["error"]["message"])
+
+    def test_compare_tool_keeps_candidate_namespace_isolated(self) -> None:
+        server = MCPServer(self.database)
+        self.initialize(server)
+
+        response = server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "kg_compare_graph",
+                    "arguments": {"candidate_snapshot": candidate_snapshot()},
+                },
+            }
+        )
+
+        result = response["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual(1, result["structuredContent"]["summary"]["new"])
+        self.assertEqual("paper:fixture", result["structuredContent"]["candidate"]["namespace"])
 
     def test_stdio_is_newline_delimited_json_rpc_without_notification_output(self) -> None:
         messages = [

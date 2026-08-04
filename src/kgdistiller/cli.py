@@ -2849,6 +2849,9 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument("--include-taxonomy", action="store_true")
     context_command.add_argument("--include-stale", action="store_true")
     context_command.add_argument("--include-orphaned", action="store_true")
+    compare_command = agent_commands.add_parser("compare")
+    compare_command.add_argument("candidate", type=Path)
+    compare_command.add_argument("--target-namespace", default="personal")
     commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -3048,6 +3051,7 @@ def main() -> int:
         if args.command == "agent":
             from kgdistiller.agent import (
                 build_context_bundle,
+                compare_graph,
                 expand_index,
                 get_index_node,
                 index_status,
@@ -3094,7 +3098,7 @@ def main() -> int:
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
                 )
-            else:
+            elif args.agent_command == "context":
                 result = build_context_bundle(
                     database,
                     args.query,
@@ -3106,6 +3110,17 @@ def main() -> int:
                     include_taxonomy=args.include_taxonomy,
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
+                )
+            else:
+                candidate_path = (
+                    args.candidate.resolve()
+                    if args.candidate.is_absolute()
+                    else (repo_root / args.candidate).resolve()
+                )
+                result = compare_graph(
+                    database,
+                    read_json(candidate_path, {}),
+                    target_namespace=args.target_namespace,
                 )
             print(pretty_json(result), end="")
             return 0
