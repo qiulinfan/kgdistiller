@@ -19,6 +19,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Set up Typst
+        uses: typst-community/setup-typst@v5
+        with:
+          typst-version: 0.15.1
       - run: uv run python -m unittest discover -s tests -v
       - run: uv build
       - name: Wheel smoke test
@@ -28,4 +32,3 @@ jobs:
           uv pip install --python .wheel-smoke/bin/python "$wheel"
           .wheel-smoke/bin/kgdistiller --help
           .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
-
