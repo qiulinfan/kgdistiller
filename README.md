@@ -328,7 +328,9 @@ boundary, Git synchronization, and upgrades, see
 [local-first deployment](docs/deployment.md). For schema compatibility,
 migration rules, distribution checks, and publication order, see
 [the public release policy](docs/release.md). Security boundaries and private
-reporting guidance are in [SECURITY.md](SECURITY.md).
+reporting guidance are in [SECURITY.md](SECURITY.md). The reproducible
+100,000-node measurements and release envelope are in
+[the performance baseline](docs/performance.md).
 
 ## Development
 
@@ -336,7 +338,12 @@ reporting guidance are in [SECURITY.md](SECURITY.md).
 uv run python -m unittest discover -s tests -v
 uv build
 
-# Disposable large-graph acceptance run; generated data stays outside the repo.
+# Query/sync profile. Generated data stays outside the repository.
+PYTHONPATH=src python3 scripts/stress_workflow.py --nodes 100000 \
+  --skip-transaction --query-samples 20 \
+  --report /tmp/kgdistiller-stress-100k-query.json
+
+# Slower full transaction, fault-injection, and reader-isolation profile.
 PYTHONPATH=src python3 scripts/stress_workflow.py --nodes 100000 \
   --report /tmp/kgdistiller-stress-100k-report.json
 ```

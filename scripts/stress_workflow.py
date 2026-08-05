@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import resource
+import sys
 import tempfile
 import threading
 import time
@@ -44,6 +46,23 @@ def _timed(callable_: Any, *args: Any, **kwargs: Any) -> tuple[Any, float]:
     started = time.perf_counter()
     value = callable_(*args, **kwargs)
     return value, round(time.perf_counter() - started, 6)
+
+
+def _latency_summary(samples: list[float]) -> dict[str, float | int]:
+    ordered = sorted(samples)
+    if not ordered:
+        return {"samples": 0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+
+    def percentile(fraction: float) -> float:
+        index = max(0, min(len(ordered) - 1, int(len(ordered) * fraction + 0.999999) - 1))
+        return round(ordered[index], 6)
+
+    return {
+        "samples": len(ordered),
+        "p50": percentile(0.50),
+        "p95": percentile(0.95),
+        "max": round(ordered[-1], 6),
+    }
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -112,10 +131,15 @@ def _registry() -> dict[str, Any]:
     }
 
 
-def _prepare_fixture(root: Path, knowledge_nodes: int) -> tuple[IngestPaths, Path]:
+def _prepare_fixture(
+    root: Path,
+    knowledge_nodes: int,
+    *,
+    reserve_transaction_node: bool,
+) -> tuple[IngestPaths, Path]:
     if knowledge_nodes < 20:
         raise ValueError("knowledge_nodes must be at least 20")
-    bulk = knowledge_nodes - 2
+    bulk = knowledge_nodes - (2 if reserve_transaction_node else 1)
     markdown_count = bulk // 2
     typst_count = bulk - markdown_count
 
@@ -348,17 +372,26 @@ def run_stress(
     *,
     knowledge_nodes: int,
     fault_injection: bool,
+    transactions: bool = True,
+    query_samples: int = 20,
 ) -> dict[str, Any]:
-    paths, transaction = _prepare_fixture(root, knowledge_nodes)
+    if query_samples < 1 or query_samples > 1000:
+        raise ValueError("query_samples must be between 1 and 1000")
+    paths, transaction = _prepare_fixture(
+        root,
+        knowledge_nodes,
+        reserve_transaction_node=transactions,
+    )
     (_, _, sync_report), sync_seconds = _timed(_sync, paths)
     _install_alpha_entry(paths, transaction)
     baseline_state = load_state(paths.graph_dir)
     baseline_knowledge = sum(
         1 for node in baseline_state.nodes.values() if node["type"] == "knowledge"
     )
-    if baseline_knowledge != knowledge_nodes - 1:
+    expected_baseline = knowledge_nodes - 1 if transactions else knowledge_nodes
+    if baseline_knowledge != expected_baseline:
         raise AssertionError(
-            f"expected {knowledge_nodes - 1} baseline knowledge nodes, got {baseline_knowledge}"
+            f"expected {expected_baseline} baseline knowledge nodes, got {baseline_knowledge}"
         )
 
     database_before_queries = sha256_file(paths.database)
@@ -383,6 +416,33 @@ def run_stress(
         max_depth=1,
         include_taxonomy=True,
     )
+    resolve_latencies: list[float] = []
+    search_latencies: list[float] = []
+    context_latencies: list[float] = []
+    for _ in range(query_samples):
+        _, duration = _timed(
+            resolve_concepts,
+            paths.database,
+            ["Stress MD 000001", "Stress Typst 000001", "Alpha"],
+        )
+        resolve_latencies.append(duration)
+        _, duration = _timed(
+            search_index,
+            paths.database,
+            "Stress MD 000001",
+            limit=5,
+        )
+        search_latencies.append(duration)
+        _, duration = _timed(
+            build_context_bundle,
+            paths.database,
+            "Stress Typst 000001",
+            token_budget=6000,
+            result_limit=8,
+            max_depth=1,
+            include_taxonomy=True,
+        )
+        context_latencies.append(duration)
     database_after_queries = sha256_file(paths.database)
     if database_before_queries != database_after_queries:
         raise AssertionError("read-only query operations changed the disposable index bytes")
@@ -410,56 +470,61 @@ def run_stress(
             f"index={indexed_after_incremental} graph={persisted_after_incremental}"
         )
 
-    plan_request = _transaction_request(paths, transaction, mode="plan")
-    plan, plan_seconds = _timed(plan_ingest, paths, plan_request)
-    if plan["status"] != "planned":
-        raise AssertionError(f"transaction plan did not complete: {plan['status']}")
-
+    plan: dict[str, Any] = {"status": "skipped"}
+    receipt: dict[str, Any] = {"status": "skipped", "request_sha256": None}
+    plan_seconds = 0.0
     failure_seconds = 0.0
-    if fault_injection:
-        before_failure = _material_hashes(paths)
-
-        def inject(stage: str) -> None:
-            if stage == "staged-scan":
-                raise RuntimeError("stress fault injection at staged-scan")
-
-        apply_request = _transaction_request(paths, transaction, mode="apply")
-        started = time.perf_counter()
-        try:
-            apply_ingest(paths, apply_request, failure_injector=inject)
-        except RuntimeError as error:
-            if "stress fault injection" not in str(error):
-                raise
-        else:  # pragma: no cover - a regression must fail loudly
-            raise AssertionError("fault injection did not interrupt the transaction")
-        failure_seconds = round(time.perf_counter() - started, 6)
-        if before_failure != _material_hashes(paths):
-            raise AssertionError("pre-install fault injection changed material graph state")
-
-    apply_request = _transaction_request(paths, transaction, mode="apply")
+    apply_seconds = 0.0
     observations: list[str] = []
     reader_errors: list[str] = []
-    stop = threading.Event()
-    reader = threading.Thread(
-        target=_reader_loop,
-        args=(paths.database, stop, observations, reader_errors),
-        daemon=True,
-    )
-    reader.start()
-    try:
-        receipt, apply_seconds = _timed(apply_ingest, paths, apply_request)
-    finally:
-        stop.set()
-        reader.join(timeout=5)
-    observations.append(resolve_concepts(paths.database, ["Beta"])[0]["status"])
-    if reader_errors:
-        raise AssertionError(f"concurrent readers failed: {reader_errors[:3]}")
-    if not observations or set(observations) - {"missing", "exact"}:
-        raise AssertionError(f"reader observed a mixed generation: {set(observations)}")
-    if observations[-1] != "exact":
-        raise AssertionError("reader did not observe the committed generation")
-    if receipt["status"] != "committed":
-        raise AssertionError(f"transaction did not commit: {receipt['status']}")
+    if transactions:
+        plan_request = _transaction_request(paths, transaction, mode="plan")
+        plan, plan_seconds = _timed(plan_ingest, paths, plan_request)
+        if plan["status"] != "planned":
+            raise AssertionError(f"transaction plan did not complete: {plan['status']}")
+
+        if fault_injection:
+            before_failure = _material_hashes(paths)
+
+            def inject(stage: str) -> None:
+                if stage == "staged-scan":
+                    raise RuntimeError("stress fault injection at staged-scan")
+
+            apply_request = _transaction_request(paths, transaction, mode="apply")
+            started = time.perf_counter()
+            try:
+                apply_ingest(paths, apply_request, failure_injector=inject)
+            except RuntimeError as error:
+                if "stress fault injection" not in str(error):
+                    raise
+            else:  # pragma: no cover - a regression must fail loudly
+                raise AssertionError("fault injection did not interrupt the transaction")
+            failure_seconds = round(time.perf_counter() - started, 6)
+            if before_failure != _material_hashes(paths):
+                raise AssertionError("pre-install fault injection changed material graph state")
+
+        apply_request = _transaction_request(paths, transaction, mode="apply")
+        stop = threading.Event()
+        reader = threading.Thread(
+            target=_reader_loop,
+            args=(paths.database, stop, observations, reader_errors),
+            daemon=True,
+        )
+        reader.start()
+        try:
+            receipt, apply_seconds = _timed(apply_ingest, paths, apply_request)
+        finally:
+            stop.set()
+            reader.join(timeout=5)
+        observations.append(resolve_concepts(paths.database, ["Beta"])[0]["status"])
+        if reader_errors:
+            raise AssertionError(f"concurrent readers failed: {reader_errors[:3]}")
+        if not observations or set(observations) - {"missing", "exact"}:
+            raise AssertionError(f"reader observed a mixed generation: {set(observations)}")
+        if observations[-1] != "exact":
+            raise AssertionError("reader did not observe the committed generation")
+        if receipt["status"] != "committed":
+            raise AssertionError(f"transaction did not commit: {receipt['status']}")
 
     final_state = load_state(paths.graph_dir)
     final_knowledge = sum(
@@ -470,12 +535,19 @@ def run_stress(
             f"expected {knowledge_nodes} final knowledge nodes, got {final_knowledge}"
         )
 
+    max_rss_raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    max_rss_bytes = max_rss_raw if sys.platform == "darwin" else max_rss_raw * 1024
     return {
         "schema": "kgdistiller-stress-report-v1",
         "status": "passed",
         "fixture": str(root),
         "knowledge_nodes": final_knowledge,
         "formats": ["markdown", "typst"],
+        "environment": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "python": platform.python_version(),
+        },
         "graph": {
             "nodes": len(final_state.nodes),
             "edges": len(final_state.edges),
@@ -489,6 +561,11 @@ def run_stress(
             "resolved": len(resolved),
             "search_results": len(searched),
             "context_nodes": len(context["nodes"]),
+            "latency_seconds": {
+                "resolve_batch": _latency_summary(resolve_latencies),
+                "search": _latency_summary(search_latencies),
+                "hybrid_context": _latency_summary(context_latencies),
+            },
         },
         "incremental": {
             "scope": incremental_report["scope"],
@@ -496,10 +573,11 @@ def run_stress(
             "graph_digest_unchanged": True,
         },
         "transaction": {
+            "enabled": transactions,
             "plan_status": plan["status"],
             "receipt_status": receipt["status"],
             "request_sha256": receipt["request_sha256"],
-            "fault_injection": fault_injection,
+            "fault_injection": fault_injection and transactions,
             "reader_observations": len(observations),
             "reader_statuses": sorted(set(observations)),
             "reader_errors": 0,
@@ -515,7 +593,8 @@ def run_stress(
             "fault_injection": failure_seconds,
             "ingest_apply": apply_seconds,
         },
-        "max_rss_raw": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        "max_rss_raw": max_rss_raw,
+        "max_rss_bytes": max_rss_bytes,
         "initial_sync_report": {
             "files": sync_report["files"],
             "definitions": sync_report["definitions"],
@@ -530,6 +609,8 @@ def main() -> None:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--skip-fault-injection", action="store_true")
+    parser.add_argument("--skip-transaction", action="store_true")
+    parser.add_argument("--query-samples", type=int, default=20)
     args = parser.parse_args()
 
     if args.keep:
@@ -538,6 +619,8 @@ def main() -> None:
             root,
             knowledge_nodes=args.nodes,
             fault_injection=not args.skip_fault_injection,
+            transactions=not args.skip_transaction,
+            query_samples=args.query_samples,
         )
     else:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-stress-") as temporary:
@@ -545,6 +628,8 @@ def main() -> None:
                 Path(temporary),
                 knowledge_nodes=args.nodes,
                 fault_injection=not args.skip_fault_injection,
+                transactions=not args.skip_transaction,
+                query_samples=args.query_samples,
             )
     rendered = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

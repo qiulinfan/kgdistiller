@@ -425,10 +425,19 @@ class AgentIndexTest(unittest.TestCase):
         self.assertEqual("alpha", semantic[0]["node"]["id"])
         self.assertFalse(semantic[0]["reasons"][0]["identity_authority"])
         self.assertEqual("qlkg-ppr-result-v1", ppr["schema"])
+        self.assertEqual("namespace", ppr["policy"]["scope"])
         self.assertGreater(
             next(item["score"] for item in ppr["results"] if item["node"]["id"] == "beta"),
             0.0,
         )
+        bounded = personalized_pagerank(
+            self.database,
+            {"alpha": 1.0},
+            limit=2,
+            _candidate_ids={"alpha", "beta"},
+        )
+        self.assertEqual("bounded-neighborhood", bounded["policy"]["scope"])
+        self.assertEqual(2, bounded["policy"]["scope_nodes"])
         beta = next(item for item in retrieved if item["node"]["id"] == "beta")
         methods = {reason["method"] for reason in beta["reasons"]}
         self.assertEqual({"graph", "ppr"}, methods)

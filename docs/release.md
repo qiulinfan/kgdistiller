@@ -60,8 +60,9 @@ Then verify:
 - a Markdown/Typst/LaTeX fixture passes sync and check;
 - transactional plan/apply, idempotency, stale preconditions, lock conflict,
   fault injection, crash recovery, and old/new reader isolation pass;
-- the 100,000-node disposable stress harness passes or its bounded performance
-  finding is documented as a release blocker;
+- the 100,000-node disposable stress harness passes the reference-machine
+  envelope in [the performance baseline](performance.md), or the deviation is
+  documented as a release blocker;
 - Skills pass structural validation and a real isolated Agent evaluation;
 - no credential, personal graph, authority note, generated SQLite, build
   artifact, or stress fixture is tracked.
@@ -90,11 +91,11 @@ The safe order is:
 
 1. merge and publish the kgdistiller release commit;
 2. verify that the remote commit and package contain the transactional ingest
-   schemas, candidate builder, query/index consistency fix, and stress harness;
+   schemas, candidate builder, query/index consistency fix, bounded GraphRAG,
+   and stress harness;
 3. update qlblog's submodule pointer to that published commit;
 4. run qlblog knowledge and site gates;
 5. publish qlblog.
 
 Reversing this order leaves the public host pointing at an unavailable engine
 commit.
-

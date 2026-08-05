@@ -15,10 +15,12 @@ a new schema version.
   reader isolation.
 - Make SQLite snapshots derive from committed hydrated graph artifacts so a
   fresh read does not rebuild an already-current index.
+- Bound hybrid retrieval's personalized PageRank to the already-expanded local
+  neighborhood while preserving full-namespace PPR as a standalone operation.
 - Add disposable large-graph, multi-format, GraphRAG, incremental,
   concurrency, fault-injection, and transaction stress coverage.
 - Document local deployment, backup/restore, compatibility, migration, and
-  public release order.
+  public release order, including a measured 100,000-node baseline.
 
 ## 0.2.1
 
@@ -35,4 +37,3 @@ a new schema version.
 
 - Initial standalone Markdown, Typst, and LaTeX graph compiler and local
   browser.
-

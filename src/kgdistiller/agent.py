@@ -1265,6 +1265,7 @@ def personalized_pagerank(
     max_iterations: int = 60,
     tolerance: float = 1e-10,
     limit: int = 50,
+    _candidate_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Run deterministic weighted PPR over trusted edges and disposable soft edges."""
     _validate_namespace(namespace)
@@ -1281,12 +1282,21 @@ def personalized_pagerank(
     else:
         relations.discard("contains")
     allowed_types = set(node_types or [])
+    bounded_ids = sorted(set(_candidate_ids or []))
     connection = _connect(path)
     try:
         nodes: dict[str, dict[str, Any]] = {}
-        for row in connection.execute(
-            "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
-        ):
+        if bounded_ids:
+            placeholders = ",".join("?" for _ in bounded_ids)
+            node_rows = connection.execute(
+                f"SELECT * FROM nodes WHERE namespace = ? AND id IN ({placeholders}) ORDER BY id",
+                [namespace, *bounded_ids],
+            )
+        else:
+            node_rows = connection.execute(
+                "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
+            )
+        for row in node_rows:
             node = _node_payload(row)
             if allowed_types and node.get("type") not in allowed_types:
                 continue
@@ -1318,9 +1328,23 @@ def personalized_pagerank(
             "contains": 0.3,
         }
         trusted_edge_count = 0
-        for row in connection.execute(
-            "SELECT * FROM edges WHERE namespace = ? ORDER BY edge_id", (namespace,)
-        ):
+        if bounded_ids:
+            placeholders = ",".join("?" for _ in bounded_ids)
+            edge_rows = connection.execute(
+                f"""
+                SELECT * FROM edges
+                WHERE namespace = ?
+                  AND source IN ({placeholders})
+                  AND target IN ({placeholders})
+                ORDER BY edge_id
+                """,
+                [namespace, *bounded_ids, *bounded_ids],
+            )
+        else:
+            edge_rows = connection.execute(
+                "SELECT * FROM edges WHERE namespace = ? ORDER BY edge_id", (namespace,)
+            )
+        for row in edge_rows:
             relation = str(row["relation"])
             source = str(row["source"])
             target = str(row["target"])
@@ -1335,13 +1359,27 @@ def personalized_pagerank(
             trusted_edge_count += 1
         similarity_edge_count = 0
         if include_similarity:
-            for row in connection.execute(
-                """
-                SELECT source, target, score FROM similarity_edges
-                WHERE namespace = ? ORDER BY source, score DESC, target
-                """,
-                (namespace,),
-            ):
+            if bounded_ids:
+                placeholders = ",".join("?" for _ in bounded_ids)
+                similarity_rows = connection.execute(
+                    f"""
+                    SELECT source, target, score FROM similarity_edges
+                    WHERE namespace = ?
+                      AND source IN ({placeholders})
+                      AND target IN ({placeholders})
+                    ORDER BY source, score DESC, target
+                    """,
+                    [namespace, *bounded_ids, *bounded_ids],
+                )
+            else:
+                similarity_rows = connection.execute(
+                    """
+                    SELECT source, target, score FROM similarity_edges
+                    WHERE namespace = ? ORDER BY source, score DESC, target
+                    """,
+                    (namespace,),
+                )
+            for row in similarity_rows:
                 source = str(row["source"])
                 target = str(row["target"])
                 if source not in nodes or target not in nodes:
@@ -1395,6 +1433,8 @@ def personalized_pagerank(
                 "tolerance": tolerance,
                 "edge_types": sorted(relations),
                 "include_similarity": include_similarity,
+                "scope": "bounded-neighborhood" if bounded_ids else "namespace",
+                "scope_nodes": len(nodes),
                 "trusted_edges": trusted_edge_count,
                 "similarity_edges": similarity_edge_count,
             },
@@ -1518,6 +1558,7 @@ def retrieve_index(
     graph_seeds = list(
         dict.fromkeys([*lane_nodes["exact"], *lane_nodes["fts"], *lane_nodes["semantic"]])
     )[:8]
+    bounded_graph_ids = set(graph_seeds)
     if graph_seeds and max_depth > 0 and graph_strategy in {"bfs", "hybrid"}:
         expansion = expand_index(
             path,
@@ -1528,6 +1569,9 @@ def retrieve_index(
             include_taxonomy=include_taxonomy,
             include_stale=include_stale,
             include_orphaned=include_orphaned,
+        )
+        bounded_graph_ids.update(
+            str(record["node"]["id"]) for record in expansion["nodes"]
         )
         graph_records = [record for record in expansion["nodes"] if not record["seed"]]
         graph_records.sort(
@@ -1554,10 +1598,28 @@ def retrieve_index(
             )
 
     if graph_seeds and max_depth > 0 and graph_strategy in {"ppr", "hybrid"}:
+        if graph_strategy == "ppr":
+            ppr_expansion = expand_index(
+                path,
+                graph_seeds,
+                namespace=namespace,
+                max_depth=max_depth,
+                limit=min(MAX_LIMIT, max(limit * 4, 40)),
+                include_taxonomy=include_taxonomy,
+                include_stale=include_stale,
+                include_orphaned=include_orphaned,
+            )
+            bounded_graph_ids.update(
+                str(record["node"]["id"]) for record in ppr_expansion["nodes"]
+            )
         seed_weights: dict[str, float] = {}
         for lane, weight in (("exact", 3.0), ("fts", 1.0), ("semantic", 0.8)):
             for rank, node_id in enumerate(dict.fromkeys(lane_nodes[lane]), start=1):
                 seed_weights[node_id] = seed_weights.get(node_id, 0.0) + weight / rank
+        ppr_candidate_ids = set(graph_seeds)
+        ppr_candidate_ids.update(
+            sorted(bounded_graph_ids - ppr_candidate_ids)[: 400 - len(ppr_candidate_ids)]
+        )
         ppr = personalized_pagerank(
             path,
             seed_weights,
@@ -1568,6 +1630,7 @@ def retrieve_index(
             include_stale=include_stale,
             include_orphaned=include_orphaned,
             limit=min(MAX_LIMIT, max(limit * 4, 40)),
+            _candidate_ids=ppr_candidate_ids,
         )
         for result in ppr["results"]:
             node = result["node"]
