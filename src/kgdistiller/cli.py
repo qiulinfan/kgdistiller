@@ -1042,6 +1042,13 @@ def load_state(graph_dir: Path) -> GraphState:
             node["text"] = str(record.get("text", ""))
             if isinstance(record.get("entry"), dict) and record["entry"]:
                 node["entry"] = record["entry"]
+    # In-memory source nodes always carry a text field, including pending
+    # authorities whose entry is still empty. The committed JSONL projection
+    # omits that empty value. Rehydrate it here so snapshots built directly
+    # during sync and snapshots rebuilt from committed artifacts are identical;
+    # otherwise the next nominally read-only Agent query rebuilds SQLite.
+    for node in nodes.values():
+        node.setdefault("text", "")
     edges = {
         (item["source"], item["relation"], item["target"]): item
         for item in read_jsonl(graph_dir / "edges.jsonl")
@@ -2324,6 +2331,13 @@ def synchronize(
     }
     if write:
         write_artifacts(graph_dir, artifacts)
+        # Build every downstream projection from the committed, hydrated
+        # representation. The JSONL projection omits empty text and stores
+        # entry bodies in shards, so using the pre-serialization state here
+        # can give SQLite a different snapshot digest from the graph that was
+        # just installed. That makes the next read-only query rebuild the
+        # disposable index even though no authority changed.
+        state = load_state(graph_dir)
         write_registry(typst_registry, state)
         write_database(database, state, alignments)
     return state, artifacts, report
@@ -2443,6 +2457,7 @@ def apply_delta(
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
     state.manifest = json.loads(artifacts["manifest.json"])
     write_artifacts(graph_dir, artifacts)
+    state = load_state(graph_dir)
     write_registry(typst_registry, state)
     write_database(database, state, alignments)
     after = state.manifest["counts"]

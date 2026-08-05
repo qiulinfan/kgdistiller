@@ -199,6 +199,11 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertFalse(knowledge.ensure_database(self.database, state))
         self.assertEqual(first, self.database.read_bytes())
 
+        persisted = knowledge.load_state(self.graph)
+        self.assertEqual("", persisted.nodes["sigma-algebra"]["text"])
+        self.assertFalse(knowledge.ensure_database(self.database, persisted))
+        self.assertEqual(first, self.database.read_bytes())
+
     def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
         self.sync()
         delta = self.repo / "knowledge/build/snapshot-entry.json"

@@ -323,11 +323,22 @@ destructive migration. Future schema changes will require explicit migration.
 See [the graph contract](docs/graph-contract.md) for identity, curation, and
 validation rules.
 
+For a personal installation, backup/restore drill, MCP configuration, loopback
+boundary, Git synchronization, and upgrades, see
+[local-first deployment](docs/deployment.md). For schema compatibility,
+migration rules, distribution checks, and publication order, see
+[the public release policy](docs/release.md). Security boundaries and private
+reporting guidance are in [SECURITY.md](SECURITY.md).
+
 ## Development
 
 ```sh
 uv run python -m unittest discover -s tests -v
 uv build
+
+# Disposable large-graph acceptance run; generated data stays outside the repo.
+PYTHONPATH=src python3 scripts/stress_workflow.py --nodes 100000 \
+  --report /tmp/kgdistiller-stress-100k-report.json
 ```
 
 Licensed under Apache-2.0.
