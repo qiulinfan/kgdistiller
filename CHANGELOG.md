@@ -6,6 +6,11 @@ a new schema version.
 
 ## 0.3.0 — unreleased
 
+- Add the Git-friendly `qlkg-store-v1` authority store, canonical document
+  inventory, content-addressed exact float32 embedding bundle, integrity
+  verification, and provider-free SQLite materialization.
+- Add `store snapshot`, `store verify`, and `store materialize` commands plus a
+  deployment Skill for backup and multi-machine workflows.
 - Add deterministic `qlkg-candidate-graph-v1` build and validation.
 - Add content-addressed transactional ingest plan/apply requests, canonical
   receipts, single-writer locking, rollback, crash recovery, and idempotency.

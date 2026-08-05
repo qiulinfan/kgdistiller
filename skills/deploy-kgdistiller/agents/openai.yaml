@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deploy kgdistiller"
+  short_description: "Set up and restore portable Git knowledge stores"
+  default_prompt: "Set up or refresh this personal kgdistiller knowledge store, preserve exact embeddings, verify it, and explain the Git synchronization state."

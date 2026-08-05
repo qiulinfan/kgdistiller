@@ -33,6 +33,7 @@ nodes automatically.
   `generalizes`, `contrasts-with`, and `derived-from`;
 - deterministic JSONL graph artifacts;
 - a local SQLite full-text index;
+- a Git-friendly portable store with source snapshots and exact embeddings;
 - a generated Typst reference registry;
 - a dependency-free local graph browser.
 
@@ -112,6 +113,60 @@ name becomes an alias, and the definition change still requires curation review.
 `serve` opens <http://127.0.0.1:8765/>. It exposes the graph and bounded source
 excerpts only to the local machine unless another host is explicitly selected.
 
+## Portable Git store
+
+For backup and multi-machine use, make the knowledge project—not SQLite—the
+portable unit:
+
+```sh
+kgdistiller store snapshot
+kgdistiller store verify
+git add notes knowledge/sources.json knowledge/alignments.json \
+  knowledge/.gitignore knowledge/graph knowledge/documents.jsonl \
+  knowledge/embeddings knowledge/store.json
+```
+
+Also stage `knowledge/identities.json` when that optional reviewed registry
+exists. `init` and `store snapshot` create `knowledge/.gitignore` with
+`build/` when the file is absent and never overwrite an existing ignore file.
+
+`store snapshot` writes the versioned `qlkg-store-v1` manifest, a canonical
+JSONL inventory of every ingested authority, and a content-addressed embedding
+bundle. Vectors are the exact little-endian float32 bytes already in the
+current index; the command never calls a provider. Provider/model,
+dimensions, canonical embedding-input digest, configuration digest, and vector
+digest remain attached to every record. Embeddings are portable retrieval
+artifacts, never graph identity or semantic authority.
+
+Index rebuilds carry forward exact vectors only when node, provider, model,
+dimensions, and canonical input digest remain current; changed nodes are
+invalidated instead of receiving stale vectors.
+
+If the current notes repository should not be the backup unit, bootstrap a
+separate store with `kgdistiller store snapshot --output /path/to/private-kb`.
+The destination receives registered Markdown, Typst, and LaTeX sources plus
+the registries, graph, inventory, and embedding objects. It must not be nested
+inside the source project.
+
+On another machine:
+
+```sh
+git clone PRIVATE_REMOTE personal-kb
+cd personal-kb
+kgdistiller store verify
+kgdistiller store materialize
+kgdistiller agent status
+```
+
+`materialize` verifies all content digests and atomically rebuilds the ignored
+`knowledge/build/knowledge.sqlite`; no document parsing or re-embedding is
+required. Re-running it is a no-op when SQLite already records the same store
+generation. Keep the store private when its sources or embeddings contain
+sensitive information.
+
+完整的原始需求、SQL/JSONL/向量存储方案比较、数据契约、失败边界和第一版
+实现说明见 [portable store development notes](docs/portable-store-development.md)。
+
 ## Agent snapshot
 
 Agent indexes and retrieval adapters consume a deterministic, self-contained
@@ -165,17 +220,17 @@ kgdistiller agent propose knowledge/build/paper.snapshot.json \
   --delta-output knowledge/reviews/paper.delta.json
 ```
 
-The SQLite index is disposable. If it is absent or stale while the committed
-graph is current, any `agent` command or the `mcp` command rebuilds it before
-serving the request. A fresh clone therefore does not need to commit or preload
-`knowledge/build/knowledge.sqlite`.
+The SQLite index remains disposable. If it is absent or stale while the
+committed graph is current, any `agent` command or the `mcp` command rebuilds
+its provider-neutral lanes. A portable store can additionally restore cached
+embeddings with `store materialize`; the SQLite file itself is never committed.
 
 The `qlkg-agent-index-v2` index stores nodes, normalized IDs/labels/global
 aliases, explicit scoped abbreviations, reviewed cross-namespace mappings,
 structured entry text, typed edges with evidence, reference occurrences, and
-optional disposable embeddings/similarity edges. Exact and alias resolution
-refuses ambiguous identities; FTS input is tokenized and quoted before reaching
-SQLite.
+optional locally materialized embeddings/similarity edges. Exact and alias
+resolution refuses ambiguous identities; FTS input is tokenized and quoted
+before reaching SQLite.
 
 Agent search fuses exact/scoped resolution, FTS, bounded typed traversal, and
 weighted Personalized PageRank with deterministic reciprocal-rank fusion.
@@ -275,7 +330,7 @@ implementation phases.
 
 ## Agent Skills
 
-kgdistiller ships two narrow, provider-neutral Agent Skills alongside the
+kgdistiller ships three narrow, provider-neutral Agent Skills alongside the
 engine:
 
 - [`query-kgdistiller`](skills/query-kgdistiller/SKILL.md) performs only batch
@@ -286,6 +341,9 @@ engine:
   boundary for already reviewed authority markers, refs, entries, mappings,
   and semantic edges. It does not discover concepts or decide ambiguous
   identity.
+- [`deploy-kgdistiller`](skills/deploy-kgdistiller/SKILL.md) creates, refreshes,
+  verifies, and restores the portable store, including exact cached embeddings
+  and the local-only/committed/remote-confirmed Git state.
 
 Host-specific extraction Skills produce candidates and call these two engine
 Skills. A note exporter normally queries, turns known concepts into refs, then

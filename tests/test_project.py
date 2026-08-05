@@ -31,11 +31,17 @@ class ProjectInitializationTest(unittest.TestCase):
                 {"schema": "qlkg-alignments-v1", "mappings": []},
                 json.loads(alignments.read_text(encoding="utf-8")),
             )
+            self.assertEqual(
+                "build/\n",
+                (root / "knowledge/.gitignore").read_text(encoding="utf-8"),
+            )
             reviewed = {
                 "schema": "qlkg-alignments-v1",
                 "mappings": [{"preserved": True}],
             }
             alignments.write_text(json.dumps(reviewed), encoding="utf-8")
+            gitignore = root / "knowledge/.gitignore"
+            gitignore.write_text("build/\nlocal-secret/\n", encoding="utf-8")
             initialize_project(
                 root,
                 registry,
@@ -44,6 +50,10 @@ class ProjectInitializationTest(unittest.TestCase):
                 force=True,
             )
             self.assertEqual(reviewed, json.loads(alignments.read_text(encoding="utf-8")))
+            self.assertEqual(
+                "build/\nlocal-secret/\n",
+                gitignore.read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

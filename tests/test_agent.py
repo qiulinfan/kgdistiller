@@ -442,6 +442,52 @@ class AgentIndexTest(unittest.TestCase):
         methods = {reason["method"] for reason in beta["reasons"]}
         self.assertEqual({"graph", "ppr"}, methods)
 
+    def test_index_rebuild_preserves_only_embeddings_with_current_input_digest(self) -> None:
+        snapshot = fixture_snapshot()
+        write_agent_index(self.database, snapshot)
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        connection = sqlite3.connect(self.database)
+        try:
+            before = connection.execute(
+                "SELECT node_id, vector FROM embeddings ORDER BY node_id"
+            ).fetchall()
+        finally:
+            connection.close()
+
+        write_agent_index(self.database, snapshot)
+        connection = sqlite3.connect(self.database)
+        try:
+            self.assertEqual(
+                before,
+                connection.execute(
+                    "SELECT node_id, vector FROM embeddings ORDER BY node_id"
+                ).fetchall(),
+            )
+        finally:
+            connection.close()
+
+        snapshot["nodes"][0]["label"] = "Changed embedding input"
+        snapshot.pop("snapshot_sha256")
+        snapshot["snapshot_sha256"] = sha256_json(snapshot)
+        write_agent_index(self.database, snapshot)
+        connection = sqlite3.connect(self.database)
+        try:
+            self.assertEqual(
+                ["beta"],
+                [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT node_id FROM embeddings ORDER BY node_id"
+                    ).fetchall()
+                ],
+            )
+        finally:
+            connection.close()
+
     def test_ppr_does_not_rank_unreachable_zero_mass_nodes(self) -> None:
         write_agent_index(self.database, alignment_fixture_snapshot())
 

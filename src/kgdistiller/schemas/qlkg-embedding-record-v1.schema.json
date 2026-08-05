@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-embedding-record-v1.schema.json",
+  "title": "kgdistiller portable embedding record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "namespace", "node_id", "provider", "model", "dimensions",
+    "embedding_input_schema", "content_sha256", "vector_sha256",
+    "provider_config_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-embedding-record-v1"},
+    "namespace": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"},
+    "node_id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "provider": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "dimensions": {"type": "integer", "minimum": 1},
+    "embedding_input_schema": {"const": "qlkg-node-embedding-text-v1"},
+    "content_sha256": {"$ref": "#/$defs/sha256"},
+    "vector_sha256": {"$ref": "#/$defs/sha256"},
+    "provider_config_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

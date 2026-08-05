@@ -3126,6 +3126,18 @@ def parse_args() -> argparse.Namespace:
     ingest_apply = ingest_commands.add_parser("apply")
     ingest_apply.add_argument("request", type=Path)
     ingest_apply.add_argument("--receipt", type=Path)
+    store_command = commands.add_parser("store")
+    store_commands = store_command.add_subparsers(
+        dest="store_command", required=True
+    )
+    store_snapshot = store_commands.add_parser("snapshot")
+    store_snapshot.add_argument(
+        "--output",
+        type=Path,
+        help="write a self-contained copy instead of refreshing this repository",
+    )
+    store_commands.add_parser("verify")
+    store_commands.add_parser("materialize")
     commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -3264,6 +3276,55 @@ def main() -> int:
             except IngestError as error:
                 print(pretty_json(error.payload()), end="", file=sys.stderr)
                 return 1
+        if args.command == "store":
+            from .store import materialize_store, snapshot_store, verify_store
+
+            if args.store_command == "snapshot":
+                _, artifacts, _ = synchronize(
+                    repo_root,
+                    registry,
+                    graph_dir,
+                    database,
+                    typst_registry,
+                    identities=identities,
+                    alignments=alignments,
+                    files=[],
+                    course=None,
+                    subject=None,
+                    write=False,
+                )
+                stale = [
+                    name
+                    for name, content in artifacts.items()
+                    if not (graph_dir / name).is_file()
+                    or (graph_dir / name).read_text(encoding="utf-8") != content
+                ]
+                if stale:
+                    raise KnowledgeError(
+                        f"stale graph artifacts: {', '.join(stale)}; run kgdistiller sync"
+                    )
+                ensure_database(database, load_state(graph_dir), alignments)
+                output = args.output or repo_root
+                output_root = (
+                    output.resolve()
+                    if output.is_absolute()
+                    else (repo_root / output).resolve()
+                )
+                result = snapshot_store(
+                    repo_root,
+                    output_root,
+                    registry=registry,
+                    graph_dir=graph_dir,
+                    identities=identities,
+                    alignments=alignments,
+                    database=database,
+                )
+            elif args.store_command == "verify":
+                result = verify_store(repo_root)
+            else:
+                result = materialize_store(repo_root, database)
+            print(pretty_json(result), end="")
+            return 0
         if args.command == "init":
             from .project import initialize_project
 

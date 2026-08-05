@@ -46,6 +46,9 @@ def initialize_project(
         ],
     }
     registry.parent.mkdir(parents=True, exist_ok=True)
+    gitignore = registry.parent / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("build/\n", encoding="utf-8")
     registry.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

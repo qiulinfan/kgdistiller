@@ -14,6 +14,10 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-agent-delta-v2` | yes | yes | Low-level compatibility primitive. |
 | `qlkg-agent-snapshot-v1` | yes | yes | Self-contained hydrated query input. |
 | `qlkg-agent-index-v2` | yes | disposable | Rebuilt locally; never a migration authority. |
+| `qlkg-store-v1` | yes | yes | Portable authority generation; Git-friendly manifest. |
+| `qlkg-document-record-v1` | yes | yes | Canonical JSONL inventory of ingested sources. |
+| `qlkg-embedding-bundle-v1` | yes | yes | Exact portable retrieval artifacts, never identity. |
+| `qlkg-embedding-record-v1` | yes | yes | Content-addressed float32 vector metadata. |
 | `qlkg-candidate-graph-v1` | yes | builder input | Isolated namespace and source locations required. |
 | `qlkg-ingest-request-v1` | yes | accepted | Content-addressed plan/apply request. |
 | `qlkg-ingest-plan-v1` | output | output | Review artifact, not a commit receipt. |

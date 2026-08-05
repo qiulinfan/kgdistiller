@@ -93,9 +93,34 @@ the personal graph.
 
 ### 4.4 Derived state
 
-SQLite tables, FTS indexes, embeddings, ranker caches, graph neighborhoods,
-community summaries, and context bundles are derived state. They MUST be safe
-to delete and rebuild from an Agent snapshot.
+SQLite tables, FTS indexes, ranker caches, graph neighborhoods, community
+summaries, and context bundles are local derived state. They MUST be safe to
+delete and rebuild from an Agent snapshot. Embeddings do not confer authority,
+but their exact bytes MAY be retained as a durable portable retrieval artifact
+because reproducing a provider/model call can be expensive or impossible.
+
+### 4.5 Portable store
+
+`qlkg-store-v1` is the Git-friendly synchronization contract for a small
+personal knowledge base. It contains:
+
+- registered Markdown, Typst, and LaTeX authority snapshots;
+- the `qlkg-sources-v2`, optional identity, and alignment registries;
+- the complete deterministic `qlkg-v2` graph and entry shards;
+- `qlkg-document-record-v1` JSONL records for exactly the sources represented
+  by the graph generation;
+- one `qlkg-embedding-bundle-v1` manifest, canonical
+  `qlkg-embedding-record-v1` JSONL, and content-addressed vector objects.
+
+The store manifest binds registry, source inventory, graph, identity,
+alignment, and embedding generations by SHA-256. It MUST contain only relative,
+non-traversing paths and MUST be written after every other artifact. A reader
+MUST verify the complete generation before materializing local state.
+
+The portable store is an authority for *which captured generation to restore*.
+Source markers and reviewed registries remain the only identity and semantic
+authority within that generation. The store manifest and embeddings MUST NOT
+create nodes, merge identities, or create trusted semantic relations.
 
 ## 5. Identity and namespace rules
 
@@ -304,8 +329,31 @@ tables. Those tables are never part of authority.
 - A reviewed mapping becomes stale when either stored endpoint fingerprint no
   longer matches the current node content.
 - Changing an embedding provider MUST NOT change node IDs or graph structure.
-- Provider credentials and generated vectors MUST NOT be committed to the
-  kgdistiller repository.
+- Provider credentials and personal vectors MUST NOT be committed to the
+  kgdistiller engine repository. Exact vectors MAY be committed to a private
+  user-owned portable store under the contract below.
+
+### 7.2 Portable embedding contract
+
+Each `qlkg-embedding-record-v1` MUST bind:
+
+```text
+namespace, node_id, provider, model, dimensions,
+embedding_input_schema, content_sha256,
+provider_config_sha256, vector_sha256
+```
+
+The vector object is exactly `dimensions * 4` bytes of finite, nonzero,
+little-endian IEEE-754 float32 values. Its path is derived from
+`vector_sha256`, allowing identical vectors to share an immutable object. The
+bundle manifest binds the canonical JSONL digest, distinct object digest set,
+byte count, dtype, input schema, and provider configurations.
+
+Import MUST reject unknown nodes, stale embedding input hashes, provider-config
+digest mismatches, duplicate keys, non-finite or all-zero vectors, incorrect
+lengths, missing objects, and any manifest, record, or object digest mismatch.
+Materialization MAY skip work only when the existing local index records the
+same complete `store_generation_sha256`.
 
 ## 8. Retrieval contract
 
@@ -659,6 +707,9 @@ Model output MUST NOT directly create graph identity or trusted semantic edges.
   machine.
 - Authority content, personal snapshots, generated indexes, embeddings, keys,
   and query logs MUST NOT be committed to the kgdistiller engine repository.
+  A private user-owned portable store MAY intentionally commit authority
+  content and verified embeddings; it MUST still exclude SQLite, credentials,
+  provider caches, and query logs.
 - Read-only MCP tools SHOULD be the default capability set.
 
 ## 15. Determinism and failure behavior

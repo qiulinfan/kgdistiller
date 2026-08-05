@@ -123,7 +123,9 @@ The engine executes these stages:
 9. back up every live target and write a recovery journal;
 10. install sources, alignments, graph, and generated registry while holding the
     single-writer lock;
-11. rebuild the disposable SQLite index from the committed graph;
+11. rebuild the disposable SQLite index from the committed graph, carrying
+    forward only embeddings whose canonical input/provider/model/dimensions
+    remain current;
 12. persist the canonical receipt, mark the journal committed, and remove the
     backup.
 

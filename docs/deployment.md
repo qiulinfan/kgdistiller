@@ -1,22 +1,52 @@
 # Local-first deployment and recovery
 
-kgdistiller is designed to run inside the repository that owns the authority
-documents. The authority repository, not SQLite and not an Agent conversation,
-is the unit to back up and synchronize.
+kgdistiller is designed around a portable authority store. The store—not
+SQLite and not an Agent conversation—is the unit to back up and synchronize.
+It can be the notes repository itself or a dedicated private Git repository
+created from an existing knowledge project.
+
+Design rationale, rejected alternatives, versioned contracts, and the v1
+implementation map are recorded in
+[portable-store-development.md](portable-store-development.md).
 
 ## Recommended personal layout
 
 ```text
-notes-repository/
+personal-knowledge-store/
 ├── notes/                         # Markdown, Typst, and LaTeX authorities
 ├── knowledge/
 │   ├── sources.json               # committed source and taxonomy policy
 │   ├── identities.json            # committed reviewed renames, when present
 │   ├── alignments.json            # committed reviewed mappings
 │   ├── graph/                     # committed deterministic qlkg-v2 snapshot
+│   ├── documents.jsonl            # committed authority inventory
+│   ├── embeddings/                # committed exact float32 vector objects
+│   ├── store.json                 # committed qlkg-store-v1 generation
+│   ├── .gitignore                 # keeps build/ local; existing file preserved
 │   └── build/                     # ignored SQLite, plans, receipts, previews
 └── vendor/kgdistiller/            # optional pinned Git submodule
 ```
+
+Create or refresh this layout in place with:
+
+```sh
+kgdistiller --repo-root . check
+kgdistiller --repo-root . store snapshot
+kgdistiller --repo-root . store verify
+```
+
+To migrate from a different notes project, write a self-contained copy to a
+separate directory:
+
+```sh
+kgdistiller --repo-root /absolute/path/to/notes store snapshot \
+  --output /absolute/path/to/personal-knowledge-store
+```
+
+The destination cannot be nested inside the source project. Only registered,
+already-ingested `.md`, `.typ`, and `.tex` authorities are copied. Once the
+dedicated store becomes primary, run future ingest operations against it so
+source, graph, inventory, and embeddings advance as one generation.
 
 Keep domain extraction Skills in the host repository. Use the canonical
 `query-kgdistiller` and `ingest-kgdistiller` Skills from the installed package
@@ -81,18 +111,37 @@ Commit these files together:
 - authority documents and referenced authored assets;
 - `knowledge/sources.json`, `identities.json`, and `alignments.json`;
 - every deterministic file under `knowledge/graph/`;
+- `knowledge/documents.jsonl`, `knowledge/store.json`, and every file under
+  `knowledge/embeddings/`;
 - a pinned submodule pointer or an explicit package version.
 
-Ignore `knowledge/build/`, SQLite files, transaction staging directories,
-plans, receipts, local snapshots, rendered pages, and provider caches. A Git
-remote or ordinary encrypted backup service can synchronize the committed
-authority repository. Avoid file-sync tools concurrently rewriting the same
-working tree while `ingest apply` holds the local writer lock.
+Ignore `knowledge/build/`, SQLite and WAL files, transaction staging
+directories, plans, receipts, local Agent snapshots, rendered pages,
+credentials, query logs, and provider caches. Exact vectors under
+`knowledge/embeddings/` are an intentional exception: they are portable,
+content-addressed retrieval artifacts. They remain derived from the authority
+graph and MUST NOT define identity or trusted relations.
+
+SQLite rebuilds retain exact vectors only for nodes whose canonical embedding
+input digest is unchanged; stale node vectors are dropped before snapshotting.
+
+Ordinary Git is recommended for a small personal store. Individual vector
+objects are bounded by their declared dimensions and verified by SHA-256. Do
+not add Git LFS by default: it introduces another remote object store and makes
+offline restoration depend on LFS checkout. Revisit that choice only after
+measuring repository size and confirming LFS availability on every machine.
+
+A Git remote or ordinary encrypted backup service can synchronize the store.
+Avoid file-sync tools concurrently rewriting the same working tree while
+`ingest apply` holds the local writer lock. A local snapshot is not a backup
+until a commit exists elsewhere; report a remote as confirmed only after a
+successful push of the containing commit.
 
 Before changing machines:
 
 ```sh
-kgdistiller --repo-root . check
+kgdistiller --repo-root . store snapshot
+kgdistiller --repo-root . store verify
 git status --short
 git bundle create ../notes-backup.bundle --all
 ```
@@ -102,13 +151,15 @@ private authority data only in storage appropriate for that data.
 
 ## Restore drill
 
-1. Clone the authority repository or restore its Git bundle.
+1. Clone the authority store or restore its Git bundle.
 2. Initialize the pinned submodule or install the recorded kgdistiller version.
-3. Delete any restored `knowledge/build/` directory; it is disposable.
-4. Run `kgdistiller check` against the committed graph.
-5. Run `kgdistiller agent status`; it rebuilds SQLite when absent.
-6. Resolve several known IDs and build one bounded context bundle.
-7. Run `ingest plan` for a disposable reviewed request before allowing writes.
+3. Run `kgdistiller store verify` before changing any tracked file.
+4. Delete any restored `knowledge/build/` directory; it is disposable.
+5. Run `kgdistiller store materialize`; it restores SQLite and exact vectors
+   without provider calls.
+6. Run `kgdistiller agent status` and confirm the store generation.
+7. Resolve several known IDs and build one bounded context bundle.
+8. Run `ingest plan` for a disposable reviewed request before allowing writes.
 
 Do not run `sync` first merely to make a failed `check` disappear. A mismatch
 between committed authority and graph is evidence to review.
@@ -138,4 +189,3 @@ mixed generation to look committed.
 
 Downgrades are safe only when the older release declares every committed schema
 readable. Keep the pre-upgrade Git revision until a restore drill succeeds.
-

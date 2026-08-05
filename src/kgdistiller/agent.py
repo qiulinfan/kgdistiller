@@ -31,6 +31,7 @@ from .alignment import (
 
 SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
 INDEX_SCHEMA = "qlkg-agent-index-v2"
+EMBEDDING_INPUT_SCHEMA = "qlkg-node-embedding-text-v1"
 NAMESPACE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
 )
@@ -327,6 +328,62 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     )
 
 
+def _reusable_embedding_rows(
+    path: Path,
+    nodes: list[dict[str, Any]],
+    namespace: str,
+) -> list[tuple[str, str, str, str, int, str, bytes]]:
+    """Read exact still-current vectors before an atomic index rebuild."""
+    if not path.is_file():
+        return []
+    expected = {
+        str(node["id"]): embedding_input_sha256(node)
+        for node in nodes
+    }
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = _connect(path)
+        rows = connection.execute(
+            """
+            SELECT namespace, node_id, provider, model, dimensions,
+                   content_sha256, vector
+            FROM embeddings
+            WHERE namespace = ?
+            ORDER BY namespace, node_id, provider, model
+            """,
+            (namespace,),
+        ).fetchall()
+        reusable: list[tuple[str, str, str, str, int, str, bytes]] = []
+        for row in rows:
+            node_id = str(row["node_id"])
+            digest = str(row["content_sha256"])
+            dimensions = int(row["dimensions"])
+            vector = bytes(row["vector"])
+            if expected.get(node_id) != digest:
+                continue
+            try:
+                _validate_vector(_unpack_vector(vector, dimensions), dimensions)
+            except (AgentIndexError, ValueError, struct.error):
+                continue
+            reusable.append(
+                (
+                    str(row["namespace"]),
+                    node_id,
+                    str(row["provider"]),
+                    str(row["model"]),
+                    dimensions,
+                    digest,
+                    vector,
+                )
+            )
+        return reusable
+    except (AgentIndexError, OSError, sqlite3.Error, ValueError, json.JSONDecodeError):
+        return []
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def write_agent_index(
     path: Path,
     snapshot: dict[str, Any],
@@ -340,6 +397,7 @@ def write_agent_index(
     except AlignmentError as error:
         raise AgentIndexError(str(error)) from error
     nodes = list(snapshot.get("nodes") or [])
+    reusable_embeddings = _reusable_embedding_rows(path, nodes, namespace)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -359,7 +417,11 @@ def write_agent_index(
             "namespace": namespace,
             "counts": counts,
             "retrieval_lanes": ["exact", "scoped-alias", "fts", "graph", "ppr"],
-            "capabilities": ["read-only-query-v2", "transactional-ingest-v1"],
+            "capabilities": [
+                "read-only-query-v2",
+                "transactional-ingest-v1",
+                "portable-store-v1",
+            ],
             "alignment_schema": ALIGNMENT_SCHEMA,
             "alignment_sha256": alignment_sha256_json(validated_alignments),
             "alignment_counts": {
@@ -375,6 +437,25 @@ def write_agent_index(
                 "candidate_analyzer": None,
             },
         }
+        embedding_configs = sorted(
+            {
+                canonical_json(
+                    {
+                        "name": row[2],
+                        "model": row[3],
+                        "dimensions": row[4],
+                    }
+                )
+                for row in reusable_embeddings
+            }
+        )
+        if embedding_configs:
+            configs = [json.loads(value) for value in embedding_configs]
+            metadata["retrieval_lanes"].append("embedding")
+            metadata["provider_config_sha256"] = sha256_json(configs)
+            metadata["providers"]["embedding"] = (
+                configs[0] if len(configs) == 1 else {"configurations": configs}
+            )
         connection.executemany(
             "INSERT INTO index_meta(key, value) VALUES (?, ?)",
             ((key, canonical_json(value)) for key, value in sorted(metadata.items())),
@@ -510,6 +591,14 @@ def write_agent_index(
                     canonical_json(mapping),
                 ),
             )
+        connection.executemany(
+            """
+            INSERT INTO embeddings
+            (namespace, node_id, provider, model, dimensions, content_sha256, vector)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            reusable_embeddings,
+        )
         connection.commit()
     except BaseException:
         connection.close()
@@ -742,6 +831,11 @@ def _embedding_text(node: dict[str, Any]) -> str:
     return "\n".join(dict.fromkeys(part.strip() for part in parts if part.strip()))
 
 
+def embedding_input_sha256(node: dict[str, Any]) -> str:
+    """Return the stable digest used to invalidate one node embedding."""
+    return hashlib.sha256(_embedding_text(node).encode("utf-8")).hexdigest()
+
+
 def _validate_vector(vector: list[float], dimensions: int) -> list[float]:
     if len(vector) != dimensions:
         raise AgentIndexError(
@@ -804,7 +898,7 @@ def index_embeddings(
         ).fetchall()
         nodes = [_node_payload(row) for row in rows]
         texts = [_embedding_text(node) for node in nodes]
-        digests = [hashlib.sha256(text.encode("utf-8")).hexdigest() for text in texts]
+        digests = [embedding_input_sha256(node) for node in nodes]
         pending_indices: list[int] = []
         for index, (node, digest) in enumerate(zip(nodes, digests)):
             cached = connection.execute(
@@ -902,10 +996,43 @@ def index_embeddings(
             "SELECT value FROM index_meta WHERE key = 'providers'"
         ).fetchone()
         providers = json.loads(providers_row["value"]) if providers_row else {}
-        providers["embedding"] = provider_meta
+        configuration_rows = connection.execute(
+            """
+            SELECT DISTINCT provider, model, dimensions
+            FROM embeddings
+            ORDER BY provider, model, dimensions
+            """
+        ).fetchall()
+        configurations = [
+            {
+                "name": str(row["provider"]),
+                "model": str(row["model"]),
+                "dimensions": int(row["dimensions"]),
+            }
+            for row in configuration_rows
+        ]
+        providers["embedding"] = (
+            configurations[0]
+            if len(configurations) == 1
+            else {"configurations": configurations}
+        )
         connection.execute(
             "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('providers', ?)",
             (canonical_json(providers),),
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('provider_config_sha256', ?)",
+            (canonical_json(sha256_json(configurations)),),
+        )
+        lanes_row = connection.execute(
+            "SELECT value FROM index_meta WHERE key = 'retrieval_lanes'"
+        ).fetchone()
+        lanes = json.loads(lanes_row["value"]) if lanes_row else []
+        if "embedding" not in lanes:
+            lanes.append("embedding")
+        connection.execute(
+            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('retrieval_lanes', ?)",
+            (canonical_json(lanes),),
         )
         counts_row = connection.execute(
             "SELECT value FROM index_meta WHERE key = 'alignment_counts'"

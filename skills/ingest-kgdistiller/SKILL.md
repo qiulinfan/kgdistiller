@@ -58,6 +58,17 @@ knowledge or mappings for import.
 5. Accept success only when the returned `qlkg-ingest-receipt-v1` has
    `status: committed`, every validation passed, its canonical digest verifies,
    and its `after` digests match `agent status`.
+6. If `knowledge/store.json` exists, refresh and verify the portable generation:
+
+   ```sh
+   kgdistiller store snapshot
+   kgdistiller store verify
+   ```
+
+   This captures exact embeddings already present in SQLite without calling a
+   provider. If no portable store exists, report that the ingest is local-only
+   and recommend `$deploy-kgdistiller`; do not silently initialize Git, commit,
+   or push.
 
 The engine owns locking, optimistic concurrency, staging, scan, delta apply,
 sync, curation, global validation, atomic installation, crash recovery,
@@ -74,6 +85,10 @@ Return the receipt path and a compact summary of:
 - nodes added, reused, updated, orphaned, or removed;
 - refs, edges, alignments, and source patches changed;
 - validation results, warnings, and unapplied review decisions.
+- portable store generation, document count, and embedding count when refreshed;
+- synchronization state as `local-only`, `committed locally`, or `remote
+  confirmed`, with the latter two used only when the corresponding explicitly
+  authorized Git operation has actually succeeded.
 
 Do not include full authority content, paper text, credentials, or unbounded
 evidence in the response.
