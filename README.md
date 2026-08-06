@@ -328,6 +328,11 @@ for the snapshot contract, retrieval pipeline, token-budget context bundles,
 MCP tools, paper comparison statuses, transaction boundary, security rules, and
 implementation phases.
 
+See [the Agentic knowledge base closure specification](docs/agentic-knowledge-base-closure-spec.md)
+for the remaining portable-RAG, document-upsert, Skill, paper-import, and qlblog
+integration requirements, quantitative acceptance metrics, dependency order,
+and issue-sized work packages intended for automated implementation.
+
 ## Agent Skills
 
 kgdistiller ships three narrow, provider-neutral Agent Skills alongside the
