@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-retrieval-plan-v1.schema.json",
+  "title": "kgdistiller bounded retrieval plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "question", "namespace", "identity_queries", "lexical_queries", "semantic_queries", "graph", "filters", "limit"],
+  "properties": {
+    "schema": {"const": "qlkg-retrieval-plan-v1"},
+    "question": {"type": "string", "minLength": 1, "maxLength": 8192},
+    "namespace": {"$ref": "#/$defs/namespace"},
+    "identity_queries": {"$ref": "#/$defs/queries"},
+    "lexical_queries": {"$ref": "#/$defs/queries"},
+    "semantic_queries": {"$ref": "#/$defs/queries"},
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed_ids", "edge_types", "direction", "max_depth", "strategy"],
+      "properties": {
+        "seed_ids": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/nodeId"}},
+        "edge_types": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/edgeType"}},
+        "direction": {"enum": ["out", "in", "both"]},
+        "max_depth": {"type": "integer", "minimum": 0, "maximum": 8},
+        "strategy": {"enum": ["bfs", "ppr", "hybrid"]}
+      }
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_types", "include_stale", "include_orphaned"],
+      "properties": {
+        "node_types": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"enum": ["knowledge", "field", "topic"]}},
+        "include_stale": {"type": "boolean"},
+        "include_orphaned": {"type": "boolean"}
+      }
+    },
+    "limit": {"type": "integer", "minimum": 1, "maximum": 500}
+  },
+  "$defs": {
+    "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"},
+    "nodeId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "queries": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
+    "edgeType": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]}
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schema": "qlkg-document-upsert-request-v1",
+  "request_id": "synthetic-upsert-1",
+  "request_sha256": "6cb7fb0eca7a24e522e199fd083abca8d3ab76a84ff03935eb6d79d9b18e3fad",
+  "source": {
+    "source_id": "notes",
+    "authority": "notes/synthetic.typ",
+    "registered_glob": "notes/**/*.typ",
+    "format": "typ",
+    "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "document": {
+    "document_id": "doc:synthetic-note",
+    "matching_evidence": [{"kind": "explicit-document-id", "value": "doc:synthetic-note"}]
+  },
+  "reviewed": {
+    "markers": [{"node_id": "synthetic-theorem", "kind": "definition", "marker": "synthetic-theorem", "location": {"line": 3}}],
+    "references": [{"target_id": "synthetic-premise", "location": {"line": 4}, "evidence": "The reviewed statement names the premise."}],
+    "entries": [{"node_id": "synthetic-theorem", "node_type": "knowledge", "label": "Synthetic theorem", "text": "A fixture-only theorem used to validate the contract.", "claims": ["Depends on a synthetic premise."]}],
+    "edges": [{"subject_id": "synthetic-premise", "relation": "prerequisite-for", "object_id": "synthetic-theorem", "evidence": "The reviewed source states the dependency.", "location": {"line": 4}}],
+    "review": {"status": "reviewed", "reviewer": "fixture-reviewer", "evidence": ["Synthetic marker and edge review completed."]}
+  },
+  "artifacts": {
+    "candidate": {"path": "artifacts/candidate.json", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"},
+    "query": {"path": "artifacts/query.json", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"},
+    "delta": {"path": "artifacts/delta.json", "sha256": "5555555555555555555555555555555555555555555555555555555555555555"}
+  },
+  "preconditions": {
+    "graph_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "query_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "document_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "portable_generation_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  "embedding": {
+    "intent": "required",
+    "policy_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+    "profile": "primary"
+  },
+  "targets": {
+    "portable": {"store": "/synthetic/private-store", "expected_generation_sha256": "8888888888888888888888888888888888888888888888888888888888888888"},
+    "machine_local": {"database": "knowledge/build/knowledge.sqlite"}
+  }
+}

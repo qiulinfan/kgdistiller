@@ -7,6 +7,7 @@ without installing a second Python environment.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -28,7 +29,11 @@ def _type_matches(value: Any, expected: str) -> bool:
     if expected == "integer":
         return isinstance(value, int) and not isinstance(value, bool)
     if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and (not isinstance(value, float) or math.isfinite(value))
+        )
     if expected == "boolean":
         return isinstance(value, bool)
     if expected == "null":
@@ -111,6 +116,18 @@ def validate_json_schema(instance: Any, schema: dict[str, Any]) -> list[SchemaVi
             if isinstance(selected, dict):
                 validate(value, selected, path)
         if isinstance(value, dict):
+            if "minProperties" in rule and len(value) < int(rule["minProperties"]):
+                errors.append(
+                    SchemaViolation(
+                        path, f"must contain at least {rule['minProperties']} properties"
+                    )
+                )
+            if "maxProperties" in rule and len(value) > int(rule["maxProperties"]):
+                errors.append(
+                    SchemaViolation(
+                        path, f"must contain at most {rule['maxProperties']} properties"
+                    )
+                )
             for required in rule.get("required", []):
                 if required not in value:
                     errors.append(
@@ -128,6 +145,10 @@ def validate_json_schema(instance: Any, schema: dict[str, Any]) -> list[SchemaVi
                     )
                 elif isinstance(additional, dict):
                     validate(value[key], additional, (*path, key))
+            property_names = rule.get("propertyNames")
+            if isinstance(property_names, dict):
+                for key in sorted(value):
+                    validate(key, property_names, (*path, key))
         if isinstance(value, list):
             if "minItems" in rule and len(value) < int(rule["minItems"]):
                 errors.append(
@@ -137,6 +158,14 @@ def validate_json_schema(instance: Any, schema: dict[str, Any]) -> list[SchemaVi
                 errors.append(
                     SchemaViolation(path, f"must contain at most {rule['maxItems']} items")
                 )
+            if rule.get("uniqueItems") is True:
+                for index, item in enumerate(value):
+                    if any(item == previous for previous in value[:index]):
+                        errors.append(
+                            SchemaViolation(
+                                (*path, index), "must not duplicate an earlier item"
+                            )
+                        )
             item_rule = rule.get("items")
             if isinstance(item_rule, dict):
                 for index, item in enumerate(value):
@@ -173,6 +202,14 @@ def validate_json_schema(instance: Any, schema: dict[str, Any]) -> list[SchemaVi
             and value < rule["minimum"]
         ):
             errors.append(SchemaViolation(path, f"must be >= {rule['minimum']}"))
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and (not isinstance(value, float) or math.isfinite(value))
+            and "maximum" in rule
+            and value > rule["maximum"]
+        ):
+            errors.append(SchemaViolation(path, f"must be <= {rule['maximum']}"))
 
     validate(instance, schema, ())
     return errors

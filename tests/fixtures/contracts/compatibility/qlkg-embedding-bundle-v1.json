@@ -1,0 +1,9 @@
+{
+  "schema": "qlkg-embedding-bundle-v1",
+  "embedding_input_schema": "qlkg-node-embedding-text-v1",
+  "dtype": "float32-le",
+  "records": {"path": "knowledge/embeddings/records.jsonl", "count": 1, "sha256": "5555555555555555555555555555555555555555555555555555555555555555"},
+  "objects": {"directory": "knowledge/embeddings/objects", "count": 1, "bytes": 8, "sha256": "6666666666666666666666666666666666666666666666666666666666666666"},
+  "providers": [{"provider": "fixture-adapter", "model": "synthetic-model", "dimensions": 2, "dtype": "float32-le", "embedding_input_schema": "qlkg-node-embedding-text-v1", "provider_config_sha256": "4444444444444444444444444444444444444444444444444444444444444444"}],
+  "embedding_generation_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+}

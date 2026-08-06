@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-document-ingest-receipt-v1.schema.json",
+  "title": "kgdistiller resumable document ingest receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "request_id", "overall_status", "document", "stages", "git_ready", "warnings", "receipt_sha256"],
+  "properties": {
+    "schema": {"const": "qlkg-document-ingest-receipt-v1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "overall_status": {"enum": ["ready", "degraded", "pending", "rejected", "failed"]},
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id", "operation"],
+      "properties": {
+        "document_id": {"oneOf": [{"$ref": "#/$defs/documentId"}, {"type": "null"}]},
+        "operation": {"enum": ["create", "update", "no-op", "move", "ambiguous", "rejected"]}
+      }
+    },
+    "stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority_graph", "embeddings", "portable", "materialization"],
+      "properties": {
+        "authority_graph": {"$ref": "#/$defs/authorityStage"},
+        "embeddings": {"$ref": "#/$defs/embeddingStage"},
+        "portable": {"$ref": "#/$defs/portableStage"},
+        "materialization": {"$ref": "#/$defs/materializationStage"}
+      }
+    },
+    "git_ready": {"type": "boolean"},
+    "warnings": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
+    "receipt_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nullableSha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "documentId": {"type": "string", "minLength": 5, "maxLength": 256, "pattern": "^doc:[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "localPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))(?!.*[\\u0000\\r\\n]).+$"
+    },
+    "authorityStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["pending", "committed", "rejected", "failed", "rolled-back"]},
+        "receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "reason": {"$ref": "#/$defs/reason"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "committed"}}}, "then": {"required": ["receipt_sha256"]}},
+        {"if": {"properties": {"status": {"enum": ["rejected", "failed", "rolled-back"]}}}, "then": {"required": ["reason"]}}
+      ]
+    },
+    "embeddingStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ready", "missing"],
+      "properties": {
+        "status": {"enum": ["pending", "complete", "not-required", "provider-failed", "profile-mismatch", "stale-generation", "invalid-response"]},
+        "ready": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "missing": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "reason": {"$ref": "#/$defs/reason"}
+      },
+      "allOf": [{"if": {"properties": {"status": {"enum": ["complete", "not-required"]}}}, "else": {"required": ["reason"]}}]
+    },
+    "portableStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["pending", "verified", "partial", "coverage-blocked", "verification-failed", "stale-generation"]},
+        "store_generation_sha256": {"$ref": "#/$defs/sha256"},
+        "reason": {"$ref": "#/$defs/reason"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "verified"}}}, "then": {"required": ["store_generation_sha256"]}},
+        {"if": {"properties": {"status": {"enum": ["coverage-blocked", "verification-failed", "stale-generation"]}}}, "then": {"required": ["reason"]}}
+      ]
+    },
+    "materializationStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["pending", "current", "not-required", "failed", "stale-generation"]},
+        "database": {"$ref": "#/$defs/localPath"},
+        "reason": {"$ref": "#/$defs/reason"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "current"}}}, "then": {"required": ["database"]}},
+        {"if": {"properties": {"status": {"enum": ["failed", "stale-generation"]}}}, "then": {"required": ["reason"]}}
+      ]
+    }
+  }
+}

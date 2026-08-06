@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
+
+from .contracts import canonical_json, sha256_json
 
 
 ALIGNMENT_SCHEMA = "qlkg-alignments-v1"
@@ -55,14 +56,6 @@ WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
 class AlignmentError(ValueError):
     """Raised when alignment data violates the deterministic contract."""
-
-
-def canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def sha256_json(value: Any) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def normalize_surface(value: str) -> str:
