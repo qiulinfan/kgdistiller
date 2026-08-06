@@ -27,6 +27,7 @@ from .alignment import (
     sha256_json as alignment_sha256_json,
     validate_alignment_set,
 )
+from .contracts import canonical_json, sha256_json
 
 
 SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
@@ -103,14 +104,6 @@ class CandidateAnalyzer(Protocol):
         evidence: list[dict[str, Any]],
     ) -> dict[str, Any]:
         ...
-
-
-def canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def sha256_json(value: Any) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def normalize_name(value: str) -> str:

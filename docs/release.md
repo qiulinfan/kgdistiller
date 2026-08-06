@@ -22,6 +22,13 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-ingest-request-v1` | yes | accepted | Content-addressed plan/apply request. |
 | `qlkg-ingest-plan-v1` | output | output | Review artifact, not a commit receipt. |
 | `qlkg-ingest-receipt-v1` | output | output | Canonical committed/rejected result. |
+| `qlkg-local-profile-v1` | proposed | proposed | Machine-local paths and credential environment-variable names; never portable. |
+| `qlkg-embedding-policy-v1` | proposed | proposed | Portable vector-space and required-coverage policy without credentials. |
+| `qlkg-retrieval-plan-v1` | proposed | proposed | Bounded lane-specific query input; execution is deferred. |
+| `qlkg-search-result-v2` | proposed | proposed | Bounded per-lane status and fusion evidence; public wiring is deferred. |
+| `qlkg-document-record-v2` | proposed | proposed | Stable inventory identity only; it does not define graph node identity. |
+| `qlkg-document-upsert-request-v1` | proposed | proposed | Reviewed annotated-document input; plan/apply behavior is deferred. |
+| `qlkg-document-ingest-receipt-v1` | proposed | proposed | Resumable stage output; enrichment orchestration is deferred. |
 | MCP `2024-11-05` through `2025-11-25` | yes | read-only | No MCP mutation tools. |
 
 Python 3.9 and newer are supported. The deterministic core has no runtime model

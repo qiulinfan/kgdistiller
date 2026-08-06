@@ -1,0 +1,14 @@
+{
+  "schema": "qlkg-embedding-policy-v1",
+  "profiles": [
+    {
+      "name": "primary",
+      "provider": "fixture-adapter",
+      "model": "synthetic-model",
+      "dimensions": 8,
+      "required_node_types": ["knowledge"],
+      "minimum_coverage": 1.5,
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "qlkg-document-record-v2",
+  "document_id": "doc:synthetic-note",
+  "source_id": "notes",
+  "authority": "notes/synthetic.typ",
+  "authority_history": ["notes/old-synthetic.typ"],
+  "format": "typ",
+  "knowledge_origin": "personal-note",
+  "external_ids": {"doi": null, "arxiv": null},
+  "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "definition_ids": ["synthetic-theorem"],
+  "reference_count": 1
+}

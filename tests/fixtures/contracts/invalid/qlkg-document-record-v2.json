@@ -1,0 +1,13 @@
+{
+  "schema": "qlkg-document-record-v2",
+  "document_id": "doc:synthetic-note",
+  "source_id": "notes",
+  "authority": "notes/link/../../private.typ",
+  "authority_history": [],
+  "format": "typ",
+  "knowledge_origin": "personal-note",
+  "external_ids": {},
+  "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "definition_ids": [],
+  "reference_count": 0
+}
