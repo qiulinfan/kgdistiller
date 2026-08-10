@@ -4,7 +4,7 @@ Status: active execution plan
 
 Baseline date: 2026-08-09
 
-Current slice: `KB-REPAIR-00`
+Current slice: `KB-REPAIR-01`
 
 Repositories: 先修复 `kgdistiller`，再更新固定版本的 `qlblog` 宿主
 
@@ -483,8 +483,8 @@ Acceptance:
 
 | Slice | Status | Completion evidence |
 | --- | --- | --- |
-| `KB-REPAIR-00` | IN PROGRESS | 本地 Windows 3.13 与 WSL 3.14 全量 178 项通过；Windows 3.9/3.11/3.13 兼容回归、build、distribution/wheel smoke 通过；等待 Linux/Windows/macOS CI。 |
-| `KB-REPAIR-01` | NOT STARTED | 本地 WIP 已保留，但在 `KB-REPAIR-00` 通过前不继续。 |
+| `KB-REPAIR-00` | COMPLETE | Commit `1cb7f31`、PR #1；本地 Windows 3.9/3.11/3.13 与 WSL 3.14 全量 178 项通过；build、distribution/wheel smoke 通过；GitHub Actions [run 31418772924](https://github.com/qiulinfan/kgdistiller/actions/runs/31418772924) 的 Linux 3.9/3.11/3.13、Windows、macOS 五项全部通过。 |
+| `KB-REPAIR-01` | IN PROGRESS | 审计并收口已保留的 machine-local profile/provider registry WIP。 |
 | `KB-REPAIR-02` | NOT STARTED | — |
 | `KB-REPAIR-03` | NOT STARTED | — |
 | `KB-REPAIR-04` | NOT STARTED | — |
@@ -498,4 +498,4 @@ Acceptance:
 | `KB-REPAIR-12` | NOT STARTED | — |
 | `KB-REPAIR-13` | NOT STARTED | — |
 
-当前只执行 `KB-REPAIR-00`；在它通过独立验收前不开始后续 repair slice。
+当前只执行 `KB-REPAIR-01`；在它通过独立验收前不开始后续 repair slice。
