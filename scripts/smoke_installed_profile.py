@@ -11,10 +11,26 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from kgdistiller.agent import write_agent_index
+from kgdistiller.contracts import sha256_json
+
 
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def _generation_markers(database: Path) -> tuple[str, ...]:
+    root = database.parent / f".{database.name}.generations"
+    if not root.is_dir():
+        return ()
+    return tuple(
+        sorted(
+            path.name
+            for path in root.iterdir()
+            if path.is_file() and path.name.startswith("current-")
+        )
+    )
 
 
 def _run_profile(
@@ -52,6 +68,78 @@ def _run_profile(
     return payload
 
 
+def _run_embedding(
+    root: Path,
+    command: str,
+    arguments: list[str],
+    environment: dict[str, str],
+    sentinels: tuple[str, ...],
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "kgdistiller",
+            "--repo-root",
+            str(root),
+            *arguments,
+            "embedding",
+            command,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    transcript = completed.stdout + completed.stderr
+    for sentinel in sentinels:
+        _require(sentinel not in transcript, "embedding command exposed a credential sentinel")
+    _require(completed.returncode == 0, f"installed embedding {command} failed")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("installed embedding command did not return JSON") from error
+    _require(isinstance(payload, dict), "installed embedding result was not an object")
+    return payload
+
+
+def _embedding_snapshot() -> dict[str, Any]:
+    nodes = [
+        {
+            "id": node_id,
+            "type": "knowledge",
+            "label": label,
+            "text": text,
+            "properties": {
+                "aliases": [],
+                "curation_status": "current",
+                "source_status": "active",
+            },
+            "provenance": {"active": True, "authority": "notes/wheel-smoke.md"},
+        }
+        for node_id, label, text in (
+            ("wheel-alpha", "Wheel alpha", "First installed-wheel concept."),
+            ("wheel-beta", "Wheel beta", "Second installed-wheel concept."),
+        )
+    ]
+    snapshot: dict[str, Any] = {
+        "schema": "qlkg-agent-snapshot-v1",
+        "namespace": "personal",
+        "graph": {
+            "schema": "qlkg-v2",
+            "sha256": "1" * 64,
+            "counts": {"nodes": len(nodes), "edges": 0, "references": 0},
+        },
+        "nodes": nodes,
+        "edges": [],
+        "references": [],
+        "diagnostics": {"errors": [], "warnings": []},
+    }
+    snapshot["snapshot_sha256"] = sha256_json(snapshot)
+    return snapshot
+
+
 def main() -> int:
     primary_secret = "installed-primary-credential-sentinel"
     secondary_secret = "installed-secondary-credential-sentinel"
@@ -80,6 +168,13 @@ def main() -> int:
                     "base_url": "https://provider.example/v1",
                     "credential_env": "KGDISTILLER_SECONDARY_SMOKE_KEY",
                 },
+                "fixture": {
+                    "adapter": "deterministic-fixture",
+                    "model": "installed-fixture-model",
+                    "dimensions": 3,
+                    "base_url": "https://fixture.invalid/v1",
+                    "credential_env": "KGDISTILLER_FIXTURE_UNUSED_KEY",
+                },
             },
         }
         profile_path.write_text(
@@ -90,6 +185,28 @@ def main() -> int:
         environment.pop("PYTHONPATH", None)
         environment["KGDISTILLER_PRIMARY_SMOKE_KEY"] = primary_secret
         environment["KGDISTILLER_SECONDARY_SMOKE_KEY"] = secondary_secret
+
+        policy_path = root / "knowledge/embedding-policy.json"
+        policy = {
+            "schema": "qlkg-embedding-policy-v1",
+            "profiles": [
+                {
+                    "name": "fixture",
+                    "provider": "deterministic-fixture",
+                    "model": "installed-fixture-model",
+                    "dimensions": 3,
+                    "required_node_types": ["knowledge"],
+                    "minimum_coverage": 1.0,
+                    "required": True,
+                }
+            ],
+        }
+        policy_path.write_text(
+            json.dumps(policy, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        database = profile_path.parent / "state/knowledge.sqlite"
+        write_agent_index(database, _embedding_snapshot())
 
         first = _run_profile(root, [], environment, sentinels)
         second = _run_profile(root, [], environment, sentinels)
@@ -154,7 +271,39 @@ def main() -> int:
             "installed CLI did not report deterministic override precedence",
         )
 
-    print("installed profile smoke passed")
+        before = _run_embedding(root, "status", [], environment, sentinels)
+        _require(before.get("profiles", [{}])[0].get("missing") == 2,
+                 "installed embedding status did not report missing vectors")
+        first_sync = _run_embedding(
+            root,
+            "sync",
+            ["--embedding-profile", "fixture"],
+            environment,
+            sentinels,
+        )
+        installed_generation = _generation_markers(database)
+        _require(installed_generation,
+                 "installed embedding sync published no observable generation marker")
+        second_sync = _run_embedding(
+            root,
+            "sync",
+            ["--embedding-profile", "fixture"],
+            environment,
+            sentinels,
+        )
+        _require(first_sync.get("installed") == 2,
+                 "installed embedding sync did not install both vectors")
+        _require(second_sync.get("status") == "unchanged",
+                 "installed embedding second sync was not unchanged")
+        _require(second_sync.get("attempts") == 0 and second_sync.get("batches") == 0,
+                 "installed embedding second sync called a document provider")
+        _require(_generation_markers(database) == installed_generation,
+                 "installed embedding no-op published a new generation")
+        after = _run_embedding(root, "status", [], environment, sentinels)
+        _require(after.get("profiles", [{}])[0].get("ready") == 2,
+                 "installed embedding status did not report ready vectors")
+
+    print("installed profile and embedding smoke passed")
     return 0
 
 

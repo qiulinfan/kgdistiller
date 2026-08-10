@@ -859,6 +859,7 @@ class ProviderAdapterTests(unittest.TestCase):
             headers={"Content-Length": str(len(body))},
             drip_delay=0.01,
         )
+        started = time.monotonic()
         with mock.patch(
             "kgdistiller.providers._open_provider_request",
             return_value=slow,
@@ -867,7 +868,8 @@ class ProviderAdapterTests(unittest.TestCase):
                 "provider-timeout",
                 lambda: provider.embed_query("query"),
             )
-        self.assertGreater(slow.read_calls, 1)
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.2)
 
     def test_slow_status_header_obeys_a_total_deadline(self) -> None:
         listener = socket.socket()

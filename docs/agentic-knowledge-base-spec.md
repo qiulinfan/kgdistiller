@@ -109,8 +109,9 @@ personal knowledge base. It contains:
 - the complete deterministic `qlkg-v2` graph and entry shards;
 - `qlkg-document-record-v1` JSONL records for exactly the sources represented
   by the graph generation;
-- one `qlkg-embedding-bundle-v1` manifest, canonical
-  `qlkg-embedding-record-v1` JSONL, and content-addressed vector objects.
+- one current `qlkg-embedding-bundle-v2` manifest, canonical
+  `qlkg-embedding-record-v2` JSONL, and content-addressed vector objects
+  (with v1 retained as a read-only compatibility contract).
 
 The store manifest binds registry, source inventory, graph, identity,
 alignment, and embedding generations by SHA-256. It MUST contain only relative,
@@ -298,6 +299,7 @@ node_fts(id, label, aliases, text)
 
 embeddings(
   namespace, node_id, provider, model, dimensions,
+  embedding_input_schema, provider_config_sha256,
   content_sha256, vector
 )
 
@@ -320,6 +322,11 @@ similarity_edges(
 An implementation MAY add materialized adjacency, degree, community, or cache
 tables. Those tables are never part of authority.
 
+The local embedding table keeps the released portable logical key
+`(namespace, node_id, provider, model)`. The two additional binding columns let
+status distinguish stale and incompatible rows without letting a configuration
+change create a second row for the same portable key.
+
 ### 7.1 Incremental invalidation
 
 - A changed `snapshot_sha256` invalidates snapshot-wide caches.
@@ -335,7 +342,7 @@ tables. Those tables are never part of authority.
 
 ### 7.2 Portable embedding contract
 
-Each `qlkg-embedding-record-v1` MUST bind:
+Each current `qlkg-embedding-record-v2` MUST bind:
 
 ```text
 namespace, node_id, provider, model, dimensions,
@@ -348,6 +355,21 @@ little-endian IEEE-754 float32 values. Its path is derived from
 `vector_sha256`, allowing identical vectors to share an immutable object. The
 bundle manifest binds the canonical JSONL digest, distinct object digest set,
 byte count, dtype, input schema, and provider configurations.
+
+For v2, the logical key remains `(namespace, node_id, provider, model)`.
+`provider_config_sha256` is the opaque KB01 digest of
+the machine-local, non-secret vector-space configuration. Export and import MUST
+preserve it exactly; portable artifacts MUST NOT disclose base URLs, credential
+environment names, or secrets. A configuration switch replaces the old row;
+two records with the same logical key are duplicates even when their
+configuration digests differ.
+
+Readers MUST continue to accept published `qlkg-embedding-bundle-v1` and
+`qlkg-embedding-record-v1`. Their logical key remains the four-tuple
+`(namespace, node_id, provider, model)`, and their provider digest MUST equal the
+legacy digest recomputed from provider, model, dimensions, float32-le dtype, and
+the embedding input schema. A v1 materialization MUST retain that exact legacy
+digest. Writers emit v2 and MUST NOT silently change the v1 invariant.
 
 Import MUST reject unknown nodes, stale embedding input hashes, provider-config
 digest mismatches, duplicate keys, non-finite or all-zero vectors, incorrect

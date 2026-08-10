@@ -21,7 +21,7 @@ from kgdistiller.agent import (  # noqa: E402
     index_status,
     resolve_agent_index_path,
 )
-from kgdistiller.cli import synchronize  # noqa: E402
+from kgdistiller.cli import make_artifacts, synchronize, write_artifacts  # noqa: E402
 from kgdistiller.project import initialize_project  # noqa: E402
 import kgdistiller.store as store_module  # noqa: E402
 from kgdistiller.store import (  # noqa: E402
@@ -36,6 +36,7 @@ class FixtureEmbeddingProvider:
     name = "fixture"
     model = "portable-v1"
     dimensions = 4
+    provider_config_sha256 = "a" * 64
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [
@@ -100,9 +101,11 @@ class PortableStoreTest(unittest.TestCase):
             return connection.execute(
                 """
                 SELECT namespace, node_id, provider, model, dimensions,
-                       content_sha256, vector
+                       embedding_input_schema, content_sha256,
+                       provider_config_sha256, vector
                 FROM embeddings
-                ORDER BY namespace, node_id, provider, model
+                ORDER BY namespace, node_id, provider, model,
+                         provider_config_sha256
                 """
             ).fetchall()
         finally:
@@ -125,6 +128,22 @@ class PortableStoreTest(unittest.TestCase):
         self.assertEqual("snapshot-copy", created["mode"])
         self.assertEqual(created["store_generation_sha256"], verified["store_generation_sha256"])
         self.assertEqual(len(expected_embeddings), verified["embeddings"])
+        portable_manifest = json.loads(
+            (self.store / "knowledge/embeddings/manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        portable_records = self.embedding_records()
+        self.assertEqual("qlkg-embedding-bundle-v2", portable_manifest["schema"])
+        self.assertTrue(portable_records)
+        self.assertEqual(
+            {"qlkg-embedding-record-v2"},
+            {record["schema"] for record in portable_records},
+        )
+        self.assertEqual(
+            {"a" * 64},
+            {record["provider_config_sha256"] for record in portable_records},
+        )
         self.assertTrue((self.store / "notes/roundtrip.typ").is_file())
         self.assertTrue((self.store / "knowledge/graph/manifest.json").is_file())
         self.assertEqual(
@@ -161,10 +180,101 @@ class PortableStoreTest(unittest.TestCase):
         self.assertTrue(first["materialized"])
         self.assertFalse(second["materialized"])
         self.assertEqual(expected_embeddings, self.embedding_rows(restored_database))
+        restored_status = index_status(restored_database)
         self.assertEqual(
             created["store_generation_sha256"],
-            index_status(restored_database)["store_generation_sha256"],
+            restored_status["store_generation_sha256"],
         )
+        self.assertEqual(
+            "a" * 64,
+            restored_status["providers"]["embedding"]["provider_config_sha256"],
+        )
+        self.assertEqual(
+            "qlkg-node-embedding-text-v1",
+            restored_status["providers"]["embedding"]["embedding_input_schema"],
+        )
+
+    def test_v1_bundle_remains_verifiable_and_materializes_legacy_digest(self) -> None:
+        self.snapshot()
+        records = self.convert_embedding_bundle_to_v1()
+        legacy_digests = {
+            str(record["provider_config_sha256"]) for record in records
+        }
+
+        verified = verify_store(self.store)
+        target = self.store / "knowledge/build/v1.sqlite"
+        result = materialize_store(self.store, target)
+
+        self.assertEqual(len(records), verified["embeddings"])
+        self.assertEqual(len(records), result["embeddings"])
+        self.assertEqual(
+            legacy_digests,
+            {str(row[7]) for row in self.embedding_rows(target)},
+        )
+
+    def test_v1_bundle_rejects_nonlegacy_provider_digest(self) -> None:
+        self.snapshot()
+        records = self.convert_embedding_bundle_to_v1()
+        records[0]["provider_config_sha256"] = "f" * 64
+        self.rewrite_embedding_bundle(
+            records, bundle_schema=store_module.LEGACY_EMBEDDING_BUNDLE_SCHEMA
+        )
+
+        with self.assertRaisesRegex(StoreError, "provider digest mismatch"):
+            verify_store(self.store)
+
+    def test_snapshot_rejects_invalid_current_provider_config_digest(self) -> None:
+        with store_module._mutable_agent_index(self.database) as connection:
+            connection.execute(
+                "UPDATE embeddings SET provider_config_sha256 = 'not-a-digest'"
+            )
+
+        with self.assertRaisesRegex(StoreError, "invalid embedding provider digest"):
+            self.snapshot()
+
+    def test_snapshot_omits_ineligible_stale_embedding_rows(self) -> None:
+        before = self.embedding_rows(self.database)
+        state = store_module.load_state(self.graph)
+        changed = next(
+            node for node in state.nodes.values() if node.get("type") == "knowledge"
+        )
+        changed["text"] = str(changed.get("text", "")) + " changed"
+        changed["properties"]["curation_status"] = "needs-review"
+        changed["provenance"]["active"] = False
+        artifacts = make_artifacts(
+            state,
+            dict(state.manifest.get("source_hashes") or {}),
+            identity_sha256=str(state.manifest.get("identity_sha256", "")) or None,
+            git_revision=str(state.manifest.get("git_revision", "")) or None,
+        )
+        write_artifacts(self.graph, artifacts)
+        snapshot = store_module.make_agent_snapshot(store_module.load_state(self.graph))
+        store_module.write_agent_index(self.database, snapshot)
+
+        retained = self.embedding_rows(self.database)
+        self.assertEqual(len(before), len(retained))
+        created = self.snapshot()
+        verified = verify_store(self.store)
+        portable = self.embedding_records()
+        self.assertGreater(len(retained), len(portable))
+        self.assertEqual(len(portable), created["embeddings"])
+        self.assertEqual(len(portable), verified["embeddings"])
+        target = self.store / "knowledge/build/stale-filtered.sqlite"
+        materialized = materialize_store(self.store, target)
+        self.assertEqual(len(portable), materialized["embeddings"])
+
+    def test_v2_rejects_duplicate_key_across_provider_configurations(self) -> None:
+        self.snapshot()
+        records = self.embedding_records()
+        second_configuration = dict(records[0])
+        second_configuration["provider_config_sha256"] = "b" * 64
+        records.append(second_configuration)
+        self.rewrite_embedding_bundle(
+            records, bundle_schema=store_module.EMBEDDING_BUNDLE_SCHEMA
+        )
+
+        with self.assertRaisesRegex(StoreError, "duplicate or incomplete"):
+            verify_store(self.store)
 
     def test_verify_rejects_tampered_embedding_object(self) -> None:
         snapshot_store(
@@ -367,6 +477,93 @@ class PortableStoreTest(unittest.TestCase):
             )
         finally:
             connection.close()
+
+    def snapshot(self) -> dict[str, object]:
+        return snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+        )
+
+    def embedding_records(self) -> list[dict[str, object]]:
+        records_path = self.store / "knowledge/embeddings/records.jsonl"
+        return [
+            json.loads(line)
+            for line in records_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+    def rewrite_embedding_bundle(
+        self,
+        records: list[dict[str, object]],
+        *,
+        bundle_schema: str,
+    ) -> None:
+        records_path = self.store / "knowledge/embeddings/records.jsonl"
+        records_text = store_module._jsonl(records)
+        records_path.write_text(records_text, encoding="utf-8")
+        manifest_path = self.store / "knowledge/embeddings/manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["schema"] = bundle_schema
+        manifest["records"]["count"] = len(records)
+        manifest["records"]["sha256"] = store_module._sha256_text(records_text)
+        manifest["providers"] = [
+            json.loads(value)
+            for value in sorted(
+                {
+                    store_module._canonical_json(
+                        store_module._provider_config(record)
+                        | {
+                            "provider_config_sha256": record[
+                                "provider_config_sha256"
+                            ]
+                        }
+                    )
+                    for record in records
+                }
+            )
+        ]
+        manifest.pop("embedding_generation_sha256", None)
+        manifest["embedding_generation_sha256"] = store_module.sha256_json(manifest)
+        manifest_path.write_text(
+            store_module._pretty_json(manifest), encoding="utf-8"
+        )
+
+        store_path = self.store / "knowledge/store.json"
+        store = json.loads(store_path.read_text(encoding="utf-8"))
+        store["embedding_manifest_sha256"] = store_module.sha256_file(manifest_path)
+        store["embedding_generation_sha256"] = manifest[
+            "embedding_generation_sha256"
+        ]
+        store["store_generation_sha256"] = store_module.sha256_json(
+            {
+                "knowledge_generation_sha256": store[
+                    "knowledge_generation_sha256"
+                ],
+                "embedding_generation_sha256": store[
+                    "embedding_generation_sha256"
+                ],
+            }
+        )
+        store.pop("store_sha256", None)
+        store["store_sha256"] = store_module.sha256_json(store)
+        store_path.write_text(store_module._pretty_json(store), encoding="utf-8")
+
+    def convert_embedding_bundle_to_v1(self) -> list[dict[str, object]]:
+        records = self.embedding_records()
+        for record in records:
+            record["schema"] = store_module.LEGACY_EMBEDDING_RECORD_SCHEMA
+            record["provider_config_sha256"] = store_module.sha256_json(
+                store_module._provider_config(record)
+            )
+        self.rewrite_embedding_bundle(
+            records, bundle_schema=store_module.LEGACY_EMBEDDING_BUNDLE_SCHEMA
+        )
+        return records
 
     def test_snapshot_copy_removes_only_unchanged_stale_authority(self) -> None:
         snapshot_store(

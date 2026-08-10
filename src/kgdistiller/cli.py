@@ -3014,6 +3014,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--store", type=Path)
     parser.add_argument("--embedding-profile")
     parser.add_argument(
+        "--embedding-policy",
+        type=Path,
+        default=Path("knowledge/embedding-policy.json"),
+        help=(
+            "portable qlkg-embedding-policy-v1 "
+            "(default: knowledge/embedding-policy.json)"
+        ),
+    )
+    parser.add_argument(
         "--typst-registry",
         default="knowledge/build/knowledge-registry.typ",
     )
@@ -3171,6 +3180,38 @@ def parse_args() -> argparse.Namespace:
         dest="profile_command", required=True
     )
     profile_commands.add_parser("status")
+    embedding_command = commands.add_parser("embedding")
+    embedding_commands = embedding_command.add_subparsers(
+        dest="embedding_command", required=True
+    )
+    embedding_status_command = embedding_commands.add_parser("status")
+    embedding_status_command.add_argument("--namespace", default="personal")
+    embedding_sync_command = embedding_commands.add_parser("sync")
+    embedding_sync_command.add_argument("--namespace", default="personal")
+    embedding_sync_command.add_argument(
+        "--batch-size",
+        default=32,
+        help="document inputs per provider call (default: 32)",
+    )
+    embedding_sync_command.add_argument(
+        "--max-retries",
+        default=2,
+        help="retry bound for each provider batch (default: 2)",
+    )
+    embedding_sync_command.add_argument(
+        "--max-nodes",
+        default=10_000,
+        help="maximum missing or stale nodes in one sync (default: 10000)",
+    )
+    embedding_sync_command.add_argument(
+        "--profile",
+        action="append",
+        dest="embedding_sync_profiles",
+        help=(
+            "policy/profile name to synchronize; repeat for multiple profiles "
+            "(default: selected machine-local embedding profile)"
+        ),
+    )
     store_command = commands.add_parser("store")
     store_commands = store_command.add_subparsers(
         dest="store_command", required=True
@@ -3209,6 +3250,99 @@ def main() -> int:
         alignments = defaults(repo_root, args.alignments)
         database = runtime.database
         typst_registry = defaults(repo_root, args.typst_registry)
+        if args.command == "embedding":
+            try:
+                from .embedding import (
+                    EmbeddingError,
+                    embedding_status,
+                    load_embedding_policy,
+                    sync_embeddings,
+                )
+                from .providers import ProviderError, default_provider_registry
+            except ImportError:  # Direct execution during compatibility tests.
+                from kgdistiller.embedding import (
+                    EmbeddingError,
+                    embedding_status,
+                    load_embedding_policy,
+                    sync_embeddings,
+                )
+                from kgdistiller.providers import (
+                    ProviderError,
+                    default_provider_registry,
+                )
+
+            policy_argument = args.embedding_policy
+            policy_path = (
+                policy_argument.resolve()
+                if policy_argument.is_absolute()
+                else (repo_root / policy_argument).resolve()
+            )
+            try:
+                policy = load_embedding_policy(policy_path)
+                if args.embedding_command == "status":
+                    result = embedding_status(
+                        database,
+                        policy,
+                        runtime.provider_profiles,
+                        namespace=args.namespace,
+                    )
+                else:
+                    profile_names = list(args.embedding_sync_profiles or [])
+                    if not profile_names and runtime.embedding_profile is not None:
+                        profile_names = [runtime.embedding_profile]
+                    if not profile_names:
+                        raise EmbeddingError(
+                            "profile-not-selected",
+                            "embedding sync requires a selected embedding profile",
+                        )
+                    work_budget: dict[str, int] = {}
+                    for name in ("batch_size", "max_retries", "max_nodes"):
+                        raw_value = str(getattr(args, name))
+                        if len(raw_value) > 16 or not re.fullmatch(
+                            r"-?[0-9]+", raw_value
+                        ):
+                            raise EmbeddingError(
+                                "invalid-work-budget",
+                                "embedding work budget is invalid",
+                            )
+                        work_budget[name] = int(raw_value)
+                    ensure_database(database, load_state(graph_dir), alignments)
+                    result = sync_embeddings(
+                        database,
+                        policy,
+                        runtime.provider_profiles,
+                        registry=default_provider_registry(),
+                        namespace=args.namespace,
+                        profile_names=profile_names,
+                        batch_size=work_budget["batch_size"],
+                        max_retries=work_budget["max_retries"],
+                        max_nodes=work_budget["max_nodes"],
+                    )
+            except (EmbeddingError, ProviderError) as error:
+                print(pretty_json(error.payload()), end="", file=sys.stderr)
+                return 1
+            except (
+                KnowledgeError,
+                OSError,
+                UnicodeError,
+                ValueError,
+                json.JSONDecodeError,
+                sqlite3.Error,
+            ):
+                print(
+                    pretty_json(
+                        {
+                            "kind": "kgdistiller-embedding-error",
+                            "code": "embedding-command-failed",
+                            "message": "embedding command could not be completed",
+                        }
+                    ),
+                    end="",
+                    file=sys.stderr,
+                )
+                return 1
+            print(pretty_json(result), end="")
+            return 0
         if args.command == "profile":
             try:
                 from .providers import (
