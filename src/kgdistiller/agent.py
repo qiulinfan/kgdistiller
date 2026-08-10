@@ -508,15 +508,61 @@ def _write_index_marker(path: Path, counter: int, kind: str) -> Path:
     root = _index_generation_root(path)
     _mkdir(root)
     marker = root / f"current-{counter:020d}-{kind}"
-    descriptor = os.open(
-        _filesystem_path(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+    active = _ACTIVE_INDEX_MARKER_BINDING.get()
+    binding: _IndexFileBinding | None = None
+    if active is not None:
+        if (
+            active.logical_key != _path_key(path)
+            or active.counter != counter
+            or active.kind != kind
+        ):
+            raise AgentIndexError("Agent index marker binding does not match publication")
+        binding = active.file
+        target = path if kind == "canonical" else _index_generation_path(path, counter)
+        if not _binding_matches_path(target, binding):
+            raise AgentIndexError(
+                f"Agent index generation {counter} was replaced before publication"
+            )
+
+    # Prepare the complete marker under an unrecognized private name, then
+    # hard-link it into the marker namespace. The final link is an atomic,
+    # no-replace publication point, so readers never accept a partially written
+    # binding and a same-counter collision cannot overwrite an existing marker.
+    temporary = root / f".marker-{counter:020d}-{secrets.token_hex(16)}.tmp"
+    descriptor: int | None = os.open(
+        _filesystem_path(temporary), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
     )
     try:
-        os.close(descriptor)
-    except Exception:
-        # O_EXCL creation is the publication linearization point. An ordinary
-        # close error cannot retroactively make the marker unpublished.
-        pass
+        payload = _marker_binding_bytes(binding)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("failed to write Agent index marker binding")
+            offset += written
+        os.fsync(descriptor)
+        try:
+            os.close(descriptor)
+        except Exception:
+            # A close implementation can report an error after releasing the
+            # descriptor. Retry once to cover the inverse case without making
+            # an ordinary close-reporting failure revoke a fully fsynced marker.
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        descriptor = None
+        os.link(_filesystem_path(temporary), _filesystem_path(marker))
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            _filesystem_path(temporary).unlink(missing_ok=True)
+        except OSError:
+            pass
     return marker
 
 
@@ -530,13 +576,17 @@ def _cleanup_index_generations(path: Path) -> None:
         # Unpublish first. A marker unlink failure must leave its target intact;
         # a later target unlink failure can leave only an unreferenced orphan.
         try:
-            _filesystem_path(marker).unlink(missing_ok=True)
+            os.unlink(_filesystem_path(marker))
+        except FileNotFoundError:
+            pass
         except OSError:
             continue
         if kind == "generation":
             generation = _index_generation_path(path, counter)
             try:
-                _filesystem_path(generation).unlink(missing_ok=True)
+                os.unlink(_filesystem_path(generation))
+            except FileNotFoundError:
+                pass
             except OSError:
                 pass
 
@@ -556,7 +606,7 @@ def _cleanup_index_generations(path: Path) -> None:
         if counter in retained or counter in referenced:
             continue
         try:
-            _filesystem_path(root / name).unlink()
+            os.unlink(_filesystem_path(root / name))
         except OSError:
             pass
 
@@ -656,8 +706,7 @@ def _publish_agent_index_file_locked(source: Path, path: Path) -> Path:
     destination = _index_generation_path(path, counter)
     kind = "generation"
     _mkdir(destination.parent)
-    destination_was_present = _path_exists(destination)
-    destination_identity: tuple[int, int] | None = None
+    destination_file: _OwnedIndexFile | None = None
     marker = _index_generation_root(path) / f"current-{counter:020d}-{kind}"
 
     try:
@@ -665,63 +714,65 @@ def _publish_agent_index_file_locked(source: Path, path: Path) -> Path:
         # hardlink aliases of the current logical index. Always copying is the
         # only lexical-path-independent way to preserve last-good history and
         # guarantee that the new generation has independent bytes and identity.
-        destination_identity = _copy_index_file(source, destination)
-        _write_index_marker(path, counter, kind)
-    except Exception:
-        # _write_index_marker absorbs every ordinary exception after O_EXCL
-        # creation, so an Exception here is provably pre-linearization.
-        if destination_identity is not None:
-            _unlink_owned_file(destination, destination_identity)
+        destination_file = _copy_index_file(source, destination)
+        if destination_file.binding is None:
+            raise AgentIndexError("Agent index generation copy was not sealed")
+        publication = _MarkerPublicationBinding(
+            logical_key=_path_key(path),
+            counter=counter,
+            kind=kind,
+            file=destination_file.binding,
+        )
+        token = _ACTIVE_INDEX_MARKER_BINDING.set(publication)
+        try:
+            _write_index_marker(path, counter, kind)
+        finally:
+            _ACTIVE_INDEX_MARKER_BINDING.reset(token)
+    except (Exception, KeyboardInterrupt, SystemExit):
+        if destination_file is not None:
+            binding = destination_file.binding
+            published = False
+            if binding is not None and _path_is_file(marker):
+                try:
+                    published = _marker_selects_binding(marker, destination, binding)
+                except AgentIndexError:
+                    published = False
+            if published:
+                destination_file.close()
+            else:
+                destination_file.discard()
+        # If the copy helper raised before returning its live ownership token,
+        # it alone can know whether a pathname it left behind is owned or
+        # foreign. The real helper always discards its own partial file; outer
+        # cleanup deliberately leaves an unknown replacement untouched.
         raise
-    except (KeyboardInterrupt, SystemExit) as error:
-        # The real copy helper removes its own partial file. Fault injectors can
-        # interrupt after creating the destination themselves, so remove that
-        # new path only when it was absent before the call and no publication
-        # marker reached the linearization point. A post-marker interruption
-        # must leave the selected generation intact.
-        if (
-            not getattr(error, _INDEX_COPY_OWNERSHIP_HANDLED, False)
-            and not destination_was_present
-            and not _path_exists(marker)
-        ):
-            owned_identity = destination_identity or _path_identity(destination)
-            if owned_identity is not None:
-                _unlink_owned_file(destination, owned_identity)
-        raise
+    else:
+        destination_file.close()
 
     # Keep one non-authoritative legacy copy for raw tools that predate logical
     # generation resolution. It is installed only after the marker commit and
     # never changes in place; failure cannot revoke the published generation.
     compatibility = _index_generation_root(path) / f".canonical-{counter}.tmp"
-    compatibility_descriptor: int | None = None
-    compatibility_identity: tuple[int, int] | None = None
+    compatibility_file: _OwnedIndexFile | None = None
+    compatibility_installed = False
     try:
         if not _path_exists(path):
-            compatibility_descriptor = os.open(
-                _filesystem_path(compatibility),
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                0o600,
-            )
-            compatibility_identity = _stat_identity(
-                os.fstat(compatibility_descriptor)
-            )
-            os.close(compatibility_descriptor)
-            compatibility_descriptor = None
-            shutil.copyfile(
-                _filesystem_path(destination), _filesystem_path(compatibility)
-            )
+            compatibility_file = _copy_index_file(destination, compatibility)
+            if compatibility_file.binding is None or not _binding_matches_path(
+                compatibility, compatibility_file.binding
+            ):
+                raise AgentIndexError("Agent index compatibility copy was replaced")
             os.replace(_filesystem_path(compatibility), _filesystem_path(path))
+            compatibility_installed = True
     except Exception:
         # Compatibility is post-commit and remains strictly best-effort.
         pass
     finally:
-        if compatibility_descriptor is not None:
-            try:
-                os.close(compatibility_descriptor)
-            except OSError:
-                pass
-        if compatibility_identity is not None:
-            _unlink_owned_file(compatibility, compatibility_identity)
+        if compatibility_file is not None:
+            if compatibility_installed:
+                compatibility_file.close()
+            else:
+                compatibility_file.discard()
 
     _best_effort_generation_cleanup(path)
     return destination
@@ -1317,13 +1368,6 @@ def _readonly_sqlite_uri(path: Path) -> str:
     return f"{path.resolve(strict=False).as_uri()}?mode=ro"
 
 
-def _writable_sqlite_uri(path: Path) -> str:
-    if os.name == "nt":
-        location = quote(os.fspath(_filesystem_path(path)), safe="")
-        return f"file:{location}?mode=rw"
-    return f"{path.resolve(strict=False).as_uri()}?mode=rw"
-
-
 def open_agent_index(path: Path) -> sqlite3.Connection:
     """Open a logical kgdistiller index read-only with bounded re-resolution."""
     last_error: Exception | None = None
@@ -1393,39 +1437,6 @@ def open_agent_index(path: Path) -> sqlite3.Connection:
     ) from last_error
 
 
-def _open_agent_index_for_compatibility_write(path: Path) -> sqlite3.Connection:
-    """Open the selected generation for the legacy embedding maintenance writer."""
-    physical_path = resolve_agent_index_path(path)
-    if not _path_is_file(physical_path):
-        raise AgentIndexError(f"Agent index does not exist: {path}")
-    try:
-        connection = sqlite3.connect(
-            _writable_sqlite_uri(physical_path), uri=True
-        )
-    except sqlite3.OperationalError as error:
-        raise AgentIndexError(
-            f"Agent index generation could not be opened for maintenance: {path}"
-        ) from error
-    connection.row_factory = sqlite3.Row
-    try:
-        schema_row = connection.execute(
-            "SELECT value FROM index_meta WHERE key = 'schema'"
-        ).fetchone()
-        schema = json.loads(schema_row[0]) if schema_row else None
-    except (sqlite3.DatabaseError, json.JSONDecodeError, TypeError) as error:
-        connection.close()
-        raise AgentIndexError(
-            f"invalid Agent index generation for logical path: {path}"
-        ) from error
-    except (KeyboardInterrupt, SystemExit):
-        connection.close()
-        raise
-    if schema != INDEX_SCHEMA:
-        connection.close()
-        raise AgentIndexError(f"unsupported Agent index schema: {schema!r}")
-    return connection
-
-
 def _sqlite_snapshot_to_file(path: Path, destination: Path) -> None:
     """Write a consistent SQLite snapshot, including committed WAL state."""
     source = open_agent_index(path)
@@ -1491,10 +1502,13 @@ def _mutable_agent_index(path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
-    """Keep the historical writer default; every reader opts into read-only."""
-    if read_only:
-        return open_agent_index(path)
-    return _open_agent_index_for_compatibility_write(path)
+    """Open a generation read-only; mutations must clone and republish it."""
+    if not read_only:
+        raise AgentIndexError(
+            "in-place Agent index maintenance is unsupported; "
+            "use the transactional mutation API"
+        )
+    return open_agent_index(path)
 
 
 def index_status(path: Path) -> dict[str, Any]:

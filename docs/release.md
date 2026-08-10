@@ -38,7 +38,8 @@ matrix is:
 | --- | --- | --- | --- |
 | Windows native | 3.13 CI job; 3.14.6 local pass | 0.15.1 | supported and required |
 | WSL Ubuntu 26.04 | 3.14.4 local pass | 0.15.1 | supported and required |
-| Ubuntu GitHub runner | 3.9, 3.11, 3.13 compatibility jobs | 0.15.1 | retained check; not a support gate |
+| macOS GitHub runner | 3.13 CI job | 0.15.1 | supported release gate |
+| Ubuntu GitHub runner | 3.9, 3.11, 3.13 compatibility jobs | 0.15.1 | supported release gate |
 
 Every full-suite CI job uses Typst 0.15.1. The deterministic core has no runtime
 model provider dependency. The optional `openai-compatible` embedding adapter
@@ -70,6 +71,7 @@ Run from a clean engine worktree:
 ```sh
 uv run python -m unittest discover -s tests -v
 uv build
+uv run python scripts/check_distribution.py
 ```
 
 Then verify:

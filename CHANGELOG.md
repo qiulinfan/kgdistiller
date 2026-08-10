@@ -24,10 +24,11 @@ a new schema version.
   neighborhood while preserving full-namespace PPR as a standalone operation.
 - Add disposable large-graph, multi-format, GraphRAG, incremental,
   concurrency, fault-injection, and transaction stress coverage.
-- Make writer locking, long transaction backup paths, stress reporting,
-  structured console output, and closure contract glob validation portable
-  across Windows native and WSL, with a Windows CI job and retained
-  Linux-version compatibility checks.
+- Make writer locking, bound Agent-index generation publication and cleanup,
+  long transaction backup paths, stress reporting, structured console output,
+  and closure contract glob validation portable across Windows native and WSL,
+  with Windows and macOS CI jobs and retained Linux-version compatibility
+  checks.
 - Activate the ignored machine-local profile with deterministic CLI override
   precedence, safe status output, a bounded provider registry, and a stdlib
   OpenAI-compatible batched embedding adapter.

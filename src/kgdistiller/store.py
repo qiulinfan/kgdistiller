@@ -19,6 +19,7 @@ from .agent import (
     EMBEDDING_INPUT_SCHEMA,
     INDEX_SCHEMA,
     _filesystem_path,
+    _mutable_agent_index,
     agent_index_exists,
     embedding_input_sha256,
     index_status,
@@ -842,8 +843,7 @@ def _import_embeddings(
     store_generation_sha256: str,
     embedding_generation_sha256: str,
 ) -> None:
-    connection = sqlite3.connect(_filesystem_path(resolve_agent_index_path(database)))
-    try:
+    with _mutable_agent_index(database) as connection:
         connection.execute("DELETE FROM embeddings")
         for record, payload in records:
             connection.execute(
@@ -917,8 +917,6 @@ def _import_embeddings(
                 (key, _canonical_json(value)),
             )
         connection.commit()
-    finally:
-        connection.close()
 
 
 def materialize_store(root: Path, database: Path) -> dict[str, Any]:
