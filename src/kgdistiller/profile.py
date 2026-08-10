@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import copy
+import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .contracts import ContractError, parse_contract_json, sha256_json, validate_contract
+from .contracts import parse_contract_json, sha256_json, validate_contract
 
 
 DEFAULT_LOCAL_PROFILE = Path("knowledge/build/local-profile.json")
@@ -62,28 +63,90 @@ def _resolve_path(base: Path, value: str | Path, *, field: str) -> Path:
 
 
 def _load_profile(path: Path, *, required: bool) -> dict[str, Any] | None:
+    descriptor: int | None = None
+    missing = False
+    permission_denied = False
+    open_failure: tuple[str, str] | None = None
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
     try:
-        mode = path.stat().st_mode
+        descriptor = os.open(path, flags)
     except FileNotFoundError:
+        missing = True
+    except IsADirectoryError:
+        open_failure = ("invalid-profile", "the local profile is not a regular file")
+    except PermissionError:
+        permission_denied = True
+    except OSError:
+        open_failure = ("profile-unreadable", "the local profile could not be read")
+
+    if permission_denied:
+        is_directory = False
+        try:
+            is_directory = path.is_dir()
+        except OSError:
+            pass
+        open_failure = (
+            ("invalid-profile", "the local profile is not a regular file")
+            if is_directory
+            else ("profile-unreadable", "the local profile could not be read")
+        )
+
+    if missing:
         if required:
             raise ProfileError("profile-not-found", "the explicit local profile does not exist")
         return None
-    except OSError as error:
-        raise ProfileError("profile-unreadable", "the local profile could not be read") from error
-    if not stat.S_ISREG(mode):
-        raise ProfileError("invalid-profile", "the local profile is not a regular file")
+    if open_failure is not None:
+        raise ProfileError(*open_failure)
+
+    raw: bytes | None = None
+    read_failure: tuple[str, str] | None = None
     try:
-        raw = path.read_bytes()
-    except OSError as error:
-        raise ProfileError("profile-unreadable", "the local profile could not be read") from error
+        if descriptor is None:
+            read_failure = ("profile-unreadable", "the local profile could not be read")
+        elif not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            read_failure = ("invalid-profile", "the local profile is not a regular file")
+        else:
+            handle = os.fdopen(descriptor, "rb", closefd=True)
+            descriptor = None
+            with handle:
+                raw = handle.read(MAX_LOCAL_PROFILE_BYTES + 1)
+    except OSError:
+        read_failure = ("profile-unreadable", "the local profile could not be read")
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+    if read_failure is not None:
+        raise ProfileError(*read_failure)
+    if raw is None:
+        raise ProfileError("profile-unreadable", "the local profile could not be read")
     if len(raw) > MAX_LOCAL_PROFILE_BYTES:
         raise ProfileError("profile-too-large", "the local profile exceeds 1 MiB")
+
+    validated_payload: dict[str, Any] | None = None
+    validation_failed = False
     try:
         text = raw.decode("utf-8")
         payload = parse_contract_json(text)
-        return validate_contract(payload)
-    except (UnicodeDecodeError, ContractError) as error:
-        raise ProfileError("invalid-profile", "the local profile failed validation") from error
+        validated_payload = validate_contract(payload)
+        # Ensure every schema-valid string also has a canonical UTF-8 form;
+        # JSON escape sequences can otherwise introduce lone surrogates.
+        sha256_json(validated_payload)
+    except (UnicodeDecodeError, ValueError, RecursionError, OverflowError):
+        validation_failed = True
+    if validation_failed:
+        # Raise outside the exception handler so raw profile bytes cannot remain
+        # reachable through ProfileError.__cause__ or __context__.
+        raise ProfileError("invalid-profile", "the local profile failed validation")
+    if validated_payload is None:
+        raise ProfileError("invalid-profile", "the local profile failed validation")
+    return validated_payload
 
 
 def resolve_runtime_config(

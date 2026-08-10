@@ -151,6 +151,23 @@ environment variable. Configuring a provider does not grant it graph identity
 or relation authority. The separately named `deterministic-fixture` adapter is
 credential-free and intended only for reproducible tests.
 
+Provider endpoints must use HTTPS. Plain HTTP is accepted only for numeric
+loopback addresses such as `127.0.0.1` and `::1`, so a local fixture can be
+tested without permitting bearer credentials over a remote plaintext link;
+`localhost` is deliberately not treated as the numeric-loopback exception.
+Equivalent HTTPS spellings are normalized before computing the non-secret
+provider configuration digest.
+
+Credentials must be bounded ASCII bearer tokens without whitespace or control
+characters. Network operations have an inactivity timeout; after operating-system
+name resolution and socket setup, status lines, headers, response bodies, and
+slow-drip responses also share one monotonic wall-clock deadline. Resolver and
+multi-address connection latency remain operating-system governed, but are
+reported as a timeout if the deadline has elapsed. Malformed framing, oversized
+or deeply nested JSON, and invalid vectors return stable, structured provider
+errors without retaining the credential, provider response body, or raw
+exception chain.
+
 ## Portable Git store
 
 For backup and multi-machine use, make the knowledge project—not SQLite—the

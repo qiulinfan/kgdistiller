@@ -33,6 +33,7 @@ jobs:
           uv pip install --python .wheel-smoke/bin/python "$wheel"
           .wheel-smoke/bin/kgdistiller --help
           .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
+          .wheel-smoke/bin/python scripts/smoke_installed_profile.py
 
   windows:
     runs-on: windows-latest
@@ -57,6 +58,7 @@ jobs:
           uv pip install --python .wheel-smoke\Scripts\python.exe $wheel.FullName
           .wheel-smoke\Scripts\kgdistiller.exe --help
           .wheel-smoke\Scripts\python.exe -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
+          .wheel-smoke\Scripts\python.exe scripts/smoke_installed_profile.py
 
   macos:
     runs-on: macos-latest
@@ -80,3 +82,4 @@ jobs:
           uv pip install --python .wheel-smoke/bin/python "$wheel"
           .wheel-smoke/bin/kgdistiller --help
           .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
+          .wheel-smoke/bin/python scripts/smoke_installed_profile.py

@@ -30,8 +30,11 @@ a new schema version.
   with Windows and macOS CI jobs and retained Linux-version compatibility
   checks.
 - Activate the ignored machine-local profile with deterministic CLI override
-  precedence, safe status output, a bounded provider registry, and a stdlib
-  OpenAI-compatible batched embedding adapter.
+  precedence, bounded single-handle loading, repaired existing ignore files,
+  safe status output, a bounded provider registry, and a stdlib
+  OpenAI-compatible batched embedding adapter with HTTPS enforcement,
+  secret-safe errors, normalized configuration digests, and total response
+  deadlines.
 - Document local deployment, backup/restore, compatibility, migration, and
   public release order, including a measured 100,000-node baseline.
 

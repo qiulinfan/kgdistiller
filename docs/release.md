@@ -47,6 +47,14 @@ uses only the Python standard library and reads credentials from the configured
 environment variable. Typst is an external requirement only when Typst-authored
 labels must be rendered.
 
+The adapter requires HTTPS except for numeric-loopback HTTP fixtures, validates
+bounded header-safe bearer tokens, and applies one monotonic deadline to HTTP
+status, header, and body streaming after operating-system resolver/socket setup.
+Resolver and multi-address connection latency is OS-governed and is classified
+as a timeout when it returns after the deadline. Provider configuration,
+transport, framing, JSON, and vector failures must have stable structured codes
+with no retained credential, response body, or raw exception chain.
+
 ## Schema evolution
 
 - A published schema name is immutable.
@@ -79,6 +87,9 @@ Then verify:
 - wheel and sdist contain Python modules, static browser assets, and all JSON
   Schemas;
 - an isolated environment can install the wheel and run `kgdistiller --help`;
+- that installed wheel can load the default local profile in two fresh
+  processes, apply database/store/embedding-profile overrides, expose the same
+  non-secret configuration digest, and keep credential sentinels out of output;
 - plain `PYTHONPATH=src python3` imports candidate and ingest without undeclared
   dependencies;
 - a Markdown/Typst/LaTeX fixture passes sync and check;

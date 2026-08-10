@@ -3211,21 +3211,33 @@ def main() -> int:
         typst_registry = defaults(repo_root, args.typst_registry)
         if args.command == "profile":
             try:
-                from .providers import default_provider_registry, provider_status
+                from .providers import (
+                    ProviderError,
+                    default_provider_registry,
+                    provider_status,
+                )
             except ImportError:
-                from kgdistiller.providers import default_provider_registry, provider_status
+                from kgdistiller.providers import (
+                    ProviderError,
+                    default_provider_registry,
+                    provider_status,
+                )
 
             adapter_registry = default_provider_registry()
             selected_provider = runtime.provider_profile
-            provider = (
-                provider_status(
-                    str(runtime.embedding_profile),
-                    selected_provider,
-                    adapter_registry,
+            try:
+                provider = (
+                    provider_status(
+                        str(runtime.embedding_profile),
+                        selected_provider,
+                        adapter_registry,
+                    )
+                    if selected_provider is not None
+                    else None
                 )
-                if selected_provider is not None
-                else None
-            )
+            except ProviderError as error:
+                print(pretty_json(error.payload()), end="", file=sys.stderr)
+                return 1
             print(
                 pretty_json(
                     {

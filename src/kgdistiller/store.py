@@ -43,6 +43,7 @@ from .cli import (
     unique_source_for_path,
 )
 from .json_schema import validate_json_schema
+from .project import ensure_knowledge_gitignore
 
 
 STORE_SCHEMA = "qlkg-store-v1"
@@ -695,9 +696,7 @@ def snapshot_store(
         status = index_status(database)
         if status.get("graph_sha256") != snapshot["graph"]["sha256"]:
             raise StoreError("local Agent index is stale for the graph generation")
-    knowledge_gitignore = output_root / "knowledge/.gitignore"
-    if not knowledge_gitignore.exists():
-        _atomic_write_text(knowledge_gitignore, "build/\n")
+    ensure_knowledge_gitignore(output_root / "knowledge/.gitignore")
     source_hashes = dict(state.manifest.get("source_hashes") or {})
     specs = load_sources(repo_root, registry)
     definition_ids: dict[str, list[str]] = {}
