@@ -18,8 +18,13 @@ from typing import Any
 from .agent import (
     EMBEDDING_INPUT_SCHEMA,
     INDEX_SCHEMA,
+    _filesystem_path,
+    agent_index_exists,
     embedding_input_sha256,
     index_status,
+    open_agent_index,
+    publish_agent_index_file,
+    resolve_agent_index_path,
     sha256_json,
     write_agent_index,
 )
@@ -193,12 +198,11 @@ def _export_embeddings(
     records_path = embedding_root / EMBEDDING_RECORDS_NAME
     object_root = embedding_root / EMBEDDING_OBJECTS_NAME
     rows: list[sqlite3.Row] = []
-    if database.is_file():
+    if agent_index_exists(database):
         status = index_status(database)
         if status.get("schema") != INDEX_SCHEMA:
             raise StoreError("cannot export an unsupported Agent index")
-        connection = sqlite3.connect(database)
-        connection.row_factory = sqlite3.Row
+        connection = open_agent_index(database)
         try:
             rows = connection.execute(
                 """
@@ -686,7 +690,7 @@ def snapshot_store(
 
     state = load_state(graph_dir)
     snapshot = make_agent_snapshot(state)
-    if database.is_file():
+    if agent_index_exists(database):
         status = index_status(database)
         if status.get("graph_sha256") != snapshot["graph"]["sha256"]:
             raise StoreError("local Agent index is stale for the graph generation")
@@ -838,7 +842,7 @@ def _import_embeddings(
     store_generation_sha256: str,
     embedding_generation_sha256: str,
 ) -> None:
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(_filesystem_path(resolve_agent_index_path(database)))
     try:
         connection.execute("DELETE FROM embeddings")
         for record, payload in records:
@@ -920,7 +924,7 @@ def _import_embeddings(
 def materialize_store(root: Path, database: Path) -> dict[str, Any]:
     """Build the local disposable index from a verified portable store."""
     manifest, _, snapshot, alignment_set, embedding_records = _validated_store(root)
-    if database.is_file():
+    if agent_index_exists(database):
         try:
             status = index_status(database)
         except (OSError, sqlite3.Error, ValueError):
@@ -934,13 +938,30 @@ def materialize_store(root: Path, database: Path) -> dict[str, Any]:
                 "embeddings": len(embedding_records),
                 "counts": snapshot["graph"]["counts"],
             }
-    write_agent_index(database, snapshot, alignment_set)
-    _import_embeddings(
-        database,
-        embedding_records,
-        store_generation_sha256=manifest["store_generation_sha256"],
-        embedding_generation_sha256=manifest["embedding_generation_sha256"],
+    _filesystem_path(database.parent).mkdir(parents=True, exist_ok=True)
+    stage_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{database.name}.materialize-",
+            dir=_filesystem_path(database.parent),
+        )
     )
+    staged_database = stage_root / "complete.sqlite"
+    try:
+        # Graph rows and exact vectors are assembled privately. The logical
+        # database receives one marker only after the complete SQLite file is
+        # durable, so observers can see strictly the old or the new generation.
+        write_agent_index(staged_database, snapshot, alignment_set)
+        _import_embeddings(
+            staged_database,
+            embedding_records,
+            store_generation_sha256=manifest["store_generation_sha256"],
+            embedding_generation_sha256=manifest["embedding_generation_sha256"],
+        )
+        publish_agent_index_file(
+            resolve_agent_index_path(staged_database), database
+        )
+    finally:
+        shutil.rmtree(_filesystem_path(stage_root), ignore_errors=True)
     return {
         "schema": STORE_SCHEMA,
         "materialized": True,

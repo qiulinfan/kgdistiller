@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import errno
 import json
 import os
 import re
@@ -17,7 +16,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from . import __version__
-from .agent import AgentIndexError, validate_agent_snapshot
+from .agent import (
+    AgentIndexError,
+    agent_index_exists,
+    backup_agent_index,
+    publish_agent_index_file,
+    remove_agent_index,
+    validate_agent_snapshot,
+)
 from .alignment import (
     AlignmentError,
     load_alignment_set,
@@ -685,8 +691,48 @@ def _validate_decisions(
 
 
 def _copy_file(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    filesystem_source = _filesystem_path(source)
+    filesystem_target = _filesystem_path(target)
+    filesystem_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(filesystem_source, filesystem_target)
+
+
+def _filesystem_path(path: Path) -> Path:
+    """Use Win32 extended-length paths for I/O without persisting that spelling."""
+    if os.name != "nt":
+        return path
+    absolute = os.path.abspath(os.fspath(path))
+    if absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{absolute[2:]}")
+    return Path(f"\\\\?\\{absolute}")
+
+
+def _read_json_file(path: Path, default: Any) -> Any:
+    filesystem_path = _filesystem_path(path)
+    if not filesystem_path.is_file():
+        return copy.deepcopy(default)
+    return json.loads(filesystem_path.read_text(encoding="utf-8"))
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    filesystem_path = _filesystem_path(path)
+    filesystem_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=filesystem_path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+        os.replace(_filesystem_path(temporary), filesystem_path)
+    except (Exception, KeyboardInterrupt, SystemExit):
+        try:
+            _filesystem_path(temporary).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _shadow_paths(paths: IngestPaths, root: Path) -> IngestPaths:
@@ -711,7 +757,10 @@ def _prepare_shadow(paths: IngestPaths, root: Path) -> IngestPaths:
         if source.is_file():
             _copy_file(source, root / _config_relative(paths, source, source.name))
     if paths.graph_dir.is_dir():
-        shutil.copytree(paths.graph_dir, shadow.graph_dir)
+        shutil.copytree(
+            _filesystem_path(paths.graph_dir),
+            _filesystem_path(shadow.graph_dir),
+        )
     for spec in specs:
         relative_root = relative_path(paths.repo_root, spec.root)
         (root / relative_root).mkdir(parents=True, exist_ok=True)
@@ -809,8 +858,11 @@ def _stage_ingest(
     validations.append({"stage": "preconditions", "status": "passed"})
     _invoke(failure_injector, "validated-preconditions")
     before_alignment = _alignment_digest(paths.alignments)
-    with tempfile.TemporaryDirectory(prefix="kgdistiller-ingest-stage-") as temporary:
-        stage_root = Path(temporary) / "repo"
+    temporary_root = Path(tempfile.mkdtemp(prefix="kgdistiller-ingest-stage-"))
+    durable_root: Path | None = None
+    durable_ready = False
+    try:
+        stage_root = temporary_root / "repo"
         stage_root.mkdir()
         started = time.monotonic()
         shadow = _prepare_shadow(paths, stage_root)
@@ -843,8 +895,12 @@ def _stage_ingest(
             durations["initial-sync"] = _duration(started)
             validations.append({"stage": "initial-sync", "status": "passed"})
         _invoke(failure_injector, "staged-initial-sync")
-        delta_path = shadow.database.parent / f"{request_sha}.delta.json"
-        atomic_write(delta_path, pretty_json(request["delta"]))
+        # The configured database path can be longer than Win32's legacy path
+        # limit even though this staging root is short. The delta is only an
+        # input to the staged apply, so keep it outside that mirrored path and
+        # use the extended-length-safe atomic writer.
+        delta_path = temporary_root / f"{request_sha}.delta.json"
+        _atomic_write_text(delta_path, pretty_json(request["delta"]))
         delta_has_changes = any(
             request["delta"].get(field)
             for field in ("nodes", "edges", "remove_nodes", "remove_edges")
@@ -967,8 +1023,21 @@ def _stage_ingest(
         }
         durable_root = Path(tempfile.mkdtemp(prefix="kgdistiller-ingest-ready-"))
         durable_stage = durable_root / "repo"
-        shutil.copytree(stage_root, durable_stage)
+        shutil.copytree(
+            _filesystem_path(stage_root),
+            _filesystem_path(durable_stage),
+        )
         durable_shadow = _shadow_paths(paths, durable_stage)
+        durable_ready = True
+    finally:
+        # TemporaryDirectory uses ordinary Win32 spellings during cleanup and
+        # can mask the original failure for deep staged database paths. Cleanup
+        # through the I/O boundary and keep it strictly best-effort.
+        shutil.rmtree(_filesystem_path(temporary_root), ignore_errors=True)
+        if durable_root is not None and not durable_ready:
+            shutil.rmtree(_filesystem_path(durable_root), ignore_errors=True)
+    if durable_root is None:
+        raise AssertionError("staging completed without a durable root")
     return StagedIngest(
         root=durable_root,
         paths=durable_shadow,
@@ -1147,7 +1216,7 @@ def plan_ingest(
     try:
         return _plan_payload(staged)
     finally:
-        shutil.rmtree(staged.root, ignore_errors=True)
+        shutil.rmtree(_filesystem_path(staged.root), ignore_errors=True)
 
 
 def _state_dir(paths: IngestPaths) -> Path:
@@ -1162,59 +1231,101 @@ def _journal_path(paths: IngestPaths) -> Path:
     return _state_dir(paths) / "journal.json"
 
 
-@contextmanager
-def _writer_lock(paths: IngestPaths) -> Iterator[None]:
-    state_dir = _state_dir(paths)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = state_dir / "writer.lock"
-    handle = lock_path.open("a+", encoding="utf-8")
+def _acquire_writer_lock(handle: Any) -> None:
+    handle.seek(0)
     try:
-        try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (ImportError, OSError) as error:
-            if isinstance(error, OSError) and error.errno not in {
-                errno.EACCES,
-                errno.EAGAIN,
-            }:
-                raise
-            raise IngestError(
-                "lock-conflict", "another kgdistiller writer holds the repository lock", stage="lock"
-            ) from error
+    except OSError as error:
+        raise IngestError(
+            "lock-conflict",
+            "another kgdistiller writer holds the repository lock",
+            stage="lock",
+        ) from error
+
+
+def _release_writer_lock(handle: Any) -> None:
+    try:
         handle.seek(0)
-        handle.truncate()
-        handle.write(f"pid={os.getpid()}\n")
-        handle.flush()
-        yield
-    finally:
-        try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        except (ImportError, OSError):
-            pass
+    except OSError:
+        pass
+
+
+@contextmanager
+def _writer_lock(paths: IngestPaths) -> Iterator[None]:
+    state_dir = _state_dir(paths)
+    _filesystem_path(state_dir).mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / "writer.lock"
+    handle = _filesystem_path(lock_path).open("a+b")
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        _acquire_writer_lock(handle)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"pid={os.getpid()}\n".encode("ascii"))
+        handle.flush()
+        yield
+    finally:
+        _release_writer_lock(handle)
         handle.close()
 
 
-def _backup_target(repo_root: Path, target: Path, backup_root: Path) -> dict[str, Any]:
+def _backup_target(
+    repo_root: Path,
+    target: Path,
+    backup_root: Path,
+    *,
+    source: Path | None = None,
+    kind: str | None = None,
+) -> dict[str, Any]:
     relative = target.resolve(strict=False).relative_to(repo_root.resolve()).as_posix()
     backup = backup_root / relative
-    existed = target.exists()
-    kind = "directory" if target.is_dir() else "file"
+    backup_source = source if source is not None else target
+    filesystem_backup_source = _filesystem_path(backup_source)
+    target_kind = kind or (
+        "directory" if filesystem_backup_source.is_dir() else "file"
+    )
+    existed = (
+        agent_index_exists(target)
+        if target_kind == "agent-index"
+        else filesystem_backup_source.exists()
+    )
     if existed:
-        if target.is_dir():
-            shutil.copytree(target, backup)
+        if target_kind == "agent-index":
+            backup_agent_index(target, backup)
+        elif filesystem_backup_source.is_dir():
+            shutil.copytree(
+                filesystem_backup_source,
+                _filesystem_path(backup),
+            )
         else:
-            _copy_file(target, backup)
-    return {"path": relative, "existed": existed, "kind": kind}
+            _copy_file(backup_source, backup)
+    return {"path": relative, "existed": existed, "kind": target_kind}
 
 
 def _remove_target(target: Path) -> None:
-    if target.is_dir() and not target.is_symlink():
-        shutil.rmtree(target)
-    elif target.exists() or target.is_symlink():
-        target.unlink()
+    filesystem_target = _filesystem_path(target)
+    if filesystem_target.is_dir() and not filesystem_target.is_symlink():
+        shutil.rmtree(filesystem_target)
+    elif filesystem_target.exists() or filesystem_target.is_symlink():
+        filesystem_target.unlink()
 
 
 def _restore_journal(paths: IngestPaths, journal: dict[str, Any]) -> None:
@@ -1225,17 +1336,28 @@ def _restore_journal(paths: IngestPaths, journal: dict[str, Any]) -> None:
         target = paths.repo_root / relative
         backup = backup_root / relative
         try:
-            _remove_target(target)
-            if target_record.get("existed"):
-                if target_record.get("kind") == "directory":
-                    shutil.copytree(backup, target)
+            kind = target_record.get("kind")
+            if kind == "agent-index":
+                if target_record.get("existed"):
+                    _atomic_copy(backup, target, agent_index=True)
                 else:
+                    remove_agent_index(target)
+            else:
+                _remove_target(target)
+                if target_record.get("existed") and kind == "directory":
+                    shutil.copytree(
+                        _filesystem_path(backup),
+                        _filesystem_path(target),
+                    )
+                elif target_record.get("existed"):
                     _copy_file(backup, target)
-        except OSError as error:
+        except (OSError, AgentIndexError) as error:
             errors.append({"path": relative, "message": str(error)})
-    receipt = _receipt_path(paths, str(journal.get("request_sha256", "")))
-    if receipt.is_file():
-        receipt.unlink()
+    receipt_path = _receipt_path(paths, str(journal.get("request_sha256", "")))
+    try:
+        _filesystem_path(receipt_path).unlink(missing_ok=True)
+    except OSError as error:
+        errors.append({"path": str(receipt_path), "message": str(error)})
     if errors:
         raise IngestError(
             "rollback-failed",
@@ -1247,9 +1369,9 @@ def _restore_journal(paths: IngestPaths, journal: dict[str, Any]) -> None:
 
 def recover_ingest(paths: IngestPaths) -> dict[str, Any] | None:
     journal_path = _journal_path(paths)
-    if not journal_path.is_file():
+    if not _filesystem_path(journal_path).is_file():
         return None
-    journal = read_json(journal_path, {})
+    journal = _read_json_file(journal_path, {})
     if journal.get("schema") != JOURNAL_SCHEMA:
         raise IngestError("rollback-failed", "invalid ingest journal", stage="recovery")
     if journal.get("status") != "committed":
@@ -1258,42 +1380,55 @@ def recover_ingest(paths: IngestPaths) -> dict[str, Any] | None:
     else:
         outcome = "committed"
     backup_root = Path(str(journal.get("backup_root", "")))
-    shutil.rmtree(backup_root, ignore_errors=True)
-    journal_path.unlink(missing_ok=True)
+    shutil.rmtree(_filesystem_path(backup_root), ignore_errors=True)
+    _filesystem_path(journal_path).unlink(missing_ok=True)
     return {"request_sha256": journal.get("request_sha256"), "status": outcome}
 
 
-def _atomic_copy(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.ingest-", dir=target.parent)
+def _atomic_copy(source: Path, target: Path, *, agent_index: bool = False) -> None:
+    filesystem_source = _filesystem_path(source)
+    filesystem_target = _filesystem_path(target)
+    filesystem_target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.name}.ingest-", dir=filesystem_target.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "wb") as output, source.open("rb") as input_:
+        with os.fdopen(descriptor, "wb") as output, filesystem_source.open("rb") as input_:
             shutil.copyfileobj(input_, output)
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, target)
-    except BaseException:
+        if agent_index:
+            publish_agent_index_file(temporary, target)
+        else:
+            os.replace(_filesystem_path(temporary), filesystem_target)
+    finally:
         try:
-            os.unlink(temporary)
-        except FileNotFoundError:
+            _filesystem_path(temporary).unlink(missing_ok=True)
+        except OSError:
             pass
-        raise
 
 
 def _install_directory(source: Path, target: Path, request_sha256: str) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
+    _filesystem_path(target.parent).mkdir(parents=True, exist_ok=True)
     prepared = target.parent / f".{target.name}.ingest-{request_sha256[:12]}"
     displaced = target.parent / f".{target.name}.previous-{request_sha256[:12]}"
     _remove_target(prepared)
     _remove_target(displaced)
-    shutil.copytree(source, prepared)
-    if target.exists():
-        os.replace(target, displaced)
+    shutil.copytree(
+        _filesystem_path(source),
+        _filesystem_path(prepared),
+    )
+    filesystem_target = _filesystem_path(target)
+    filesystem_prepared = _filesystem_path(prepared)
+    filesystem_displaced = _filesystem_path(displaced)
+    if filesystem_target.exists():
+        os.replace(filesystem_target, filesystem_displaced)
     try:
-        os.replace(prepared, target)
-    except BaseException:
-        if displaced.exists() and not target.exists():
-            os.replace(displaced, target)
+        os.replace(filesystem_prepared, filesystem_target)
+    except (Exception, KeyboardInterrupt, SystemExit):
+        if filesystem_displaced.exists() and not filesystem_target.exists():
+            os.replace(filesystem_displaced, filesystem_target)
         raise
     _remove_target(displaced)
 
@@ -1306,7 +1441,7 @@ def _install_staged(
 ) -> dict[str, Any]:
     state_dir = _state_dir(paths)
     backup_root = state_dir / "backups" / staged.request_sha256
-    shutil.rmtree(backup_root, ignore_errors=True)
+    shutil.rmtree(_filesystem_path(backup_root), ignore_errors=True)
     targets: list[Path] = []
     for patch in staged.request["authority_patches"]:
         targets.append(paths.repo_root / str(patch["path"]))
@@ -1318,7 +1453,19 @@ def _install_staged(
         if key not in seen:
             seen.add(key)
             unique_targets.append(target)
-    records = [_backup_target(paths.repo_root, target, backup_root) for target in unique_targets]
+    records: list[dict[str, Any]] = []
+    for target in unique_targets:
+        if target == paths.database:
+            records.append(
+                _backup_target(
+                    paths.repo_root,
+                    target,
+                    backup_root,
+                    kind="agent-index",
+                )
+            )
+        else:
+            records.append(_backup_target(paths.repo_root, target, backup_root))
     journal = {
         "schema": JOURNAL_SCHEMA,
         "request_sha256": staged.request_sha256,
@@ -1326,7 +1473,7 @@ def _install_staged(
         "backup_root": str(backup_root),
         "targets": records,
     }
-    atomic_write(_journal_path(paths), pretty_json(journal))
+    _atomic_write_text(_journal_path(paths), pretty_json(journal))
     _invoke(failure_injector, "prepared-install")
     try:
         for patch in staged.request["authority_patches"]:
@@ -1352,7 +1499,7 @@ def _install_staged(
         try:
             _restore_journal(paths, journal)
             journal["status"] = "rolled-back"
-            atomic_write(_journal_path(paths), pretty_json(journal))
+            _atomic_write_text(_journal_path(paths), pretty_json(journal))
         except IngestError:
             raise
         if isinstance(error, IngestError):
@@ -1392,10 +1539,11 @@ def _receipt_payload(staged: StagedIngest, plan: dict[str, Any]) -> dict[str, An
 
 def _find_request_conflict(paths: IngestPaths, request: dict[str, Any]) -> None:
     receipts = _state_dir(paths) / "receipts"
-    if not receipts.is_dir():
+    filesystem_receipts = _filesystem_path(receipts)
+    if not filesystem_receipts.is_dir():
         return
-    for path in receipts.glob("*.json"):
-        existing = read_json(path, {})
+    for path in filesystem_receipts.glob("*.json"):
+        existing = _read_json_file(path, {})
         if (
             existing.get("request_id") == request["request_id"]
             and existing.get("request_sha256") != request["request_sha256"]
@@ -1418,8 +1566,8 @@ def apply_ingest(
     with _writer_lock(paths):
         recover_ingest(paths)
         existing_path = _receipt_path(paths, request_sha)
-        if existing_path.is_file():
-            return read_json(existing_path, {})
+        if _filesystem_path(existing_path).is_file():
+            return _read_json_file(existing_path, {})
         _find_request_conflict(paths, validated)
         staged = _stage_ingest(paths, validated, failure_injector=failure_injector)
         try:
@@ -1432,16 +1580,16 @@ def apply_ingest(
             try:
                 receipt = _receipt_payload(staged, plan)
                 receipt_path = _receipt_path(paths, request_sha)
-                atomic_write(receipt_path, pretty_json(receipt))
+                _atomic_write_text(receipt_path, pretty_json(receipt))
                 _invoke(failure_injector, "receipt-written")
                 journal["status"] = "committed"
-                atomic_write(_journal_path(paths), pretty_json(journal))
+                _atomic_write_text(_journal_path(paths), pretty_json(journal))
                 recover_ingest(paths)
                 return receipt
             except BaseException:
                 _restore_journal(paths, journal)
                 journal["status"] = "rolled-back"
-                atomic_write(_journal_path(paths), pretty_json(journal))
+                _atomic_write_text(_journal_path(paths), pretty_json(journal))
                 raise
         finally:
-            shutil.rmtree(staged.root, ignore_errors=True)
+            shutil.rmtree(_filesystem_path(staged.root), ignore_errors=True)

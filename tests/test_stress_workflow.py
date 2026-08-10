@@ -41,6 +41,12 @@ class StressWorkflowHarnessTest(unittest.TestCase):
         self.assertEqual("committed", report["transaction"]["receipt_status"])
         self.assertEqual(0, report["transaction"]["reader_errors"])
         self.assertEqual(2, report["query"]["latency_seconds"]["hybrid_context"]["samples"])
+        self.assertIn(report["max_rss_source"], {"getrusage", "unavailable"})
+        if report["max_rss_source"] == "unavailable":
+            self.assertIsNone(report["max_rss_raw"])
+            self.assertIsNone(report["max_rss_bytes"])
+        else:
+            self.assertGreater(report["max_rss_bytes"], 0)
 
     def test_small_query_only_stress_run(self) -> None:
         environment = dict(os.environ)

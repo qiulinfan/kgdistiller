@@ -25,6 +25,10 @@ Contract owners: kgdistiller deterministic core and its qlblog host integration
 - [Portable knowledge store development notes](portable-store-development.md)；
 - [Local-first deployment and recovery](deployment.md)。
 
+逐项修复、验收和状态记录使用
+[Agentic knowledge base repair specification](agentic-knowledge-base-repair-spec.md)。
+本规范定义目标合同；repair spec 只定义当前审计基线和执行顺序，不能降低本规范要求。
+
 现有已发布 schema 名称不可修改含义。新增 required 字段、digest 规则或状态
 语义时，必须发布新的 schema 版本和显式迁移。
 
@@ -109,7 +113,7 @@ embedding enrichment 和 portable publication 是可恢复、可重试但明确�
 ```json
 {
   "schema": "qlkg-local-profile-v1",
-  "database": "knowledge/build/knowledge.sqlite",
+  "database": "knowledge.sqlite",
   "portable_store": "/absolute/path/to/private-store",
   "embedding_profile": "primary",
   "provider_profiles": {
@@ -128,6 +132,7 @@ embedding enrichment 和 portable publication 是可恢复、可重试但明确�
 
 - `--database`、`--store` 和 `--embedding-profile` 显式参数优先于 profile；
 - profile 优先于现有默认值；
+- profile 中的相对 `database` 和 `portable_store` 路径按 profile 文件目录解析；
 - `credential_env` 只记录环境变量名，不能记录 secret value；
 - `provider_config_sha256` 只覆盖影响向量空间的非秘密字段；
 - 自定义数据库位置在下一次 CLI/MCP 启动时可复用，满足“本机记住数据库”；

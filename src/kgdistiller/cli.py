@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import codecs
 import copy
 import fnmatch
 import hashlib
@@ -20,6 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote
+
+try:
+    from .profile import ProfileError, resolve_runtime_config
+except ImportError:  # Direct execution of this file during compatibility tests.
+    from kgdistiller.profile import ProfileError, resolve_runtime_config
 
 
 GRAPH_SCHEMA = "qlkg-v2"
@@ -180,6 +186,33 @@ def json_text(value: Any) -> str:
 
 def pretty_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+
+
+def _json_backslash_replace(error: UnicodeError) -> tuple[str, int]:
+    if not isinstance(error, UnicodeEncodeError):
+        raise error
+    escaped: list[str] = []
+    for character in error.object[error.start : error.end]:
+        codepoint = ord(character)
+        if codepoint <= 0xFFFF:
+            escaped.append(f"\\u{codepoint:04x}")
+            continue
+        codepoint -= 0x10000
+        escaped.append(
+            f"\\u{0xD800 + (codepoint >> 10):04x}"
+            f"\\u{0xDC00 + (codepoint & 0x3FF):04x}"
+        )
+    return "".join(escaped), error.end
+
+
+def configure_console_streams() -> None:
+    """Escape unencodable console text as valid JSON Unicode escapes."""
+    error_handler = "kgdistiller_json_backslashreplace"
+    codecs.register_error(error_handler, _json_backslash_replace)
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors=error_handler)
 
 
 def jsonl(values: Iterable[dict[str, Any]]) -> str:
@@ -2968,11 +3001,18 @@ def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--local-profile",
+        type=Path,
+        help="machine-local qlkg-local-profile-v1 (default: knowledge/build/local-profile.json)",
+    )
     parser.add_argument("--registry", default="knowledge/sources.json")
     parser.add_argument("--graph", default="knowledge/graph")
     parser.add_argument("--identities", default="knowledge/identities.json")
     parser.add_argument("--alignments", default="knowledge/alignments.json")
-    parser.add_argument("--database", default="knowledge/build/knowledge.sqlite")
+    parser.add_argument("--database", type=Path)
+    parser.add_argument("--store", type=Path)
+    parser.add_argument("--embedding-profile")
     parser.add_argument(
         "--typst-registry",
         default="knowledge/build/knowledge-registry.typ",
@@ -3126,6 +3166,11 @@ def parse_args() -> argparse.Namespace:
     ingest_apply = ingest_commands.add_parser("apply")
     ingest_apply.add_argument("request", type=Path)
     ingest_apply.add_argument("--receipt", type=Path)
+    profile_command = commands.add_parser("profile")
+    profile_commands = profile_command.add_subparsers(
+        dest="profile_command", required=True
+    )
+    profile_commands.add_parser("status")
     store_command = commands.add_parser("store")
     store_commands = store_command.add_subparsers(
         dest="store_command", required=True
@@ -3147,15 +3192,56 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    configure_console_streams()
     args = parse_args()
     repo_root = args.repo_root.resolve()
-    registry = defaults(repo_root, args.registry)
-    graph_dir = defaults(repo_root, args.graph)
-    identities = defaults(repo_root, args.identities)
-    alignments = defaults(repo_root, args.alignments)
-    database = defaults(repo_root, args.database)
-    typst_registry = defaults(repo_root, args.typst_registry)
     try:
+        runtime = resolve_runtime_config(
+            repo_root,
+            local_profile=args.local_profile,
+            database=args.database,
+            portable_store=args.store,
+            embedding_profile=args.embedding_profile,
+        )
+        registry = defaults(repo_root, args.registry)
+        graph_dir = defaults(repo_root, args.graph)
+        identities = defaults(repo_root, args.identities)
+        alignments = defaults(repo_root, args.alignments)
+        database = runtime.database
+        typst_registry = defaults(repo_root, args.typst_registry)
+        if args.command == "profile":
+            try:
+                from .providers import default_provider_registry, provider_status
+            except ImportError:
+                from kgdistiller.providers import default_provider_registry, provider_status
+
+            adapter_registry = default_provider_registry()
+            selected_provider = runtime.provider_profile
+            provider = (
+                provider_status(
+                    str(runtime.embedding_profile),
+                    selected_provider,
+                    adapter_registry,
+                )
+                if selected_provider is not None
+                else None
+            )
+            print(
+                pretty_json(
+                    {
+                        "profile_path": str(runtime.profile_path),
+                        "profile_loaded": runtime.profile_loaded,
+                        "profile_sha256": runtime.profile_sha256,
+                        "database": str(runtime.database),
+                        "portable_store": str(runtime.portable_store),
+                        "embedding_profile": runtime.embedding_profile,
+                        "sources": runtime.sources,
+                        "provider": provider,
+                    }
+                ),
+                end="",
+            )
+            return 0
         if args.command == "candidate":
             from .agent import validate_agent_snapshot
             from .candidate import build_candidate_snapshot
@@ -3304,7 +3390,7 @@ def main() -> int:
                         f"stale graph artifacts: {', '.join(stale)}; run kgdistiller sync"
                     )
                 ensure_database(database, load_state(graph_dir), alignments)
-                output = args.output or repo_root
+                output = args.output or runtime.portable_store
                 output_root = (
                     output.resolve()
                     if output.is_absolute()
@@ -3320,9 +3406,9 @@ def main() -> int:
                     database=database,
                 )
             elif args.store_command == "verify":
-                result = verify_store(repo_root)
+                result = verify_store(runtime.portable_store)
             else:
-                result = materialize_store(repo_root, database)
+                result = materialize_store(runtime.portable_store, database)
             print(pretty_json(result), end="")
             return 0
         if args.command == "init":
@@ -3768,6 +3854,9 @@ def main() -> int:
         elif args.command == "stats":
             print(pretty_json(state.manifest), end="")
         return 0
+    except ProfileError as error:
+        print(pretty_json(error.payload()), end="", file=sys.stderr)
+        return 1
     except (KnowledgeError, OSError, UnicodeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         print(f"knowledge command failed: {error}", file=sys.stderr)
         return 1

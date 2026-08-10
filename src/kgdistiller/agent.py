@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
 import os
 import re
+import secrets
+import shutil
 import sqlite3
 import struct
 import tempfile
+import time
 import unicodedata
 from collections import deque
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Iterable, Protocol
+from typing import Any, BinaryIO, Iterable, Iterator, NamedTuple, Protocol
+from urllib.parse import quote
 
 from .alignment import (
     ALIGNMENT_REPORT_SCHEMA,
@@ -54,10 +61,691 @@ DEFAULT_SEMANTIC_RELATIONS = {
     "contrasts-with",
     "derived-from",
 }
+_INDEX_MARKER_RE = re.compile(
+    r"^current-(?P<counter>[0-9]{20})-(?P<kind>canonical|generation|missing)$"
+)
+_INDEX_GENERATION_RE = re.compile(r"^generation-(?P<counter>[0-9]{20})\.sqlite$")
+_INDEX_MARKER_BINDING_SCHEMA = "kgdistiller-index-marker-binding-v1"
+_INDEX_PUBLICATION_LOCK_TIMEOUT_SECONDS = 60.0
+_INDEX_PUBLICATION_LOCK_POLL_SECONDS = 0.05
 
 
 class AgentIndexError(ValueError):
     """Raised when an Agent snapshot or derived index is invalid."""
+
+
+def _index_generation_root(path: Path) -> Path:
+    return path.parent / f".{path.name}.generations"
+
+
+def _filesystem_path(path: Path) -> Path:
+    """Spell a canonical path for Win32 I/O without leaking that spelling."""
+    if os.name != "nt":
+        return path
+    absolute = os.path.abspath(os.fspath(path))
+    if absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path(f"\\\\?\\UNC\\{absolute[2:]}")
+    return Path(f"\\\\?\\{absolute}")
+
+
+def _path_is_file(path: Path) -> bool:
+    return _filesystem_path(path).is_file()
+
+
+def _path_exists(path: Path) -> bool:
+    return _filesystem_path(path).exists()
+
+
+def _mkdir(path: Path) -> None:
+    _filesystem_path(path).mkdir(parents=True, exist_ok=True)
+
+
+def _stat_identity(result: os.stat_result) -> tuple[int, int]:
+    return (int(result.st_dev), int(result.st_ino))
+
+
+def _path_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        return _stat_identity(os.stat(_filesystem_path(path)))
+    except OSError:
+        return None
+
+
+def _unlink_owned_file(path: Path, identity: tuple[int, int]) -> None:
+    """Atomically capture ``path`` before deciding whether ownership permits delete.
+
+    A stat followed by unlink can delete a replacement installed between those
+    operations. Rename first to an unpredictable quarantine name, then inspect
+    the captured directory entry. A foreign file is linked back under its
+    original name; an owned file is removed only from the private quarantine.
+    """
+    quarantine: Path | None = None
+    for _ in range(8):
+        candidate = path.with_name(
+            f".{path.name}.cleanup-{secrets.token_hex(16)}"
+        )
+        try:
+            os.rename(_filesystem_path(path), _filesystem_path(candidate))
+        except FileNotFoundError:
+            return
+        except FileExistsError:
+            continue
+        except OSError:
+            return
+        quarantine = candidate
+        break
+    if quarantine is None:
+        return
+
+    try:
+        observed = _stat_identity(os.stat(_filesystem_path(quarantine)))
+    except OSError:
+        return
+    if observed == identity:
+        try:
+            _filesystem_path(quarantine).unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
+
+    # Restore a captured foreign inode without overwriting anything that may
+    # have appeared at the public pathname while it was quarantined.
+    try:
+        os.link(_filesystem_path(quarantine), _filesystem_path(path))
+    except OSError:
+        return
+    try:
+        _filesystem_path(quarantine).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+class _IndexFileBinding(NamedTuple):
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    sha256: str
+
+
+class _MarkerPublicationBinding(NamedTuple):
+    logical_key: str
+    counter: int
+    kind: str
+    file: _IndexFileBinding
+
+
+_ACTIVE_INDEX_MARKER_BINDING: ContextVar[_MarkerPublicationBinding | None] = (
+    ContextVar("kgdistiller_active_index_marker_binding", default=None)
+)
+
+
+def _open_exclusive_owned_file(path: Path) -> BinaryIO:
+    """Create ``path`` exclusively with delete-sharing on Windows."""
+    filesystem_path = _filesystem_path(path)
+    if os.name != "nt":
+        return filesystem_path.open("x+b")
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_file(
+        os.fspath(filesystem_path),
+        0x80000000 | 0x40000000,  # GENERIC_READ | GENERIC_WRITE
+        0x00000001 | 0x00000002 | 0x00000004,  # read/write/delete sharing
+        None,
+        1,  # CREATE_NEW
+        0x00000080,  # FILE_ATTRIBUTE_NORMAL
+        None,
+    )
+    if handle == ctypes.c_void_p(-1).value:
+        error_code = ctypes.get_last_error()
+        if error_code in {80, 183}:  # ERROR_FILE_EXISTS / ERROR_ALREADY_EXISTS
+            raise FileExistsError(
+                error_code, "destination already exists", os.fspath(path)
+            )
+        raise ctypes.WinError(error_code)
+    try:
+        descriptor = msvcrt.open_osfhandle(
+            int(handle), os.O_RDWR | getattr(os, "O_BINARY", 0)
+        )
+    except (Exception, KeyboardInterrupt, SystemExit):
+        close_handle(handle)
+        raise
+    try:
+        return os.fdopen(descriptor, "w+b")
+    except (Exception, KeyboardInterrupt, SystemExit):
+        os.close(descriptor)
+        raise
+
+
+def _hash_open_file(handle: BinaryIO) -> str:
+    position = handle.tell()
+    digest = hashlib.sha256()
+    handle.seek(0)
+    while chunk := handle.read(1024 * 1024):
+        digest.update(chunk)
+    handle.seek(position)
+    return digest.hexdigest()
+
+
+class _OwnedIndexFile:
+    """An exclusively created file whose live handle is its ownership token."""
+
+    def __init__(self, path: Path, handle: BinaryIO) -> None:
+        self.path = path
+        self.handle = handle
+        self.identity = _stat_identity(os.fstat(handle.fileno()))
+        self.binding: _IndexFileBinding | None = None
+
+    def seal(self) -> _IndexFileBinding:
+        self.handle.flush()
+        os.fsync(self.handle.fileno())
+        result = os.fstat(self.handle.fileno())
+        self.binding = _IndexFileBinding(
+            device=int(result.st_dev),
+            inode=int(result.st_ino),
+            size=int(result.st_size),
+            mtime_ns=int(result.st_mtime_ns),
+            sha256=_hash_open_file(self.handle),
+        )
+        return self.binding
+
+    def close(self) -> None:
+        if not self.handle.closed:
+            self.handle.close()
+
+    def discard(self) -> None:
+        try:
+            _unlink_owned_file(self.path, self.identity)
+        finally:
+            self.close()
+
+
+def _copy_index_file(source: Path, destination: Path) -> _OwnedIndexFile:
+    """Copy one complete index and return its still-live ownership token."""
+    owned: _OwnedIndexFile | None = None
+    try:
+        with _filesystem_path(source).open("rb") as input_:
+            owned = _OwnedIndexFile(
+                destination, _open_exclusive_owned_file(destination)
+            )
+            shutil.copyfileobj(input_, owned.handle)
+            owned.seal()
+    except (Exception, KeyboardInterrupt, SystemExit):
+        if owned is not None:
+            owned.discard()
+        raise
+    return owned
+
+
+def _path_key(path: Path) -> str:
+    """Return one lexical key for canonical and extended Win32 spellings."""
+    absolute = os.path.abspath(os.fspath(path))
+    if os.name == "nt":
+        if absolute.startswith("\\\\?\\UNC\\"):
+            absolute = f"\\\\{absolute[8:]}"
+        elif absolute.startswith("\\\\?\\"):
+            absolute = absolute[4:]
+    return os.path.normcase(absolute)
+
+
+def _index_file_binding(path: Path) -> _IndexFileBinding:
+    with _filesystem_path(path).open("rb") as handle:
+        result = os.fstat(handle.fileno())
+        return _IndexFileBinding(
+            device=int(result.st_dev),
+            inode=int(result.st_ino),
+            size=int(result.st_size),
+            mtime_ns=int(result.st_mtime_ns),
+            sha256=_hash_open_file(handle),
+        )
+
+
+def _binding_matches_path(path: Path, binding: _IndexFileBinding) -> bool:
+    try:
+        result = os.stat(_filesystem_path(path))
+    except OSError:
+        return False
+    if (
+        int(result.st_dev) == binding.device
+        and int(result.st_ino) == binding.inode
+        and int(result.st_size) == binding.size
+        and int(result.st_mtime_ns) == binding.mtime_ns
+    ):
+        return True
+    try:
+        observed = _index_file_binding(path)
+    except OSError:
+        return False
+    # Content identity permits a logical index created in Windows native to be
+    # checked from WSL (and vice versa), where device/inode spellings differ.
+    return observed.size == binding.size and observed.sha256 == binding.sha256
+
+
+def _marker_binding_bytes(binding: _IndexFileBinding | None) -> bytes:
+    if binding is None:
+        return b""
+    return json.dumps(
+        {
+            "schema": _INDEX_MARKER_BINDING_SCHEMA,
+            "device": binding.device,
+            "inode": binding.inode,
+            "size": binding.size,
+            "mtime_ns": binding.mtime_ns,
+            "sha256": binding.sha256,
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+
+
+def _read_marker_binding(marker: Path) -> _IndexFileBinding | None:
+    try:
+        payload = _filesystem_path(marker).read_bytes()
+    except OSError as error:
+        raise AgentIndexError(f"Agent index marker cannot be read: {marker}") from error
+    if not payload:
+        # Empty markers from earlier kgdistiller builds remain readable.
+        return None
+    try:
+        value = json.loads(payload.decode("ascii"))
+        if not isinstance(value, dict):
+            raise TypeError("marker binding is not an object")
+        if value.get("schema") != _INDEX_MARKER_BINDING_SCHEMA:
+            raise ValueError("unsupported marker binding schema")
+        fields = ["device", "inode", "size", "mtime_ns"]
+        integers = [value.get(field) for field in fields]
+        if any(not isinstance(item, int) or isinstance(item, bool) for item in integers):
+            raise TypeError("marker binding integer is invalid")
+        sha256 = value.get("sha256")
+        if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+            raise ValueError("marker binding digest is invalid")
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+        raise AgentIndexError(f"Agent index marker binding is invalid: {marker}") from error
+    return _IndexFileBinding(
+        device=int(value["device"]),
+        inode=int(value["inode"]),
+        size=int(value["size"]),
+        mtime_ns=int(value["mtime_ns"]),
+        sha256=sha256,
+    )
+
+
+def _marker_selects_binding(
+    marker: Path, target: Path, expected: _IndexFileBinding
+) -> bool:
+    published = _read_marker_binding(marker)
+    if published is not None and (
+        published.size != expected.size or published.sha256 != expected.sha256
+    ):
+        return False
+    return _binding_matches_path(target, published or expected)
+
+
+def _index_marker_records(path: Path) -> list[tuple[int, str, Path]]:
+    root = _index_generation_root(path)
+    try:
+        names = [entry.name for entry in _filesystem_path(root).iterdir()]
+    except FileNotFoundError:
+        return []
+    except NotADirectoryError as error:
+        raise AgentIndexError(
+            f"Agent index generation sidecar is not a directory: {root}"
+        ) from error
+    records: list[tuple[int, str, Path]] = []
+    for name in names:
+        match = _INDEX_MARKER_RE.fullmatch(name)
+        if match is None:
+            if name.startswith("current-"):
+                raise AgentIndexError(
+                    f"Agent index generation sidecar has malformed marker: {name}"
+                )
+            continue
+        records.append(
+            (int(match.group("counter")), match.group("kind"), root / name)
+        )
+    return sorted(records)
+
+
+def _index_generation_path(path: Path, counter: int) -> Path:
+    return _index_generation_root(path) / f"generation-{counter:020d}.sqlite"
+
+
+def _authoritative_index_record(path: Path) -> tuple[int, str, Path] | None:
+    records = _index_marker_records(path)
+    if not records:
+        return None
+    newest = max(counter for counter, _, _ in records)
+    authoritative = [record for record in records if record[0] == newest]
+    if len(authoritative) != 1:
+        kinds = ", ".join(sorted(kind for _, kind, _ in authoritative))
+        raise AgentIndexError(
+            f"Agent index has ambiguous current markers at generation {newest}: {kinds}"
+        )
+    return authoritative[0]
+
+
+def _resolved_agent_index_record_path(
+    path: Path, record: tuple[int, str, Path] | None
+) -> Path | None:
+    if record is None:
+        return path if _path_is_file(path) else None
+    counter, kind, marker = record
+    if kind == "missing":
+        return None
+    candidate = path if kind == "canonical" else _index_generation_path(path, counter)
+    if not _path_is_file(candidate):
+        raise AgentIndexError(
+            f"Agent index generation {counter} points to a missing {kind} target"
+        )
+    binding = _read_marker_binding(marker)
+    if binding is not None and not _binding_matches_path(candidate, binding):
+        raise AgentIndexError(
+            f"Agent index generation {counter} points to a replaced {kind} target"
+        )
+    return candidate
+
+
+def _resolved_agent_index_path(path: Path) -> Path | None:
+    return _resolved_agent_index_record_path(path, _authoritative_index_record(path))
+
+
+def resolve_agent_index_path(path: Path) -> Path:
+    """Resolve a logical Agent index to its uniquely newest published generation."""
+    resolved = _resolved_agent_index_path(path)
+    if resolved is None:
+        raise AgentIndexError(f"Agent index does not exist: {path}")
+    return resolved
+
+
+def agent_index_exists(path: Path) -> bool:
+    resolved = _resolved_agent_index_path(path)
+    return resolved is not None and _path_is_file(resolved)
+
+
+def _next_index_generation(path: Path) -> int:
+    counters = [counter for counter, _, _ in _index_marker_records(path)]
+    root = _index_generation_root(path)
+    try:
+        names = [entry.name for entry in _filesystem_path(root).iterdir()]
+    except FileNotFoundError:
+        names = []
+    except NotADirectoryError as error:
+        raise AgentIndexError(
+            f"Agent index generation sidecar is not a directory: {root}"
+        ) from error
+    for name in names:
+        match = _INDEX_GENERATION_RE.fullmatch(name)
+        if match is not None:
+            counters.append(int(match.group("counter")))
+    return max(counters, default=0) + 1
+
+
+def _write_index_marker(path: Path, counter: int, kind: str) -> Path:
+    if kind not in {"canonical", "generation", "missing"}:
+        raise AgentIndexError(f"unsupported Agent index marker kind: {kind!r}")
+    root = _index_generation_root(path)
+    _mkdir(root)
+    marker = root / f"current-{counter:020d}-{kind}"
+    descriptor = os.open(
+        _filesystem_path(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+    )
+    try:
+        os.close(descriptor)
+    except Exception:
+        # O_EXCL creation is the publication linearization point. An ordinary
+        # close error cannot retroactively make the marker unpublished.
+        pass
+    return marker
+
+
+def _cleanup_index_generations(path: Path) -> None:
+    records = _index_marker_records(path)
+    # Keep a bounded tail so open readers and diagnostic receipts can continue
+    # to name recent immutable generations. Cleanup is never correctness-critical.
+    retained_records = records[-16:]
+    retained = {counter for counter, _, _ in retained_records}
+    for counter, kind, marker in records[:-16]:
+        # Unpublish first. A marker unlink failure must leave its target intact;
+        # a later target unlink failure can leave only an unreferenced orphan.
+        try:
+            _filesystem_path(marker).unlink(missing_ok=True)
+        except OSError:
+            continue
+        if kind == "generation":
+            generation = _index_generation_path(path, counter)
+            try:
+                _filesystem_path(generation).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    root = _index_generation_root(path)
+    try:
+        names = [entry.name for entry in _filesystem_path(root).iterdir()]
+    except OSError:
+        return
+    referenced = {
+        counter for counter, kind, _ in _index_marker_records(path) if kind == "generation"
+    }
+    for name in names:
+        match = _INDEX_GENERATION_RE.fullmatch(name)
+        if match is None:
+            continue
+        counter = int(match.group("counter"))
+        if counter in retained or counter in referenced:
+            continue
+        try:
+            _filesystem_path(root / name).unlink()
+        except OSError:
+            pass
+
+
+@contextmanager
+def _index_publication_lock(path: Path) -> Iterator[None]:
+    """Serialize publication with a bounded 60-second host-local wait."""
+    root = _index_generation_root(path)
+    _mkdir(root)
+    lock_path = root / "publication.lock"
+    handle = _filesystem_path(lock_path).open("a+b")
+    locked = False
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            deadline = time.monotonic() + _INDEX_PUBLICATION_LOCK_TIMEOUT_SECONDS
+            while True:
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as error:
+                    if error.errno not in {
+                        errno.EACCES,
+                        errno.EAGAIN,
+                        errno.EDEADLK,
+                    }:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise AgentIndexError(
+                            "timed out waiting for Agent index "
+                            f"publication lock: {path}"
+                        ) from error
+                    time.sleep(_INDEX_PUBLICATION_LOCK_POLL_SECONDS)
+        else:
+            import fcntl
+
+            deadline = time.monotonic() + _INDEX_PUBLICATION_LOCK_TIMEOUT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as error:
+                    if error.errno not in {errno.EACCES, errno.EAGAIN}:
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise AgentIndexError(
+                            "timed out waiting for Agent index "
+                            f"publication lock: {path}"
+                        ) from error
+                    time.sleep(_INDEX_PUBLICATION_LOCK_POLL_SECONDS)
+        locked = True
+        yield
+    finally:
+        if locked:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+
+def _best_effort_generation_cleanup(path: Path) -> None:
+    try:
+        _cleanup_index_generations(path)
+    except Exception:
+        # Marker creation is the commit point. Cleanup can never revoke success.
+        pass
+
+
+def _publish_agent_index_file_locked(source: Path, path: Path) -> Path:
+    """Publish while the caller holds ``_index_publication_lock(path)``."""
+    _mkdir(path.parent)
+    records = _index_marker_records(path)
+    if records:
+        # Refuse to paper over an ambiguous or dangling newest marker. A
+        # deliberate `missing` marker is valid and can be superseded.
+        _resolved_agent_index_path(path)
+    counter = _next_index_generation(path)
+    destination = _index_generation_path(path, counter)
+    kind = "generation"
+    _mkdir(destination.parent)
+    destination_was_present = _path_exists(destination)
+    destination_identity: tuple[int, int] | None = None
+    marker = _index_generation_root(path) / f"current-{counter:020d}-{kind}"
+
+    try:
+        # Publication accepts caller-owned paths, including junction/symlink and
+        # hardlink aliases of the current logical index. Always copying is the
+        # only lexical-path-independent way to preserve last-good history and
+        # guarantee that the new generation has independent bytes and identity.
+        destination_identity = _copy_index_file(source, destination)
+        _write_index_marker(path, counter, kind)
+    except Exception:
+        # _write_index_marker absorbs every ordinary exception after O_EXCL
+        # creation, so an Exception here is provably pre-linearization.
+        if destination_identity is not None:
+            _unlink_owned_file(destination, destination_identity)
+        raise
+    except (KeyboardInterrupt, SystemExit) as error:
+        # The real copy helper removes its own partial file. Fault injectors can
+        # interrupt after creating the destination themselves, so remove that
+        # new path only when it was absent before the call and no publication
+        # marker reached the linearization point. A post-marker interruption
+        # must leave the selected generation intact.
+        if (
+            not getattr(error, _INDEX_COPY_OWNERSHIP_HANDLED, False)
+            and not destination_was_present
+            and not _path_exists(marker)
+        ):
+            owned_identity = destination_identity or _path_identity(destination)
+            if owned_identity is not None:
+                _unlink_owned_file(destination, owned_identity)
+        raise
+
+    # Keep one non-authoritative legacy copy for raw tools that predate logical
+    # generation resolution. It is installed only after the marker commit and
+    # never changes in place; failure cannot revoke the published generation.
+    compatibility = _index_generation_root(path) / f".canonical-{counter}.tmp"
+    compatibility_descriptor: int | None = None
+    compatibility_identity: tuple[int, int] | None = None
+    try:
+        if not _path_exists(path):
+            compatibility_descriptor = os.open(
+                _filesystem_path(compatibility),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o600,
+            )
+            compatibility_identity = _stat_identity(
+                os.fstat(compatibility_descriptor)
+            )
+            os.close(compatibility_descriptor)
+            compatibility_descriptor = None
+            shutil.copyfile(
+                _filesystem_path(destination), _filesystem_path(compatibility)
+            )
+            os.replace(_filesystem_path(compatibility), _filesystem_path(path))
+    except Exception:
+        # Compatibility is post-commit and remains strictly best-effort.
+        pass
+    finally:
+        if compatibility_descriptor is not None:
+            try:
+                os.close(compatibility_descriptor)
+            except OSError:
+                pass
+        if compatibility_identity is not None:
+            _unlink_owned_file(compatibility, compatibility_identity)
+
+    _best_effort_generation_cleanup(path)
+    return destination
+
+
+def publish_agent_index_file(source: Path, path: Path) -> Path:
+    """Publish a complete immutable file and atomically select it with a marker."""
+    with _index_publication_lock(path):
+        return _publish_agent_index_file_locked(source, path)
+
+
+def remove_agent_index(path: Path) -> None:
+    """Publish logical absence without invalidating any existing open reader."""
+    with _index_publication_lock(path):
+        records = _index_marker_records(path)
+        if records:
+            _resolved_agent_index_path(path)
+        counter = _next_index_generation(path)
+        _write_index_marker(path, counter, "missing")
+        try:
+            _filesystem_path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+        _best_effort_generation_cleanup(path)
 
 
 class EmbeddingProvider(Protocol):
@@ -327,7 +1015,7 @@ def _reusable_embedding_rows(
     namespace: str,
 ) -> list[tuple[str, str, str, str, int, str, bytes]]:
     """Read exact still-current vectors before an atomic index rebuild."""
-    if not path.is_file():
+    if not agent_index_exists(path):
         return []
     expected = {
         str(node["id"]): embedding_input_sha256(node)
@@ -335,7 +1023,7 @@ def _reusable_embedding_rows(
     }
     connection: sqlite3.Connection | None = None
     try:
-        connection = _connect(path)
+        connection = _connect(path, read_only=True)
         rows = connection.execute(
             """
             SELECT namespace, node_id, provider, model, dimensions,
@@ -370,14 +1058,16 @@ def _reusable_embedding_rows(
                 )
             )
         return reusable
-    except (AgentIndexError, OSError, sqlite3.Error, ValueError, json.JSONDecodeError):
+    except AgentIndexError:
+        raise
+    except (OSError, sqlite3.Error, ValueError, json.JSONDecodeError):
         return []
     finally:
         if connection is not None:
             connection.close()
 
 
-def write_agent_index(
+def _write_agent_index_locked(
     path: Path,
     snapshot: dict[str, Any],
     alignment_set: dict[str, Any] | None = None,
@@ -391,14 +1081,14 @@ def write_agent_index(
         raise AgentIndexError(str(error)) from error
     nodes = list(snapshot.get("nodes") or [])
     reusable_embeddings = _reusable_embedding_rows(path, nodes, namespace)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir(path.parent)
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        prefix=f".{path.name}.", suffix=".tmp", dir=_filesystem_path(path.parent)
     )
     os.close(descriptor)
     temporary = Path(temporary_name)
-    temporary.unlink()
-    connection = sqlite3.connect(temporary)
+    _filesystem_path(temporary).unlink()
+    connection = sqlite3.connect(_filesystem_path(temporary))
     try:
         _create_schema(connection)
         metadata = {
@@ -593,32 +1283,222 @@ def write_agent_index(
             reusable_embeddings,
         )
         connection.commit()
-    except BaseException:
+    except (Exception, KeyboardInterrupt, SystemExit):
         connection.close()
-        temporary.unlink(missing_ok=True)
+        _filesystem_path(temporary).unlink(missing_ok=True)
         raise
     else:
         connection.close()
-        os.replace(temporary, path)
+        try:
+            _publish_agent_index_file_locked(temporary, path)
+        finally:
+            try:
+                _filesystem_path(temporary).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
-def _connect(path: Path) -> sqlite3.Connection:
-    if not path.is_file():
+def write_agent_index(
+    path: Path,
+    snapshot: dict[str, Any],
+    alignment_set: dict[str, Any] | None = None,
+) -> None:
+    """Build and publish one complete immutable Agent index generation."""
+    with _index_publication_lock(path):
+        _write_agent_index_locked(path, snapshot, alignment_set)
+
+
+def _readonly_sqlite_uri(path: Path) -> str:
+    if os.name == "nt":
+        # Encoding every character causes SQLite to pass the decoded extended
+        # Win32 spelling to its VFS while still honoring URI mode=ro.
+        location = quote(os.fspath(_filesystem_path(path)), safe="")
+        return f"file:{location}?mode=ro"
+    return f"{path.resolve(strict=False).as_uri()}?mode=ro"
+
+
+def _writable_sqlite_uri(path: Path) -> str:
+    if os.name == "nt":
+        location = quote(os.fspath(_filesystem_path(path)), safe="")
+        return f"file:{location}?mode=rw"
+    return f"{path.resolve(strict=False).as_uri()}?mode=rw"
+
+
+def open_agent_index(path: Path) -> sqlite3.Connection:
+    """Open a logical kgdistiller index read-only with bounded re-resolution."""
+    last_error: Exception | None = None
+    for _ in range(3):
+        selection = _authoritative_index_record(path)
+        try:
+            physical_path = _resolved_agent_index_record_path(path, selection)
+        except AgentIndexError as error:
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            raise
+        if physical_path is None:
+            error = AgentIndexError(f"Agent index does not exist: {path}")
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            raise error
+        if not _path_is_file(physical_path):
+            error = AgentIndexError(f"Agent index does not exist: {path}")
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            raise error
+        try:
+            connection = sqlite3.connect(
+                _readonly_sqlite_uri(physical_path), uri=True
+            )
+        except sqlite3.OperationalError as error:
+            # A publication can move from one immutable physical generation to
+            # the next between resolution and open. mode=ro prevents an empty
+            # replacement file, and a bounded retry observes the newer marker.
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            raise AgentIndexError(
+                f"invalid Agent index generation for logical path: {path}"
+            ) from error
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            schema_row = connection.execute(
+                "SELECT value FROM index_meta WHERE key = 'schema'"
+            ).fetchone()
+            schema = json.loads(schema_row[0]) if schema_row else None
+        except (sqlite3.DatabaseError, json.JSONDecodeError, TypeError) as error:
+            connection.close()
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            raise AgentIndexError(
+                f"invalid Agent index generation for logical path: {path}"
+            ) from error
+        except (KeyboardInterrupt, SystemExit):
+            connection.close()
+            raise
+        if schema != INDEX_SCHEMA:
+            connection.close()
+            error = AgentIndexError(f"unsupported Agent index schema: {schema!r}")
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            raise error
+        return connection
+    raise AgentIndexError(
+        f"Agent index generation changed before it could be opened: {path}"
+    ) from last_error
+
+
+def _open_agent_index_for_compatibility_write(path: Path) -> sqlite3.Connection:
+    """Open the selected generation for the legacy embedding maintenance writer."""
+    physical_path = resolve_agent_index_path(path)
+    if not _path_is_file(physical_path):
         raise AgentIndexError(f"Agent index does not exist: {path}")
-    connection = sqlite3.connect(path)
+    try:
+        connection = sqlite3.connect(
+            _writable_sqlite_uri(physical_path), uri=True
+        )
+    except sqlite3.OperationalError as error:
+        raise AgentIndexError(
+            f"Agent index generation could not be opened for maintenance: {path}"
+        ) from error
     connection.row_factory = sqlite3.Row
-    schema_row = connection.execute(
-        "SELECT value FROM index_meta WHERE key = 'schema'"
-    ).fetchone()
-    schema = json.loads(schema_row[0]) if schema_row else None
+    try:
+        schema_row = connection.execute(
+            "SELECT value FROM index_meta WHERE key = 'schema'"
+        ).fetchone()
+        schema = json.loads(schema_row[0]) if schema_row else None
+    except (sqlite3.DatabaseError, json.JSONDecodeError, TypeError) as error:
+        connection.close()
+        raise AgentIndexError(
+            f"invalid Agent index generation for logical path: {path}"
+        ) from error
+    except (KeyboardInterrupt, SystemExit):
+        connection.close()
+        raise
     if schema != INDEX_SCHEMA:
         connection.close()
         raise AgentIndexError(f"unsupported Agent index schema: {schema!r}")
     return connection
 
 
+def _sqlite_snapshot_to_file(path: Path, destination: Path) -> None:
+    """Write a consistent SQLite snapshot, including committed WAL state."""
+    source = open_agent_index(path)
+    target = sqlite3.connect(_filesystem_path(destination))
+    try:
+        source.backup(target)
+        target.commit()
+    finally:
+        target.close()
+        source.close()
+
+
+def backup_agent_index(path: Path, destination: Path) -> None:
+    """Atomically back up the current logical generation as a SQLite snapshot."""
+    with _index_publication_lock(path):
+        _mkdir(destination.parent)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".snapshot",
+            dir=_filesystem_path(destination.parent),
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            _sqlite_snapshot_to_file(path, temporary)
+            os.replace(_filesystem_path(temporary), _filesystem_path(destination))
+        finally:
+            try:
+                _filesystem_path(temporary).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+@contextmanager
+def _mutable_agent_index(path: Path) -> Iterator[sqlite3.Connection]:
+    """Clone, mutate, and publish an index while serializing the whole update."""
+    with _index_publication_lock(path):
+        _mkdir(path.parent)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".mutable",
+            dir=_filesystem_path(path.parent),
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            _sqlite_snapshot_to_file(path, temporary)
+            connection = sqlite3.connect(_filesystem_path(temporary))
+            connection.row_factory = sqlite3.Row
+            try:
+                yield connection
+            except (Exception, KeyboardInterrupt, SystemExit):
+                connection.close()
+                raise
+            else:
+                connection.close()
+                _publish_agent_index_file_locked(temporary, path)
+        finally:
+            try:
+                _filesystem_path(temporary).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    """Keep the historical writer default; every reader opts into read-only."""
+    if read_only:
+        return open_agent_index(path)
+    return _open_agent_index_for_compatibility_write(path)
+
+
 def index_status(path: Path) -> dict[str, Any]:
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         metadata = {
             row["key"]: json.loads(row["value"])
@@ -654,7 +1534,7 @@ def resolve_concepts(
     _validate_namespace(namespace)
     if len(concepts) > MAX_BATCH_CONCEPTS:
         raise AgentIndexError(f"concept batch exceeds {MAX_BATCH_CONCEPTS}")
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         results: list[dict[str, Any]] = []
         for concept in concepts:
@@ -772,7 +1652,7 @@ def search_index(
     limit = _validated_limit(limit)
     expression = _fts_expression(query)
     allowed_types = sorted(set(node_types or []))
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         where = ["node_fts MATCH ?", "n.namespace = ?"]
         parameters: list[Any] = [expression, namespace]
@@ -884,8 +1764,7 @@ def index_embeddings(
         raise AgentIndexError("similarity_top_k must be between 1 and 100")
     if similarity_threshold < -1.0 or similarity_threshold > 1.0:
         raise AgentIndexError("similarity_threshold must be between -1 and 1")
-    connection = _connect(path)
-    try:
+    with _mutable_agent_index(path) as connection:
         rows = connection.execute(
             "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
         ).fetchall()
@@ -1047,8 +1926,6 @@ def index_embeddings(
             "cached": len(nodes) - len(pending_indices),
             "similarity_edges": soft_edge_count,
         }
-    finally:
-        connection.close()
 
 
 def semantic_search(
@@ -1073,7 +1950,7 @@ def semantic_search(
         raise AgentIndexError("embedding provider returned the wrong query vector count")
     query_vector = _validate_vector(query_vectors[0], dimensions)
     allowed_types = set(node_types or [])
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         rows = connection.execute(
             """
@@ -1148,7 +2025,7 @@ def get_index_node(
 ) -> dict[str, Any]:
     """Return one node with direct typed edges, backlinks, and provenance."""
     _validate_namespace(namespace)
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         node = _node_by_id(connection, namespace, node_id)
         if node is None:
@@ -1279,7 +2156,7 @@ def expand_index(
     else:
         relations.discard("contains")
 
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         seed_nodes: dict[str, dict[str, Any]] = {}
         for seed in seeds:
@@ -1403,7 +2280,7 @@ def personalized_pagerank(
         relations.discard("contains")
     allowed_types = set(node_types or [])
     bounded_ids = sorted(set(_candidate_ids or []))
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         nodes: dict[str, dict[str, Any]] = {}
         if bounded_ids:
@@ -1943,7 +2820,7 @@ def build_context_bundle(
             )
 
     if included:
-        connection = _connect(path)
+        connection = _connect(path, read_only=True)
         try:
             placeholders = ",".join("?" for _ in included)
             parameters: list[Any] = [namespace, *sorted(included), *sorted(included)]
@@ -2072,7 +2949,7 @@ def _indexed_alignment_mappings(
     subject_id: str,
     object_namespace: str,
 ) -> list[dict[str, Any]]:
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         return [
             json.loads(row["payload"])
@@ -2174,7 +3051,7 @@ def _alignment_lexical_overlap(probe: str, target: dict[str, Any]) -> float:
 
 
 def _target_graph_edges(path: Path, namespace: str) -> set[tuple[str, str, str]]:
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         return {
             (str(row["source"]), str(row["relation"]), str(row["target"]))
@@ -2188,7 +3065,7 @@ def _target_graph_edges(path: Path, namespace: str) -> set[tuple[str, str, str]]
 
 
 def _all_index_nodes(path: Path, namespace: str) -> list[dict[str, Any]]:
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         return [
             _node_payload(row)
@@ -2761,7 +3638,7 @@ def compare_graph(
                     }
                 )
 
-    connection = _connect(path)
+    connection = _connect(path, read_only=True)
     try:
         target_edges = {
             (str(row["source"]), str(row["relation"]), str(row["target"]))

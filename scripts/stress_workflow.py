@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import platform
-import resource
 import sys
 import tempfile
 import threading
@@ -63,6 +62,16 @@ def _latency_summary(samples: list[float]) -> dict[str, float | int]:
         "p95": percentile(0.95),
         "max": round(ordered[-1], 6),
     }
+
+
+def _maximum_rss() -> tuple[int | None, int | None, str]:
+    try:
+        import resource
+    except ImportError:
+        return None, None, "unavailable"
+    maximum = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    byte_count = maximum if sys.platform == "darwin" else maximum * 1024
+    return maximum, byte_count, "getrusage"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -535,8 +544,7 @@ def run_stress(
             f"expected {knowledge_nodes} final knowledge nodes, got {final_knowledge}"
         )
 
-    max_rss_raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    max_rss_bytes = max_rss_raw if sys.platform == "darwin" else max_rss_raw * 1024
+    max_rss_raw, max_rss_bytes, max_rss_source = _maximum_rss()
     return {
         "schema": "kgdistiller-stress-report-v1",
         "status": "passed",
@@ -595,6 +603,7 @@ def run_stress(
         },
         "max_rss_raw": max_rss_raw,
         "max_rss_bytes": max_rss_bytes,
+        "max_rss_source": max_rss_source,
         "initial_sync_report": {
             "files": sync_report["files"],
             "definitions": sync_report["definitions"],

@@ -1,6 +1,6 @@
 {
   "schema": "qlkg-local-profile-v1",
-  "database": "knowledge/build/knowledge.sqlite",
+  "database": "knowledge.sqlite",
   "portable_store": "/synthetic/private-store",
   "embedding_profile": "primary",
   "provider_profiles": {

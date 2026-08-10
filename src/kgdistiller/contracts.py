@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import re
 from importlib import resources
 from pathlib import PurePosixPath
 from typing import Any
@@ -159,6 +158,28 @@ def _glob_variants(pattern: str) -> set[str]:
     return variants
 
 
+def _validate_registered_glob_syntax(pattern: str) -> None:
+    offset = 0
+    while offset < len(pattern):
+        if pattern[offset] != "[":
+            offset += 1
+            continue
+        closing = pattern.find("]", offset + 1)
+        if closing < 0:
+            raise ContractError("registered_glob is malformed")
+        character_class = pattern[offset + 1 : closing]
+        if character_class.startswith(("!", "^")):
+            character_class = character_class[1:]
+        if not character_class:
+            raise ContractError("registered_glob is malformed")
+        for index, character in enumerate(character_class):
+            if character != "-" or index == 0 or index == len(character_class) - 1:
+                continue
+            if ord(character_class[index - 1]) > ord(character_class[index + 1]):
+                raise ContractError("registered_glob is malformed")
+        offset = closing + 1
+
+
 def _validate_upsert_source(payload: dict[str, Any]) -> None:
     if payload.get("schema") != "qlkg-document-upsert-request-v1":
         return
@@ -171,12 +192,13 @@ def _validate_upsert_source(payload: dict[str, Any]) -> None:
     static_prefix = registered_glob[: min(wildcard_offsets)] if wildcard_offsets else registered_glob
     if not static_prefix or static_prefix.startswith("/"):
         raise ContractError("registered_glob must have a bounded relative prefix")
+    _validate_registered_glob_syntax(registered_glob)
     try:
         matches_registered_glob = any(
             PurePosixPath(authority).match(candidate)
             for candidate in _glob_variants(registered_glob)
         )
-    except (re.error, ValueError) as error:
+    except ValueError as error:
         raise ContractError("registered_glob is malformed") from error
     if not matches_registered_glob:
         raise ContractError("authority must match its registered bounded glob")

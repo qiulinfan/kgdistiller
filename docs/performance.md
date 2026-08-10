@@ -5,7 +5,11 @@ objective. Results depend on storage, available memory, Python, graph shape,
 source size, and query mix. The fixture is disposable and contains no personal
 knowledge.
 
-## Reference environment
+## Historical reference environment
+
+This measurement predates the Windows-native and WSL support decision. It is
+retained for provenance and regression context, but it is not a release or
+support gate.
 
 - Apple A18 Pro (`arm64`)
 - 8 GiB unified memory
@@ -72,8 +76,7 @@ as the current query baseline.
 
 The original exploratory targets of a full sync below 60 seconds and peak
 memory below 1 GiB were not met on this 8 GiB host. They are findings, not
-silently relaxed pass results. For the 0.3 release on this reference machine,
-the measured acceptance envelope is:
+silently relaxed pass results. The historical measurement envelope was:
 
 - initial sync at or below 90 seconds;
 - no-op incremental sync at or below 90 seconds;
@@ -83,7 +86,7 @@ the measured acceptance envelope is:
 - peak resident memory below 3 GiB;
 - transaction plan below 300 seconds and apply below 360 seconds.
 
-These bounds include modest variance around the recorded run. A regression
-outside them blocks release until it is explained, fixed, or documented with a
-new baseline. A different machine or production workload must establish its
-own baseline instead of treating these numbers as universal guarantees.
+These bounds include modest variance around the recorded run. They do not block
+release because the source environment is outside the supported Windows-host
+matrix. A Windows-native, WSL, or production workload must establish its own
+baseline instead of treating these numbers as universal guarantees.

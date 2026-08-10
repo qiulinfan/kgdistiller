@@ -25,6 +25,7 @@ from kgdistiller.agent import (  # noqa: E402
     index_status,
     index_embeddings,
     personalized_pagerank,
+    resolve_agent_index_path,
     resolve_concepts,
     retrieve_index,
     search_index,
@@ -300,7 +301,7 @@ class AgentIndexTest(unittest.TestCase):
         self.assertEqual("qlkg-agent-index-v2", status["schema"])
         self.assertEqual(snapshot["snapshot_sha256"], status["snapshot_sha256"])
         self.assertEqual({"nodes": 2, "edges": 1, "references": 1}, status["counts"])
-        connection = sqlite3.connect(self.database)
+        connection = sqlite3.connect(resolve_agent_index_path(self.database))
         try:
             self.assertEqual(1, connection.execute("SELECT count(*) FROM edges").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT count(*) FROM refs").fetchone()[0])
@@ -343,7 +344,7 @@ class AgentIndexTest(unittest.TestCase):
         self.assertEqual("scoped-alias", resolution["match_kind"])
         self.assertEqual(1, len(resolution["evidence"]))
 
-        connection = sqlite3.connect(self.database)
+        connection = sqlite3.connect(resolve_agent_index_path(self.database))
         try:
             self.assertEqual(
                 0,
@@ -450,7 +451,7 @@ class AgentIndexTest(unittest.TestCase):
             KeywordEmbeddingProvider(),
             build_similarity_edges=False,
         )
-        connection = sqlite3.connect(self.database)
+        connection = sqlite3.connect(resolve_agent_index_path(self.database))
         try:
             before = connection.execute(
                 "SELECT node_id, vector FROM embeddings ORDER BY node_id"
@@ -459,7 +460,7 @@ class AgentIndexTest(unittest.TestCase):
             connection.close()
 
         write_agent_index(self.database, snapshot)
-        connection = sqlite3.connect(self.database)
+        connection = sqlite3.connect(resolve_agent_index_path(self.database))
         try:
             self.assertEqual(
                 before,
@@ -474,7 +475,7 @@ class AgentIndexTest(unittest.TestCase):
         snapshot.pop("snapshot_sha256")
         snapshot["snapshot_sha256"] = sha256_json(snapshot)
         write_agent_index(self.database, snapshot)
-        connection = sqlite3.connect(self.database)
+        connection = sqlite3.connect(resolve_agent_index_path(self.database))
         try:
             self.assertEqual(
                 ["beta"],

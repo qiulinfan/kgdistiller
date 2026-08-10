@@ -113,6 +113,44 @@ name becomes an alias, and the definition change still requires curation review.
 `serve` opens <http://127.0.0.1:8765/>. It exposes the graph and bounded source
 excerpts only to the local machine unless another host is explicitly selected.
 
+## Machine-local profile
+
+Put machine-specific paths and provider selection in the ignored
+`knowledge/build/local-profile.json` file:
+
+```json
+{
+  "schema": "qlkg-local-profile-v1",
+  "database": "knowledge.sqlite",
+  "portable_store": "/absolute/path/to/private-store",
+  "embedding_profile": "primary",
+  "provider_profiles": {
+    "primary": {
+      "adapter": "openai-compatible",
+      "model": "example-embedding-model",
+      "dimensions": 1536,
+      "base_url": "https://provider.example/v1",
+      "credential_env": "EMBEDDING_API_KEY"
+    }
+  }
+}
+```
+
+Relative profile paths resolve from the profile file's directory. Inspect the
+effective selection with `kgdistiller profile status`; the output includes a
+non-secret provider configuration digest and credential availability, never the
+credential or provider response. `--database`, `--store`, and
+`--embedding-profile` override profile values, and `--local-profile` selects a
+non-default profile file. Without a profile, existing repository defaults
+continue to apply.
+
+The bundled `openai-compatible` adapter uses only the Python standard library,
+batches document or query text through `/embeddings`, bounds requests,
+responses, and timeouts, and reads its bearer credential only from the declared
+environment variable. Configuring a provider does not grant it graph identity
+or relation authority. The separately named `deterministic-fixture` adapter is
+credential-free and intended only for reproducible tests.
+
 ## Portable Git store
 
 For backup and multi-machine use, make the knowledge project—not SQLite—the
@@ -332,6 +370,11 @@ See [the Agentic knowledge base closure specification](docs/agentic-knowledge-ba
 for the remaining portable-RAG, document-upsert, Skill, paper-import, and qlblog
 integration requirements, quantitative acceptance metrics, dependency order,
 and issue-sized work packages intended for automated implementation.
+
+See [the active repair specification](docs/agentic-knowledge-base-repair-spec.md)
+for the 2026-08-09 audited baseline, the strictly sequential implementation
+slices, and the evidence ledger used to complete those requirements one at a
+time.
 
 ## Agent Skills
 

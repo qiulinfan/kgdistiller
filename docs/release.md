@@ -22,7 +22,7 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-ingest-request-v1` | yes | accepted | Content-addressed plan/apply request. |
 | `qlkg-ingest-plan-v1` | output | output | Review artifact, not a commit receipt. |
 | `qlkg-ingest-receipt-v1` | output | output | Canonical committed/rejected result. |
-| `qlkg-local-profile-v1` | proposed | proposed | Machine-local paths and credential environment-variable names; never portable. |
+| `qlkg-local-profile-v1` | yes | user-authored | Machine-local paths and credential environment-variable names; never portable. |
 | `qlkg-embedding-policy-v1` | proposed | proposed | Portable vector-space and required-coverage policy without credentials. |
 | `qlkg-retrieval-plan-v1` | proposed | proposed | Bounded lane-specific query input; execution is deferred. |
 | `qlkg-search-result-v2` | proposed | proposed | Bounded per-lane status and fusion evidence; public wiring is deferred. |
@@ -31,8 +31,19 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-document-ingest-receipt-v1` | proposed | proposed | Resumable stage output; enrichment orchestration is deferred. |
 | MCP `2024-11-05` through `2025-11-25` | yes | read-only | No MCP mutation tools. |
 
-Python 3.9 and newer are supported. The deterministic core has no runtime model
-provider dependency. Typst is an external requirement only when Typst-authored
+The package requires Python 3.9 or newer. The required Windows-host acceptance
+matrix is:
+
+| Environment | Python coverage | Typst | Role |
+| --- | --- | --- | --- |
+| Windows native | 3.13 CI job; 3.14.6 local pass | 0.15.1 | supported and required |
+| WSL Ubuntu 26.04 | 3.14.4 local pass | 0.15.1 | supported and required |
+| Ubuntu GitHub runner | 3.9, 3.11, 3.13 compatibility jobs | 0.15.1 | retained check; not a support gate |
+
+Every full-suite CI job uses Typst 0.15.1. The deterministic core has no runtime
+model provider dependency. The optional `openai-compatible` embedding adapter
+uses only the Python standard library and reads credentials from the configured
+environment variable. Typst is an external requirement only when Typst-authored
 labels must be rendered.
 
 ## Schema evolution
@@ -71,9 +82,10 @@ Then verify:
 - a Markdown/Typst/LaTeX fixture passes sync and check;
 - transactional plan/apply, idempotency, stale preconditions, lock conflict,
   fault injection, crash recovery, and old/new reader isolation pass;
-- the 100,000-node disposable stress harness passes the reference-machine
-  envelope in [the performance baseline](performance.md), or the deviation is
-  documented as a release blocker;
+- the 100,000-node disposable stress harness records a Windows-native or WSL
+  baseline before any performance envelope is used as a release gate; the
+  historical baseline in [the performance notes](performance.md) is
+  informational only;
 - Skills pass structural validation and a real isolated Agent evaluation;
 - no credential, personal graph, authority note, generated SQLite, build
   artifact, or stress fixture is tracked.

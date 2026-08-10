@@ -326,10 +326,18 @@ class ContractNegativeTests(unittest.TestCase):
         self.assert_invalid(request, "query artifact digest")
 
     def test_malformed_registered_glob_fails_with_contract_error(self) -> None:
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["source"]["registered_glob"] = "notes/[z-a].typ"
-        request = finalize_self_digest(request, "request_sha256")
-        self.assert_invalid(request, "registered_glob is malformed")
+        for malformed_glob in (
+            "notes/[z-a].typ",
+            "notes/[.typ",
+            "notes/[].typ",
+            "notes/[!].typ",
+            "notes/[^].typ",
+        ):
+            with self.subTest(registered_glob=malformed_glob):
+                request = load_fixture("valid", "qlkg-document-upsert-request-v1")
+                request["source"]["registered_glob"] = malformed_glob
+                request = finalize_self_digest(request, "request_sha256")
+                self.assert_invalid(request, "registered_glob is malformed")
 
     def test_disabled_and_degraded_lanes_require_reason_codes(self) -> None:
         result = load_fixture("valid", "qlkg-search-result-v2")

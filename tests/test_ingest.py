@@ -3,13 +3,19 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from kgdistiller.agent import sha256_json
+import kgdistiller.agent as agent
+import kgdistiller.ingest as ingest_module
+from kgdistiller.agent import resolve_agent_index_path, sha256_json
 from kgdistiller.alignment import empty_alignment_set
 from kgdistiller.cli import (
     apply_delta,
@@ -24,6 +30,10 @@ from kgdistiller.ingest import (
     CAPABILITY,
     IngestError,
     IngestPaths,
+    _backup_target,
+    _filesystem_path,
+    _remove_target,
+    _restore_journal,
     _writer_lock,
     apply_ingest,
     finalize_request,
@@ -323,6 +333,19 @@ class TransactionalIngestTest(unittest.TestCase):
         )
         self.assertTrue(receipt_path.is_file())
 
+    def test_first_ingest_succeeds_without_an_existing_agent_index(self) -> None:
+        _remove_target(self.database)
+        _remove_target(agent._index_generation_root(self.database))
+        self.assertFalse(agent.agent_index_exists(self.database))
+
+        receipt = apply_ingest(
+            self.paths,
+            self.request("apply", request_id="first-index"),
+        )
+
+        self.assertEqual("committed", receipt["status"])
+        self.assertTrue(agent.agent_index_exists(self.database))
+
     def test_stale_source_and_stale_graph_reject_without_writes(self) -> None:
         request = self.request("apply")
         before = self.material_hashes()
@@ -371,6 +394,321 @@ class TransactionalIngestTest(unittest.TestCase):
             self.assertEqual(baseline, self.material_hashes(), failure_stage)
             recover_ingest(self.paths)
 
+    def test_long_transaction_backup_restores_with_canonical_journal_paths(self) -> None:
+        backup_container = (
+            self.database.parent
+            / ("long-backup-" + "x" * 180)
+        )
+        backup_root = backup_container / ("a" * 64)
+        try:
+            record = _backup_target(self.repo, self.graph, backup_root)
+            backed_up_graph = backup_root / record["path"]
+            self.assertGreater(len(str(backed_up_graph)), 260)
+            self.assertEqual("knowledge/graph", record["path"])
+            self.assertNotIn("\\\\?\\", str(backup_root))
+            if os.name == "nt":
+                self.assertTrue(
+                    str(_filesystem_path(backup_root)).startswith("\\\\?\\")
+                )
+            else:
+                self.assertEqual(backup_root, _filesystem_path(backup_root))
+
+            journal = {
+                "backup_root": str(backup_root),
+                "targets": [record],
+            }
+            _remove_target(self.graph)
+            self.assertFalse(_filesystem_path(self.graph).exists())
+            _restore_journal(self.paths, journal)
+            self.assertIn("alpha", load_state(self.graph).nodes)
+        finally:
+            shutil.rmtree(_filesystem_path(backup_container), ignore_errors=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length I/O is required")
+    def test_writer_lock_supports_a_long_agent_index_state_path(self) -> None:
+        long_root = self.repo / ("long-writer-lock-" + "x" * 180)
+        database = long_root / ("nested-" + "y" * 80) / "knowledge.sqlite"
+        paths = IngestPaths(
+            repo_root=self.paths.repo_root,
+            registry=self.paths.registry,
+            graph_dir=self.paths.graph_dir,
+            identities=self.paths.identities,
+            alignments=self.paths.alignments,
+            database=database,
+            typst_registry=self.paths.typst_registry,
+        )
+        self.assertGreater(len(str(database)), 260)
+        try:
+            with _writer_lock(paths):
+                pass
+        finally:
+            shutil.rmtree(_filesystem_path(long_root), ignore_errors=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length I/O is required")
+    def test_long_agent_index_backup_remove_and_restore_is_readable(self) -> None:
+        long_root = self.repo / ("long-index-recovery-" + "x" * 180)
+        database = long_root / ("nested-" + "y" * 80) / "knowledge.sqlite"
+        paths = IngestPaths(
+            repo_root=self.paths.repo_root,
+            registry=self.paths.registry,
+            graph_dir=self.paths.graph_dir,
+            identities=self.paths.identities,
+            alignments=self.paths.alignments,
+            database=database,
+            typst_registry=self.paths.typst_registry,
+        )
+        self.assertGreater(len(str(database)), 260)
+        filesystem_database = _filesystem_path(database)
+        filesystem_database.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(str(filesystem_database))
+        try:
+            connection.execute(
+                "CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.executemany(
+                "INSERT INTO index_meta VALUES (?, ?)",
+                [
+                    ("schema", json.dumps(agent.INDEX_SCHEMA)),
+                    ("sentinel", json.dumps("long-last-good")),
+                ],
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        backup_root = database.parent / "kgdistiller-ingest/backups/long-restore"
+        try:
+            record = _backup_target(
+                self.repo,
+                database,
+                backup_root,
+                kind="agent-index",
+            )
+            self.assertEqual(database.relative_to(self.repo).as_posix(), record["path"])
+            self.assertNotIn("\\\\?\\", record["path"])
+            self.assertNotIn("\\\\?\\", str(backup_root))
+
+            agent.remove_agent_index(database)
+            self.assertFalse(agent.agent_index_exists(database))
+            try:
+                _restore_journal(
+                    paths,
+                    {
+                        "backup_root": str(backup_root),
+                        "request_sha256": "long-restore",
+                        "targets": [record],
+                    },
+                )
+            except IngestError as error:
+                self.fail(f"long-path restore failed: {error.diagnostics}")
+
+            self.assertEqual("long-last-good", agent.index_status(database)["sentinel"])
+        finally:
+            shutil.rmtree(_filesystem_path(long_root), ignore_errors=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length I/O is required")
+    def test_apply_ingest_supports_a_long_absent_index_end_to_end(self) -> None:
+        long_root = self.repo / ("long-apply-" + "x" * 180)
+        database = long_root / ("nested-" + "y" * 80) / "knowledge.sqlite"
+        paths = IngestPaths(
+            repo_root=self.paths.repo_root,
+            registry=self.paths.registry,
+            graph_dir=self.paths.graph_dir,
+            identities=self.paths.identities,
+            alignments=self.paths.alignments,
+            database=database,
+            typst_registry=self.paths.typst_registry,
+        )
+        request = self.request("apply", request_id="long-absent-apply")
+        self.assertGreater(len(str(database)), 260)
+        self.assertFalse(agent.agent_index_exists(database))
+
+        try:
+            try:
+                receipt = apply_ingest(paths, request)
+            except Exception as error:
+                self.fail(
+                    "long-path apply failed before committing a readable index: "
+                    f"{type(error).__name__}: {error}"
+                )
+
+            self.assertEqual("committed", receipt["status"])
+            connection = agent.open_agent_index(database)
+            try:
+                self.assertEqual(
+                    ("beta",),
+                    tuple(
+                        connection.execute(
+                            "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                        ).fetchone()
+                    ),
+                )
+            finally:
+                connection.close()
+            receipt_path = (
+                database.parent
+                / "kgdistiller-ingest/receipts"
+                / f"{request['request_sha256']}.json"
+            )
+            self.assertTrue(_filesystem_path(receipt_path).is_file())
+            persisted = _filesystem_path(receipt_path).read_text(encoding="utf-8")
+            self.assertNotIn("\\\\?\\", persisted)
+            self.assertNotIn("\\\\?\\", json.dumps(receipt))
+            self.assertFalse(
+                _filesystem_path(
+                    database.parent / "kgdistiller-ingest/journal.json"
+                ).exists()
+            )
+        finally:
+            shutil.rmtree(_filesystem_path(long_root), ignore_errors=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length I/O is required")
+    def test_long_apply_failure_after_rebuild_recovers_existing_index(self) -> None:
+        long_root = self.repo / ("long-apply-recovery-" + "x" * 170)
+        database = long_root / ("nested-" + "y" * 80) / "knowledge.sqlite"
+        paths = IngestPaths(
+            repo_root=self.paths.repo_root,
+            registry=self.paths.registry,
+            graph_dir=self.paths.graph_dir,
+            identities=self.paths.identities,
+            alignments=self.paths.alignments,
+            database=database,
+            typst_registry=self.paths.typst_registry,
+        )
+        self.assertGreater(len(str(database)), 260)
+        agent.backup_agent_index(self.database, database)
+        before_status = agent.index_status(database)
+        baseline = self.material_hashes()
+        request = self.request("apply", request_id="long-rebuild-rollback")
+
+        def inject(stage: str) -> None:
+            if stage == "rebuilt-index":
+                raise IngestError("injected-failure", stage, stage=stage)
+
+        try:
+            with self.assertRaises(IngestError) as caught:
+                apply_ingest(paths, request, failure_injector=inject)
+            self.assertEqual("injected-failure", caught.exception.code)
+            journal_path = database.parent / "kgdistiller-ingest/journal.json"
+            self.assertTrue(_filesystem_path(journal_path).is_file())
+            journal_text = _filesystem_path(journal_path).read_text(encoding="utf-8")
+            self.assertNotIn("\\\\?\\", journal_text)
+
+            recovered = recover_ingest(paths)
+            self.assertIsNotNone(recovered)
+            assert recovered is not None
+            self.assertEqual("rolled-back", recovered["status"])
+            self.assertFalse(_filesystem_path(journal_path).exists())
+            self.assertEqual(baseline, self.material_hashes())
+            self.assertEqual(
+                before_status["graph_sha256"],
+                agent.index_status(database)["graph_sha256"],
+            )
+            connection = agent.open_agent_index(database)
+            try:
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                    ).fetchone()
+                )
+            finally:
+                connection.close()
+        finally:
+            shutil.rmtree(_filesystem_path(long_root), ignore_errors=True)
+
+    def test_restore_journal_continues_after_agent_index_error(self) -> None:
+        backup_root = self.database.parent / "kgdistiller-ingest/backups/mixed-error"
+        records = [
+            _backup_target(self.repo, self.authority, backup_root),
+            _backup_target(self.repo, self.graph, backup_root),
+            _backup_target(self.repo, self.alignments, backup_root),
+            _backup_target(
+                self.repo,
+                self.database,
+                backup_root,
+                kind="agent-index",
+            ),
+        ]
+        baseline = self.material_hashes()
+        self.authority.write_text("mutated authority\n", encoding="utf-8")
+        _remove_target(self.graph)
+        self.graph.mkdir(parents=True)
+        (self.graph / "mutated.json").write_text("{}", encoding="utf-8")
+        self.alignments.write_text("{}", encoding="utf-8")
+        real_atomic_copy = ingest_module._atomic_copy
+
+        def fail_only_agent_index(
+            source: Path, target: Path, *, agent_index: bool = False
+        ) -> None:
+            if agent_index:
+                raise agent.AgentIndexError("injected Agent index restore failure")
+            real_atomic_copy(source, target, agent_index=agent_index)
+
+        try:
+            with patch.object(
+                ingest_module,
+                "_atomic_copy",
+                side_effect=fail_only_agent_index,
+            ):
+                with self.assertRaises(IngestError) as caught:
+                    _restore_journal(
+                        self.paths,
+                        {
+                            "backup_root": str(backup_root),
+                            "request_sha256": "mixed-agent-index-error",
+                            "targets": records,
+                        },
+                    )
+            self.assertEqual("rollback-failed", caught.exception.code)
+            self.assertEqual(baseline, self.material_hashes())
+            self.assertTrue(
+                any(
+                    "injected Agent index restore failure"
+                    in str(item.get("message", ""))
+                    for item in caught.exception.diagnostics
+                )
+            )
+        finally:
+            shutil.rmtree(_filesystem_path(backup_root), ignore_errors=True)
+
+    def test_restore_journal_collects_receipt_unlink_error(self) -> None:
+        request_sha = "receipt-unlink-error"
+        receipt = (
+            self.database.parent
+            / "kgdistiller-ingest/receipts"
+            / f"{request_sha}.json"
+        )
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text("{}", encoding="utf-8")
+        real_unlink = Path.unlink
+
+        def deny_receipt_unlink(
+            candidate: Path, *args: object, **kwargs: object
+        ) -> None:
+            if candidate.name == receipt.name and candidate.parent.name == "receipts":
+                raise PermissionError("injected receipt unlink denial")
+            real_unlink(candidate, *args, **kwargs)
+
+        with patch.object(Path, "unlink", new=deny_receipt_unlink):
+            with self.assertRaises(IngestError) as caught:
+                _restore_journal(
+                    self.paths,
+                    {
+                        "backup_root": str(self.repo / "unused-backup"),
+                        "request_sha256": request_sha,
+                        "targets": [],
+                    },
+                )
+
+        self.assertEqual("rollback-failed", caught.exception.code)
+        self.assertTrue(_filesystem_path(receipt).is_file())
+        self.assertTrue(
+            any(
+                "injected receipt unlink denial" in str(item.get("message", ""))
+                for item in caught.exception.diagnostics
+            )
+        )
+
     def test_lock_conflict_and_request_id_conflict_are_stable(self) -> None:
         request = self.request("apply")
         with _writer_lock(self.paths):
@@ -385,6 +723,83 @@ class TransactionalIngestTest(unittest.TestCase):
         with self.assertRaises(IngestError) as conflict:
             apply_ingest(self.paths, different)
         self.assertEqual("request-id-conflict", conflict.exception.code)
+
+    def test_writer_lock_conflicts_across_processes(self) -> None:
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(REPO_ROOT / "src")
+        ready_path = self.repo / "knowledge/build/writer-lock.ready"
+        release_path = self.repo / "knowledge/build/writer-lock.release"
+        holder_code = (
+            "import sys, time\n"
+            "from pathlib import Path\n"
+            "from kgdistiller.ingest import IngestPaths, _writer_lock\n"
+            "repo = Path(sys.argv[1])\n"
+            "ready = Path(sys.argv[2])\n"
+            "release = Path(sys.argv[3])\n"
+            "paths = IngestPaths(\n"
+            "    repo_root=repo,\n"
+            "    registry=repo / 'knowledge/sources.json',\n"
+            "    graph_dir=repo / 'knowledge/graph',\n"
+            "    identities=repo / 'knowledge/identities.json',\n"
+            "    alignments=repo / 'knowledge/alignments.json',\n"
+            "    database=repo / 'knowledge/build/knowledge.sqlite',\n"
+            "    typst_registry=repo / 'knowledge/build/knowledge-registry.typ',\n"
+            ")\n"
+            "with _writer_lock(paths):\n"
+            "    ready.touch()\n"
+            "    deadline = time.monotonic() + 20.0\n"
+            "    while not release.exists():\n"
+            "        if time.monotonic() >= deadline:\n"
+            "            raise RuntimeError('release deadline expired')\n"
+            "        time.sleep(0.01)\n"
+        )
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                holder_code,
+                str(self.repo),
+                str(ready_path),
+                str(release_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+        holder_stdout = ""
+        holder_error = ""
+        try:
+            deadline = time.monotonic() + 10.0
+            while not ready_path.exists() and time.monotonic() < deadline:
+                if holder.poll() is not None:
+                    break
+                time.sleep(0.01)
+            if not ready_path.exists():
+                if holder.poll() is None:
+                    holder.kill()
+                holder_stdout, holder_error = holder.communicate(timeout=5)
+                self.fail(
+                    "lock holder did not become ready: "
+                    f"exit={holder.returncode} stdout={holder_stdout} "
+                    f"stderr={holder_error}"
+                )
+
+            with self.assertRaises(IngestError) as locked:
+                apply_ingest(self.paths, self.request("apply"))
+            self.assertEqual("lock-conflict", locked.exception.code)
+        finally:
+            release_path.touch(exist_ok=True)
+            try:
+                holder_stdout, holder_error = holder.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                holder.kill()
+                holder_stdout, holder_error = holder.communicate(timeout=5)
+        self.assertEqual(
+            0,
+            holder.returncode,
+            f"stdout={holder_stdout} stderr={holder_error}",
+        )
 
     def test_killed_writer_is_recovered_before_retry(self) -> None:
         request = self.request("apply", request_id="crash-recovery")
@@ -409,6 +824,7 @@ class TransactionalIngestTest(unittest.TestCase):
             capture_output=True,
             text=True,
             env=environment,
+            timeout=30,
         )
         self.assertEqual(86, crashed.returncode)
 
@@ -443,6 +859,99 @@ class TransactionalIngestTest(unittest.TestCase):
 
         self.assertFalse(rebuilt)
         self.assertEqual(before, self.database.read_bytes())
+
+    def test_open_reader_survives_transaction_generation_swap(self) -> None:
+        reader = sqlite3.connect(resolve_agent_index_path(self.database))
+        transaction_error: Exception | None = None
+        try:
+            self.assertIsNone(
+                reader.execute(
+                    "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                ).fetchone()
+            )
+
+            receipt = apply_ingest(self.paths, self.request("apply"))
+
+            self.assertEqual("committed", receipt["status"])
+            self.assertIsNone(
+                reader.execute(
+                    "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                ).fetchone()
+            )
+        except Exception as error:
+            transaction_error = error
+        finally:
+            reader.close()
+
+        if transaction_error is not None:
+            recover_ingest(self.paths)
+            self.fail(
+                "an open reader blocked the transaction generation swap: "
+                f"{type(transaction_error).__name__}: {transaction_error}"
+            )
+
+        current_reader = sqlite3.connect(resolve_agent_index_path(self.database))
+        try:
+            self.assertEqual(
+                ("beta",),
+                current_reader.execute(
+                    "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                ).fetchone(),
+            )
+        finally:
+            current_reader.close()
+
+    def test_open_reader_survives_transaction_generation_rollback(self) -> None:
+        reader = sqlite3.connect(resolve_agent_index_path(self.database))
+        try:
+            self.assertIsNone(
+                reader.execute(
+                    "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                ).fetchone()
+            )
+
+            def inject(stage: str) -> None:
+                if stage == "rebuilt-index":
+                    raise IngestError("injected-failure", stage, stage=stage)
+
+            with self.assertRaises(IngestError) as caught:
+                apply_ingest(
+                    self.paths,
+                    self.request("apply"),
+                    failure_injector=inject,
+                )
+            self.assertEqual("injected-failure", caught.exception.code)
+            journal = json.loads(
+                (
+                    self.database.parent
+                    / "kgdistiller-ingest/journal.json"
+                ).read_text(encoding="utf-8")
+            )
+            database_record = next(
+                record
+                for record in journal["targets"]
+                if record["kind"] == "agent-index"
+            )
+            self.assertEqual("knowledge/build/knowledge.sqlite", database_record["path"])
+            self.assertNotIn(".generations", database_record["path"])
+            self.assertIsNone(
+                reader.execute(
+                    "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                ).fetchone()
+            )
+
+            current_reader = sqlite3.connect(resolve_agent_index_path(self.database))
+            try:
+                self.assertIsNone(
+                    current_reader.execute(
+                        "SELECT id FROM nodes WHERE id = ?", ("beta",)
+                    ).fetchone()
+                )
+            finally:
+                current_reader.close()
+        finally:
+            reader.close()
+            recover_ingest(self.paths)
 
     def test_path_traversal_marker_mismatch_and_unreviewed_identity_are_rejected(self) -> None:
         traversal = self.request("plan")
@@ -491,6 +1000,7 @@ class TransactionalIngestTest(unittest.TestCase):
             capture_output=True,
             text=True,
             env=environment,
+            timeout=30,
         )
         self.assertEqual(0, plan_result.returncode, plan_result.stderr)
         self.assertEqual("qlkg-ingest-plan-v1", json.loads(plan_result.stdout)["schema"])
@@ -512,6 +1022,7 @@ class TransactionalIngestTest(unittest.TestCase):
             capture_output=True,
             text=True,
             env=environment,
+            timeout=30,
         )
         self.assertEqual(0, apply_result.returncode, apply_result.stderr)
         self.assertEqual(

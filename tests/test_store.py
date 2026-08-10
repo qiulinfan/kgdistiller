@@ -9,14 +9,21 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.agent import index_embeddings, index_status  # noqa: E402
+from kgdistiller.agent import (  # noqa: E402
+    agent_index_exists,
+    index_embeddings,
+    index_status,
+    resolve_agent_index_path,
+)
 from kgdistiller.cli import synchronize  # noqa: E402
 from kgdistiller.project import initialize_project  # noqa: E402
+import kgdistiller.store as store_module  # noqa: E402
 from kgdistiller.store import (  # noqa: E402
     StoreError,
     materialize_store,
@@ -35,6 +42,11 @@ class FixtureEmbeddingProvider:
             [float(index + 1), float(len(text) + 1), 0.25, -0.5]
             for index, text in enumerate(texts)
         ]
+
+
+class ReplacementEmbeddingProvider(FixtureEmbeddingProvider):
+    name = "replacement-fixture"
+    model = "replacement-v1"
 
 
 class PortableStoreTest(unittest.TestCase):
@@ -83,7 +95,7 @@ class PortableStoreTest(unittest.TestCase):
 
     @staticmethod
     def embedding_rows(database: Path) -> list[tuple[object, ...]]:
-        connection = sqlite3.connect(database)
+        connection = sqlite3.connect(resolve_agent_index_path(database))
         try:
             return connection.execute(
                 """
@@ -171,6 +183,190 @@ class PortableStoreTest(unittest.TestCase):
 
         with self.assertRaisesRegex(StoreError, "object digest mismatch"):
             verify_store(self.store)
+
+    def test_snapshot_reads_current_generation_while_old_reader_stays_open(self) -> None:
+        old_reader = sqlite3.connect(self.database)
+        try:
+            old_count = int(
+                old_reader.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            )
+            source = self.source / "notes/roundtrip.typ"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "\n#definition(\n"
+                + "  title: [#kn[reader generation]],\n"
+                + ")[\n"
+                + "  A node published while an earlier index reader is open.\n"
+                + "]\n",
+                encoding="utf-8",
+            )
+            synchronize(
+                self.source,
+                self.registry,
+                self.graph,
+                self.database,
+                self.typst_registry,
+                identities=self.identities,
+                alignments=self.alignments,
+                files=[],
+                course=None,
+                subject=None,
+                write=True,
+            )
+
+            current_path = resolve_agent_index_path(self.database)
+            if os.name == "nt":
+                self.assertNotEqual(self.database, current_path)
+                self.assertEqual(
+                    f".{self.database.name}.generations", current_path.parent.name
+                )
+            current_reader = sqlite3.connect(current_path)
+            try:
+                self.assertEqual(
+                    old_count + 1,
+                    current_reader.execute("SELECT COUNT(*) FROM nodes").fetchone()[0],
+                )
+            finally:
+                current_reader.close()
+            self.assertEqual(
+                old_count,
+                old_reader.execute("SELECT COUNT(*) FROM nodes").fetchone()[0],
+            )
+
+            created = snapshot_store(
+                self.source,
+                self.store,
+                registry=self.registry,
+                graph_dir=self.graph,
+                identities=self.identities,
+                alignments=self.alignments,
+                database=self.database,
+            )
+            self.assertEqual(old_count + 1, created["counts"]["nodes"])
+            self.assertFalse(
+                any(
+                    ".generations" in path.as_posix()
+                    for path in self.store.rglob("*")
+                )
+            )
+        finally:
+            old_reader.close()
+
+    def test_embedding_update_does_not_mutate_published_generation(self) -> None:
+        old_reader = sqlite3.connect(self.database)
+        try:
+            source = self.source / "notes/roundtrip.typ"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "\n#definition(\n"
+                + "  title: [#kn[immutable generation]],\n"
+                + ")[\n"
+                + "  Published index generations are immutable.\n"
+                + "]\n",
+                encoding="utf-8",
+            )
+            synchronize(
+                self.source,
+                self.registry,
+                self.graph,
+                self.database,
+                self.typst_registry,
+                identities=self.identities,
+                alignments=self.alignments,
+                files=[],
+                course=None,
+                subject=None,
+                write=True,
+            )
+        finally:
+            old_reader.close()
+
+        published = resolve_agent_index_path(self.database)
+        before = published.read_bytes()
+        index_embeddings(
+            self.database,
+            ReplacementEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+
+        self.assertEqual(before, published.read_bytes())
+        self.assertNotEqual(published, resolve_agent_index_path(self.database))
+
+    def test_materialize_failure_before_embeddings_keeps_old_generation(self) -> None:
+        snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+        )
+        target = self.store / "knowledge/build/failure.sqlite"
+
+        with patch(
+            "kgdistiller.store._import_embeddings",
+            side_effect=RuntimeError("injected embedding import failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected embedding import failure"):
+                materialize_store(self.store, target)
+
+        self.assertFalse(agent_index_exists(target))
+
+    def test_materialize_exposes_only_complete_old_or_new_generation(self) -> None:
+        created = snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+        )
+        target = self.store / "knowledge/build/observed.sqlite"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(resolve_agent_index_path(self.database), target)
+        old_bytes = target.read_bytes()
+        real_import = store_module._import_embeddings
+        observations: list[tuple[Path, bytes, object]] = []
+
+        def observing_import(database: Path, *args: object, **kwargs: object) -> None:
+            observations.append(
+                (
+                    resolve_agent_index_path(target),
+                    target.read_bytes(),
+                    index_status(target).get("store_generation_sha256"),
+                )
+            )
+            real_import(database, *args, **kwargs)
+            observations.append(
+                (
+                    resolve_agent_index_path(target),
+                    target.read_bytes(),
+                    index_status(target).get("store_generation_sha256"),
+                )
+            )
+
+        with patch("kgdistiller.store._import_embeddings", side_effect=observing_import):
+            result = materialize_store(self.store, target)
+
+        self.assertEqual(
+            [(target, old_bytes, None), (target, old_bytes, None)], observations
+        )
+        self.assertEqual(old_bytes, target.read_bytes())
+        self.assertNotEqual(target, resolve_agent_index_path(target))
+        self.assertEqual(
+            created["store_generation_sha256"],
+            index_status(target)["store_generation_sha256"],
+        )
+        connection = sqlite3.connect(resolve_agent_index_path(target))
+        try:
+            self.assertEqual(
+                result["embeddings"],
+                connection.execute("SELECT count(*) FROM embeddings").fetchone()[0],
+            )
+        finally:
+            connection.close()
 
     def test_snapshot_copy_removes_only_unchanged_stale_authority(self) -> None:
         snapshot_store(

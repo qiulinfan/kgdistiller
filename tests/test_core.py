@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,8 @@ assert SPEC is not None and SPEC.loader is not None
 knowledge = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = knowledge
 SPEC.loader.exec_module(knowledge)
+
+from kgdistiller.agent import remove_agent_index, resolve_agent_index_path  # noqa: E402
 
 
 class KnowledgeGraphTest(unittest.TestCase):
@@ -192,17 +195,17 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_agent_index_is_bootstrapped_and_reused_from_committed_graph(self) -> None:
         state, _, _ = self.sync()
-        self.database.unlink()
+        remove_agent_index(self.database)
 
         self.assertTrue(knowledge.ensure_database(self.database, state))
-        first = self.database.read_bytes()
+        first = resolve_agent_index_path(self.database).read_bytes()
         self.assertFalse(knowledge.ensure_database(self.database, state))
-        self.assertEqual(first, self.database.read_bytes())
+        self.assertEqual(first, resolve_agent_index_path(self.database).read_bytes())
 
         persisted = knowledge.load_state(self.graph)
         self.assertEqual("", persisted.nodes["sigma-algebra"]["text"])
         self.assertFalse(knowledge.ensure_database(self.database, persisted))
-        self.assertEqual(first, self.database.read_bytes())
+        self.assertEqual(first, resolve_agent_index_path(self.database).read_bytes())
 
     def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
         self.sync()
@@ -322,6 +325,31 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual("qlkg-agent-snapshot-v1", report["schema"])
         self.assertEqual(snapshot["snapshot_sha256"], report["snapshot_sha256"])
         self.assertEqual("personal", snapshot["namespace"])
+
+    def test_structured_cli_json_is_safe_on_an_ascii_console(self) -> None:
+        self.sync()
+        environment = dict(os.environ)
+        environment["PYTHONIOENCODING"] = "ascii:strict"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(MODULE_PATH),
+                "--repo-root",
+                str(self.repo),
+                "show",
+                "sigma-algebra",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(r"\u03c3", result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual("σ-algebra", payload["node"]["label"])
+        self.assertIn("𝜎", payload["node"]["properties"]["label_html"])
 
     def test_entries_are_sharded_by_authority_and_hydrated_on_load(self) -> None:
         self.sync()
