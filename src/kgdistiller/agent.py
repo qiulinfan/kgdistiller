@@ -1728,9 +1728,18 @@ def _validate_vector(vector: list[float], dimensions: int) -> list[float]:
         raise AgentIndexError(
             f"embedding dimensions mismatch: expected {dimensions}, got {len(vector)}"
         )
-    normalized = [float(value) for value in vector]
-    if not all(math.isfinite(value) for value in normalized):
-        raise AgentIndexError("embedding contains a non-finite value")
+    normalized: list[float] = []
+    for raw_value in vector:
+        conversion_failed = False
+        try:
+            value = float(raw_value)
+            value = struct.unpack("<f", struct.pack("<f", value))[0]
+        except (TypeError, ValueError, OverflowError, struct.error):
+            conversion_failed = True
+            value = 0.0
+        if conversion_failed or not math.isfinite(value):
+            raise AgentIndexError("embedding contains a non-float32 value")
+        normalized.append(value)
     if not any(value != 0.0 for value in normalized):
         raise AgentIndexError("embedding vector cannot be all zero")
     return normalized

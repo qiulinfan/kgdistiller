@@ -113,6 +113,24 @@ machine-local status `provider_config_sha256` binds the adapter, model,
 dimensions, and normalized base URL—not the credential or its
 environment-variable name.
 
+Production provider URLs must use HTTPS. The only plaintext exception is an
+explicit numeric loopback address (`127.0.0.0/8` or `::1`) for a machine-local
+fixture; hostnames such as `localhost`, private-network addresses, and remote
+hosts do not qualify. URL normalization lowercases the scheme and IDNA host,
+removes the default port, and removes trailing path slashes before the
+configuration digest is calculated.
+
+The bearer credential is accepted only as a bounded ASCII token without
+whitespace or control characters. Network operations have an inactivity
+timeout. After operating-system name resolution and socket setup, HTTP status,
+header, and body reads additionally share one monotonic wall-clock deadline, so
+a peer cannot evade it by continuously sending tiny chunks. Resolver and
+multi-address connection latency remain operating-system governed; if they
+return after the deadline, the adapter reports a timeout. HTTP framing failures,
+response-size and JSON-depth limits, and invalid numeric vectors are reported as
+structured, secret-safe provider errors; raw response bodies and exception
+chains are not kept in output or receipts.
+
 The `deterministic-fixture` adapter is credential-free and exists only for
 repeatable acceptance tests. Production profiles should select a reviewed real
 adapter such as `openai-compatible`.
