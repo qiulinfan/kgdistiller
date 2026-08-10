@@ -35,6 +35,13 @@ a new schema version.
   OpenAI-compatible batched embedding adapter with HTTPS enforcement,
   secret-safe errors, normalized configuration digests, and total response
   deadlines.
+- Add explicit policy-driven `embedding status` and `embedding sync` commands
+  with per-profile/type coverage, missing/stale-only batches, bounded retries
+  and total work, atomic generation-checked installation, idempotent no-op
+  synchronization, and no document-embedding side effect on queries.
+- Version portable embedding bundle/record v2 so the normalized non-secret
+  provider configuration digest round-trips exactly while v1 remains strictly
+  readable under its original four-key, recomputable-digest contract.
 - Document local deployment, backup/restore, compatibility, migration, and
   public release order, including a measured 100,000-node baseline.
 

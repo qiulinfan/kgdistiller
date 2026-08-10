@@ -48,8 +48,10 @@ from .project import ensure_knowledge_gitignore
 
 STORE_SCHEMA = "qlkg-store-v1"
 DOCUMENT_RECORD_SCHEMA = "qlkg-document-record-v1"
-EMBEDDING_BUNDLE_SCHEMA = "qlkg-embedding-bundle-v1"
-EMBEDDING_RECORD_SCHEMA = "qlkg-embedding-record-v1"
+LEGACY_EMBEDDING_BUNDLE_SCHEMA = "qlkg-embedding-bundle-v1"
+LEGACY_EMBEDDING_RECORD_SCHEMA = "qlkg-embedding-record-v1"
+EMBEDDING_BUNDLE_SCHEMA = "qlkg-embedding-bundle-v2"
+EMBEDDING_RECORD_SCHEMA = "qlkg-embedding-record-v2"
 STORE_MANIFEST_PATH = Path("knowledge/store.json")
 DOCUMENTS_PATH = Path("knowledge/documents.jsonl")
 EMBEDDING_MANIFEST_PATH = Path("knowledge/embeddings/manifest.json")
@@ -191,6 +193,10 @@ def _provider_config(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
 def _export_embeddings(
     database: Path,
     output_root: Path,
@@ -206,13 +212,30 @@ def _export_embeddings(
             raise StoreError("cannot export an unsupported Agent index")
         connection = open_agent_index(database)
         try:
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(embeddings)")
+            }
+            input_schema_column = (
+                "embedding_input_schema"
+                if "embedding_input_schema" in columns
+                else f"'{EMBEDDING_INPUT_SCHEMA}' AS embedding_input_schema"
+            )
+            has_config_digest = "provider_config_sha256" in columns
+            config_digest_column = (
+                "provider_config_sha256"
+                if has_config_digest
+                else "NULL AS provider_config_sha256"
+            )
             rows = connection.execute(
-                """
+                f"""
                 SELECT namespace, node_id, provider, model, dimensions,
-                       content_sha256, vector
+                       {input_schema_column}, content_sha256,
+                       {config_digest_column}, vector
                 FROM embeddings
                 WHERE namespace = ?
-                ORDER BY namespace, node_id, provider, model
+                ORDER BY namespace, node_id, provider, model,
+                         provider_config_sha256
                 """,
                 (str(snapshot["namespace"]),),
             ).fetchall()
@@ -230,7 +253,10 @@ def _export_embeddings(
         if node is None:
             raise StoreError(f"embedding references unknown node: {node_id}")
         if str(row["content_sha256"]) != embedding_input_sha256(node):
-            raise StoreError(f"stale embedding input for node: {node_id}")
+            # Graph rebuilds retain superseded rows so embedding status can report
+            # them as stale.  Portable snapshots contain only vectors for the
+            # current canonical input; stale rows are disposable local state.
+            continue
         payload = bytes(row["vector"])
         dimensions = int(row["dimensions"])
         _validate_vector(payload, dimensions)
@@ -255,11 +281,23 @@ def _export_embeddings(
             "provider": str(row["provider"]),
             "model": str(row["model"]),
             "dimensions": dimensions,
-            "embedding_input_schema": EMBEDDING_INPUT_SCHEMA,
+            "embedding_input_schema": str(row["embedding_input_schema"]),
             "content_sha256": str(row["content_sha256"]),
             "vector_sha256": vector_sha256,
         }
-        record["provider_config_sha256"] = sha256_json(_provider_config(record))
+        if record["embedding_input_schema"] != EMBEDDING_INPUT_SCHEMA:
+            raise StoreError(
+                f"unsupported embedding input schema for node: {node_id}"
+            )
+        config_digest = row["provider_config_sha256"]
+        if has_config_digest:
+            if not _is_sha256(config_digest):
+                raise StoreError(
+                    f"invalid embedding provider digest for node: {node_id}"
+                )
+            record["provider_config_sha256"] = str(config_digest)
+        else:
+            record["provider_config_sha256"] = sha256_json(_provider_config(record))
         records.append(record)
 
     records_text = _jsonl(records)
@@ -337,13 +375,22 @@ def _embedding_bundle(
     snapshot: dict[str, Any],
 ) -> tuple[dict[str, Any], list[tuple[dict[str, Any], bytes]]]:
     manifest = _read_json(manifest_path)
+    bundle_schema = manifest.get("schema")
+    if bundle_schema == LEGACY_EMBEDDING_BUNDLE_SCHEMA:
+        bundle_schema_filename = "qlkg-embedding-bundle-v1.schema.json"
+        record_schema = LEGACY_EMBEDDING_RECORD_SCHEMA
+        record_schema_filename = "qlkg-embedding-record-v1.schema.json"
+    elif bundle_schema == EMBEDDING_BUNDLE_SCHEMA:
+        bundle_schema_filename = "qlkg-embedding-bundle-v2.schema.json"
+        record_schema = EMBEDDING_RECORD_SCHEMA
+        record_schema_filename = "qlkg-embedding-record-v2.schema.json"
+    else:
+        raise StoreError("unsupported embedding bundle schema")
     _validate_schema(
         manifest,
-        "qlkg-embedding-bundle-v1.schema.json",
+        bundle_schema_filename,
         "embedding manifest",
     )
-    if manifest.get("schema") != EMBEDDING_BUNDLE_SCHEMA:
-        raise StoreError("unsupported embedding bundle schema")
     claimed_generation = str(manifest.get("embedding_generation_sha256", ""))
     generation_payload = dict(manifest)
     generation_payload.pop("embedding_generation_sha256", None)
@@ -369,26 +416,39 @@ def _embedding_bundle(
     )
     object_root = _resolve(manifest_path.parent, object_directory)
     nodes = {str(node["id"]): node for node in snapshot.get("nodes") or []}
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, ...]] = set()
     object_hashes: set[str] = set()
     total_object_bytes = 0
     verified: list[tuple[dict[str, Any], bytes]] = []
     for record in records:
         _validate_schema(
             record,
-            "qlkg-embedding-record-v1.schema.json",
+            record_schema_filename,
             "embedding record",
         )
-        if record.get("schema") != EMBEDDING_RECORD_SCHEMA:
+        if record.get("schema") != record_schema:
             raise StoreError("unsupported embedding record schema")
         if record.get("embedding_input_schema") != EMBEDDING_INPUT_SCHEMA:
             raise StoreError("unsupported embedding record input schema")
-        key = (
+        base_key = (
             str(record.get("namespace", "")),
             str(record.get("node_id", "")),
             str(record.get("provider", "")),
             str(record.get("model", "")),
         )
+        config_digest = record.get("provider_config_sha256")
+        if bundle_schema == LEGACY_EMBEDDING_BUNDLE_SCHEMA:
+            if config_digest != sha256_json(_provider_config(record)):
+                raise StoreError(
+                    f"embedding provider digest mismatch for node: {base_key[1]}"
+                )
+            key = base_key
+        else:
+            if not _is_sha256(config_digest):
+                raise StoreError(
+                    f"embedding provider digest mismatch for node: {base_key[1]}"
+                )
+            key = base_key
         if not all(key) or key in seen:
             raise StoreError(f"duplicate or incomplete embedding record: {key}")
         seen.add(key)
@@ -399,9 +459,6 @@ def _embedding_bundle(
             raise StoreError(f"embedding references unknown node: {key[1]}")
         if str(record.get("content_sha256", "")) != embedding_input_sha256(node):
             raise StoreError(f"stale embedding input for node: {key[1]}")
-        expected_config = sha256_json(_provider_config(record))
-        if str(record.get("provider_config_sha256", "")) != expected_config:
-            raise StoreError(f"embedding provider digest mismatch for node: {key[1]}")
         vector_sha256 = str(record.get("vector_sha256", ""))
         if len(vector_sha256) != 64:
             raise StoreError(f"invalid vector digest for node: {key[1]}")
@@ -848,8 +905,10 @@ def _import_embeddings(
             connection.execute(
                 """
                 INSERT INTO embeddings
-                (namespace, node_id, provider, model, dimensions, content_sha256, vector)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (namespace, node_id, provider, model, dimensions,
+                 embedding_input_schema, content_sha256,
+                 provider_config_sha256, vector)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(record["namespace"]),
@@ -857,7 +916,9 @@ def _import_embeddings(
                     str(record["provider"]),
                     str(record["model"]),
                     int(record["dimensions"]),
+                    str(record["embedding_input_schema"]),
                     str(record["content_sha256"]),
+                    str(record["provider_config_sha256"]),
                     payload,
                 ),
             )
@@ -868,7 +929,10 @@ def _import_embeddings(
                         "name": record["provider"],
                         "model": record["model"],
                         "dimensions": record["dimensions"],
-                        "portable_config_sha256": record[
+                        "embedding_input_schema": record[
+                            "embedding_input_schema"
+                        ],
+                        "provider_config_sha256": record[
                             "provider_config_sha256"
                         ],
                     }

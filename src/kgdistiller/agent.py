@@ -40,6 +40,7 @@ from .contracts import canonical_json, sha256_json
 SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
 INDEX_SCHEMA = "qlkg-agent-index-v2"
 EMBEDDING_INPUT_SCHEMA = "qlkg-node-embedding-text-v1"
+EMBEDDING_DTYPE = "float32-le"
 NAMESPACE_RE = re.compile(
     r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
 )
@@ -68,6 +69,14 @@ _INDEX_GENERATION_RE = re.compile(r"^generation-(?P<counter>[0-9]{20})\.sqlite$"
 _INDEX_MARKER_BINDING_SCHEMA = "kgdistiller-index-marker-binding-v1"
 _INDEX_PUBLICATION_LOCK_TIMEOUT_SECONDS = 60.0
 _INDEX_PUBLICATION_LOCK_POLL_SECONDS = 0.05
+_MAX_EMBEDDING_INVENTORY_NODES = 100_000
+_MAX_EMBEDDING_INVENTORY_RECORDS = 200_000
+_MAX_EMBEDDING_INVENTORY_TEXT_BYTES = 128 * 1024 * 1024
+_MAX_EMBEDDING_INVENTORY_VECTOR_BYTES = 128 * 1024 * 1024
+_MAX_EMBEDDING_INSTALL_RECORDS = 100_000
+_MAX_EMBEDDING_INSTALL_VECTOR_BYTES = 128 * 1024 * 1024
+_MAX_EMBEDDING_DIMENSIONS = 1_048_576
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AgentIndexError(ValueError):
@@ -930,6 +939,213 @@ def _node_payload(row: sqlite3.Row) -> dict[str, Any]:
     return node
 
 
+_LEGACY_EMBEDDING_COLUMNS = (
+    "namespace",
+    "node_id",
+    "provider",
+    "model",
+    "dimensions",
+    "content_sha256",
+    "vector",
+)
+_EMBEDDING_COLUMNS = (
+    "namespace",
+    "node_id",
+    "provider",
+    "model",
+    "dimensions",
+    "embedding_input_schema",
+    "provider_config_sha256",
+    "content_sha256",
+    "vector",
+)
+_EMBEDDING_PRIMARY_KEY = (
+    "namespace",
+    "node_id",
+    "provider",
+    "model",
+)
+
+
+def _legacy_provider_config_sha256(
+    provider: str, model: str, dimensions: int
+) -> str:
+    """Bind a v2 row to the exact portable legacy vector-space identity."""
+    return sha256_json(
+        {
+            "provider": provider,
+            "model": model,
+            "dimensions": dimensions,
+            "dtype": EMBEDDING_DTYPE,
+            "embedding_input_schema": EMBEDDING_INPUT_SCHEMA,
+        }
+    )
+
+
+def _embedding_provider_config_sha256(
+    provider: EmbeddingProvider, provider_name: str, model: str, dimensions: int
+) -> str:
+    configured = getattr(provider, "provider_config_sha256", None)
+    if configured is None:
+        return _legacy_provider_config_sha256(provider_name, model, dimensions)
+    digest = str(configured)
+    if not _SHA256_RE.fullmatch(digest):
+        raise AgentIndexError("embedding provider config digest is invalid")
+    return digest
+
+
+def _embedding_table_layout(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    rows = connection.execute("PRAGMA table_info(embeddings)").fetchall()
+    columns = tuple(str(row[1]) for row in rows)
+    primary_key = tuple(
+        str(row[1])
+        for row in sorted(
+            (row for row in rows if int(row[5]) > 0), key=lambda row: int(row[5])
+        )
+    )
+    return columns, primary_key
+
+
+def _create_embedding_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE embeddings (
+            namespace TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            embedding_input_schema TEXT NOT NULL DEFAULT '{EMBEDDING_INPUT_SCHEMA}',
+            provider_config_sha256 TEXT NOT NULL DEFAULT '',
+            content_sha256 TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            PRIMARY KEY
+                (namespace, node_id, provider, model),
+            FOREIGN KEY (namespace, node_id) REFERENCES nodes(namespace, id)
+        )
+        """
+    )
+
+
+def _normalize_legacy_embedding_defaults(connection: sqlite3.Connection) -> None:
+    """Fill defaults used by older mutation callers before publication."""
+    columns, _ = _embedding_table_layout(connection)
+    if not columns:
+        return
+    row_count = int(
+        connection.execute(
+            """
+            SELECT count(*) FROM embeddings
+            WHERE embedding_input_schema = '' OR provider_config_sha256 = ''
+            """
+        ).fetchone()[0]
+    )
+    if row_count > _MAX_EMBEDDING_INVENTORY_RECORDS:
+        raise AgentIndexError("legacy embedding defaults exceed the record limit")
+    rows = connection.execute(
+        """
+        SELECT namespace, node_id, provider, model, dimensions,
+               embedding_input_schema, provider_config_sha256
+        FROM embeddings
+        WHERE embedding_input_schema = '' OR provider_config_sha256 = ''
+        ORDER BY namespace, node_id, provider, model, provider_config_sha256
+        """
+    )
+    for row in rows:
+        provider = str(row[2])
+        model = str(row[3])
+        dimensions = int(row[4])
+        if not provider or not model or dimensions < 1:
+            raise AgentIndexError("legacy embedding provider metadata is invalid")
+        input_schema = str(row[5]) or EMBEDDING_INPUT_SCHEMA
+        digest = str(row[6]) or _legacy_provider_config_sha256(
+            provider, model, dimensions
+        )
+        connection.execute(
+            """
+            UPDATE embeddings
+            SET embedding_input_schema = ?, provider_config_sha256 = ?
+            WHERE namespace = ? AND node_id = ? AND provider = ? AND model = ?
+              AND provider_config_sha256 = ?
+            """,
+            (
+                input_schema,
+                digest,
+                str(row[0]),
+                str(row[1]),
+                provider,
+                model,
+                str(row[6]),
+            ),
+        )
+
+
+def _ensure_embedding_table_schema(connection: sqlite3.Connection) -> None:
+    """Migrate the legacy v2 embedding table inside a private mutation copy."""
+    columns, primary_key = _embedding_table_layout(connection)
+    if not columns:
+        # Generation-publication tests deliberately exercise metadata-only DBs.
+        return
+    if columns == _EMBEDDING_COLUMNS and primary_key == _EMBEDDING_PRIMARY_KEY:
+        _normalize_legacy_embedding_defaults(connection)
+        return
+    if columns != _LEGACY_EMBEDDING_COLUMNS or primary_key != (
+        "namespace",
+        "node_id",
+        "provider",
+        "model",
+    ):
+        raise AgentIndexError("unsupported Agent embedding table layout")
+
+    record_count, stored_vector_bytes = connection.execute(
+        """
+        SELECT count(*), coalesce(sum(length(vector)), 0)
+        FROM embeddings
+        """
+    ).fetchone()
+    if int(record_count) > _MAX_EMBEDDING_INVENTORY_RECORDS:
+        raise AgentIndexError("legacy embeddings exceed the migration record limit")
+    if int(stored_vector_bytes) > _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES:
+        raise AgentIndexError("legacy embeddings exceed the migration vector budget")
+    connection.execute("ALTER TABLE embeddings RENAME TO embeddings_v2_legacy")
+    _create_embedding_table(connection)
+    rows = connection.execute(
+        """
+        SELECT namespace, node_id, provider, model, dimensions,
+               content_sha256, vector
+        FROM embeddings_v2_legacy
+        ORDER BY namespace, node_id, provider, model
+        """
+    )
+    for row in rows:
+        provider = str(row[2])
+        model = str(row[3])
+        dimensions = int(row[4])
+        connection.execute(
+            """
+            INSERT INTO embeddings
+            (namespace, node_id, provider, model, dimensions,
+             embedding_input_schema, provider_config_sha256,
+             content_sha256, vector)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(row[0]),
+                str(row[1]),
+                provider,
+                model,
+                dimensions,
+                EMBEDDING_INPUT_SCHEMA,
+                _legacy_provider_config_sha256(provider, model, dimensions),
+                str(row[5]),
+                bytes(row[6]),
+            ),
+        )
+    connection.execute("DROP TABLE embeddings_v2_legacy")
+
+
 def _create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
@@ -1002,17 +1218,6 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX refs_target
             ON refs(namespace, target, authority, line);
-        CREATE TABLE embeddings (
-            namespace TEXT NOT NULL,
-            node_id TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            dimensions INTEGER NOT NULL,
-            content_sha256 TEXT NOT NULL,
-            vector BLOB NOT NULL,
-            PRIMARY KEY (namespace, node_id, provider, model),
-            FOREIGN KEY (namespace, node_id) REFERENCES nodes(namespace, id)
-        );
         CREATE TABLE scoped_aliases (
             alias_id TEXT PRIMARY KEY,
             namespace TEXT NOT NULL,
@@ -1058,40 +1263,95 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             ON similarity_edges(namespace, source, score DESC, target);
         """
     )
+    _create_embedding_table(connection)
 
 
 def _reusable_embedding_rows(
     path: Path,
     nodes: list[dict[str, Any]],
     namespace: str,
-) -> list[tuple[str, str, str, str, int, str, bytes]]:
-    """Read exact still-current vectors before an atomic index rebuild."""
+) -> list[tuple[str, str, str, str, int, str, str, str, bytes]]:
+    """Read exact valid vectors for still-existing nodes before a rebuild."""
     if not agent_index_exists(path):
         return []
-    expected = {
-        str(node["id"]): embedding_input_sha256(node)
-        for node in nodes
-    }
+    expected_node_ids = {str(node["id"]) for node in nodes}
     connection: sqlite3.Connection | None = None
     try:
         connection = _connect(path, read_only=True)
-        rows = connection.execute(
+        columns, primary_key = _embedding_table_layout(connection)
+        legacy = columns == _LEGACY_EMBEDDING_COLUMNS and primary_key == (
+            "namespace",
+            "node_id",
+            "provider",
+            "model",
+        )
+        current = (
+            columns == _EMBEDDING_COLUMNS
+            and primary_key == _EMBEDDING_PRIMARY_KEY
+        )
+        if not legacy and not current:
+            raise AgentIndexError("unsupported Agent embedding table layout")
+        selected = (
+            "namespace, node_id, provider, model, dimensions, "
+            + (
+                "embedding_input_schema, provider_config_sha256, "
+                if current
+                else ""
+            )
+            + "content_sha256, vector"
+        )
+        record_count, stored_vector_bytes = connection.execute(
             """
-            SELECT namespace, node_id, provider, model, dimensions,
-                   content_sha256, vector
+            SELECT count(*), coalesce(sum(length(vector)), 0)
+            FROM embeddings
+            WHERE namespace = ?
+            """,
+            (namespace,),
+        ).fetchone()
+        if int(record_count) > _MAX_EMBEDDING_INVENTORY_RECORDS:
+            raise AgentIndexError("reusable embeddings exceed the record limit")
+        if int(stored_vector_bytes) > _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES:
+            raise AgentIndexError("reusable embeddings exceed the vector budget")
+        rows = connection.execute(
+            f"""
+            SELECT {selected}
             FROM embeddings
             WHERE namespace = ?
             ORDER BY namespace, node_id, provider, model
             """,
             (namespace,),
-        ).fetchall()
-        reusable: list[tuple[str, str, str, str, int, str, bytes]] = []
+        )
+        reusable: list[
+            tuple[str, str, str, str, int, str, str, str, bytes]
+        ] = []
         for row in rows:
             node_id = str(row["node_id"])
+            if node_id not in expected_node_ids:
+                continue
+            provider = str(row["provider"])
+            model = str(row["model"])
             digest = str(row["content_sha256"])
             dimensions = int(row["dimensions"])
             vector = bytes(row["vector"])
-            if expected.get(node_id) != digest:
+            input_schema = (
+                str(row["embedding_input_schema"])
+                if current and str(row["embedding_input_schema"])
+                else EMBEDDING_INPUT_SCHEMA
+            )
+            config_digest = (
+                str(row["provider_config_sha256"])
+                if current and str(row["provider_config_sha256"])
+                else _legacy_provider_config_sha256(provider, model, dimensions)
+            )
+            if (
+                not provider
+                or not model
+                or dimensions < 1
+                or dimensions > _MAX_EMBEDDING_DIMENSIONS
+                or not input_schema
+                or not _SHA256_RE.fullmatch(config_digest)
+                or not _SHA256_RE.fullmatch(digest)
+            ):
                 continue
             try:
                 _validate_vector(_unpack_vector(vector, dimensions), dimensions)
@@ -1101,9 +1361,11 @@ def _reusable_embedding_rows(
                 (
                     str(row["namespace"]),
                     node_id,
-                    str(row["provider"]),
-                    str(row["model"]),
+                    provider,
+                    model,
                     dimensions,
+                    input_schema,
+                    config_digest,
                     digest,
                     vector,
                 )
@@ -1178,6 +1440,8 @@ def _write_agent_index_locked(
                         "name": row[2],
                         "model": row[3],
                         "dimensions": row[4],
+                        "embedding_input_schema": row[5],
+                        "provider_config_sha256": row[6],
                     }
                 )
                 for row in reusable_embeddings
@@ -1186,7 +1450,9 @@ def _write_agent_index_locked(
         if embedding_configs:
             configs = [json.loads(value) for value in embedding_configs]
             metadata["retrieval_lanes"].append("embedding")
-            metadata["provider_config_sha256"] = sha256_json(configs)
+            metadata["provider_config_sha256"] = sha256_json(
+                sorted({str(config["provider_config_sha256"]) for config in configs})
+            )
             metadata["providers"]["embedding"] = (
                 configs[0] if len(configs) == 1 else {"configurations": configs}
             )
@@ -1328,8 +1594,10 @@ def _write_agent_index_locked(
         connection.executemany(
             """
             INSERT INTO embeddings
-            (namespace, node_id, provider, model, dimensions, content_sha256, vector)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (namespace, node_id, provider, model, dimensions,
+             embedding_input_schema, provider_config_sha256,
+             content_sha256, vector)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             reusable_embeddings,
         )
@@ -1487,11 +1755,14 @@ def _mutable_agent_index(path: Path) -> Iterator[sqlite3.Connection]:
             connection = sqlite3.connect(_filesystem_path(temporary))
             connection.row_factory = sqlite3.Row
             try:
+                _ensure_embedding_table_schema(connection)
                 yield connection
             except (Exception, KeyboardInterrupt, SystemExit):
                 connection.close()
                 raise
             else:
+                _normalize_legacy_embedding_defaults(connection)
+                connection.commit()
                 connection.close()
                 _publish_agent_index_file_locked(temporary, path)
         finally:
@@ -1730,6 +2001,8 @@ def _validate_vector(vector: list[float], dimensions: int) -> list[float]:
         )
     normalized: list[float] = []
     for raw_value in vector:
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+            raise AgentIndexError("embedding contains a non-numeric value")
         conversion_failed = False
         try:
             value = float(raw_value)
@@ -1756,6 +2029,513 @@ def _unpack_vector(payload: bytes, dimensions: int) -> list[float]:
     return list(struct.unpack(f"<{dimensions}f", payload))
 
 
+def _embedding_index_identity(
+    connection: sqlite3.Connection,
+) -> tuple[str, str]:
+    values: dict[str, Any] = {}
+    for key in ("snapshot_sha256", "graph_sha256"):
+        row = connection.execute(
+            "SELECT value FROM index_meta WHERE key = ?", (key,)
+        ).fetchone()
+        try:
+            value = json.loads(row[0]) if row is not None else None
+        except (json.JSONDecodeError, TypeError) as error:
+            raise AgentIndexError(f"Agent index has invalid {key}") from error
+        if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+            raise AgentIndexError(f"Agent index has invalid {key}")
+        values[key] = value
+    return str(values["snapshot_sha256"]), str(values["graph_sha256"])
+
+
+def _record_vector_is_valid(payload: bytes, dimensions: int) -> bool:
+    if dimensions < 1 or dimensions > _MAX_EMBEDDING_DIMENSIONS:
+        return False
+    try:
+        _validate_vector(_unpack_vector(payload, dimensions), dimensions)
+    except (AgentIndexError, ValueError, OverflowError, struct.error):
+        return False
+    return True
+
+
+def embedding_inventory(
+    path: Path, *, namespace: str = "personal"
+) -> dict[str, Any]:
+    """Return a bounded read-only embedding inventory for one immutable graph."""
+    _validate_namespace(namespace)
+    connection = _connect(path, read_only=True)
+    try:
+        snapshot_sha256, graph_sha256 = _embedding_index_identity(connection)
+        node_count = int(
+            connection.execute(
+                "SELECT count(*) FROM nodes WHERE namespace = ?", (namespace,)
+            ).fetchone()[0]
+        )
+        if node_count > _MAX_EMBEDDING_INVENTORY_NODES:
+            raise AgentIndexError("embedding inventory exceeds the node limit")
+        node_rows = connection.execute(
+            """
+            SELECT * FROM nodes
+            WHERE namespace = ?
+            ORDER BY id
+            """,
+            (namespace,),
+        )
+
+        nodes: list[dict[str, Any]] = []
+        total_text_bytes = 0
+        for row in node_rows:
+            node = _node_payload(row)
+            canonical_text = _embedding_text(node)
+            total_text_bytes += len(canonical_text.encode("utf-8"))
+            if total_text_bytes > _MAX_EMBEDDING_INVENTORY_TEXT_BYTES:
+                raise AgentIndexError("embedding inventory exceeds the text budget")
+            properties = node.get("properties") or {}
+            provenance = node.get("provenance") or {}
+            curation_status = str(properties.get("curation_status", ""))
+            source_status = str(properties.get("source_status", ""))
+            if source_status == "orphaned":
+                status = "orphaned"
+            elif curation_status == "needs-review":
+                status = "needs-review"
+            else:
+                status = "active"
+            nodes.append(
+                {
+                    "node_id": str(node["id"]),
+                    "node_type": str(node.get("type", "")),
+                    "status": status,
+                    "curation_status": curation_status,
+                    "source_status": source_status,
+                    "active": (
+                        status == "active" and provenance.get("active") is not False
+                    ),
+                    "canonical_text": canonical_text,
+                    "content_sha256": embedding_input_sha256(node),
+                }
+            )
+
+        columns, primary_key = _embedding_table_layout(connection)
+        legacy = columns == _LEGACY_EMBEDDING_COLUMNS and primary_key == (
+            "namespace",
+            "node_id",
+            "provider",
+            "model",
+        )
+        current = (
+            columns == _EMBEDDING_COLUMNS
+            and primary_key == _EMBEDDING_PRIMARY_KEY
+        )
+        if not legacy and not current:
+            raise AgentIndexError("unsupported Agent embedding table layout")
+        selected = (
+            "namespace, node_id, provider, model, dimensions, "
+            + (
+                "embedding_input_schema, provider_config_sha256, "
+                if current
+                else ""
+            )
+            + "content_sha256, vector"
+        )
+        record_count, stored_vector_bytes = connection.execute(
+            """
+            SELECT count(*), coalesce(sum(length(vector)), 0)
+            FROM embeddings
+            WHERE namespace = ?
+            """,
+            (namespace,),
+        ).fetchone()
+        if int(record_count) > _MAX_EMBEDDING_INVENTORY_RECORDS:
+            raise AgentIndexError("embedding inventory exceeds the record limit")
+        if int(stored_vector_bytes) > _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES:
+            raise AgentIndexError("embedding inventory exceeds the vector budget")
+        record_rows = connection.execute(
+            f"""
+            SELECT {selected}
+            FROM embeddings
+            WHERE namespace = ?
+            ORDER BY node_id, provider, model
+            """,
+            (namespace,),
+        )
+
+        records: list[dict[str, Any]] = []
+        total_vector_bytes = 0
+        for row in record_rows:
+            provider = str(row["provider"])
+            model = str(row["model"])
+            dimensions = int(row["dimensions"])
+            payload = bytes(row["vector"])
+            total_vector_bytes += len(payload)
+            if total_vector_bytes > _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES:
+                raise AgentIndexError("embedding inventory exceeds the vector budget")
+            input_schema = (
+                str(row["embedding_input_schema"])
+                if current and str(row["embedding_input_schema"])
+                else EMBEDDING_INPUT_SCHEMA
+            )
+            config_digest = (
+                str(row["provider_config_sha256"])
+                if current and str(row["provider_config_sha256"])
+                else _legacy_provider_config_sha256(provider, model, dimensions)
+            )
+            records.append(
+                {
+                    "namespace": str(row["namespace"]),
+                    "node_id": str(row["node_id"]),
+                    "provider": provider,
+                    "model": model,
+                    "dimensions": dimensions,
+                    "embedding_input_schema": input_schema,
+                    "provider_config_sha256": config_digest,
+                    "content_sha256": str(row["content_sha256"]),
+                    "vector_sha256": hashlib.sha256(payload).hexdigest(),
+                    "vector_valid": _record_vector_is_valid(payload, dimensions),
+                }
+            )
+        return {
+            "namespace": namespace,
+            "snapshot_sha256": snapshot_sha256,
+            "graph_sha256": graph_sha256,
+            "nodes": nodes,
+            "records": records,
+        }
+    finally:
+        connection.close()
+
+
+class _StaleEmbeddingGeneration(Exception):
+    pass
+
+
+class _UnchangedEmbeddingInstall(Exception):
+    def __init__(self, count: int) -> None:
+        super().__init__()
+        self.count = count
+
+
+def _enforce_embedding_inventory_limits(
+    connection: sqlite3.Connection, *, namespace: str
+) -> None:
+    record_count, stored_vector_bytes = connection.execute(
+        """
+        SELECT count(*), coalesce(sum(length(vector)), 0)
+        FROM embeddings
+        WHERE namespace = ?
+        """,
+        (namespace,),
+    ).fetchone()
+    if int(record_count) > _MAX_EMBEDDING_INVENTORY_RECORDS:
+        raise AgentIndexError("embedding inventory exceeds the record limit")
+    if int(stored_vector_bytes) > _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES:
+        raise AgentIndexError("embedding inventory exceeds the vector budget")
+
+
+def _refresh_embedding_metadata(
+    connection: sqlite3.Connection, *, namespace: str
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT DISTINCT provider, model, dimensions, embedding_input_schema,
+                        provider_config_sha256
+        FROM embeddings
+        ORDER BY provider, model, dimensions, embedding_input_schema,
+                 provider_config_sha256
+        """
+    ).fetchall()
+    configurations = [
+        {
+            "name": str(row[0]),
+            "model": str(row[1]),
+            "dimensions": int(row[2]),
+            "embedding_input_schema": str(row[3]),
+            "provider_config_sha256": str(row[4]),
+        }
+        for row in rows
+    ]
+    providers_row = connection.execute(
+        "SELECT value FROM index_meta WHERE key = 'providers'"
+    ).fetchone()
+    try:
+        providers = json.loads(providers_row[0]) if providers_row else {}
+    except (json.JSONDecodeError, TypeError) as error:
+        raise AgentIndexError("Agent index has invalid provider metadata") from error
+    if not isinstance(providers, dict):
+        raise AgentIndexError("Agent index has invalid provider metadata")
+    providers["embedding"] = (
+        None
+        if not configurations
+        else configurations[0]
+        if len(configurations) == 1
+        else {"configurations": configurations}
+    )
+    connection.execute(
+        "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('providers', ?)",
+        (canonical_json(providers),),
+    )
+    digests = sorted(
+        {str(configuration["provider_config_sha256"]) for configuration in configurations}
+    )
+    connection.execute(
+        """
+        INSERT OR REPLACE INTO index_meta(key, value)
+        VALUES ('provider_config_sha256', ?)
+        """,
+        (canonical_json(sha256_json(digests) if digests else None),),
+    )
+    lanes_row = connection.execute(
+        "SELECT value FROM index_meta WHERE key = 'retrieval_lanes'"
+    ).fetchone()
+    try:
+        lanes = json.loads(lanes_row[0]) if lanes_row else []
+    except (json.JSONDecodeError, TypeError) as error:
+        raise AgentIndexError("Agent index has invalid retrieval metadata") from error
+    if not isinstance(lanes, list):
+        raise AgentIndexError("Agent index has invalid retrieval metadata")
+    lanes = [str(lane) for lane in lanes if str(lane) != "embedding"]
+    if configurations:
+        lanes.append("embedding")
+    connection.execute(
+        "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('retrieval_lanes', ?)",
+        (canonical_json(lanes),),
+    )
+    counts_row = connection.execute(
+        "SELECT value FROM index_meta WHERE key = 'alignment_counts'"
+    ).fetchone()
+    try:
+        alignment_counts = json.loads(counts_row[0]) if counts_row else {}
+    except (json.JSONDecodeError, TypeError) as error:
+        raise AgentIndexError("Agent index has invalid alignment metadata") from error
+    if not isinstance(alignment_counts, dict):
+        raise AgentIndexError("Agent index has invalid alignment metadata")
+    alignment_counts["similarity_edges"] = int(
+        connection.execute(
+            "SELECT count(*) FROM similarity_edges WHERE namespace = ?", (namespace,)
+        ).fetchone()[0]
+    )
+    connection.execute(
+        """
+        INSERT OR REPLACE INTO index_meta(key, value)
+        VALUES ('alignment_counts', ?)
+        """,
+        (canonical_json(alignment_counts),),
+    )
+
+
+def _prepared_embedding_record(
+    record: dict[str, Any], namespace: str
+) -> tuple[str, str, str, str, int, str, str, str, bytes]:
+    if not isinstance(record, dict):
+        raise AgentIndexError("embedding install record must be an object")
+    record_namespace = str(record.get("namespace", namespace))
+    node_id = str(record.get("node_id", ""))
+    provider = str(record.get("provider", "")).strip()
+    model = str(record.get("model", "")).strip()
+    raw_dimensions = record.get("dimensions", 0)
+    if isinstance(raw_dimensions, bool) or not isinstance(raw_dimensions, int):
+        raise AgentIndexError("embedding install dimensions are invalid")
+    dimensions = raw_dimensions
+    input_schema = str(record.get("embedding_input_schema", ""))
+    config_digest = str(record.get("provider_config_sha256", ""))
+    content_digest = str(record.get("content_sha256", ""))
+    if record_namespace != namespace:
+        raise AgentIndexError("embedding install namespace does not match")
+    if not node_id or not provider or not model:
+        raise AgentIndexError("embedding install metadata is incomplete")
+    if dimensions < 1 or dimensions > _MAX_EMBEDDING_DIMENSIONS:
+        raise AgentIndexError("embedding install dimensions are invalid")
+    if input_schema != EMBEDDING_INPUT_SCHEMA:
+        raise AgentIndexError("embedding install input schema is unsupported")
+    if not _SHA256_RE.fullmatch(config_digest):
+        raise AgentIndexError("embedding install provider digest is invalid")
+    if not _SHA256_RE.fullmatch(content_digest):
+        raise AgentIndexError("embedding install content digest is invalid")
+    raw_vector = record.get("vector")
+    if isinstance(raw_vector, (bytes, bytearray, memoryview)):
+        payload = bytes(raw_vector)
+        if not _record_vector_is_valid(payload, dimensions):
+            raise AgentIndexError("embedding install vector is invalid")
+    elif isinstance(raw_vector, list):
+        payload = _pack_vector(_validate_vector(raw_vector, dimensions))
+    else:
+        raise AgentIndexError("embedding install vector is missing")
+    return (
+        namespace,
+        node_id,
+        provider,
+        model,
+        dimensions,
+        input_schema,
+        config_digest,
+        content_digest,
+        payload,
+    )
+
+
+def install_embedding_records(
+    path: Path,
+    records: list[dict[str, Any]],
+    *,
+    expected_snapshot_sha256: str,
+    expected_graph_sha256: str,
+    namespace: str = "personal",
+) -> dict[str, Any]:
+    """Atomically install a validated batch iff the graph identity is unchanged."""
+    _validate_namespace(namespace)
+    if not isinstance(records, list):
+        raise AgentIndexError("embedding install records must be a list")
+    if len(records) > _MAX_EMBEDDING_INSTALL_RECORDS:
+        raise AgentIndexError("embedding install exceeds the record limit")
+    if not _SHA256_RE.fullmatch(str(expected_snapshot_sha256)) or not _SHA256_RE.fullmatch(
+        str(expected_graph_sha256)
+    ):
+        raise AgentIndexError("embedding install generation precondition is invalid")
+
+    if not records:
+        connection = _connect(path, read_only=True)
+        try:
+            current_snapshot, current_graph = _embedding_index_identity(connection)
+        finally:
+            connection.close()
+        status = (
+            "installed"
+            if (current_snapshot, current_graph)
+            == (str(expected_snapshot_sha256), str(expected_graph_sha256))
+            else "stale-generation"
+        )
+        return {"status": status, "installed": 0, "unchanged": 0}
+
+    result: dict[str, Any] = {}
+    try:
+        with _mutable_agent_index(path) as connection:
+            current_snapshot, current_graph = _embedding_index_identity(connection)
+            if (current_snapshot, current_graph) != (
+                str(expected_snapshot_sha256),
+                str(expected_graph_sha256),
+            ):
+                raise _StaleEmbeddingGeneration
+
+            prepared: list[
+                tuple[str, str, str, str, int, str, str, str, bytes]
+            ] = []
+            seen: set[tuple[str, str, str, str]] = set()
+            total_vector_bytes = 0
+            for record in records:
+                item = _prepared_embedding_record(record, namespace)
+                key = (item[0], item[1], item[2], item[3])
+                if key in seen:
+                    raise AgentIndexError("embedding install contains duplicate records")
+                seen.add(key)
+                total_vector_bytes += len(item[8])
+                if total_vector_bytes > _MAX_EMBEDDING_INSTALL_VECTOR_BYTES:
+                    raise AgentIndexError("embedding install exceeds the vector budget")
+                node_row = connection.execute(
+                    "SELECT * FROM nodes WHERE namespace = ? AND id = ?",
+                    (namespace, item[1]),
+                ).fetchone()
+                if node_row is None:
+                    raise AgentIndexError(
+                        f"embedding install references unknown node: {item[1]}"
+                    )
+                if embedding_input_sha256(_node_payload(node_row)) != item[7]:
+                    raise AgentIndexError(
+                        f"embedding install input is stale for node: {item[1]}"
+                    )
+                prepared.append(item)
+
+            changed: list[
+                tuple[str, str, str, str, int, str, str, str, bytes]
+            ] = []
+            unchanged = 0
+            replaced_records = 0
+            replaced_vector_bytes = 0
+            for item in prepared:
+                existing = connection.execute(
+                    """
+                    SELECT dimensions, embedding_input_schema,
+                           provider_config_sha256, content_sha256, vector
+                    FROM embeddings
+                    WHERE namespace = ? AND node_id = ? AND provider = ? AND model = ?
+                    """,
+                    (item[0], item[1], item[2], item[3]),
+                ).fetchone()
+                if existing is not None and (
+                    int(existing["dimensions"]) == item[4]
+                    and str(existing["embedding_input_schema"]) == item[5]
+                    and str(existing["provider_config_sha256"]) == item[6]
+                    and str(existing["content_sha256"]) == item[7]
+                    and bytes(existing["vector"]) == item[8]
+                ):
+                    unchanged += 1
+                    continue
+                if existing is not None:
+                    replaced_records += 1
+                    replaced_vector_bytes += len(bytes(existing["vector"]))
+                changed.append(item)
+
+            if not changed:
+                raise _UnchangedEmbeddingInstall(unchanged)
+            record_count, stored_vector_bytes = connection.execute(
+                """
+                SELECT count(*), coalesce(sum(length(vector)), 0)
+                FROM embeddings
+                WHERE namespace = ?
+                """,
+                (namespace,),
+            ).fetchone()
+            final_record_count = (
+                int(record_count) - replaced_records + len(changed)
+            )
+            final_vector_bytes = (
+                int(stored_vector_bytes)
+                - replaced_vector_bytes
+                + sum(len(item[8]) for item in changed)
+            )
+            if final_record_count > _MAX_EMBEDDING_INVENTORY_RECORDS:
+                raise AgentIndexError(
+                    "embedding install would exceed the inventory record limit"
+                )
+            if final_vector_bytes > _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES:
+                raise AgentIndexError(
+                    "embedding install would exceed the inventory vector budget"
+                )
+            for item in changed:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO embeddings
+                    (namespace, node_id, provider, model, dimensions,
+                     embedding_input_schema, provider_config_sha256,
+                     content_sha256, vector)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    item,
+                )
+                connection.execute(
+                    """
+                    DELETE FROM similarity_edges
+                    WHERE namespace = ? AND provider = ? AND model = ?
+                      AND (source = ? OR target = ?)
+                    """,
+                    (namespace, item[2], item[3], item[1], item[1]),
+                )
+            _enforce_embedding_inventory_limits(connection, namespace=namespace)
+            _refresh_embedding_metadata(connection, namespace=namespace)
+            connection.commit()
+            result = {
+                "status": "installed",
+                "installed": len(changed),
+                "unchanged": unchanged,
+            }
+    except _StaleEmbeddingGeneration:
+        return {"status": "stale-generation", "installed": 0, "unchanged": 0}
+    except _UnchangedEmbeddingInstall as unchanged_install:
+        return {
+            "status": "installed",
+            "installed": 0,
+            "unchanged": unchanged_install.count,
+        }
+    return result
+
+
 def _cosine(left: list[float], right: list[float]) -> float:
     if len(left) != len(right):
         raise AgentIndexError("cannot compare embeddings with different dimensions")
@@ -1780,9 +2560,23 @@ def index_embeddings(
     _validate_namespace(namespace)
     provider_name = str(getattr(provider, "name", "")).strip()
     model = str(getattr(provider, "model", "")).strip()
-    dimensions = int(getattr(provider, "dimensions", 0))
-    if not provider_name or not model or dimensions < 1:
+    raw_dimensions = getattr(provider, "dimensions", 0)
+    if isinstance(raw_dimensions, bool):
         raise AgentIndexError("embedding provider metadata is incomplete")
+    try:
+        dimensions = int(raw_dimensions)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise AgentIndexError("embedding provider metadata is incomplete") from error
+    if (
+        not provider_name
+        or not model
+        or dimensions < 1
+        or dimensions > _MAX_EMBEDDING_DIMENSIONS
+    ):
+        raise AgentIndexError("embedding provider metadata is incomplete")
+    config_digest = _embedding_provider_config_sha256(
+        provider, provider_name, model, dimensions
+    )
     if similarity_top_k < 1 or similarity_top_k > 100:
         raise AgentIndexError("similarity_top_k must be between 1 and 100")
     if similarity_threshold < -1.0 or similarity_threshold > 1.0:
@@ -1798,19 +2592,35 @@ def index_embeddings(
         for index, (node, digest) in enumerate(zip(nodes, digests)):
             cached = connection.execute(
                 """
-                SELECT content_sha256, dimensions FROM embeddings
+                SELECT content_sha256, dimensions, embedding_input_schema, vector
+                FROM embeddings
                 WHERE namespace = ? AND node_id = ? AND provider = ? AND model = ?
+                  AND provider_config_sha256 = ?
                 """,
-                (namespace, str(node["id"]), provider_name, model),
+                (
+                    namespace,
+                    str(node["id"]),
+                    provider_name,
+                    model,
+                    config_digest,
+                ),
             ).fetchone()
             if (
                 cached is None
                 or str(cached["content_sha256"]) != digest
                 or int(cached["dimensions"]) != dimensions
+                or str(cached["embedding_input_schema"]) != EMBEDDING_INPUT_SCHEMA
+                or not _record_vector_is_valid(bytes(cached["vector"]), dimensions)
             ):
                 pending_indices.append(index)
         if pending_indices:
-            vectors = provider.embed([texts[index] for index in pending_indices])
+            document_embedder = getattr(provider, "embed_documents", None)
+            pending_texts = [texts[index] for index in pending_indices]
+            vectors = (
+                document_embedder(pending_texts)
+                if callable(document_embedder)
+                else provider.embed(pending_texts)
+            )
             if len(vectors) != len(pending_indices):
                 raise AgentIndexError("embedding provider returned the wrong vector count")
             for index, vector in zip(pending_indices, vectors):
@@ -1818,8 +2628,10 @@ def index_embeddings(
                 connection.execute(
                     """
                     INSERT OR REPLACE INTO embeddings
-                    (namespace, node_id, provider, model, dimensions, content_sha256, vector)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (namespace, node_id, provider, model, dimensions,
+                     embedding_input_schema, provider_config_sha256,
+                     content_sha256, vector)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         namespace,
@@ -1827,10 +2639,27 @@ def index_embeddings(
                         provider_name,
                         model,
                         dimensions,
+                        EMBEDDING_INPUT_SCHEMA,
+                        config_digest,
                         digests[index],
                         _pack_vector(normalized),
                     ),
                 )
+                connection.execute(
+                    """
+                    DELETE FROM similarity_edges
+                    WHERE namespace = ? AND provider = ? AND model = ?
+                      AND (source = ? OR target = ?)
+                    """,
+                    (
+                        namespace,
+                        provider_name,
+                        model,
+                        str(nodes[index]["id"]),
+                        str(nodes[index]["id"]),
+                    ),
+                )
+        _enforce_embedding_inventory_limits(connection, namespace=namespace)
         soft_edge_count = 0
         if build_similarity_edges:
             connection.execute(
@@ -1839,16 +2668,32 @@ def index_embeddings(
             )
             vector_rows = connection.execute(
                 """
-                SELECT node_id, vector FROM embeddings
+                SELECT node_id, content_sha256, vector FROM embeddings
                 WHERE namespace = ? AND provider = ? AND model = ? AND dimensions = ?
+                  AND embedding_input_schema = ? AND provider_config_sha256 = ?
                 ORDER BY node_id
                 """,
-                (namespace, provider_name, model, dimensions),
+                (
+                    namespace,
+                    provider_name,
+                    model,
+                    dimensions,
+                    EMBEDDING_INPUT_SCHEMA,
+                    config_digest,
+                ),
             ).fetchall()
-            vectors_by_id = {
-                str(row["node_id"]): _unpack_vector(row["vector"], dimensions)
-                for row in vector_rows
+            expected_digests = {
+                str(node["id"]): digest for node, digest in zip(nodes, digests)
             }
+            vectors_by_id: dict[str, list[float]] = {}
+            for row in vector_rows:
+                node_id = str(row["node_id"])
+                payload = bytes(row["vector"])
+                if expected_digests.get(node_id) != str(row["content_sha256"]):
+                    continue
+                if not _record_vector_is_valid(payload, dimensions):
+                    continue
+                vectors_by_id[node_id] = _unpack_vector(payload, dimensions)
             node_ids = sorted(vectors_by_id)
             for source in node_ids:
                 candidates = sorted(
@@ -1886,60 +2731,10 @@ def index_embeddings(
             "name": provider_name,
             "model": model,
             "dimensions": dimensions,
+            "embedding_input_schema": EMBEDDING_INPUT_SCHEMA,
+            "provider_config_sha256": config_digest,
         }
-        providers_row = connection.execute(
-            "SELECT value FROM index_meta WHERE key = 'providers'"
-        ).fetchone()
-        providers = json.loads(providers_row["value"]) if providers_row else {}
-        configuration_rows = connection.execute(
-            """
-            SELECT DISTINCT provider, model, dimensions
-            FROM embeddings
-            ORDER BY provider, model, dimensions
-            """
-        ).fetchall()
-        configurations = [
-            {
-                "name": str(row["provider"]),
-                "model": str(row["model"]),
-                "dimensions": int(row["dimensions"]),
-            }
-            for row in configuration_rows
-        ]
-        providers["embedding"] = (
-            configurations[0]
-            if len(configurations) == 1
-            else {"configurations": configurations}
-        )
-        connection.execute(
-            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('providers', ?)",
-            (canonical_json(providers),),
-        )
-        connection.execute(
-            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('provider_config_sha256', ?)",
-            (canonical_json(sha256_json(configurations)),),
-        )
-        lanes_row = connection.execute(
-            "SELECT value FROM index_meta WHERE key = 'retrieval_lanes'"
-        ).fetchone()
-        lanes = json.loads(lanes_row["value"]) if lanes_row else []
-        if "embedding" not in lanes:
-            lanes.append("embedding")
-        connection.execute(
-            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('retrieval_lanes', ?)",
-            (canonical_json(lanes),),
-        )
-        counts_row = connection.execute(
-            "SELECT value FROM index_meta WHERE key = 'alignment_counts'"
-        ).fetchone()
-        alignment_counts = json.loads(counts_row["value"]) if counts_row else {}
-        alignment_counts["similarity_edges"] = connection.execute(
-            "SELECT count(*) FROM similarity_edges WHERE namespace = ?", (namespace,)
-        ).fetchone()[0]
-        connection.execute(
-            "INSERT OR REPLACE INTO index_meta(key, value) VALUES ('alignment_counts', ?)",
-            (canonical_json(alignment_counts),),
-        )
+        _refresh_embedding_metadata(connection, namespace=namespace)
         connection.commit()
         return {
             "namespace": namespace,
@@ -1964,54 +2759,144 @@ def semantic_search(
     limit = _validated_limit(limit)
     if not str(query).strip():
         raise AgentIndexError("semantic query cannot be empty")
-    index_embeddings(path, provider, namespace=namespace)
-    provider_name = str(provider.name)
-    model = str(provider.model)
-    dimensions = int(provider.dimensions)
-    query_vectors = provider.embed([str(query)])
-    if len(query_vectors) != 1:
-        raise AgentIndexError("embedding provider returned the wrong query vector count")
-    query_vector = _validate_vector(query_vectors[0], dimensions)
+    _validate_namespace(namespace)
+    provider_name = str(getattr(provider, "name", "")).strip()
+    model = str(getattr(provider, "model", "")).strip()
+    raw_dimensions = getattr(provider, "dimensions", 0)
+    if isinstance(raw_dimensions, bool):
+        raise AgentIndexError("embedding provider metadata is incomplete")
+    try:
+        dimensions = int(raw_dimensions)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise AgentIndexError("embedding provider metadata is incomplete") from error
+    if (
+        not provider_name
+        or not model
+        or dimensions < 1
+        or dimensions > _MAX_EMBEDDING_DIMENSIONS
+    ):
+        raise AgentIndexError("embedding provider metadata is incomplete")
+    config_digest = _embedding_provider_config_sha256(
+        provider, provider_name, model, dimensions
+    )
     allowed_types = set(node_types or [])
     connection = _connect(path, read_only=True)
     try:
-        rows = connection.execute(
-            """
-            SELECT e.node_id, e.vector, n.*
-            FROM embeddings AS e
-            JOIN nodes AS n ON n.namespace = e.namespace AND n.id = e.node_id
-            WHERE e.namespace = ? AND e.provider = ? AND e.model = ? AND e.dimensions = ?
-            ORDER BY e.node_id
-            """,
-            (namespace, provider_name, model, dimensions),
-        ).fetchall()
-        scored: list[tuple[float, dict[str, Any]]] = []
+        columns, primary_key = _embedding_table_layout(connection)
+        legacy = columns == _LEGACY_EMBEDDING_COLUMNS and primary_key == (
+            "namespace",
+            "node_id",
+            "provider",
+            "model",
+        )
+        current = (
+            columns == _EMBEDDING_COLUMNS
+            and primary_key == _EMBEDDING_PRIMARY_KEY
+        )
+        if not legacy and not current:
+            raise AgentIndexError("unsupported Agent embedding table layout")
+        if legacy and config_digest != _legacy_provider_config_sha256(
+            provider_name, model, dimensions
+        ):
+            rows: list[sqlite3.Row] = []
+        elif current:
+            rows = connection.execute(
+                """
+                SELECT e.content_sha256 AS embedding_content_sha256,
+                       e.vector AS embedding_vector, n.*
+                FROM embeddings AS e
+                JOIN nodes AS n
+                  ON n.namespace = e.namespace AND n.id = e.node_id
+                WHERE e.namespace = ? AND e.provider = ? AND e.model = ?
+                  AND e.dimensions = ? AND e.embedding_input_schema = ?
+                  AND e.provider_config_sha256 = ?
+                ORDER BY e.node_id
+                """,
+                (
+                    namespace,
+                    provider_name,
+                    model,
+                    dimensions,
+                    EMBEDDING_INPUT_SCHEMA,
+                    config_digest,
+                ),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT e.content_sha256 AS embedding_content_sha256,
+                       e.vector AS embedding_vector, n.*
+                FROM embeddings AS e
+                JOIN nodes AS n
+                  ON n.namespace = e.namespace AND n.id = e.node_id
+                WHERE e.namespace = ? AND e.provider = ? AND e.model = ?
+                  AND e.dimensions = ?
+                ORDER BY e.node_id
+                """,
+                (namespace, provider_name, model, dimensions),
+            ).fetchall()
+        ready: list[tuple[dict[str, Any], list[float]]] = []
         for row in rows:
             node = _node_payload(row)
             if allowed_types and node.get("type") not in allowed_types:
                 continue
-            score = _cosine(query_vector, _unpack_vector(row["vector"], dimensions))
-            scored.append((score, node))
-        scored.sort(key=lambda item: (-item[0], str(item[1].get("label", "")), str(item[1]["id"])))
-        return [
-            {
-                "rank": rank,
-                "node": node,
-                "reasons": [
-                    {
-                        "method": "semantic",
-                        "rank": rank,
-                        "score": round(score, 12),
-                        "provider": provider_name,
-                        "model": model,
-                        "identity_authority": False,
-                    }
-                ],
-            }
-            for rank, (score, node) in enumerate(scored[:limit], start=1)
-        ]
+            properties = node.get("properties") or {}
+            provenance = node.get("provenance") or {}
+            if (
+                properties.get("curation_status") == "needs-review"
+                or properties.get("source_status") == "orphaned"
+                or provenance.get("active") is False
+            ):
+                continue
+            if embedding_input_sha256(node) != str(row["embedding_content_sha256"]):
+                continue
+            payload = bytes(row["embedding_vector"])
+            if not _record_vector_is_valid(payload, dimensions):
+                continue
+            ready.append((node, _unpack_vector(payload, dimensions)))
     finally:
         connection.close()
+
+    # A query provider must not be called when the selected vector space has no
+    # current, valid document rows.
+    if not ready:
+        return []
+    query_embedder = getattr(provider, "embed_query", None)
+    if callable(query_embedder):
+        query_vector = _validate_vector(query_embedder(str(query)), dimensions)
+    else:
+        query_vectors = provider.embed([str(query)])
+        if len(query_vectors) != 1:
+            raise AgentIndexError("embedding provider returned the wrong query vector count")
+        query_vector = _validate_vector(query_vectors[0], dimensions)
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for node, vector in ready:
+        score = _cosine(query_vector, vector)
+        scored.append((score, node))
+    scored.sort(
+        key=lambda item: (
+            -item[0],
+            str(item[1].get("label", "")),
+            str(item[1]["id"]),
+        )
+    )
+    return [
+        {
+            "rank": rank,
+            "node": node,
+            "reasons": [
+                {
+                    "method": "semantic",
+                    "rank": rank,
+                    "score": round(score, 12),
+                    "provider": provider_name,
+                    "model": model,
+                    "identity_authority": False,
+                }
+            ],
+        }
+        for rank, (score, node) in enumerate(scored[:limit], start=1)
+    ]
 
 
 def _edge_payload(row: sqlite3.Row) -> dict[str, Any]:

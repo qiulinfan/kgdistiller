@@ -20,9 +20,10 @@ personal-knowledge-store/
 │   ├── alignments.json            # committed reviewed mappings
 │   ├── graph/                     # committed deterministic qlkg-v2 snapshot
 │   ├── documents.jsonl            # committed authority inventory
+│   ├── embedding-policy.json      # committed credential-free vector policy
 │   ├── embeddings/                # committed exact float32 vector objects
 │   ├── store.json                 # committed qlkg-store-v1 generation
-│   ├── .gitignore                 # keeps build/ local; existing file preserved
+│   ├── .gitignore                 # keeps build/ local; existing rules preserved
 │   └── build/                     # ignored SQLite, plans, receipts, previews
 └── vendor/kgdistiller/            # optional pinned Git submodule
 ```
@@ -135,6 +136,58 @@ The `deterministic-fixture` adapter is credential-free and exists only for
 repeatable acceptance tests. Production profiles should select a reviewed real
 adapter such as `openai-compatible`.
 
+## Explicit embedding maintenance
+
+The portable, credential-free policy defaults to
+`knowledge/embedding-policy.json`. It declares each profile name, provider,
+model, dimensions, required node types, minimum coverage, and whether the
+profile is required. Those vector-space fields must agree with the
+same-named machine-local provider profile. Use the global
+`--embedding-policy path/to/policy.json` option when a repository keeps the
+policy elsewhere; a relative path is resolved from `--repo-root`.
+
+Run status before making a provider available:
+
+```sh
+kgdistiller --repo-root . embedding status
+kgdistiller --repo-root . embedding status --namespace personal
+```
+
+Status does not create or refresh the local index, construct a provider, make a
+network call, or mutate embeddings. It reports `ready`, `missing`, `stale`, and
+`incompatible` eligible slots plus `unmanaged` rows, grouped by policy profile
+and node type. Coverage is compared with the policy threshold; zero eligible
+nodes produce `not-applicable`, not 100%.
+
+Only the explicit sync command creates or replaces document vectors:
+
+```sh
+kgdistiller --repo-root . embedding sync
+kgdistiller --repo-root . embedding sync \
+  --batch-size 32 --max-retries 2 --max-nodes 10000
+kgdistiller --repo-root . embedding sync \
+  --profile primary --profile secondary
+```
+
+With no `--profile`, sync selects the effective machine-local
+`embedding_profile`; repeated options explicitly select multiple policy
+profiles. Sync calls providers only for eligible `missing` and `stale`
+canonical inputs. A second unchanged sync performs zero document embedding
+calls. The defaults limit a provider batch to 32 inputs, retry each batch at
+most twice, and admit at most 10,000 missing or stale nodes; fixed internal caps also
+bound total input bytes, vector bytes, and provider batch count.
+
+Provider results are completely validated before an atomic index generation
+is published. Existing ready vector bytes are left unchanged. Provider failure
+publishes nothing, and a graph/snapshot change during provider work or before
+the final status observation returns `stale-generation`. Query and MCP paths never
+invoke document sync; a query-vector request is a separate read operation.
+
+This status is not yet a portable-store readiness gate. Until that later gate
+is implemented, `store snapshot` and `store verify` must not be described as
+RAG-ready merely because they succeeded; inspect embedding coverage
+separately.
+
 ## Local Agent and browser configuration
 
 Configure an Agent with an absolute repository path and stdio MCP:
@@ -169,7 +222,8 @@ not a multi-user authorization service.
 Commit these files together:
 
 - authority documents and referenced authored assets;
-- `knowledge/sources.json`, `identities.json`, and `alignments.json`;
+- `knowledge/sources.json`, `identities.json`, `alignments.json`, and the
+  credential-free `embedding-policy.json`;
 - every deterministic file under `knowledge/graph/`;
 - `knowledge/documents.jsonl`, `knowledge/store.json`, and every file under
   `knowledge/embeddings/`;
@@ -182,8 +236,9 @@ credentials, query logs, and provider caches. Exact vectors under
 content-addressed retrieval artifacts. They remain derived from the authority
 graph and MUST NOT define identity or trusted relations.
 
-SQLite rebuilds retain exact vectors only for nodes whose canonical embedding
-input digest is unchanged; stale node vectors are dropped before snapshotting.
+SQLite rebuilds retain exact valid vector bytes for still-existing nodes so
+status can classify stale inputs. Only rows whose canonical input digest still
+matches are query-reusable; stale rows are dropped before snapshotting.
 
 Ordinary Git is recommended for a small personal store. Individual vector
 objects are bounded by their declared dimensions and verified by SHA-256. Do

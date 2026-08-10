@@ -16,14 +16,16 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-agent-index-v2` | yes | disposable | Rebuilt locally; never a migration authority. |
 | `qlkg-store-v1` | yes | yes | Portable authority generation; Git-friendly manifest. |
 | `qlkg-document-record-v1` | yes | yes | Canonical JSONL inventory of ingested sources. |
-| `qlkg-embedding-bundle-v1` | yes | yes | Exact portable retrieval artifacts, never identity. |
-| `qlkg-embedding-record-v1` | yes | yes | Content-addressed float32 vector metadata. |
+| `qlkg-embedding-bundle-v1` | yes | legacy only | Published four-key provider digest contract; new snapshots do not write it. |
+| `qlkg-embedding-record-v1` | yes | legacy only | Legacy digest is recomputed and retained exactly on materialization. |
+| `qlkg-embedding-bundle-v2` | yes | yes | Current exact portable retrieval artifacts, never identity. |
+| `qlkg-embedding-record-v2` | yes | yes | Four-field logical key with an exact opaque machine-local provider-config digest. |
 | `qlkg-candidate-graph-v1` | yes | builder input | Isolated namespace and source locations required. |
 | `qlkg-ingest-request-v1` | yes | accepted | Content-addressed plan/apply request. |
 | `qlkg-ingest-plan-v1` | output | output | Review artifact, not a commit receipt. |
 | `qlkg-ingest-receipt-v1` | output | output | Canonical committed/rejected result. |
 | `qlkg-local-profile-v1` | yes | user-authored | Machine-local paths and credential environment-variable names; never portable. |
-| `qlkg-embedding-policy-v1` | proposed | proposed | Portable vector-space and required-coverage policy without credentials. |
+| `qlkg-embedding-policy-v1` | yes | user-authored | Portable vector-space and required-coverage policy without credentials; drives local status/sync. |
 | `qlkg-retrieval-plan-v1` | proposed | proposed | Bounded lane-specific query input; execution is deferred. |
 | `qlkg-search-result-v2` | proposed | proposed | Bounded per-lane status and fusion evidence; public wiring is deferred. |
 | `qlkg-document-record-v2` | proposed | proposed | Stable inventory identity only; it does not define graph node identity. |
@@ -54,6 +56,15 @@ Resolver and multi-address connection latency is OS-governed and is classified
 as a timeout when it returns after the deadline. Provider configuration,
 transport, framing, JSON, and vector failures must have stable structured codes
 with no retained credential, response body, or raw exception chain.
+
+`embedding status` reads every profile in the portable policy without creating
+a provider. `embedding sync` is the only CLI document-vector maintenance path:
+it batches only eligible missing/stale inputs, bounds retries and total work,
+validates the graph generation before one atomic publication, and is a provider
+no-op on a second unchanged run. Query paths do not invoke document sync. This
+release does not yet use embedding coverage as a `store snapshot` or
+`store verify` readiness gate, so a valid portable store must not be advertised
+as RAG-ready on that basis alone.
 
 ## Schema evolution
 
@@ -90,11 +101,17 @@ Then verify:
 - that installed wheel can load the default local profile in two fresh
   processes, apply database/store/embedding-profile overrides, expose the same
   non-secret configuration digest, and keep credential sentinels out of output;
+- that installed wheel exposes `embedding status` and `embedding sync`, resolves
+  a repository-relative policy, synchronizes the selected/overridden profile,
+  and performs zero document calls on an unchanged second invocation;
 - plain `PYTHONPATH=src python3` imports candidate and ingest without undeclared
   dependencies;
 - a Markdown/Typst/LaTeX fixture passes sync and check;
 - transactional plan/apply, idempotency, stale preconditions, lock conflict,
   fault injection, crash recovery, and old/new reader isolation pass;
+- embedding category/coverage, batch/retry/work bounds, provider failure,
+  single-node invalidation, stale-generation rejection, and unchanged-vector
+  byte preservation pass without default network access;
 - the 100,000-node disposable stress harness records a Windows-native or WSL
   baseline before any performance envelope is used as a release gate; the
   historical baseline in [the performance notes](performance.md) is

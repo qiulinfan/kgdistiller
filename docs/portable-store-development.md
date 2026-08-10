@@ -172,8 +172,8 @@ personal-knowledge-store/
 │   ├── documents.jsonl                     # qlkg-document-record-v1
 │   ├── store.json                          # qlkg-store-v1
 │   └── embeddings/
-│       ├── manifest.json                   # qlkg-embedding-bundle-v1
-│       ├── records.jsonl                   # qlkg-embedding-record-v1
+│       ├── manifest.json                   # qlkg-embedding-bundle-v2
+│       ├── records.jsonl                   # qlkg-embedding-record-v2
 │       └── objects/
 │           └── ab/
 │               └── ab...cd.f32             # SHA-256 content-addressed bytes
@@ -243,7 +243,7 @@ SQLite 可以被删除和重建。其 schema 不构成跨机器协议，也不�
 Inventory 必须与 `qlkg-v2` manifest 的 `source_hashes` 完全相等。多余、缺失
 或 hash 不一致的 authority 都会导致 verify 失败。
 
-### 6.3 `qlkg-embedding-bundle-v1`
+### 6.3 `qlkg-embedding-bundle-v2`
 
 Embedding manifest 记录：
 
@@ -254,9 +254,12 @@ Embedding manifest 记录：
 - provider/model/dimensions/config digest inventory；
 - `embedding_generation_sha256`。
 
-### 6.4 `qlkg-embedding-record-v1`
+Snapshot 只写 v2 bundle。Verifier 和 materializer 继续读取已发布的
+`qlkg-embedding-bundle-v1`，但不会把 v1 原地伪装成 v2。
 
-每行 embedding record 的逻辑主键是：
+### 6.4 `qlkg-embedding-record-v2` 与 v1 compatibility
+
+当前 v2 embedding record 的逻辑主键是：
 
 ```text
 (namespace, node_id, provider, model)
@@ -277,8 +280,20 @@ vector_sha256
 ```
 
 `content_sha256` 来自 deterministic canonical embedding input，而不是文件
-位置或 chunk 顺序。只有 node input、provider、model 和 dimensions 都仍然
-匹配时，旧向量才能复用。
+位置或 chunk 顺序。`provider_config_sha256` 是 KB01 对本机 non-secret
+vector-space configuration 计算的 opaque SHA-256；portable store 不携带
+base URL、credential environment name 或 secret。V2 export/import 必须逐行
+精确保留这个 digest。配置切换会替换同一逻辑主键的旧向量；portable bundle
+不能包含同一 `(namespace, node_id, provider, model)` 逻辑主键的两个配置版本。
+
+已发布的 `qlkg-embedding-record-v1` 仍以
+`(namespace, node_id, provider, model)` 四元组为逻辑主键。V1 digest 只能按其
+旧 portable provider configuration（provider、model、dimensions、dtype、
+input schema）重算并验证；错误 digest 必须拒绝。Materialize v1 时保留该
+legacy digest，不能替换为当前机器的配置 digest。
+
+只有 node input、provider、model、dimensions、input schema 和配置 digest
+都仍然匹配时，旧向量才能复用。
 
 Vector object 必须满足：
 
@@ -462,7 +477,9 @@ store 应默认使用 private repository 或合适的加密备份。任何情况
 - `qlkg-store-v1.schema.json`；
 - `qlkg-document-record-v1.schema.json`；
 - `qlkg-embedding-bundle-v1.schema.json`；
-- `qlkg-embedding-record-v1.schema.json`。
+- `qlkg-embedding-record-v1.schema.json`；
+- `qlkg-embedding-bundle-v2.schema.json`；
+- `qlkg-embedding-record-v2.schema.json`。
 
 这些 schema 会包含在 wheel 和 sdist 中，并在 store verify 时由本地
 deterministic JSON Schema evaluator 执行。
@@ -478,7 +495,8 @@ deterministic JSON Schema evaluator 执行。
 - README 增加 portable Git store 快速流程；
 - deployment 文档增加 dedicated repository、Git/LFS、恢复演练和隐私边界；
 - Agentic KB spec 增加 portable store 与 embedding contract；
-- release compatibility matrix 增加四个 v1 schema；
+- release compatibility matrix 保留四个 v1 schema，并增加当前 embedding
+  bundle/record v2；
 - transactional ingest 文档说明 embedding carry-forward。
 
 ## 10. 测试与验收

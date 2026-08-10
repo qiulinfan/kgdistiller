@@ -168,6 +168,65 @@ or deeply nested JSON, and invalid vectors return stable, structured provider
 errors without retaining the credential, provider response body, or raw
 exception chain.
 
+## Explicit embedding status and sync
+
+Put the credential-free vector-space policy at
+`knowledge/embedding-policy.json` (or select another repository-relative file
+with `--embedding-policy`):
+
+```json
+{
+  "schema": "qlkg-embedding-policy-v1",
+  "profiles": [
+    {
+      "name": "primary",
+      "provider": "openai-compatible",
+      "model": "example-embedding-model",
+      "dimensions": 1536,
+      "required_node_types": ["knowledge"],
+      "minimum_coverage": 1.0,
+      "required": true
+    }
+  ]
+}
+```
+
+The policy profile name and provider/model/dimensions must match the
+machine-local provider profile. Inspect every policy profile without creating
+a provider or making a network request:
+
+```sh
+kgdistiller embedding status
+```
+
+Status groups eligible active nodes by profile and node type and classifies
+their local vectors as `ready`, `missing`, `stale`, or `incompatible`;
+unmapped rows are `unmanaged`. Coverage is reported against each policy
+threshold. A profile with no eligible nodes is `not-applicable`, never an
+invented 100% coverage result.
+
+Document vectors are created or updated only by an explicit sync:
+
+```sh
+kgdistiller embedding sync
+kgdistiller embedding sync --batch-size 32 --max-retries 2 --max-nodes 10000
+kgdistiller embedding sync --profile primary --profile secondary
+```
+
+Without `--profile`, sync uses the selected machine-local embedding profile.
+It sends only eligible `missing` or `stale` canonical inputs, preserves ready
+vector bytes, and makes zero document-provider calls on an unchanged second
+run. Provider calls are bounded by batch, retry, input, output, batch-count,
+and total-pending-node limits. Results are validated before one atomic publication; if
+the graph generation changes while a provider is working, the staged vectors
+are discarded with `stale-generation`.
+
+Query paths never call document embedding or trigger an implicit sync. A query
+vector, where a semantic query lane explicitly uses one, is separate from
+document synchronization. `embedding status` describes the local disposable
+index only: this release does not yet make policy coverage a `store snapshot`
+or `store verify` readiness gate.
+
 ## Portable Git store
 
 For backup and multi-machine use, make the knowledge project—not SQLite—the
@@ -177,25 +236,29 @@ portable unit:
 kgdistiller store snapshot
 kgdistiller store verify
 git add notes knowledge/sources.json knowledge/alignments.json \
-  knowledge/.gitignore knowledge/graph knowledge/documents.jsonl \
+  knowledge/.gitignore knowledge/embedding-policy.json \
+  knowledge/graph knowledge/documents.jsonl \
   knowledge/embeddings knowledge/store.json
 ```
 
 Also stage `knowledge/identities.json` when that optional reviewed registry
-exists. `init` and `store snapshot` create `knowledge/.gitignore` with
-`build/` when the file is absent and never overwrite an existing ignore file.
+exists. `init` and `store snapshot` ensure `knowledge/.gitignore` has an
+effective `build/` rule, preserving existing rules and line endings while
+repairing a missing or later-negated rule.
 
 `store snapshot` writes the versioned `qlkg-store-v1` manifest, a canonical
 JSONL inventory of every ingested authority, and a content-addressed embedding
-bundle. Vectors are the exact little-endian float32 bytes already in the
+bundle using `qlkg-embedding-bundle-v2` and `qlkg-embedding-record-v2` (while
+readers retain v1 compatibility). Vectors are the exact little-endian float32 bytes already in the
 current index; the command never calls a provider. Provider/model,
 dimensions, canonical embedding-input digest, configuration digest, and vector
 digest remain attached to every record. Embeddings are portable retrieval
 artifacts, never graph identity or semantic authority.
 
-Index rebuilds carry forward exact vectors only when node, provider, model,
-dimensions, and canonical input digest remain current; changed nodes are
-invalidated instead of receiving stale vectors.
+Index rebuilds carry forward exact valid vector bytes for still-existing nodes
+so status can identify stale inputs; deleted-node vectors are removed. Query
+paths consume only active rows whose configuration and canonical input digest
+are current, and portable snapshots omit stale inputs.
 
 If the current notes repository should not be the backup unit, bootstrap a
 separate store with `kgdistiller store snapshot --output /path/to/private-kb`.

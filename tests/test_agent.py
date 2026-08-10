@@ -8,23 +8,29 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+import kgdistiller.agent as agent_module  # noqa: E402
 from kgdistiller.agent import (  # noqa: E402
     AgentIndexError,
     align_graph,
     build_context_bundle,
     compare_graph,
     create_proposal,
+    embedding_inventory,
     estimate_tokens,
     expand_index,
     get_index_node,
     index_status,
     index_embeddings,
+    install_embedding_records,
     personalized_pagerank,
+    publish_agent_index_file,
     resolve_agent_index_path,
     resolve_concepts,
     retrieve_index,
@@ -443,7 +449,306 @@ class AgentIndexTest(unittest.TestCase):
         methods = {reason["method"] for reason in beta["reasons"]}
         self.assertEqual({"graph", "ppr"}, methods)
 
-    def test_index_rebuild_preserves_only_embeddings_with_current_input_digest(self) -> None:
+    def test_embedding_rows_are_config_bound_and_replace_the_same_logical_key(self) -> None:
+        class ConfiguredProvider(KeywordEmbeddingProvider):
+            def __init__(self, digest: str) -> None:
+                self.provider_config_sha256 = digest
+                self.document_calls = 0
+
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                self.document_calls += 1
+                return super().embed(texts)
+
+        write_agent_index(self.database, fixture_snapshot())
+        first = ConfiguredProvider("1" * 64)
+        second = ConfiguredProvider("2" * 64)
+
+        first_result = index_embeddings(
+            self.database,
+            first,
+            build_similarity_edges=True,
+            similarity_threshold=-1.0,
+        )
+        self.assertGreater(first_result["similarity_edges"], 0)
+        index_embeddings(self.database, second, build_similarity_edges=False)
+
+        inventory = embedding_inventory(self.database)
+        self.assertEqual(2, len(inventory["records"]))
+        self.assertEqual(
+            {"2" * 64},
+            {record["provider_config_sha256"] for record in inventory["records"]},
+        )
+        self.assertEqual(1, first.document_calls)
+        self.assertEqual(1, second.document_calls)
+        connection = sqlite3.connect(resolve_agent_index_path(self.database))
+        try:
+            self.assertEqual(
+                0,
+                connection.execute("SELECT count(*) FROM similarity_edges").fetchone()[0],
+            )
+        finally:
+            connection.close()
+
+    def test_legacy_embedding_table_migrates_in_private_mutation(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        source = sqlite3.connect(resolve_agent_index_path(self.database))
+        legacy_seed = self.root / "legacy-seed.sqlite"
+        target = sqlite3.connect(legacy_seed)
+        try:
+            source.backup(target)
+        finally:
+            source.close()
+            target.close()
+        connection = sqlite3.connect(legacy_seed)
+        try:
+            connection.executescript(
+                """
+                ALTER TABLE embeddings RENAME TO embeddings_current;
+                CREATE TABLE embeddings (
+                    namespace TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    vector BLOB NOT NULL,
+                    PRIMARY KEY (namespace, node_id, provider, model),
+                    FOREIGN KEY (namespace, node_id) REFERENCES nodes(namespace, id)
+                );
+                INSERT INTO embeddings
+                SELECT namespace, node_id, provider, model, dimensions,
+                       content_sha256, vector
+                FROM embeddings_current;
+                DROP TABLE embeddings_current;
+                """
+            )
+            before = connection.execute(
+                "SELECT node_id, vector FROM embeddings ORDER BY node_id"
+            ).fetchall()
+            connection.commit()
+        finally:
+            connection.close()
+        legacy_database = self.root / "legacy.sqlite"
+        publish_agent_index_file(legacy_seed, legacy_database)
+
+        legacy_generation = resolve_agent_index_path(legacy_database)
+        with patch.object(agent_module, "_MAX_EMBEDDING_INVENTORY_RECORDS", 1):
+            with self.assertRaises(AgentIndexError):
+                index_embeddings(
+                    legacy_database,
+                    KeywordEmbeddingProvider(),
+                    build_similarity_edges=False,
+                )
+        self.assertEqual(legacy_generation, resolve_agent_index_path(legacy_database))
+
+        result = index_embeddings(
+            legacy_database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+
+        self.assertEqual(0, result["embedded"])
+        connection = sqlite3.connect(resolve_agent_index_path(legacy_database))
+        try:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(embeddings)")
+            }
+            self.assertIn("embedding_input_schema", columns)
+            self.assertIn("provider_config_sha256", columns)
+            self.assertEqual(
+                before,
+                connection.execute(
+                    "SELECT node_id, vector FROM embeddings ORDER BY node_id"
+                ).fetchall(),
+            )
+            expected_digest = sha256_json(
+                {
+                    "provider": "fixture",
+                    "model": "keyword-v1",
+                    "dimensions": 3,
+                    "dtype": "float32-le",
+                    "embedding_input_schema": "qlkg-node-embedding-text-v1",
+                }
+            )
+            self.assertEqual(
+                {expected_digest},
+                {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT DISTINCT provider_config_sha256 FROM embeddings"
+                    )
+                },
+            )
+        finally:
+            connection.close()
+
+    def test_semantic_search_is_read_only_and_skips_provider_without_ready_rows(self) -> None:
+        class QueryAwareProvider:
+            name = "fixture"
+            model = "query-aware"
+            dimensions = 3
+            provider_config_sha256 = "4" * 64
+
+            def __init__(self) -> None:
+                self.document_calls = 0
+                self.query_calls = 0
+
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                self.document_calls += 1
+                return [[1.0, 1.0, 1.0] for _ in texts]
+
+            def embed_query(self, text: str) -> list[float]:
+                self.query_calls += 1
+                return [1.0, 1.0, 1.0]
+
+        snapshot = fixture_snapshot()
+        write_agent_index(self.database, snapshot)
+        provider = QueryAwareProvider()
+        before = resolve_agent_index_path(self.database)
+
+        self.assertEqual([], semantic_search(self.database, "query", provider))
+        self.assertEqual(before, resolve_agent_index_path(self.database))
+        self.assertEqual((0, 0), (provider.document_calls, provider.query_calls))
+
+        inventory = embedding_inventory(self.database)
+        alpha = next(node for node in inventory["nodes"] if node["node_id"] == "alpha")
+        installed = install_embedding_records(
+            self.database,
+            [
+                {
+                    "node_id": "alpha",
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "dimensions": provider.dimensions,
+                    "embedding_input_schema": "qlkg-node-embedding-text-v1",
+                    "provider_config_sha256": provider.provider_config_sha256,
+                    "content_sha256": alpha["content_sha256"],
+                    "vector": [1.0, 1.0, 1.0],
+                }
+            ],
+            expected_snapshot_sha256=inventory["snapshot_sha256"],
+            expected_graph_sha256=inventory["graph_sha256"],
+        )
+        self.assertEqual("installed", installed["status"])
+        installed_generation = resolve_agent_index_path(self.database)
+        self.assertEqual("alpha", semantic_search(self.database, "query", provider)[0]["node"]["id"])
+        self.assertEqual(installed_generation, resolve_agent_index_path(self.database))
+        self.assertEqual((0, 1), (provider.document_calls, provider.query_calls))
+
+        snapshot["nodes"][0]["text"] = "Changed after embedding"
+        snapshot.pop("snapshot_sha256")
+        snapshot["snapshot_sha256"] = sha256_json(snapshot)
+        write_agent_index(self.database, snapshot)
+        stale_generation = resolve_agent_index_path(self.database)
+        self.assertEqual([], semantic_search(self.database, "query", provider))
+        self.assertEqual(stale_generation, resolve_agent_index_path(self.database))
+        self.assertEqual((0, 1), (provider.document_calls, provider.query_calls))
+
+        snapshot["nodes"][0]["text"] = fixture_snapshot()["nodes"][0]["text"]
+        snapshot["nodes"][0]["provenance"]["active"] = False
+        snapshot.pop("snapshot_sha256")
+        snapshot["snapshot_sha256"] = sha256_json(snapshot)
+        write_agent_index(self.database, snapshot)
+        inactive_generation = resolve_agent_index_path(self.database)
+        self.assertEqual([], semantic_search(self.database, "query", provider))
+        self.assertEqual(inactive_generation, resolve_agent_index_path(self.database))
+        self.assertEqual((0, 1), (provider.document_calls, provider.query_calls))
+
+    def test_embedding_install_rejects_non_schema_numeric_types(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+        inventory = embedding_inventory(self.database)
+        alpha = next(node for node in inventory["nodes"] if node["node_id"] == "alpha")
+        base: dict[str, Any] = {
+            "node_id": "alpha",
+            "provider": "fixture",
+            "model": "strict-v1",
+            "dimensions": 3,
+            "embedding_input_schema": "qlkg-node-embedding-text-v1",
+            "provider_config_sha256": "7" * 64,
+            "content_sha256": alpha["content_sha256"],
+            "vector": [1.0, 2.0, 3.0],
+        }
+        published = resolve_agent_index_path(self.database)
+
+        for replacement in (
+            {"dimensions": "3"},
+            {"vector": [True, 2.0, 3.0]},
+            {"vector": ["1", 2.0, 3.0]},
+        ):
+            with self.subTest(replacement=replacement):
+                record = dict(base)
+                record.update(replacement)
+                with self.assertRaises(AgentIndexError):
+                    install_embedding_records(
+                        self.database,
+                        [record],
+                        expected_snapshot_sha256=inventory["snapshot_sha256"],
+                        expected_graph_sha256=inventory["graph_sha256"],
+                    )
+                self.assertEqual(published, resolve_agent_index_path(self.database))
+
+    def test_embedding_install_preserves_inventory_hard_limits(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+        inventory = embedding_inventory(self.database)
+        nodes = {node["node_id"]: node for node in inventory["nodes"]}
+
+        def record(node_id: str, model: str) -> dict[str, Any]:
+            return {
+                "node_id": node_id,
+                "provider": "fixture",
+                "model": model,
+                "dimensions": 3,
+                "embedding_input_schema": "qlkg-node-embedding-text-v1",
+                "provider_config_sha256": sha256_json({"model": model}),
+                "content_sha256": nodes[node_id]["content_sha256"],
+                "vector": [1.0, 2.0, 3.0],
+            }
+
+        first = install_embedding_records(
+            self.database,
+            [record("alpha", "first")],
+            expected_snapshot_sha256=inventory["snapshot_sha256"],
+            expected_graph_sha256=inventory["graph_sha256"],
+        )
+        self.assertEqual("installed", first["status"])
+        published = resolve_agent_index_path(self.database)
+
+        with patch.object(agent_module, "_MAX_EMBEDDING_INVENTORY_VECTOR_BYTES", 20):
+            with self.assertRaisesRegex(AgentIndexError, "inventory vector budget"):
+                install_embedding_records(
+                    self.database,
+                    [record("beta", "second")],
+                    expected_snapshot_sha256=inventory["snapshot_sha256"],
+                    expected_graph_sha256=inventory["graph_sha256"],
+                )
+        self.assertEqual(published, resolve_agent_index_path(self.database))
+
+        with patch.object(agent_module, "_MAX_EMBEDDING_INVENTORY_RECORDS", 1):
+            with self.assertRaisesRegex(AgentIndexError, "inventory record limit"):
+                install_embedding_records(
+                    self.database,
+                    [record("beta", "second")],
+                    expected_snapshot_sha256=inventory["snapshot_sha256"],
+                    expected_graph_sha256=inventory["graph_sha256"],
+                )
+        self.assertEqual(published, resolve_agent_index_path(self.database))
+
+        with patch.object(agent_module, "_MAX_EMBEDDING_INVENTORY_VECTOR_BYTES", 20):
+            with self.assertRaisesRegex(AgentIndexError, "inventory.*vector budget"):
+                index_embeddings(
+                    self.database,
+                    KeywordEmbeddingProvider(),
+                    build_similarity_edges=False,
+                )
+        self.assertEqual(published, resolve_agent_index_path(self.database))
+        self.assertEqual(1, len(embedding_inventory(self.database)["records"]))
+
+    def test_index_rebuild_preserves_valid_embedding_bytes_for_existing_nodes(self) -> None:
         snapshot = fixture_snapshot()
         write_agent_index(self.database, snapshot)
         index_embeddings(
@@ -478,16 +783,40 @@ class AgentIndexTest(unittest.TestCase):
         connection = sqlite3.connect(resolve_agent_index_path(self.database))
         try:
             self.assertEqual(
-                ["beta"],
-                [
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT node_id FROM embeddings ORDER BY node_id"
-                    ).fetchall()
-                ],
+                before,
+                connection.execute(
+                    "SELECT node_id, vector FROM embeddings ORDER BY node_id"
+                ).fetchall(),
             )
         finally:
             connection.close()
+        inventory = embedding_inventory(self.database)
+        alpha_node = next(
+            node for node in inventory["nodes"] if node["node_id"] == "alpha"
+        )
+        alpha_record = next(
+            record for record in inventory["records"] if record["node_id"] == "alpha"
+        )
+        self.assertNotEqual(
+            alpha_node["content_sha256"], alpha_record["content_sha256"]
+        )
+        self.assertTrue(alpha_record["vector_valid"])
+
+    def test_index_rebuild_bounds_reusable_embedding_rows_before_copying(self) -> None:
+        snapshot = fixture_snapshot()
+        write_agent_index(self.database, snapshot)
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        published = resolve_agent_index_path(self.database)
+
+        with patch.object(agent_module, "_MAX_EMBEDDING_INVENTORY_RECORDS", 1):
+            with self.assertRaises(AgentIndexError):
+                write_agent_index(self.database, snapshot)
+
+        self.assertEqual(published, resolve_agent_index_path(self.database))
 
     def test_ppr_does_not_rank_unreachable_zero_mass_nodes(self) -> None:
         write_agent_index(self.database, alignment_fixture_snapshot())
