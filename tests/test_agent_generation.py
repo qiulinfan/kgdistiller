@@ -240,15 +240,12 @@ class AgentIndexGenerationContractTest(unittest.TestCase):
                 ),
                 "a published generation must not hardlink its referenced history",
             )
-            writer = agent._connect(logical)
-            try:
+            with agent._mutable_agent_index(logical) as writer:
                 writer.execute(
                     "UPDATE index_meta SET value = ? WHERE key = 'sentinel'",
                     (json.dumps("maintained"),),
                 )
                 writer.commit()
-            finally:
-                writer.close()
             self.assertEqual(old_bytes, _filesystem_path(old_generation).read_bytes())
             self.assertEqual("maintained", agent.index_status(logical)["sentinel"])
         finally:
@@ -509,6 +506,30 @@ class AgentIndexGenerationContractTest(unittest.TestCase):
             "foreign replacement became the authoritative logical index",
         )
 
+    def test_persisted_marker_binding_rejects_later_replacement(self) -> None:
+        logical = self._logical_path("persisted-marker-binding")
+        source = self.root / "persisted-marker-source.sqlite"
+        foreign = self.root / "persisted-marker-foreign.sqlite"
+        self._write_index(source, "published")
+        self._write_index(foreign, "foreign")
+        foreign_before = _filesystem_path(foreign).read_bytes()
+
+        physical = agent.publish_agent_index_file(source, logical)
+        record = agent._authoritative_index_record(logical)
+        self.assertIsNotNone(record)
+        _, _, marker = record  # type: ignore[misc]
+        marker_payload = json.loads(_filesystem_path(marker).read_text("ascii"))
+        self.assertEqual(
+            "kgdistiller-index-marker-binding-v1", marker_payload["schema"]
+        )
+
+        _filesystem_path(physical).unlink()
+        os.link(_filesystem_path(foreign), _filesystem_path(physical))
+
+        with self.assertRaisesRegex(AgentIndexError, "replaced generation target"):
+            agent.index_status(logical)
+        self.assertEqual(foreign_before, _filesystem_path(foreign).read_bytes())
+
     def test_cleanup_identity_check_cannot_unlink_foreign_replacement(self) -> None:
         owned = self.root / "cleanup-owned-partial.sqlite"
         foreign = self.root / "cleanup-foreign-owner.sqlite"
@@ -557,17 +578,14 @@ class AgentIndexGenerationContractTest(unittest.TestCase):
         destination = agent._index_generation_path(logical, 1)
 
         def interrupt_after_partial_copy(
-            copy_source: Path, copy_destination: Path
+            input_: object, output: object, length: int = 0
         ) -> None:
-            self.assertEqual(source, copy_source)
-            self.assertEqual(destination, copy_destination)
-            with _filesystem_path(copy_destination).open("xb") as output:
-                output.write(b"partial generation")
-                output.flush()
+            output.write(b"partial generation")  # type: ignore[attr-defined]
+            output.flush()  # type: ignore[attr-defined]
             raise KeyboardInterrupt
 
         with patch.object(
-            agent, "_copy_index_file", side_effect=interrupt_after_partial_copy
+            agent.shutil, "copyfileobj", side_effect=interrupt_after_partial_copy
         ):
             with self.assertRaises(KeyboardInterrupt):
                 agent.publish_agent_index_file(source, logical)
@@ -580,24 +598,27 @@ class AgentIndexGenerationContractTest(unittest.TestCase):
         )
         self.assertEqual([], agent._index_marker_records(logical))
 
-    def test_legacy_maintenance_writer_is_separate_from_public_readers(self) -> None:
-        logical = self._logical_path("compatibility-writer")
+    def test_mutation_clones_generation_and_private_connect_refuses_writes(self) -> None:
+        logical = self._logical_path("copy-on-write-maintenance")
         self._write_index(logical, "old")
-        source = self.root / "compatibility-writer-source.sqlite"
+        source = self.root / "copy-on-write-maintenance-source.sqlite"
         self._write_index(source, "published")
         physical = agent.publish_agent_index_file(source, logical)
+        physical_before = _filesystem_path(physical).read_bytes()
 
-        writer = agent._connect(logical)
-        try:
+        with self.assertRaisesRegex(AgentIndexError, "in-place.*unsupported"):
+            agent._connect(logical)
+
+        with agent._mutable_agent_index(logical) as writer:
             writer.execute(
                 "UPDATE index_meta SET value = ? WHERE key = 'sentinel'",
                 (json.dumps("maintained"),),
             )
             writer.commit()
-        finally:
-            writer.close()
 
-        self.assertEqual(physical, agent.resolve_agent_index_path(logical))
+        self.assertEqual(physical_before, _filesystem_path(physical).read_bytes())
+        self.assertNotEqual(physical, agent.resolve_agent_index_path(logical))
+        self.assertEqual("maintained", agent.index_status(logical)["sentinel"])
         reader = agent._connect(logical, read_only=True)
         try:
             self.assertEqual(
@@ -795,18 +816,27 @@ class AgentIndexGenerationContractTest(unittest.TestCase):
         )
         interrupted = False
 
+        real_copyfileobj = agent.shutil.copyfileobj
+        copy_count = 0
+
         def interrupt_after_partial_copy(
-            copy_source: object, copy_destination: object
+            input_: object, output: object, length: int = 0
         ) -> None:
+            nonlocal copy_count
             nonlocal interrupted
+            copy_count += 1
+            if copy_count == 1:
+                real_copyfileobj(input_, output, length)
+                return
             interrupted = True
-            Path(os.fspath(copy_destination)).write_bytes(b"partial canonical copy")
+            output.write(b"partial canonical copy")  # type: ignore[attr-defined]
+            output.flush()  # type: ignore[attr-defined]
             raise KeyboardInterrupt
 
         try:
             with patch.object(
                 agent.shutil,
-                "copyfile",
+                "copyfileobj",
                 side_effect=interrupt_after_partial_copy,
             ):
                 with self.assertRaises(KeyboardInterrupt):

@@ -483,7 +483,7 @@ Acceptance:
 
 | Slice | Status | Completion evidence |
 | --- | --- | --- |
-| `KB-REPAIR-00` | IN PROGRESS | Windows open reader 会阻塞 SQLite generation swap；修复和重新独立验收中。 |
+| `KB-REPAIR-00` | IN PROGRESS | 本地 Windows 3.13 与 WSL 3.14 全量 178 项通过；Windows 3.9/3.11/3.13 兼容回归、build、distribution/wheel smoke 通过；等待 Linux/Windows/macOS CI。 |
 | `KB-REPAIR-01` | NOT STARTED | 本地 WIP 已保留，但在 `KB-REPAIR-00` 通过前不继续。 |
 | `KB-REPAIR-02` | NOT STARTED | — |
 | `KB-REPAIR-03` | NOT STARTED | — |

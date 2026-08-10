@@ -218,10 +218,10 @@ diagnosing a crash.
 and Python readers resolve its unique newest current marker and open the
 selected generation read-only. Calling raw `sqlite3.connect(configured_path)`
 is not the public current-generation interface and can observe only a legacy
-canonical file after the logical index advances. This slice does not claim
-physical generations are immutable: the legacy internal embedding-maintenance
-writer can still update the selected generation in place until the later
-embedding CAS repair replaces that compatibility route.
+canonical file after the logical index advances. Published physical generations
+are immutable. Internal maintenance clones the selected database, applies the
+bounded mutation to that private copy, and publishes a new bound generation;
+it never updates the file selected by an existing marker in place.
 
 On Windows native and WSL, the logical path has a sibling
 `.knowledge.sqlite.generations/` reader-isolation sidecar. The journal and
