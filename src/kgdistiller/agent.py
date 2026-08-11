@@ -49,7 +49,10 @@ MAX_QUERY_LENGTH = 4096
 MAX_QUERY_TERMS = 64
 MAX_BATCH_CONCEPTS = 512
 MAX_LIMIT = 500
-MAX_GRAPH_DEPTH = 5
+MAX_GRAPH_DEPTH = 8
+MAX_GRAPH_SEEDS = 256
+MAX_SEMANTIC_QUERIES = 32
+MAX_SEMANTIC_QUERY_LENGTH = 2048
 MAX_CONTEXT_BUDGET = 200_000
 CONTEXT_SCHEMA = "qlkg-context-bundle-v1"
 COMPARISON_SCHEMA = "qlkg-graph-comparison-v1"
@@ -75,6 +78,14 @@ _MAX_EMBEDDING_INVENTORY_TEXT_BYTES = 128 * 1024 * 1024
 _MAX_EMBEDDING_INVENTORY_VECTOR_BYTES = 128 * 1024 * 1024
 _MAX_EMBEDDING_INSTALL_RECORDS = 100_000
 _MAX_EMBEDDING_INSTALL_VECTOR_BYTES = 128 * 1024 * 1024
+_MAX_SEMANTIC_VECTOR_RECORDS = 100_000
+_MAX_SEMANTIC_VECTOR_BYTES = 128 * 1024 * 1024
+_MAX_SEMANTIC_SCALAR_OPERATIONS = 64_000_000
+_MAX_SEMANTIC_QUERY_VECTOR_VALUES = 4_000_000
+_MAX_GRAPH_EDGE_SCAN_RECORDS = 100_000
+_MAX_PPR_NODE_RECORDS = 100_000
+_MAX_PPR_TRUSTED_EDGE_RECORDS = 100_000
+_MAX_PPR_SIMILARITY_EDGE_RECORDS = 100_000
 _MAX_EMBEDDING_DIMENSIONS = 1_048_576
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -488,6 +499,47 @@ def resolve_agent_index_path(path: Path) -> Path:
     return resolved
 
 
+def index_generation_token(path: Path) -> str:
+    """Return an opaque, read-only token for the selected immutable generation."""
+    last_error: Exception | None = None
+    for _ in range(3):
+        selection = _authoritative_index_record(path)
+        try:
+            physical_path = _resolved_agent_index_record_path(path, selection)
+            if physical_path is None:
+                raise AgentIndexError(f"Agent index does not exist: {path}")
+            marker_binding = (
+                _read_marker_binding(selection[2]) if selection is not None else None
+            )
+            binding = marker_binding or _index_file_binding(physical_path)
+        except (AgentIndexError, OSError) as error:
+            if _authoritative_index_record(path) != selection:
+                last_error = error
+                continue
+            if isinstance(error, AgentIndexError):
+                raise
+            raise AgentIndexError(
+                f"invalid Agent index generation for logical path: {path}"
+            ) from error
+        if _authoritative_index_record(path) != selection:
+            last_error = AgentIndexError("Agent index generation changed")
+            continue
+        if not _binding_matches_path(physical_path, binding):
+            last_error = AgentIndexError("Agent index generation was replaced")
+            continue
+        counter, kind = (selection[0], selection[1]) if selection else (0, "canonical")
+        return sha256_json(
+            {
+                "counter": counter,
+                "kind": kind,
+                "binding": {"size": binding.size, "sha256": binding.sha256},
+            }
+        )
+    raise AgentIndexError(
+        f"Agent index generation changed before it could be identified: {path}"
+    ) from last_error
+
+
 def agent_index_exists(path: Path) -> bool:
     resolved = _resolved_agent_index_path(path)
     return resolved is not None and _path_is_file(resolved)
@@ -816,6 +868,9 @@ class EmbeddingProvider(Protocol):
     dimensions: int
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        ...
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
         ...
 
 
@@ -1815,17 +1870,26 @@ def resolve_concepts(
     concepts: list[str],
     *,
     namespace: str = "personal",
+    match_limit: int = MAX_LIMIT,
 ) -> list[dict[str, Any]]:
     _validate_namespace(namespace)
     if len(concepts) > MAX_BATCH_CONCEPTS:
         raise AgentIndexError(f"concept batch exceeds {MAX_BATCH_CONCEPTS}")
+    match_limit = _validated_limit(match_limit)
     connection = _connect(path, read_only=True)
     try:
         results: list[dict[str, Any]] = []
         for concept in concepts:
             raw = str(concept).strip()
             if not raw:
-                results.append({"query": str(concept), "status": "missing", "matches": []})
+                results.append(
+                    {
+                        "query": str(concept),
+                        "status": "missing",
+                        "matches": [],
+                        "overflow": False,
+                    }
+                )
                 continue
             direct = _node_by_id(connection, namespace, raw)
             if direct is not None:
@@ -1835,65 +1899,102 @@ def resolve_concepts(
                         "status": "exact",
                         "match_kind": "id",
                         "matches": [direct],
+                        "overflow": False,
                     }
                 )
                 continue
             rows = connection.execute(
                 """
-                SELECT nn.node_id, nn.kind
-                FROM node_names AS nn
-                WHERE nn.namespace = ? AND nn.normalized_name = ?
-                ORDER BY CASE nn.kind WHEN 'label' THEN 0 ELSE 1 END, nn.node_id
+                WITH matched AS (
+                    SELECT nn.node_id,
+                           MIN(CASE nn.kind WHEN 'label' THEN 0 ELSE 1 END)
+                               AS match_priority
+                    FROM node_names AS nn
+                    WHERE nn.namespace = ? AND nn.normalized_name = ?
+                    GROUP BY nn.node_id
+                    ORDER BY match_priority, nn.node_id
+                    LIMIT ?
+                )
+                SELECT n.*, matched.match_priority
+                FROM matched
+                JOIN nodes AS n
+                  ON n.namespace = ? AND n.id = matched.node_id
+                ORDER BY matched.match_priority, matched.node_id
                 """,
-                (namespace, normalize_name(raw)),
+                (namespace, normalize_name(raw), match_limit + 1, namespace),
             ).fetchall()
+            overflow = len(rows) > match_limit
             matches: list[dict[str, Any]] = []
             kinds: dict[str, str] = {}
-            for row in rows:
-                node_id = str(row["node_id"])
-                if node_id in kinds:
-                    continue
-                kinds[node_id] = str(row["kind"])
-                node = _node_by_id(connection, namespace, node_id)
-                if node is not None:
-                    matches.append(node)
+            for row in rows[:match_limit]:
+                node = _node_payload(row)
+                node_id = str(node["id"])
+                kinds[node_id] = "label" if int(row["match_priority"]) == 0 else "alias"
+                matches.append(node)
             if not matches:
                 scoped_rows = connection.execute(
                     """
-                    SELECT node_id, payload
-                    FROM scoped_aliases
-                    WHERE namespace = ? AND normalized_surface = ?
-                    ORDER BY node_id, alias_id
+                    WITH matched AS (
+                        SELECT node_id, MIN(alias_id) AS alias_id
+                        FROM scoped_aliases
+                        WHERE namespace = ? AND normalized_surface = ?
+                        GROUP BY node_id
+                        ORDER BY node_id
+                        LIMIT ?
+                    )
+                    SELECT n.*, sa.payload AS scoped_payload
+                    FROM matched
+                    JOIN scoped_aliases AS sa ON sa.alias_id = matched.alias_id
+                    JOIN nodes AS n
+                      ON n.namespace = ? AND n.id = matched.node_id
+                    ORDER BY matched.node_id
                     """,
-                    (namespace, normalize_surface(raw)),
+                    (
+                        namespace,
+                        normalize_surface(raw),
+                        match_limit + 1,
+                        namespace,
+                    ),
                 ).fetchall()
-                scoped_evidence: dict[str, list[dict[str, Any]]] = {}
-                for row in scoped_rows:
-                    node_id = str(row["node_id"])
-                    scoped_evidence.setdefault(node_id, []).append(json.loads(row["payload"]))
-                for node_id in sorted(scoped_evidence):
-                    node = _node_by_id(connection, namespace, node_id)
-                    if node is not None:
-                        matches.append(node)
+                overflow = len(scoped_rows) > match_limit
+                scoped_evidence: list[dict[str, Any]] = []
+                for row in scoped_rows[:match_limit]:
+                    matches.append(_node_payload(row))
+                    scoped_evidence.append(json.loads(row["scoped_payload"]))
                 if matches:
                     results.append(
                         {
                             "query": raw,
-                            "status": "scoped-alias" if len(matches) == 1 else "ambiguous",
+                            "status": (
+                                "scoped-alias"
+                                if len(matches) == 1 and not overflow
+                                else "ambiguous"
+                            ),
                             "match_kind": "scoped-alias",
                             "matches": matches,
-                            "evidence": [
-                                evidence
-                                for node_id in sorted(scoped_evidence)
-                                for evidence in scoped_evidence[node_id]
-                            ],
+                            "evidence": scoped_evidence,
+                            "overflow": overflow,
                         }
                     )
                     continue
             if not matches:
-                results.append({"query": raw, "status": "missing", "matches": []})
-            elif len(matches) > 1:
-                results.append({"query": raw, "status": "ambiguous", "matches": matches})
+                results.append(
+                    {
+                        "query": raw,
+                        "status": "missing",
+                        "matches": [],
+                        "overflow": False,
+                    }
+                )
+            elif overflow or len(matches) > 1:
+                results.append(
+                    {
+                        "query": raw,
+                        "status": "ambiguous",
+                        "matches": matches,
+                        "overflow": overflow,
+                    }
+                )
             else:
                 kind = kinds[matches[0]["id"]]
                 results.append(
@@ -1902,6 +2003,7 @@ def resolve_concepts(
                         "status": "exact" if kind == "label" else "alias",
                         "match_kind": kind,
                         "matches": matches,
+                        "overflow": False,
                     }
                 )
         return results
@@ -1910,6 +2012,8 @@ def resolve_concepts(
 
 
 def _validated_limit(limit: int) -> int:
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise AgentIndexError(f"limit must be between 1 and {MAX_LIMIT}")
     if limit < 1 or limit > MAX_LIMIT:
         raise AgentIndexError(f"limit must be between 1 and {MAX_LIMIT}")
     return limit
@@ -1995,24 +2099,35 @@ def embedding_input_sha256(node: dict[str, Any]) -> str:
 
 
 def _validate_vector(vector: list[float], dimensions: int) -> list[float]:
-    if len(vector) != dimensions:
+    try:
+        vector_length = len(vector)
+    except Exception:
+        raise AgentIndexError("embedding vector is invalid") from None
+    if not isinstance(vector, list):
+        raise AgentIndexError("embedding vector is invalid")
+    if vector_length != dimensions:
         raise AgentIndexError(
-            f"embedding dimensions mismatch: expected {dimensions}, got {len(vector)}"
+            f"embedding dimensions mismatch: expected {dimensions}, got {vector_length}"
         )
     normalized: list[float] = []
-    for raw_value in vector:
-        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
-            raise AgentIndexError("embedding contains a non-numeric value")
-        conversion_failed = False
-        try:
-            value = float(raw_value)
-            value = struct.unpack("<f", struct.pack("<f", value))[0]
-        except (TypeError, ValueError, OverflowError, struct.error):
-            conversion_failed = True
-            value = 0.0
-        if conversion_failed or not math.isfinite(value):
-            raise AgentIndexError("embedding contains a non-float32 value")
-        normalized.append(value)
+    try:
+        for raw_value in vector:
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                raise AgentIndexError("embedding contains a non-numeric value")
+            conversion_failed = False
+            try:
+                value = float(raw_value)
+                value = struct.unpack("<f", struct.pack("<f", value))[0]
+            except Exception:
+                conversion_failed = True
+                value = 0.0
+            if conversion_failed or not math.isfinite(value):
+                raise AgentIndexError("embedding contains a non-float32 value")
+            normalized.append(value)
+    except AgentIndexError:
+        raise
+    except Exception:
+        raise AgentIndexError("embedding vector is invalid") from None
     if not any(value != 0.0 for value in normalized):
         raise AgentIndexError("embedding vector cannot be all zero")
     return normalized
@@ -2109,6 +2224,7 @@ def embedding_inventory(
                     "active": (
                         status == "active" and provenance.get("active") is not False
                     ),
+                    "provenance_active": provenance.get("active") is not False,
                     "canonical_text": canonical_text,
                     "content_sha256": embedding_input_sha256(node),
                 }
@@ -2746,6 +2862,291 @@ def index_embeddings(
         }
 
 
+def _validated_semantic_queries(queries: list[str]) -> list[str]:
+    if (
+        not isinstance(queries, list)
+        or not queries
+        or len(queries) > MAX_SEMANTIC_QUERIES
+    ):
+        raise AgentIndexError(
+            f"semantic query batch must contain 1 to {MAX_SEMANTIC_QUERIES} queries"
+        )
+    validated: list[str] = []
+    for query in queries:
+        if type(query) is not str or not query.strip():
+            raise AgentIndexError("semantic query must be a non-empty string")
+        if len(query) > MAX_SEMANTIC_QUERY_LENGTH:
+            raise AgentIndexError(
+                f"semantic query exceeds {MAX_SEMANTIC_QUERY_LENGTH} characters"
+            )
+        try:
+            query.encode("utf-8")
+        except UnicodeEncodeError:
+            raise AgentIndexError("semantic query is not valid UTF-8") from None
+        validated.append(query)
+    return validated
+
+
+def _semantic_provider_identity(
+    provider: EmbeddingProvider,
+) -> tuple[str, str, int, str]:
+    metadata_failed = False
+    try:
+        raw_name = getattr(provider, "name")
+        raw_model = getattr(provider, "model")
+        raw_dimensions = getattr(provider, "dimensions")
+        if (
+            type(raw_name) is not str
+            or type(raw_model) is not str
+            or not raw_name.strip()
+            or not raw_model.strip()
+            or type(raw_dimensions) is not int
+        ):
+            raise AgentIndexError("embedding provider metadata is incomplete")
+        provider_name = raw_name.strip()
+        model = raw_model.strip()
+        dimensions = raw_dimensions
+        if dimensions < 1 or dimensions > _MAX_EMBEDDING_DIMENSIONS:
+            raise AgentIndexError("embedding provider metadata is incomplete")
+        configured = getattr(provider, "provider_config_sha256", None)
+        if configured is None:
+            config_digest = _legacy_provider_config_sha256(
+                provider_name, model, dimensions
+            )
+        elif type(configured) is not str or not _SHA256_RE.fullmatch(configured):
+            raise AgentIndexError("embedding provider config digest is invalid")
+        else:
+            config_digest = configured
+    except AgentIndexError:
+        raise
+    except Exception:
+        metadata_failed = True
+    if metadata_failed:
+        raise AgentIndexError("embedding provider metadata is incomplete")
+    return provider_name, model, dimensions, config_digest
+
+
+def _semantic_ready_vectors(
+    path: Path,
+    *,
+    namespace: str,
+    provider_name: str,
+    model: str,
+    dimensions: int,
+    config_digest: str,
+    allowed_types: set[str],
+    include_stale: bool,
+    include_orphaned: bool,
+) -> list[tuple[dict[str, Any], list[float], float]]:
+    connection = _connect(path, read_only=True)
+    try:
+        invalid_index = False
+        try:
+            columns, primary_key = _embedding_table_layout(connection)
+            legacy = columns == _LEGACY_EMBEDDING_COLUMNS and primary_key == (
+                "namespace",
+                "node_id",
+                "provider",
+                "model",
+            )
+            current = (
+                columns == _EMBEDDING_COLUMNS and primary_key == _EMBEDDING_PRIMARY_KEY
+            )
+            if not legacy and not current:
+                raise AgentIndexError("unsupported Agent embedding table layout")
+            if legacy and config_digest != _legacy_provider_config_sha256(
+                provider_name, model, dimensions
+            ):
+                return []
+            criteria = [
+                "e.namespace = ?",
+                "e.provider = ?",
+                "e.model = ?",
+                "e.dimensions = ?",
+            ]
+            parameters: list[Any] = [
+                namespace,
+                provider_name,
+                model,
+                dimensions,
+            ]
+            if current:
+                criteria.extend(
+                    [
+                        "e.embedding_input_schema = ?",
+                        "e.provider_config_sha256 = ?",
+                    ]
+                )
+                parameters.extend([EMBEDDING_INPUT_SCHEMA, config_digest])
+            where = " AND ".join(criteria)
+            record_count, vector_bytes = connection.execute(
+                f"""
+                SELECT count(*), coalesce(sum(length(e.vector)), 0)
+                FROM embeddings AS e
+                WHERE {where}
+                """,
+                parameters,
+            ).fetchone()
+            if int(record_count) > _MAX_SEMANTIC_VECTOR_RECORDS:
+                raise AgentIndexError("semantic vector space exceeds the record limit")
+            if int(vector_bytes) > _MAX_SEMANTIC_VECTOR_BYTES:
+                raise AgentIndexError("semantic vector space exceeds the byte budget")
+            rows = connection.execute(
+                f"""
+                SELECT e.content_sha256 AS embedding_content_sha256,
+                       e.vector AS embedding_vector, n.*
+                FROM embeddings AS e
+                JOIN nodes AS n
+                  ON n.namespace = e.namespace AND n.id = e.node_id
+                WHERE {where} AND length(e.vector) = ?
+                ORDER BY e.node_id
+                """,
+                [*parameters, dimensions * 4],
+            )
+            ready: list[tuple[dict[str, Any], list[float], float]] = []
+            for row in rows:
+                node = _node_payload(row)
+                if allowed_types and node.get("type") not in allowed_types:
+                    continue
+                if not _node_allowed(
+                    node,
+                    include_stale=include_stale,
+                    include_orphaned=include_orphaned,
+                ):
+                    continue
+                if embedding_input_sha256(node) != str(row["embedding_content_sha256"]):
+                    continue
+                payload = bytes(row["embedding_vector"])
+                if not _record_vector_is_valid(payload, dimensions):
+                    continue
+                vector = _unpack_vector(payload, dimensions)
+                norm = math.sqrt(sum(value * value for value in vector))
+                ready.append((node, vector, norm))
+            return ready
+        except AgentIndexError:
+            raise
+        except Exception:
+            invalid_index = True
+        if invalid_index:
+            raise AgentIndexError("Agent semantic index is invalid")
+    finally:
+        connection.close()
+
+
+def semantic_search_batch(
+    path: Path,
+    queries: list[str],
+    provider: EmbeddingProvider,
+    *,
+    namespace: str = "personal",
+    node_types: list[str] | None = None,
+    include_stale: bool = False,
+    include_orphaned: bool = False,
+    limit: int = 20,
+) -> list[list[dict[str, Any]]]:
+    """Retrieve many semantic queries with one query-only provider request."""
+    validated_queries = _validated_semantic_queries(queries)
+    limit = _validated_limit(limit)
+    _validate_namespace(namespace)
+    if node_types is not None and (
+        not isinstance(node_types, list)
+        or len(node_types) > 16
+        or any(type(node_type) is not str or not node_type for node_type in node_types)
+    ):
+        raise AgentIndexError("semantic node type filter is invalid")
+    allowed_types = set(node_types or [])
+    provider_name, model, dimensions, config_digest = _semantic_provider_identity(
+        provider
+    )
+    ready = _semantic_ready_vectors(
+        path,
+        namespace=namespace,
+        provider_name=provider_name,
+        model=model,
+        dimensions=dimensions,
+        config_digest=config_digest,
+        allowed_types=allowed_types,
+        include_stale=include_stale,
+        include_orphaned=include_orphaned,
+    )
+
+    # Never spend a provider call when no current document vector can contribute.
+    if not ready:
+        return [[] for _ in validated_queries]
+    scalar_operations = dimensions * len(ready) * len(validated_queries)
+    if scalar_operations > _MAX_SEMANTIC_SCALAR_OPERATIONS:
+        raise AgentIndexError("semantic similarity work budget exceeded")
+    if dimensions * len(validated_queries) > _MAX_SEMANTIC_QUERY_VECTOR_VALUES:
+        raise AgentIndexError("semantic query vector budget exceeded")
+    provider_lookup_failed = False
+    try:
+        query_embedder = getattr(provider, "embed_queries")
+    except Exception:
+        provider_lookup_failed = True
+        query_embedder = None
+    if provider_lookup_failed or not callable(query_embedder):
+        raise AgentIndexError("query embedding provider is unavailable")
+    provider_call_failed = False
+    try:
+        raw_query_vectors = query_embedder(list(validated_queries))
+    except Exception:
+        provider_call_failed = True
+        raw_query_vectors = None
+    if provider_call_failed:
+        raise AgentIndexError("query embedding provider failed")
+    invalid_response = False
+    try:
+        if not isinstance(raw_query_vectors, list) or len(raw_query_vectors) != len(
+            validated_queries
+        ):
+            raise AgentIndexError("query embedding provider response is invalid")
+        query_vectors = [
+            _validate_vector(vector, dimensions) for vector in raw_query_vectors
+        ]
+    except Exception:
+        invalid_response = True
+        query_vectors = []
+    if invalid_response:
+        raise AgentIndexError("query embedding provider response is invalid")
+
+    batches: list[list[dict[str, Any]]] = []
+    for query_vector in query_vectors:
+        query_norm = math.sqrt(sum(value * value for value in query_vector))
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for node, vector, vector_norm in ready:
+            score = sum(left * right for left, right in zip(query_vector, vector)) / (
+                query_norm * vector_norm
+            )
+            scored.append((score, node))
+        scored.sort(
+            key=lambda item: (
+                -item[0],
+                str(item[1].get("label", "")),
+                str(item[1]["id"]),
+            )
+        )
+        batches.append(
+            [
+                {
+                    "rank": rank,
+                    "node": node,
+                    "reasons": [
+                        {
+                            "method": "semantic",
+                            "rank": rank,
+                            "score": round(score, 12),
+                            "provider": provider_name,
+                            "model": model,
+                            "identity_authority": False,
+                        }
+                    ],
+                }
+                for rank, (score, node) in enumerate(scored[:limit], start=1)
+            ]
+        )
+    return batches
+
+
 def semantic_search(
     path: Path,
     query: str,
@@ -2753,150 +3154,21 @@ def semantic_search(
     *,
     namespace: str = "personal",
     node_types: list[str] | None = None,
+    include_stale: bool = False,
+    include_orphaned: bool = False,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Retrieve semantic candidates; scores are evidence, never identity decisions."""
-    limit = _validated_limit(limit)
-    if not str(query).strip():
-        raise AgentIndexError("semantic query cannot be empty")
-    _validate_namespace(namespace)
-    provider_name = str(getattr(provider, "name", "")).strip()
-    model = str(getattr(provider, "model", "")).strip()
-    raw_dimensions = getattr(provider, "dimensions", 0)
-    if isinstance(raw_dimensions, bool):
-        raise AgentIndexError("embedding provider metadata is incomplete")
-    try:
-        dimensions = int(raw_dimensions)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise AgentIndexError("embedding provider metadata is incomplete") from error
-    if (
-        not provider_name
-        or not model
-        or dimensions < 1
-        or dimensions > _MAX_EMBEDDING_DIMENSIONS
-    ):
-        raise AgentIndexError("embedding provider metadata is incomplete")
-    config_digest = _embedding_provider_config_sha256(
-        provider, provider_name, model, dimensions
-    )
-    allowed_types = set(node_types or [])
-    connection = _connect(path, read_only=True)
-    try:
-        columns, primary_key = _embedding_table_layout(connection)
-        legacy = columns == _LEGACY_EMBEDDING_COLUMNS and primary_key == (
-            "namespace",
-            "node_id",
-            "provider",
-            "model",
-        )
-        current = (
-            columns == _EMBEDDING_COLUMNS
-            and primary_key == _EMBEDDING_PRIMARY_KEY
-        )
-        if not legacy and not current:
-            raise AgentIndexError("unsupported Agent embedding table layout")
-        if legacy and config_digest != _legacy_provider_config_sha256(
-            provider_name, model, dimensions
-        ):
-            rows: list[sqlite3.Row] = []
-        elif current:
-            rows = connection.execute(
-                """
-                SELECT e.content_sha256 AS embedding_content_sha256,
-                       e.vector AS embedding_vector, n.*
-                FROM embeddings AS e
-                JOIN nodes AS n
-                  ON n.namespace = e.namespace AND n.id = e.node_id
-                WHERE e.namespace = ? AND e.provider = ? AND e.model = ?
-                  AND e.dimensions = ? AND e.embedding_input_schema = ?
-                  AND e.provider_config_sha256 = ?
-                ORDER BY e.node_id
-                """,
-                (
-                    namespace,
-                    provider_name,
-                    model,
-                    dimensions,
-                    EMBEDDING_INPUT_SCHEMA,
-                    config_digest,
-                ),
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                """
-                SELECT e.content_sha256 AS embedding_content_sha256,
-                       e.vector AS embedding_vector, n.*
-                FROM embeddings AS e
-                JOIN nodes AS n
-                  ON n.namespace = e.namespace AND n.id = e.node_id
-                WHERE e.namespace = ? AND e.provider = ? AND e.model = ?
-                  AND e.dimensions = ?
-                ORDER BY e.node_id
-                """,
-                (namespace, provider_name, model, dimensions),
-            ).fetchall()
-        ready: list[tuple[dict[str, Any], list[float]]] = []
-        for row in rows:
-            node = _node_payload(row)
-            if allowed_types and node.get("type") not in allowed_types:
-                continue
-            properties = node.get("properties") or {}
-            provenance = node.get("provenance") or {}
-            if (
-                properties.get("curation_status") == "needs-review"
-                or properties.get("source_status") == "orphaned"
-                or provenance.get("active") is False
-            ):
-                continue
-            if embedding_input_sha256(node) != str(row["embedding_content_sha256"]):
-                continue
-            payload = bytes(row["embedding_vector"])
-            if not _record_vector_is_valid(payload, dimensions):
-                continue
-            ready.append((node, _unpack_vector(payload, dimensions)))
-    finally:
-        connection.close()
-
-    # A query provider must not be called when the selected vector space has no
-    # current, valid document rows.
-    if not ready:
-        return []
-    query_embedder = getattr(provider, "embed_query", None)
-    if callable(query_embedder):
-        query_vector = _validate_vector(query_embedder(str(query)), dimensions)
-    else:
-        query_vectors = provider.embed([str(query)])
-        if len(query_vectors) != 1:
-            raise AgentIndexError("embedding provider returned the wrong query vector count")
-        query_vector = _validate_vector(query_vectors[0], dimensions)
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for node, vector in ready:
-        score = _cosine(query_vector, vector)
-        scored.append((score, node))
-    scored.sort(
-        key=lambda item: (
-            -item[0],
-            str(item[1].get("label", "")),
-            str(item[1]["id"]),
-        )
-    )
-    return [
-        {
-            "rank": rank,
-            "node": node,
-            "reasons": [
-                {
-                    "method": "semantic",
-                    "rank": rank,
-                    "score": round(score, 12),
-                    "provider": provider_name,
-                    "model": model,
-                    "identity_authority": False,
-                }
-            ],
-        }
-        for rank, (score, node) in enumerate(scored[:limit], start=1)
-    ]
+    """Retrieve one semantic query through the query-only batch interface."""
+    return semantic_search_batch(
+        path,
+        [query],
+        provider,
+        namespace=namespace,
+        node_types=node_types,
+        include_stale=include_stale,
+        include_orphaned=include_orphaned,
+        limit=limit,
+    )[0]
 
 
 def _edge_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -2914,6 +3186,9 @@ def _node_allowed(
     include_orphaned: bool,
 ) -> bool:
     properties = node.get("properties") or {}
+    provenance = node.get("provenance") or {}
+    if provenance.get("active") is False:
+        return False
     if not include_stale and properties.get("curation_status") == "needs-review":
         return False
     if not include_orphaned and properties.get("source_status") == "orphaned":
@@ -2988,11 +3263,25 @@ def _validate_traversal(
     max_depth: int,
     limit: int,
 ) -> int:
-    if direction not in {"incoming", "outgoing", "both"}:
-        raise AgentIndexError(f"invalid graph direction: {direction!r}")
+    _normalize_graph_direction(direction)
+    if isinstance(max_depth, bool) or not isinstance(max_depth, int):
+        raise AgentIndexError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH}")
     if max_depth < 0 or max_depth > MAX_GRAPH_DEPTH:
         raise AgentIndexError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH}")
     return _validated_limit(limit)
+
+
+def _normalize_graph_direction(direction: str) -> str:
+    mapping = {
+        "out": "outgoing",
+        "in": "incoming",
+        "both": "both",
+        "outgoing": "outgoing",
+        "incoming": "incoming",
+    }
+    if type(direction) is not str or direction not in mapping:
+        raise AgentIndexError("invalid graph direction")
+    return mapping[direction]
 
 
 def _neighbor_rows(
@@ -3000,40 +3289,48 @@ def _neighbor_rows(
     namespace: str,
     node_id: str,
     direction: str,
-) -> list[tuple[sqlite3.Row, str, str]]:
+    scan_budget: int,
+) -> tuple[list[tuple[sqlite3.Row, str, str]], int]:
     rows: list[tuple[sqlite3.Row, str, str]] = []
     if direction in {"outgoing", "both"}:
-        rows.extend(
-            (row, str(row["target"]), "outgoing")
-            for row in connection.execute(
-                """
-                SELECT * FROM edges
-                WHERE namespace = ? AND source = ?
-                ORDER BY relation, target, edge_id
-                """,
-                (namespace, node_id),
-            )
-        )
+        remaining = scan_budget - len(rows)
+        for row in connection.execute(
+            """
+            SELECT * FROM edges
+            WHERE namespace = ? AND source = ?
+            ORDER BY relation, target, edge_id
+            LIMIT ?
+            """,
+            (namespace, node_id, remaining + 1),
+        ):
+            rows.append((row, str(row["target"]), "outgoing"))
+            if len(rows) > scan_budget:
+                raise AgentIndexError("graph edge scan budget exceeded")
     if direction in {"incoming", "both"}:
-        rows.extend(
-            (row, str(row["source"]), "incoming")
-            for row in connection.execute(
-                """
-                SELECT * FROM edges
-                WHERE namespace = ? AND target = ?
-                ORDER BY relation, source, edge_id
-                """,
-                (namespace, node_id),
-            )
-        )
-    return sorted(
-        rows,
-        key=lambda item: (
-            str(item[0]["relation"]),
-            item[1],
-            item[2],
-            str(item[0]["edge_id"]),
+        remaining = scan_budget - len(rows)
+        for row in connection.execute(
+            """
+            SELECT * FROM edges
+            WHERE namespace = ? AND target = ?
+            ORDER BY relation, source, edge_id
+            LIMIT ?
+            """,
+            (namespace, node_id, remaining + 1),
+        ):
+            rows.append((row, str(row["source"]), "incoming"))
+            if len(rows) > scan_budget:
+                raise AgentIndexError("graph edge scan budget exceeded")
+    return (
+        sorted(
+            rows,
+            key=lambda item: (
+                str(item[0]["relation"]),
+                item[1],
+                item[2],
+                str(item[0]["edge_id"]),
+            ),
         ),
+        len(rows),
     )
 
 
@@ -3053,16 +3350,34 @@ def expand_index(
     """Traverse a bounded, typed neighborhood with deterministic paths."""
     _validate_namespace(namespace)
     limit = _validate_traversal(direction=direction, max_depth=max_depth, limit=limit)
-    seeds = list(dict.fromkeys(str(seed).strip() for seed in seed_ids if str(seed).strip()))
+    normalized_direction = _normalize_graph_direction(direction)
+    if not isinstance(seed_ids, list) or len(seed_ids) > MAX_GRAPH_SEEDS:
+        raise AgentIndexError(f"graph seed batch exceeds {MAX_GRAPH_SEEDS}")
+    seeds: list[str] = []
+    for seed in seed_ids:
+        if type(seed) is not str or not seed.strip() or len(seed) > 256:
+            raise AgentIndexError("graph seed is invalid")
+        normalized_seed = seed.strip()
+        if normalized_seed not in seeds:
+            seeds.append(normalized_seed)
     if not seeds:
         raise AgentIndexError("at least one graph seed is required")
-    if len(seeds) > 128:
-        raise AgentIndexError("graph seed batch exceeds 128")
-    relations = set(edge_types or DEFAULT_SEMANTIC_RELATIONS)
-    if include_taxonomy:
-        relations.add("contains")
+    if len(seeds) > limit:
+        raise AgentIndexError("graph seed batch exceeds the result limit")
+    if edge_types is None:
+        relations = set(DEFAULT_SEMANTIC_RELATIONS)
+        if include_taxonomy:
+            relations.add("contains")
     else:
-        relations.discard("contains")
+        if (
+            not isinstance(edge_types, list)
+            or len(edge_types) > 16
+            or any(
+                type(edge_type) is not str or not edge_type for edge_type in edge_types
+            )
+        ):
+            raise AgentIndexError("graph edge type filter is invalid")
+        relations = set(edge_types)
 
     connection = _connect(path, read_only=True)
     try:
@@ -3071,6 +3386,14 @@ def expand_index(
             node = _node_by_id(connection, namespace, seed)
             if node is None:
                 raise AgentIndexError(f"unknown graph seed: {namespace}:{seed}")
+            if not _node_allowed(
+                node,
+                include_stale=include_stale,
+                include_orphaned=include_orphaned,
+            ):
+                raise AgentIndexError(
+                    f"graph seed is excluded by filters: {namespace}:{seed}"
+                )
             seed_nodes[seed] = node
 
         queue: deque[tuple[str, int, list[dict[str, Any]]]] = deque(
@@ -3080,13 +3403,20 @@ def expand_index(
             seed: (0, []) for seed in seeds
         }
         traversed_edges: dict[str, dict[str, Any]] = {}
-        while queue and len(visited) < limit:
+        scanned_edges = 0
+        while queue and len(visited) < limit and relations:
             current, depth, path_steps = queue.popleft()
             if depth >= max_depth:
                 continue
-            for row, neighbor_id, edge_direction in _neighbor_rows(
-                connection, namespace, current, direction
-            ):
+            neighbor_rows, scanned = _neighbor_rows(
+                connection,
+                namespace,
+                current,
+                normalized_direction,
+                _MAX_GRAPH_EDGE_SCAN_RECORDS - scanned_edges,
+            )
+            scanned_edges += scanned
+            for row, neighbor_id, edge_direction in neighbor_rows:
                 relation = str(row["relation"])
                 if relation not in relations:
                     continue
@@ -3118,7 +3448,9 @@ def expand_index(
 
         records: list[dict[str, Any]] = []
         for node_id, (depth, traversal_path) in visited.items():
-            node = seed_nodes.get(node_id) or _node_by_id(connection, namespace, node_id)
+            node = seed_nodes.get(node_id) or _node_by_id(
+                connection, namespace, node_id
+            )
             if node is None:
                 continue
             records.append(
@@ -3155,6 +3487,18 @@ def expand_index(
         connection.close()
 
 
+def _bounded_ppr_rows(
+    rows: Iterable[sqlite3.Row],
+    *,
+    limit: int,
+    failure: str,
+) -> Iterator[sqlite3.Row]:
+    for index, row in enumerate(rows):
+        if index >= limit:
+            raise AgentIndexError(failure)
+        yield row
+
+
 def personalized_pagerank(
     path: Path,
     seeds: dict[str, float],
@@ -3181,27 +3525,48 @@ def personalized_pagerank(
         raise AgentIndexError("PPR max_iterations must be between 1 and 1000")
     if tolerance <= 0.0:
         raise AgentIndexError("PPR tolerance must be positive")
-    relations = set(edge_types or DEFAULT_SEMANTIC_RELATIONS)
-    if include_taxonomy:
-        relations.add("contains")
+    if edge_types is None:
+        relations = set(DEFAULT_SEMANTIC_RELATIONS)
+        if include_taxonomy:
+            relations.add("contains")
     else:
-        relations.discard("contains")
+        relations = set(edge_types)
     allowed_types = set(node_types or [])
+    bounded_scope = _candidate_ids is not None
     bounded_ids = sorted(set(_candidate_ids or []))
+    if bounded_scope and not bounded_ids:
+        raise AgentIndexError("PPR candidate scope cannot be empty")
+    if len(bounded_ids) > MAX_LIMIT:
+        raise AgentIndexError(f"PPR candidate scope exceeds {MAX_LIMIT}")
     connection = _connect(path, read_only=True)
     try:
         nodes: dict[str, dict[str, Any]] = {}
-        if bounded_ids:
+        if bounded_scope:
             placeholders = ",".join("?" for _ in bounded_ids)
             node_rows = connection.execute(
-                f"SELECT * FROM nodes WHERE namespace = ? AND id IN ({placeholders}) ORDER BY id",
-                [namespace, *bounded_ids],
+                f"""
+                SELECT * FROM nodes
+                WHERE namespace = ? AND id IN ({placeholders})
+                ORDER BY id
+                LIMIT ?
+                """,
+                [namespace, *bounded_ids, _MAX_PPR_NODE_RECORDS + 1],
             )
         else:
             node_rows = connection.execute(
-                "SELECT * FROM nodes WHERE namespace = ? ORDER BY id", (namespace,)
+                """
+                SELECT * FROM nodes
+                WHERE namespace = ?
+                ORDER BY id
+                LIMIT ?
+                """,
+                (namespace, _MAX_PPR_NODE_RECORDS + 1),
             )
-        for row in node_rows:
+        for row in _bounded_ppr_rows(
+            node_rows,
+            limit=_MAX_PPR_NODE_RECORDS,
+            failure="PPR node scan budget exceeded",
+        ):
             node = _node_payload(row)
             if allowed_types and node.get("type") not in allowed_types:
                 continue
@@ -3215,7 +3580,9 @@ def personalized_pagerank(
         positive_seeds = {
             str(node_id): float(weight)
             for node_id, weight in seeds.items()
-            if str(node_id) in nodes and math.isfinite(float(weight)) and float(weight) > 0.0
+            if str(node_id) in nodes
+            and math.isfinite(float(weight))
+            and float(weight) > 0.0
         }
         if not positive_seeds:
             raise AgentIndexError("PPR requires at least one positive indexed seed")
@@ -3233,23 +3600,42 @@ def personalized_pagerank(
             "contains": 0.3,
         }
         trusted_edge_count = 0
-        if bounded_ids:
-            placeholders = ",".join("?" for _ in bounded_ids)
+        edge_rows: Iterable[sqlite3.Row]
+        if not relations:
+            edge_rows = ()
+        elif bounded_scope:
+            candidate_values = ",".join("(?)" for _ in bounded_ids)
             edge_rows = connection.execute(
                 f"""
-                SELECT * FROM edges
-                WHERE namespace = ?
-                  AND source IN ({placeholders})
-                  AND target IN ({placeholders})
-                ORDER BY edge_id
+                WITH candidate_ids(id) AS (VALUES {candidate_values})
+                SELECT e.* FROM edges AS e
+                JOIN candidate_ids AS source_scope ON source_scope.id = e.source
+                JOIN candidate_ids AS target_scope ON target_scope.id = e.target
+                WHERE e.namespace = ?
+                ORDER BY e.edge_id
+                LIMIT ?
                 """,
-                [namespace, *bounded_ids, *bounded_ids],
+                [
+                    *bounded_ids,
+                    namespace,
+                    _MAX_PPR_TRUSTED_EDGE_RECORDS + 1,
+                ],
             )
         else:
             edge_rows = connection.execute(
-                "SELECT * FROM edges WHERE namespace = ? ORDER BY edge_id", (namespace,)
+                """
+                SELECT * FROM edges
+                WHERE namespace = ?
+                ORDER BY edge_id
+                LIMIT ?
+                """,
+                (namespace, _MAX_PPR_TRUSTED_EDGE_RECORDS + 1),
             )
-        for row in edge_rows:
+        for row in _bounded_ppr_rows(
+            edge_rows,
+            limit=_MAX_PPR_TRUSTED_EDGE_RECORDS,
+            failure="PPR trusted edge scan budget exceeded",
+        ):
             relation = str(row["relation"])
             source = str(row["source"])
             target = str(row["target"])
@@ -3264,27 +3650,39 @@ def personalized_pagerank(
             trusted_edge_count += 1
         similarity_edge_count = 0
         if include_similarity:
-            if bounded_ids:
-                placeholders = ",".join("?" for _ in bounded_ids)
+            if bounded_scope:
+                candidate_values = ",".join("(?)" for _ in bounded_ids)
                 similarity_rows = connection.execute(
                     f"""
-                    SELECT source, target, score FROM similarity_edges
-                    WHERE namespace = ?
-                      AND source IN ({placeholders})
-                      AND target IN ({placeholders})
-                    ORDER BY source, score DESC, target
+                    WITH candidate_ids(id) AS (VALUES {candidate_values})
+                    SELECT e.source, e.target, e.score
+                    FROM similarity_edges AS e
+                    JOIN candidate_ids AS source_scope ON source_scope.id = e.source
+                    JOIN candidate_ids AS target_scope ON target_scope.id = e.target
+                    WHERE e.namespace = ?
+                    ORDER BY e.source, e.score DESC, e.target
+                    LIMIT ?
                     """,
-                    [namespace, *bounded_ids, *bounded_ids],
+                    [
+                        *bounded_ids,
+                        namespace,
+                        _MAX_PPR_SIMILARITY_EDGE_RECORDS + 1,
+                    ],
                 )
             else:
                 similarity_rows = connection.execute(
                     """
                     SELECT source, target, score FROM similarity_edges
                     WHERE namespace = ? ORDER BY source, score DESC, target
+                    LIMIT ?
                     """,
-                    (namespace,),
+                    (namespace, _MAX_PPR_SIMILARITY_EDGE_RECORDS + 1),
                 )
-            for row in similarity_rows:
+            for row in _bounded_ppr_rows(
+                similarity_rows,
+                limit=_MAX_PPR_SIMILARITY_EDGE_RECORDS,
+                failure="PPR similarity edge scan budget exceeded",
+            ):
                 source = str(row["source"])
                 target = str(row["target"])
                 if source not in nodes or target not in nodes:
@@ -3329,7 +3727,11 @@ def personalized_pagerank(
             "schema": PPR_SCHEMA,
             "namespace": namespace,
             "seeds": [
-                {"id": node_id, "weight": positive_seeds[node_id], "reset": reset[node_id]}
+                {
+                    "id": node_id,
+                    "weight": positive_seeds[node_id],
+                    "reset": reset[node_id],
+                }
                 for node_id in sorted(positive_seeds)
             ],
             "policy": {
@@ -3338,7 +3740,7 @@ def personalized_pagerank(
                 "tolerance": tolerance,
                 "edge_types": sorted(relations),
                 "include_similarity": include_similarity,
-                "scope": "bounded-neighborhood" if bounded_ids else "namespace",
+                "scope": "bounded-neighborhood" if bounded_scope else "namespace",
                 "scope_nodes": len(nodes),
                 "trusted_edges": trusted_edge_count,
                 "similarity_edges": similarity_edge_count,

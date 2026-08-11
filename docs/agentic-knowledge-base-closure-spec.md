@@ -219,6 +219,38 @@ generation 只承诺可由之前的 Git revision 恢复，不得谎称当前工�
 公开 `kg_search`、`agent search` 和 `agent context` 必须接受该计划。原有
 单 `query` 输入继续兼容，并明确返回 `plan_mode: legacy`。
 
+公开 search execution 使用不可变的 `qlkg-search-execution-v1` 信封承载调用模式、
+identity resolution 和同一次只读 generation 的证据；其 `result` 必须再单独通过
+`qlkg-search-result-v2` 验证。这样不向已经分发的 v2 增加字段，也不改变它的既有
+语义：
+
+```json
+{
+  "schema": "qlkg-search-execution-v1",
+  "plan_mode": "planned",
+  "namespace": "personal",
+  "snapshot_sha256": "...",
+  "graph_sha256": "...",
+  "identity_resolutions": [
+    {
+      "query_index": 0,
+      "status": "ambiguous",
+      "match_kind": null,
+      "candidate_ids": ["first-sense", "second-sense"],
+      "overflow": false,
+      "identity_authority": true
+    }
+  ],
+  "result": {"schema": "qlkg-search-result-v2"}
+}
+```
+
+`snapshot_sha256` 和 `graph_sha256` 锚定逻辑内容，不暴露物理路径或本地 generation
+token。`identity_resolutions` 最多 32 项，每项最多保留 500 个 candidate ID；超过时
+必须确定性截断并设置 `overflow: true`。`identity_authority: true` 表示证据来自
+确定性 identity lane，不表示 ambiguous candidate 已被选成唯一身份；semantic
+evidence 仍不能改变该集合或状态。
+
 搜索结果升级为新的 versioned response，并至少包含：
 
 ```json

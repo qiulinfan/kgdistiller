@@ -42,6 +42,13 @@ a new schema version.
 - Version portable embedding bundle/record v2 so the normalized non-secret
   provider configuration digest round-trips exactly while v1 remains strictly
   readable under its original four-key, recomputable-digest contract.
+- Execute bounded `qlkg-retrieval-plan-v1` inputs through public Python, CLI,
+  and read-only MCP surfaces, returning a versioned execution envelope with
+  conservative identity evidence, explicit lane degradation, deterministic
+  hybrid fusion, one query-only semantic batch, and generation-consistent
+  context packing without implicit index or document writes.
+- Add reproducible 1k/10k/100k exact semantic-vector benchmarks and document
+  the record, byte, query-vector, and dot-product work boundaries.
 - Document local deployment, backup/restore, compatibility, migration, and
   public release order, including a measured 100,000-node baseline.
 

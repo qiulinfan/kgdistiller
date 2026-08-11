@@ -188,6 +188,51 @@ is implemented, `store snapshot` and `store verify` must not be described as
 RAG-ready merely because they succeeded; inspect embedding coverage
 separately.
 
+## Planned hybrid retrieval
+
+Search and context accept either one compatible legacy query or one bounded
+`qlkg-retrieval-plan-v1` JSON file:
+
+```sh
+kgdistiller --repo-root . agent search "measure space" --limit 20
+kgdistiller --repo-root . agent search \
+  --plan knowledge/build/measure-space.plan.json
+kgdistiller --repo-root . agent context \
+  --plan knowledge/build/measure-space.plan.json --budget 6000
+```
+
+The plan is authoritative for namespace, identity/lexical/semantic
+expressions, explicit graph seeds and edge types, filters, depth, strategy, and
+limit. Planned mode rejects legacy retrieval flags rather than silently
+overriding the plan. Legacy questions remain accepted through 4096 characters;
+the adapter preserves the full question for context and deterministically
+bounds each lane expression to the plan's 2048-character limit.
+
+Search returns `qlkg-search-execution-v1`, including `plan_mode`, immutable
+snapshot/graph digests, bounded identity resolutions, and a separately
+validated `qlkg-search-result-v2`. Every lane exposes status, result count, and
+a stable degradation reason. All semantic expressions share one query-only
+batch and only scan current materialized vectors. They never trigger document
+embedding or synchronization. Exact identities take precedence over score
+fusion; unresolved ambiguity cannot be collapsed by an automatic retrieval
+lane. Partial vector coverage remains usable but reports
+`coverage-insufficient`; vectors bound to a different selected profile report
+`profile-mismatch` before any query-provider call.
+
+Query paths never create or refresh SQLite. A missing index produces
+`index-unavailable`; a graph/index digest mismatch produces `stale-index`; a
+publication during lane execution produces `stale-generation`. In each case
+the graph, index bytes, generation marker, and portable store remain unchanged.
+Run explicit `sync`, `embedding sync`, or verified `store materialize` as the
+appropriate maintenance operation before retrying.
+
+Context packing retains the bounded identity-resolution records. An ambiguous
+candidate group is included atomically; if the token budget cannot contain the
+whole group, the context omits the entire group with
+`ambiguous-group-budget` instead of presenting one candidate as resolved. A
+candidate set truncated at the 500-ID contract boundary is always omitted with
+`ambiguous-group-overflow`, because its unknown tail cannot be packed safely.
+
 ## Local Agent and browser configuration
 
 Configure an Agent with an absolute repository path and stdio MCP:
@@ -206,6 +251,11 @@ Configure an Agent with an absolute repository path and stdio MCP:
 The MCP interface is read-only. Reviewed writes use a bounded ingest request
 and the separate `ingest plan` / `ingest apply` commands. Never put an API key,
 model token, or authority content in MCP settings.
+
+`kg_search` and `kg_build_context` accept exactly one `query` or inline `plan`.
+The server injects the selected provider profile internally; MCP arguments do
+not accept base URLs, credential environment names, tokens, or arbitrary
+provider configuration.
 
 The browser binds to `127.0.0.1` by default:
 

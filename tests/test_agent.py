@@ -26,6 +26,7 @@ from kgdistiller.agent import (  # noqa: E402
     estimate_tokens,
     expand_index,
     get_index_node,
+    index_generation_token,
     index_status,
     index_embeddings,
     install_embedding_records,
@@ -36,6 +37,7 @@ from kgdistiller.agent import (  # noqa: E402
     retrieve_index,
     search_index,
     semantic_search,
+    semantic_search_batch,
     sha256_json,
     write_agent_index,
 )
@@ -289,6 +291,12 @@ class KeywordEmbeddingProvider:
             )
         return vectors
 
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.embed(texts)
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return self.embed(texts)
+
 
 class AgentIndexTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -319,6 +327,23 @@ class AgentIndexTest(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_generation_token_is_read_only_stable_and_tracks_publication(self) -> None:
+        with self.assertRaises(AgentIndexError):
+            index_generation_token(self.database)
+        write_agent_index(self.database, fixture_snapshot())
+        before_path = resolve_agent_index_path(self.database)
+        first = index_generation_token(self.database)
+
+        self.assertEqual(first, index_generation_token(self.database))
+        self.assertEqual(before_path, resolve_agent_index_path(self.database))
+
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        self.assertNotEqual(first, index_generation_token(self.database))
+
     def test_batch_resolution_refuses_ambiguity_and_preserves_aliases(self) -> None:
         write_agent_index(self.database, fixture_snapshot())
 
@@ -333,6 +358,21 @@ class AgentIndexTest(unittest.TestCase):
         self.assertEqual("ambiguous", results[2]["status"])
         self.assertEqual(["alpha", "beta"], [node["id"] for node in results[2]["matches"]])
         self.assertEqual("missing", results[3]["status"])
+
+    def test_resolution_caps_ambiguous_matches_in_sql_and_reports_overflow(
+        self,
+    ) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+
+        result = resolve_concepts(
+            self.database,
+            ["Shared concept"],
+            match_limit=1,
+        )[0]
+
+        self.assertEqual("ambiguous", result["status"])
+        self.assertTrue(result["overflow"])
+        self.assertEqual(["alpha"], [node["id"] for node in result["matches"]])
 
     def test_explicit_abbreviations_are_scoped_and_evidence_backed(self) -> None:
         snapshot = alignment_fixture_snapshot()
@@ -587,7 +627,9 @@ class AgentIndexTest(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_semantic_search_is_read_only_and_skips_provider_without_ready_rows(self) -> None:
+    def test_semantic_search_is_read_only_and_skips_provider_without_ready_rows(
+        self,
+    ) -> None:
         class QueryAwareProvider:
             name = "fixture"
             model = "query-aware"
@@ -602,9 +644,9 @@ class AgentIndexTest(unittest.TestCase):
                 self.document_calls += 1
                 return [[1.0, 1.0, 1.0] for _ in texts]
 
-            def embed_query(self, text: str) -> list[float]:
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
                 self.query_calls += 1
-                return [1.0, 1.0, 1.0]
+                return [[1.0, 1.0, 1.0] for _ in texts]
 
         snapshot = fixture_snapshot()
         write_agent_index(self.database, snapshot)
@@ -636,10 +678,52 @@ class AgentIndexTest(unittest.TestCase):
         )
         self.assertEqual("installed", installed["status"])
         installed_generation = resolve_agent_index_path(self.database)
-        self.assertEqual("alpha", semantic_search(self.database, "query", provider)[0]["node"]["id"])
+        self.assertEqual(
+            "alpha", semantic_search(self.database, "query", provider)[0]["node"]["id"]
+        )
         self.assertEqual(installed_generation, resolve_agent_index_path(self.database))
         self.assertEqual((0, 1), (provider.document_calls, provider.query_calls))
 
+        snapshot["nodes"][0]["properties"]["curation_status"] = "needs-review"
+        snapshot.pop("snapshot_sha256")
+        snapshot["snapshot_sha256"] = sha256_json(snapshot)
+        write_agent_index(self.database, snapshot)
+        stale_inventory = embedding_inventory(self.database)
+        stale_alpha = next(
+            node for node in stale_inventory["nodes"] if node["node_id"] == "alpha"
+        )
+        self.assertFalse(stale_alpha["active"])
+        self.assertTrue(stale_alpha["provenance_active"])
+        self.assertEqual([], semantic_search(self.database, "query", provider))
+        self.assertEqual(
+            "alpha",
+            semantic_search(
+                self.database,
+                "query",
+                provider,
+                include_stale=True,
+            )[0]["node"]["id"],
+        )
+        self.assertEqual((0, 2), (provider.document_calls, provider.query_calls))
+
+        snapshot["nodes"][0]["properties"]["curation_status"] = "current"
+        snapshot["nodes"][0]["properties"]["source_status"] = "orphaned"
+        snapshot.pop("snapshot_sha256")
+        snapshot["snapshot_sha256"] = sha256_json(snapshot)
+        write_agent_index(self.database, snapshot)
+        self.assertEqual([], semantic_search(self.database, "query", provider))
+        self.assertEqual(
+            "alpha",
+            semantic_search(
+                self.database,
+                "query",
+                provider,
+                include_orphaned=True,
+            )[0]["node"]["id"],
+        )
+        self.assertEqual((0, 3), (provider.document_calls, provider.query_calls))
+
+        snapshot["nodes"][0]["properties"]["source_status"] = "active"
         snapshot["nodes"][0]["text"] = "Changed after embedding"
         snapshot.pop("snapshot_sha256")
         snapshot["snapshot_sha256"] = sha256_json(snapshot)
@@ -647,7 +731,7 @@ class AgentIndexTest(unittest.TestCase):
         stale_generation = resolve_agent_index_path(self.database)
         self.assertEqual([], semantic_search(self.database, "query", provider))
         self.assertEqual(stale_generation, resolve_agent_index_path(self.database))
-        self.assertEqual((0, 1), (provider.document_calls, provider.query_calls))
+        self.assertEqual((0, 3), (provider.document_calls, provider.query_calls))
 
         snapshot["nodes"][0]["text"] = fixture_snapshot()["nodes"][0]["text"]
         snapshot["nodes"][0]["provenance"]["active"] = False
@@ -656,8 +740,165 @@ class AgentIndexTest(unittest.TestCase):
         write_agent_index(self.database, snapshot)
         inactive_generation = resolve_agent_index_path(self.database)
         self.assertEqual([], semantic_search(self.database, "query", provider))
+        self.assertEqual(
+            [],
+            semantic_search(
+                self.database,
+                "query",
+                provider,
+                include_stale=True,
+                include_orphaned=True,
+            ),
+        )
         self.assertEqual(inactive_generation, resolve_agent_index_path(self.database))
-        self.assertEqual((0, 1), (provider.document_calls, provider.query_calls))
+        self.assertEqual((0, 3), (provider.document_calls, provider.query_calls))
+
+    def test_semantic_batch_uses_one_query_only_call_and_preserves_query_order(
+        self,
+    ) -> None:
+        class QueryOnlyProvider(KeywordEmbeddingProvider):
+            def __init__(self) -> None:
+                self.query_calls: list[list[str]] = []
+
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                raise AssertionError("document embedding must not run during search")
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                raise AssertionError("document embedding must not run during search")
+
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                self.query_calls.append(list(texts))
+                vectors: list[list[float]] = []
+                for text in texts:
+                    lowered = text.casefold()
+                    vectors.append(
+                        [
+                            1.0 if "countable" in lowered else 0.05,
+                            1.0 if "target" in lowered else 0.05,
+                            0.05,
+                        ]
+                    )
+                return vectors
+
+        write_agent_index(self.database, fixture_snapshot())
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        provider = QueryOnlyProvider()
+        generation = index_generation_token(self.database)
+
+        results = semantic_search_batch(
+            self.database,
+            ["countable closure", "target concept"],
+            provider,
+            limit=2,
+        )
+
+        self.assertEqual(
+            [["countable closure", "target concept"]], provider.query_calls
+        )
+        self.assertEqual("alpha", results[0][0]["node"]["id"])
+        self.assertEqual("beta", results[1][0]["node"]["id"])
+        self.assertEqual(generation, index_generation_token(self.database))
+
+    def test_semantic_provider_failures_are_secret_safe_and_interrupts_propagate(
+        self,
+    ) -> None:
+        secret = "SECRET_QUERY_PROVIDER_SENTINEL"
+
+        class FailingProvider(KeywordEmbeddingProvider):
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                raise RuntimeError(secret)
+
+        class QueryInterrupt(BaseException):
+            pass
+
+        class InterruptingProvider(KeywordEmbeddingProvider):
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                raise QueryInterrupt()
+
+        class MetadataFailingProvider:
+            @property
+            def name(self) -> str:
+                raise RuntimeError(secret)
+
+        write_agent_index(self.database, fixture_snapshot())
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+
+        with self.assertRaises(AgentIndexError) as rejected:
+            semantic_search(self.database, "query", FailingProvider())
+        self.assertEqual("query embedding provider failed", str(rejected.exception))
+        self.assertNotIn(secret, repr(rejected.exception))
+        self.assertIsNone(rejected.exception.__cause__)
+        self.assertIsNone(rejected.exception.__context__)
+        with self.assertRaises(AgentIndexError) as metadata_rejected:
+            semantic_search(self.database, "query", MetadataFailingProvider())
+        self.assertEqual(
+            "embedding provider metadata is incomplete",
+            str(metadata_rejected.exception),
+        )
+        self.assertIsNone(metadata_rejected.exception.__cause__)
+        self.assertIsNone(metadata_rejected.exception.__context__)
+        with self.assertRaises(QueryInterrupt):
+            semantic_search(self.database, "query", InterruptingProvider())
+
+    def test_semantic_batch_rejects_malformed_vectors_and_enforces_scan_caps(
+        self,
+    ) -> None:
+        class MalformedVector(list[float]):
+            def __iter__(self):  # type: ignore[no-untyped-def]
+                raise RuntimeError("SECRET_VECTOR_SENTINEL")
+
+        class MalformedProvider(KeywordEmbeddingProvider):
+            def __init__(self) -> None:
+                self.query_calls = 0
+
+            def embed_queries(self, texts: list[str]) -> list[list[float]]:
+                self.query_calls += 1
+                return [MalformedVector([1.0, 1.0, 1.0]) for _ in texts]
+
+        write_agent_index(self.database, fixture_snapshot())
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        provider = MalformedProvider()
+
+        with self.assertRaises(AgentIndexError) as malformed:
+            semantic_search_batch(self.database, ["query"], provider)
+        self.assertEqual(
+            "query embedding provider response is invalid", str(malformed.exception)
+        )
+        self.assertIsNone(malformed.exception.__context__)
+
+        provider.query_calls = 0
+        with patch.object(agent_module, "_MAX_SEMANTIC_SCALAR_OPERATIONS", 1):
+            with self.assertRaisesRegex(AgentIndexError, "work budget"):
+                semantic_search_batch(self.database, ["query"], provider)
+        self.assertEqual(0, provider.query_calls)
+        with patch.object(agent_module, "_MAX_SEMANTIC_QUERY_VECTOR_VALUES", 1):
+            with self.assertRaisesRegex(AgentIndexError, "query vector budget"):
+                semantic_search_batch(self.database, ["query"], provider)
+        self.assertEqual(0, provider.query_calls)
+        with patch.object(agent_module, "_MAX_SEMANTIC_VECTOR_RECORDS", 1):
+            with self.assertRaisesRegex(AgentIndexError, "record limit"):
+                semantic_search_batch(self.database, ["query"], provider)
+        self.assertEqual(0, provider.query_calls)
+        with patch.object(agent_module, "_MAX_SEMANTIC_VECTOR_BYTES", 1):
+            with self.assertRaisesRegex(AgentIndexError, "byte budget"):
+                semantic_search_batch(self.database, ["query"], provider)
+        self.assertEqual(0, provider.query_calls)
+
+        with self.assertRaisesRegex(AgentIndexError, "1 to 32"):
+            semantic_search_batch(self.database, ["query"] * 33, provider)
+        self.assertEqual(0, provider.query_calls)
 
     def test_embedding_install_rejects_non_schema_numeric_types(self) -> None:
         write_agent_index(self.database, fixture_snapshot())
@@ -827,6 +1068,45 @@ class AgentIndexTest(unittest.TestCase):
         self.assertEqual({"measure", "absolutely-continuous"}, ranked_ids)
         self.assertNotIn("alternating-current", ranked_ids)
 
+    def test_ppr_caps_trusted_and_similarity_multiedge_scans(self) -> None:
+        write_agent_index(self.database, fixture_snapshot())
+        with patch.object(agent_module, "_MAX_PPR_TRUSTED_EDGE_RECORDS", 0):
+            with self.assertRaisesRegex(AgentIndexError, "trusted edge scan budget"):
+                personalized_pagerank(
+                    self.database,
+                    {"alpha": 1.0},
+                    include_similarity=False,
+                    _candidate_ids={"alpha", "beta"},
+                )
+            trusted_disabled = personalized_pagerank(
+                self.database,
+                {"alpha": 1.0},
+                edge_types=[],
+                include_similarity=False,
+                _candidate_ids={"alpha", "beta"},
+            )
+        self.assertEqual(0, trusted_disabled["policy"]["trusted_edges"])
+
+        index_embeddings(
+            self.database,
+            KeywordEmbeddingProvider(),
+            build_similarity_edges=True,
+            similarity_threshold=-1.0,
+        )
+        with patch.object(agent_module, "_MAX_PPR_SIMILARITY_EDGE_RECORDS", 0):
+            with self.assertRaisesRegex(AgentIndexError, "similarity edge scan budget"):
+                personalized_pagerank(
+                    self.database,
+                    {"alpha": 1.0},
+                    _candidate_ids={"alpha", "beta"},
+                )
+        with self.assertRaisesRegex(AgentIndexError, "scope cannot be empty"):
+            personalized_pagerank(
+                self.database,
+                {"alpha": 1.0},
+                _candidate_ids=set(),
+            )
+
     def test_stale_nodes_are_excluded_unless_policy_allows_them(self) -> None:
         snapshot = fixture_snapshot()
         snapshot["nodes"][1]["properties"]["curation_status"] = "needs-review"
@@ -845,6 +1125,120 @@ class AgentIndexTest(unittest.TestCase):
 
         self.assertEqual(["alpha"], [item["node"]["id"] for item in default["nodes"]])
         self.assertEqual(["alpha", "beta"], [item["node"]["id"] for item in allowed["nodes"]])
+
+    def test_graph_plan_directions_literal_edge_types_and_scan_cap(self) -> None:
+        snapshot = fixture_snapshot()
+        snapshot["edges"][0]["relation"] = "contains"
+        snapshot["snapshot_sha256"] = sha256_json(
+            {key: value for key, value in snapshot.items() if key != "snapshot_sha256"}
+        )
+        write_agent_index(self.database, snapshot)
+
+        default = expand_index(self.database, ["alpha"], max_depth=8)
+        explicit = expand_index(
+            self.database,
+            ["alpha"],
+            direction="out",
+            edge_types=["contains"],
+            include_taxonomy=False,
+            max_depth=1,
+        )
+        incoming = expand_index(
+            self.database,
+            ["beta"],
+            direction="in",
+            edge_types=["contains"],
+            max_depth=1,
+        )
+        empty = expand_index(
+            self.database,
+            ["alpha"],
+            edge_types=[],
+            include_taxonomy=True,
+            max_depth=1,
+        )
+
+        self.assertEqual(["alpha"], [item["node"]["id"] for item in default["nodes"]])
+        self.assertEqual(
+            ["alpha", "beta"], [item["node"]["id"] for item in explicit["nodes"]]
+        )
+        self.assertEqual(
+            ["beta", "alpha"], [item["node"]["id"] for item in incoming["nodes"]]
+        )
+        self.assertEqual(["alpha"], [item["node"]["id"] for item in empty["nodes"]])
+        with patch.object(agent_module, "_MAX_GRAPH_EDGE_SCAN_RECORDS", 0):
+            with self.assertRaisesRegex(AgentIndexError, "scan budget"):
+                expand_index(
+                    self.database,
+                    ["alpha"],
+                    direction="out",
+                    edge_types=["contains"],
+                )
+            self.assertEqual(
+                ["alpha"],
+                [
+                    item["node"]["id"]
+                    for item in expand_index(
+                        self.database,
+                        ["alpha"],
+                        edge_types=[],
+                    )["nodes"]
+                ],
+            )
+
+    def test_graph_seed_bound_and_inactive_seed_filter_match_plan_schema(self) -> None:
+        nodes = [
+            {
+                "id": f"node-{index}",
+                "type": "knowledge",
+                "label": f"Node {index}",
+                "text": "bounded seed fixture",
+                "properties": {
+                    "aliases": [],
+                    "curation_status": "current",
+                    "source_status": "active",
+                },
+                "provenance": {"authority": "notes/fixture.md", "line": index + 1},
+            }
+            for index in range(256)
+        ]
+        snapshot = fixture_snapshot()
+        snapshot["nodes"] = nodes
+        snapshot["edges"] = []
+        snapshot["references"] = []
+        snapshot["graph"]["counts"] = {
+            "nodes": len(nodes),
+            "edges": 0,
+            "references": 0,
+        }
+        snapshot["snapshot_sha256"] = sha256_json(
+            {key: value for key, value in snapshot.items() if key != "snapshot_sha256"}
+        )
+        write_agent_index(self.database, snapshot)
+
+        seeds = [node["id"] for node in nodes]
+        expansion = expand_index(
+            self.database,
+            seeds,
+            max_depth=8,
+            limit=256,
+        )
+        self.assertEqual(256, len(expansion["nodes"]))
+        with self.assertRaisesRegex(AgentIndexError, "exceeds 256"):
+            expand_index(self.database, [*seeds, "extra"], limit=500)
+
+        snapshot["nodes"][0]["provenance"]["active"] = False
+        snapshot["snapshot_sha256"] = sha256_json(
+            {key: value for key, value in snapshot.items() if key != "snapshot_sha256"}
+        )
+        write_agent_index(self.database, snapshot)
+        with self.assertRaisesRegex(AgentIndexError, "excluded by filters"):
+            expand_index(
+                self.database,
+                ["node-0"],
+                include_stale=True,
+                include_orphaned=True,
+            )
 
     def test_context_bundle_obeys_budget_and_keeps_edge_endpoints(self) -> None:
         write_agent_index(self.database, fixture_snapshot())

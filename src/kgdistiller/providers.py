@@ -579,7 +579,7 @@ class DeterministicFixtureEmbeddingProvider:
         self.dimensions = int(validated["dimensions"])
         self.provider_config_sha256 = provider_config_sha256(validated)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for text in _validated_embedding_texts(texts):
             vector: list[float] = []
@@ -596,11 +596,17 @@ class DeterministicFixtureEmbeddingProvider:
             vectors.append(vector[: self.dimensions])
         return vectors
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_texts(texts)
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.embed(texts)
+        return self._embed_texts(texts)
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_texts(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        return self.embed([text])[0]
+        return self.embed_queries([text])[0]
 
 
 class OpenAICompatibleEmbeddingProvider:
@@ -747,7 +753,7 @@ class OpenAICompatibleEmbeddingProvider:
         _remaining_provider_timeout(deadline)
         return payload
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         normalized = self._validated_texts(texts)
         payload = self._request(normalized)
         data = payload.get("data") if isinstance(payload, dict) else None
@@ -806,11 +812,17 @@ class OpenAICompatibleEmbeddingProvider:
             vectors.append(vector)
         return vectors
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_texts(texts)
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self.embed(texts)
+        return self._embed_texts(texts)
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_texts(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        return self.embed([text])[0]
+        return self.embed_queries([text])[0]
 
 
 ProviderFactory = Callable[[str, Mapping[str, Any], str], "EmbeddingProvider"]

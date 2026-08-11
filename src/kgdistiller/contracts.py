@@ -20,6 +20,7 @@ CONTRACT_SCHEMAS = {
         "qlkg-embedding-policy-v1",
         "qlkg-retrieval-plan-v1",
         "qlkg-search-result-v2",
+        "qlkg-search-execution-v1",
         "qlkg-document-record-v2",
         "qlkg-document-upsert-request-v1",
         "qlkg-document-ingest-receipt-v1",
@@ -243,6 +244,17 @@ def _validate_receipt_state(payload: dict[str, Any]) -> None:
         raise ContractError("ready receipt cannot report an ambiguous or rejected document")
 
 
+def _validate_search_execution(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-search-execution-v1":
+        return
+    resolutions = payload.get("identity_resolutions") or []
+    indices = [resolution.get("query_index") for resolution in resolutions]
+    if indices != list(range(len(resolutions))):
+        raise ContractError(
+            "identity resolution query_index values must be unique and contiguous"
+        )
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -262,6 +274,7 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
     _validate_document_record(payload)
     _validate_upsert_source(payload)
     _validate_receipt_state(payload)
+    _validate_search_execution(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

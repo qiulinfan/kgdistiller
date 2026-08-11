@@ -46,6 +46,62 @@ personalized PageRank over at most 400 candidate nodes. The standalone PPR
 command continues to support the full selected namespace. This keeps normal
 context assembly bounded without changing the graph or identity contracts.
 
+## Semantic vector-scan benchmark
+
+The repository includes a reproducible, disposable benchmark for the exact
+vector scan used by `semantic_search_batch`. Its default run covers 1k, 10k,
+and 100k materialized vectors at 128 dimensions:
+
+```sh
+PYTHONPATH=src python3 scripts/benchmark_semantic.py \
+  --sizes 1000 10000 100000 --dimensions 128 --samples 5 \
+  --report /tmp/kgdistiller-semantic-benchmark.json
+```
+
+For a quick CI or machine smoke test, run only the smallest case:
+
+```sh
+PYTHONPATH=src python3 scripts/benchmark_semantic.py \
+  --sizes 1000 --samples 1
+```
+
+Fixture construction and vector installation are outside the timed region.
+Each measured sample calls the real read-only `semantic_search_batch` with one
+query and a provider that exposes only `embed_queries`. The report records the
+runtime environment, ready record and vector-byte counts, p50/p95/max latency,
+query and document-embedding call counts, and proof that both the selected
+database generation and every material file byte remain unchanged. Computing
+the pre-query byte manifest warms the local file cache, so these are explicitly
+warm local-scan measurements rather than cold-start timings.
+
+The 2026-08-11 Windows-native reference run used CPython 3.9.25 and SQLite
+3.50.4 at 128 dimensions:
+
+| Ready vectors | Samples | Warm p50 | Warm p95/max | Interpretation |
+| ---: | ---: | ---: | ---: | --- |
+| 1,000 | 3 | 0.044953 s | 0.047135 s | smoke/reference |
+| 10,000 | 1 | 0.451844 s | 0.451844 s | practical sub-second reference envelope |
+| 100,000 | 5 | 5.589386 s | 6.300262 s | bounded correctness/capacity boundary, not a latency SLA |
+
+The 100k run held 51.2 MB of float32 vector payload and performed 12.8
+million scalar operations per query. Across all five samples it made five
+query batches, made zero document-embedding calls, and left both the selected
+generation and every material file byte unchanged.
+
+The first exact-scan release has three hard per-call boundaries: at most
+100,000 ready vectors, at most 128 MiB of stored vector bytes, and at most 64
+million scalar dot-product operations, calculated as
+`ready_records * dimensions * semantic_queries`. Thus a 100k-by-128 space uses
+51.2 MB of float32 vector payload and 12.8 million scalar operations for one
+query; up to five such queries fit the work budget in one batch. Larger
+combinations fail closed before a query-provider call.
+
+This implementation is a bounded exact scan, not ANN, and the benchmark does
+not claim a universal sub-second service objective. When a reference machine's
+100k p95 exceeds one second, this first release deliberately records that
+boundary: reduce ready records, dimensions, or semantic queries for a tighter
+latency target. It must not be described or presented as an ANN-backed index.
+
 ## Transaction and fault profile
 
 A separate full workflow run used the same graph size with transactional plan,

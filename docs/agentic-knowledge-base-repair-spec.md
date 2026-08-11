@@ -201,7 +201,8 @@ Repository: `kgdistiller`
 Depends on: `KB-REPAIR-02`
 
 Outcome: CLI、Python、MCP 从一个 bounded `qlkg-retrieval-plan-v1` 执行 keyword、graph、
-vector retrieval，并返回 `qlkg-search-result-v2`。
+vector retrieval，并通过不可变的 `qlkg-search-execution-v1` 信封返回
+`qlkg-search-result-v2`。
 
 Required work:
 
@@ -211,6 +212,8 @@ Required work:
 - 删除当前 `semantic_search -> index_embeddings` 副作用；
 - 确定性融合各 lane，并保留 per-lane evidence；
 - 每个 lane 都报告 enabled/disabled/degraded 和 reason code；
+- 信封报告 plan mode、bounded identity resolutions、namespace、snapshot/graph digest，
+  并单独验证其中的 `qlkg-search-result-v2`；
 - 通过 CLI/read-only MCP 暴露 plan execution，MCP 参数不接收 secret；
 - 保持保守 identity 规则和 bounded context。
 

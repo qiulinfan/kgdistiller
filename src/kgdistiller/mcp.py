@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Callable, Mapping, TextIO
 
 from . import __version__
 from .agent import (
     AgentIndexError,
     align_graph,
-    build_context_bundle,
     canonical_json,
     compare_graph,
     create_proposal,
@@ -21,7 +21,13 @@ from .agent import (
     index_status,
     personalized_pagerank,
     resolve_concepts,
-    retrieve_index,
+)
+from .contracts import load_contract_schema
+from .retrieval import (
+    RetrievalError,
+    build_context_from_execution,
+    execute_retrieval_plan,
+    legacy_retrieval_plan,
 )
 
 
@@ -33,12 +39,15 @@ SUPPORTED_PROTOCOL_VERSIONS = {
     "2024-11-05",
 }
 MAX_MESSAGE_BYTES = 1024 * 1024
+MAX_MESSAGE_JSON_DEPTH = 64
+MAX_MESSAGE_JSON_VALUES = 100_000
 READ_ONLY_ANNOTATIONS = {
     "readOnlyHint": True,
     "destructiveHint": False,
     "idempotentHint": True,
     "openWorldHint": False,
 }
+RETRIEVAL_PLAN_INPUT_SCHEMA = load_contract_schema("qlkg-retrieval-plan-v1")
 
 
 def _object_schema(
@@ -57,8 +66,12 @@ def _object_schema(
 
 COMMON_RETRIEVAL_PROPERTIES = {
     "namespace": {"type": "string", "default": "personal"},
-    "node_types": {"type": "array", "items": {"type": "string"}, "maxItems": 16},
-    "max_depth": {"type": "integer", "minimum": 0, "maximum": 5, "default": 1},
+    "node_types": {
+        "type": "array",
+        "items": {"type": "string", "enum": ["knowledge", "field", "topic"]},
+        "maxItems": 16,
+    },
+    "max_depth": {"type": "integer", "minimum": 0, "maximum": 8, "default": 1},
     "include_taxonomy": {"type": "boolean", "default": False},
     "include_stale": {"type": "boolean", "default": False},
     "include_orphaned": {"type": "boolean", "default": False},
@@ -99,14 +112,14 @@ TOOL_DEFINITIONS = [
     {
         "name": "kg_search",
         "title": "Search Knowledge Graph",
-        "description": "Fuse exact, scoped-alias, full-text, BFS, and PPR retrieval with per-result explanations.",
+        "description": "Execute one bounded retrieval plan, or adapt one legacy query, with per-lane evidence.",
         "inputSchema": _object_schema(
             {
                 "query": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "plan": RETRIEVAL_PLAN_INPUT_SCHEMA,
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
                 **COMMON_RETRIEVAL_PROPERTIES,
-            },
-            ["query"],
+            }
         ),
         "annotations": READ_ONLY_ANNOTATIONS,
     },
@@ -180,10 +193,11 @@ TOOL_DEFINITIONS = [
     {
         "name": "kg_build_context",
         "title": "Build Knowledge Context",
-        "description": "Build a deterministic evidence bundle under an explicit conservative token budget.",
+        "description": "Build a deterministic evidence bundle from one bounded plan or legacy query.",
         "inputSchema": _object_schema(
             {
                 "query": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "plan": RETRIEVAL_PLAN_INPUT_SCHEMA,
                 "token_budget": {
                     "type": "integer",
                     "minimum": 1,
@@ -197,8 +211,7 @@ TOOL_DEFINITIONS = [
                     "default": 50,
                 },
                 **COMMON_RETRIEVAL_PROPERTIES,
-            },
-            ["query"],
+            }
         ),
         "annotations": READ_ONLY_ANNOTATIONS,
     },
@@ -252,6 +265,91 @@ TOOL_DEFINITIONS = [
 
 
 TOOL_SCHEMAS = {tool["name"]: tool["inputSchema"] for tool in TOOL_DEFINITIONS}
+
+
+def _bounded_json_int(value: str) -> int:
+    if len(value.lstrip("-")) > 32:
+        raise ValueError("JSON integer is too long")
+    return int(value)
+
+
+def _bounded_json_float(value: str) -> float:
+    if len(value) > 64:
+        raise ValueError("JSON number is too long")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("JSON number is not finite")
+    return parsed
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError("non-finite JSON constants are forbidden")
+
+
+def _bounded_json_shape(value: Any) -> bool:
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    visited = 0
+    while stack:
+        current, depth = stack.pop()
+        visited += 1
+        if depth > MAX_MESSAGE_JSON_DEPTH or visited > MAX_MESSAGE_JSON_VALUES:
+            return False
+        if type(current) is dict:
+            for key, item in current.items():
+                if type(key) is not str:
+                    return False
+                stack.append((key, depth + 1))
+                stack.append((item, depth + 1))
+        elif type(current) is list:
+            stack.extend((item, depth + 1) for item in current)
+        elif type(current) is str:
+            try:
+                if len(current.encode("utf-8")) > MAX_MESSAGE_BYTES:
+                    return False
+            except UnicodeError:
+                return False
+        elif type(current) is int:
+            if current.bit_length() > 107:
+                return False
+        elif type(current) is float:
+            if not math.isfinite(current):
+                return False
+        elif current is not None and type(current) is not bool:
+            return False
+    return True
+
+
+def _valid_request_id(value: Any) -> bool:
+    if value is None or type(value) is int:
+        return True
+    if type(value) is float:
+        return math.isfinite(value)
+    if type(value) is str:
+        try:
+            return len(value.encode("utf-8")) <= MAX_MESSAGE_BYTES
+        except UnicodeError:
+            return False
+    return False
+
+
+def _bounded_input_lines(source: TextIO):
+    while True:
+        raw_line = source.readline(MAX_MESSAGE_BYTES + 1)
+        if raw_line == "":
+            return
+        truncated = len(raw_line) >= MAX_MESSAGE_BYTES + 1 and not raw_line.endswith(
+            "\n"
+        )
+        if truncated:
+            while raw_line and not raw_line.endswith("\n"):
+                raw_line = source.readline(MAX_MESSAGE_BYTES + 1)
+            yield "", True
+            continue
+        try:
+            oversized = len(raw_line.encode("utf-8")) > MAX_MESSAGE_BYTES
+        except UnicodeError:
+            oversized = False
+        yield raw_line, oversized
 
 
 def _protocol_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
@@ -315,13 +413,49 @@ def _validate_arguments(name: str, arguments: Any) -> dict[str, Any]:
                 field.get("maxItems", len(value))
             ):
                 raise AgentIndexError(f"tool argument {key} has an invalid item count")
-            item_type = str((field.get("items") or {}).get("type", ""))
+            item_schema = field.get("items") or {}
+            item_type = str(item_schema.get("type", ""))
             if item_type and not all(_check_json_type(item, item_type) for item in value):
                 raise AgentIndexError(f"tool argument {key} contains invalid items")
+            if item_schema.get("enum") and not all(
+                item in item_schema["enum"] for item in value
+            ):
+                raise AgentIndexError(f"tool argument {key} contains unsupported items")
+    if name in {"kg_search", "kg_build_context"} and (
+        ("query" in arguments) == ("plan" in arguments)
+    ):
+        raise AgentIndexError(f"tool {name} requires exactly one of query or plan")
+    if "plan" in arguments:
+        legacy_controls = {
+            "namespace",
+            "node_types",
+            "max_depth",
+            "include_taxonomy",
+            "include_stale",
+            "include_orphaned",
+            "graph_strategy",
+            "limit" if name == "kg_search" else "result_limit",
+        }
+        conflicting = sorted(legacy_controls.intersection(arguments))
+        if conflicting:
+            raise AgentIndexError(
+                "retrieval plan cannot be combined with legacy controls: "
+                + ", ".join(conflicting)
+            )
     return arguments
 
 
-def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
+def call_tool(
+    database: Path,
+    name: str,
+    raw_arguments: Any,
+    *,
+    embedding_profile: str | None = None,
+    provider_config: Mapping[str, Any] | None = None,
+    provider_registry: Any = None,
+    environ: Mapping[str, str] | None = None,
+    expected_graph_sha256: str | None = None,
+) -> dict[str, Any]:
     if name not in TOOL_SCHEMAS:
         raise AgentIndexError(f"unknown tool: {name}")
     arguments = _validate_arguments(name, raw_arguments)
@@ -337,9 +471,12 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
             )
         }
     if name == "kg_search":
-        return {
-            "results": retrieve_index(
-                database,
+        if "plan" in arguments:
+            plan = dict(arguments["plan"])
+            plan_mode = "planned"
+            execution_namespace_argument = None
+        else:
+            plan = legacy_retrieval_plan(
                 str(arguments["query"]),
                 namespace=namespace,
                 node_types=arguments.get("node_types"),
@@ -350,7 +487,19 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
                 include_orphaned=bool(arguments.get("include_orphaned", False)),
                 graph_strategy=str(arguments.get("graph_strategy", "hybrid")),
             )
-        }
+            plan_mode = "legacy"
+            execution_namespace_argument = namespace
+        return execute_retrieval_plan(
+            database,
+            plan,
+            plan_mode=plan_mode,
+            namespace=execution_namespace_argument,
+            embedding_profile=embedding_profile,
+            provider_config=provider_config,
+            provider_registry=provider_registry,
+            environ=environ,
+            expected_graph_sha256=expected_graph_sha256,
+        )
     if name == "kg_get_node":
         return get_index_node(database, str(arguments["id"]), namespace=namespace)
     if name == "kg_expand":
@@ -403,18 +552,43 @@ def call_tool(database: Path, name: str, raw_arguments: Any) -> dict[str, Any]:
                 else None
             ),
         )
-    return build_context_bundle(
+    if "plan" in arguments:
+        plan = dict(arguments["plan"])
+        plan_mode = "planned"
+        execution_namespace = str(plan.get("namespace", "personal"))
+        execution_namespace_argument = None
+    else:
+        plan = legacy_retrieval_plan(
+            str(arguments["query"]),
+            namespace=namespace,
+            node_types=arguments.get("node_types"),
+            limit=int(arguments.get("result_limit", 50)),
+            max_depth=int(arguments.get("max_depth", 1)),
+            include_taxonomy=bool(arguments.get("include_taxonomy", False)),
+            include_stale=bool(arguments.get("include_stale", False)),
+            include_orphaned=bool(arguments.get("include_orphaned", False)),
+            graph_strategy=str(arguments.get("graph_strategy", "hybrid")),
+        )
+        plan_mode = "legacy"
+        execution_namespace = namespace
+        execution_namespace_argument = namespace
+    execution = execute_retrieval_plan(
         database,
-        str(arguments["query"]),
+        plan,
+        plan_mode=plan_mode,
+        namespace=execution_namespace_argument,
+        embedding_profile=embedding_profile,
+        provider_config=provider_config,
+        provider_registry=provider_registry,
+        environ=environ,
+        expected_graph_sha256=expected_graph_sha256,
+    )
+    return build_context_from_execution(
+        database,
+        execution,
+        plan=plan,
         token_budget=int(arguments.get("token_budget", 6000)),
-        namespace=namespace,
-        node_types=arguments.get("node_types"),
-        result_limit=int(arguments.get("result_limit", 50)),
-        max_depth=int(arguments.get("max_depth", 1)),
-        include_taxonomy=bool(arguments.get("include_taxonomy", False)),
-        include_stale=bool(arguments.get("include_stale", False)),
-        include_orphaned=bool(arguments.get("include_orphaned", False)),
-        graph_strategy=str(arguments.get("graph_strategy", "hybrid")),
+        namespace=execution_namespace,
     )
 
 
@@ -429,16 +603,39 @@ def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, 
 class MCPServer:
     """Small stateful MCP dispatcher for newline-delimited stdio transport."""
 
-    def __init__(self, database: Path):
+    def __init__(
+        self,
+        database: Path,
+        *,
+        embedding_profile: str | None = None,
+        provider_config: Mapping[str, Any] | None = None,
+        provider_registry: Any = None,
+        environ: Mapping[str, str] | None = None,
+        expected_graph_sha256: str | None = None,
+        expected_graph_sha256_resolver: Callable[[], str] | None = None,
+    ):
         self.database = database
+        self.embedding_profile = embedding_profile
+        self.provider_config = provider_config
+        self.provider_registry = provider_registry
+        self.environ = environ
+        self.expected_graph_sha256 = expected_graph_sha256
+        self.expected_graph_sha256_resolver = expected_graph_sha256_resolver
         self.initialized = False
         self.protocol_version = MCP_PROTOCOL_VERSION
 
     def handle(self, message: Any) -> dict[str, Any] | None:
-        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+        if (
+            type(message) is not dict
+            or not _bounded_json_shape(message)
+            or message.get("jsonrpc") != "2.0"
+            or type(message.get("method")) is not str
+        ):
             return _protocol_error(None, -32600, "Invalid Request")
-        method = str(message.get("method", ""))
+        method = message["method"]
         request_id = message.get("id")
+        if "id" in message and not _valid_request_id(request_id):
+            return _protocol_error(None, -32600, "Invalid Request")
         is_notification = "id" not in message
         if method == "notifications/initialized":
             self.initialized = True
@@ -446,7 +643,11 @@ class MCPServer:
         if method.startswith("notifications/"):
             return None
         if method == "initialize":
-            params = message.get("params") or {}
+            params = message.get("params")
+            if params is None:
+                params = {}
+            if not isinstance(params, dict):
+                return _protocol_error(request_id, -32602, "Invalid params")
             requested = str(params.get("protocolVersion", ""))
             self.protocol_version = (
                 requested if requested in SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
@@ -472,11 +673,44 @@ class MCPServer:
         if method == "tools/list":
             return _result(request_id, {"tools": TOOL_DEFINITIONS})
         if method == "tools/call":
-            params = message.get("params") or {}
+            params = message.get("params")
+            if params is None:
+                params = {}
+            if not isinstance(params, dict):
+                return _protocol_error(request_id, -32602, "Invalid params")
             name = str(params.get("name", ""))
             try:
-                value = call_tool(self.database, name, params.get("arguments"))
+                expected_graph_sha256 = self.expected_graph_sha256
+                if (
+                    name in {"kg_search", "kg_build_context"}
+                    and self.expected_graph_sha256_resolver is not None
+                ):
+                    resolver_failed = False
+                    try:
+                        expected_graph_sha256 = self.expected_graph_sha256_resolver()
+                    except Exception:
+                        resolver_failed = True
+                    if resolver_failed:
+                        raise RetrievalError(
+                            "index-unavailable",
+                            "Authority graph metadata is unavailable",
+                        )
+                value = call_tool(
+                    self.database,
+                    name,
+                    params.get("arguments"),
+                    embedding_profile=self.embedding_profile,
+                    provider_config=self.provider_config,
+                    provider_registry=self.provider_registry,
+                    environ=self.environ,
+                    expected_graph_sha256=expected_graph_sha256,
+                )
                 return _result(request_id, _tool_result(value))
+            except RetrievalError as error:
+                return _result(
+                    request_id,
+                    _tool_result({"error": error.to_payload()}, is_error=True),
+                )
             except (AgentIndexError, OSError, sqlite3.Error, ValueError) as error:
                 value = {
                     "error": {
@@ -486,32 +720,75 @@ class MCPServer:
                     }
                 }
                 return _result(request_id, _tool_result(value, is_error=True))
+            except Exception:
+                value = {
+                    "error": {
+                        "code": "tool-error",
+                        "message": "tool execution failed",
+                        "tool": name if name in TOOL_SCHEMAS else "unknown",
+                    }
+                }
+                return _result(request_id, _tool_result(value, is_error=True))
         return _protocol_error(request_id, -32601, "Method not found")
 
 
 def serve_stdio(
     database: Path,
     *,
+    embedding_profile: str | None = None,
+    provider_config: Mapping[str, Any] | None = None,
+    provider_registry: Any = None,
+    environ: Mapping[str, str] | None = None,
+    expected_graph_sha256: str | None = None,
+    expected_graph_sha256_resolver: Callable[[], str] | None = None,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
     """Serve newline-delimited UTF-8 JSON-RPC without writing logs to stdout."""
     source = input_stream or sys.stdin
     destination = output_stream or sys.stdout
-    server = MCPServer(database)
-    for raw_line in source:
-        if len(raw_line.encode("utf-8")) > MAX_MESSAGE_BYTES:
+    server = MCPServer(
+        database,
+        embedding_profile=embedding_profile,
+        provider_config=provider_config,
+        provider_registry=provider_registry,
+        environ=environ,
+        expected_graph_sha256=expected_graph_sha256,
+        expected_graph_sha256_resolver=expected_graph_sha256_resolver,
+    )
+    for raw_line, oversized in _bounded_input_lines(source):
+        if oversized:
             response = _protocol_error(None, -32600, "Message exceeds size limit")
         else:
             line = raw_line.strip()
             if not line:
                 continue
             try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
+                message = json.loads(
+                    line,
+                    parse_int=_bounded_json_int,
+                    parse_float=_bounded_json_float,
+                    parse_constant=_reject_json_constant,
+                )
+                if not _bounded_json_shape(message):
+                    raise ValueError("JSON message shape exceeds the limit")
+            except (
+                json.JSONDecodeError,
+                RecursionError,
+                OverflowError,
+                TypeError,
+                ValueError,
+            ):
                 response = _protocol_error(None, -32700, "Parse error")
             else:
                 response = server.handle(message)
         if response is not None:
-            destination.write(canonical_json(response) + "\n")
+            try:
+                encoded = canonical_json(response)
+                encoded.encode("utf-8")
+            except Exception:
+                encoded = canonical_json(
+                    _protocol_error(None, -32603, "Internal error")
+                )
+            destination.write(encoded + "\n")
             destination.flush()
