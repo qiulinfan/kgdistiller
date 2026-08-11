@@ -10,10 +10,9 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
 
 SCHEMA = "qlpaper-markdown-source-v1"
 CAPTION_RE = re.compile(
@@ -129,26 +128,36 @@ def render_page(source: Path, target: Path, page: int, dpi: int) -> None:
         raise PrepareError("pdftoppm is required for targeted visual pages")
     target.parent.mkdir(parents=True, exist_ok=True)
     prefix = target.with_suffix("")
-    result = subprocess.run(
-        [
-            renderer,
-            "-f",
-            str(page),
-            "-l",
-            str(page),
-            "-singlefile",
-            "-png",
-            "-r",
-            str(dpi),
-            str(source),
-            str(prefix),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                renderer,
+                "-f",
+                str(page),
+                "-l",
+                str(page),
+                "-singlefile",
+                "-png",
+                "-r",
+                str(dpi),
+                str(source),
+                str(prefix),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=False,
+        )
+    except OSError as error:
+        raise PrepareError(f"cannot run pdftoppm for page {page}") from error
     if result.returncode:
-        raise PrepareError(result.stderr.strip() or f"pdftoppm failed on page {page}")
+        if not isinstance(result.stderr, bytes):
+            raise PrepareError("pdftoppm machine error output is not bytes")
+        try:
+            detail = result.stderr.decode("utf-8", errors="strict").strip()
+        except UnicodeDecodeError as error:
+            raise PrepareError("pdftoppm error output is not valid UTF-8") from error
+        raise PrepareError(detail or f"pdftoppm failed on page {page}")
     produced = prefix.with_suffix(".png")
     if produced != target:
         produced.rename(target)
@@ -191,8 +200,10 @@ def write_markdown_skeleton(path: Path, digest: str, pages: list[dict[str, Any]]
             lines.extend(
                 [
                     "",
-                    "<!-- qlpaper-object: "
-                    f"kind={candidate['kind']}; label={candidate['label']}; page={page} -->",
+                    (
+                        "<!-- qlpaper-object: "
+                        f"kind={candidate['kind']}; label={candidate['label']}; page={page} -->"
+                    ),
                     f"> **{candidate['label']} — QLPAPER_UNRESOLVED: title**",
                     ">",
                     "> - `summary`: QLPAPER_UNRESOLVED",
@@ -266,7 +277,7 @@ def main() -> int:
                 "pdf_url": args.pdf_url,
                 "identifier": args.identifier,
                 "version": args.version,
-                "access_date": date.today().isoformat(),
+                "access_date": datetime.now(timezone.utc).date().isoformat(),
             },
             "tools": {"text": "pdfplumber", "render": "pdftoppm", "dpi": args.dpi},
             "pages": pages,

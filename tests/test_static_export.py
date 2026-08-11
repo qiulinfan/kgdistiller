@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +24,8 @@ from kgdistiller.static_export import (
     StaticExportError,
     _export_recovery_root,
     _install_export,
+    _run_product_git,
+    _run_source_git,
     _source_checkout_revision,
     _source_inputs,
     export_site_bundle,
@@ -304,8 +308,8 @@ class StaticSiteExportTests(unittest.TestCase):
         dirty = subprocess.CompletedProcess(
             args=["git", "status"],
             returncode=0,
-            stdout="?? untracked-product-file\n",
-            stderr="",
+            stdout=b"?? untracked-product-file\n",
+            stderr=b"",
         )
         with (
             patch(
@@ -327,14 +331,14 @@ class StaticSiteExportTests(unittest.TestCase):
         top_level = subprocess.CompletedProcess(
             args=["git", "rev-parse"],
             returncode=0,
-            stdout=f"{self.repo}\n",
-            stderr="",
+            stdout=f"{self.repo}\n".encode(),
+            stderr=b"",
         )
         dirty = subprocess.CompletedProcess(
             args=["git", "status"],
             returncode=0,
-            stdout=" M knowledge/graph/nodes.jsonl\n",
-            stderr="",
+            stdout=b" M knowledge/graph/nodes.jsonl\n",
+            stderr=b"",
         )
         with (
             patch(
@@ -426,10 +430,12 @@ class StaticSiteExportTests(unittest.TestCase):
 
     def test_source_revision_requires_every_export_input_to_be_tracked(self) -> None:
         completed = [
-            subprocess.CompletedProcess([], 0, f"{self.repo}\n", ""),
-            subprocess.CompletedProcess([], 0, "", ""),
-            subprocess.CompletedProcess([], 0, f"{self.SOURCE_REVISION}\n", ""),
-            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, f"{self.repo}\n".encode(), b""),
+            subprocess.CompletedProcess([], 0, b"", b""),
+            subprocess.CompletedProcess(
+                [], 0, f"{self.SOURCE_REVISION}\n".encode(), b""
+            ),
+            subprocess.CompletedProcess([], 0, b"", b""),
         ]
         with (
             patch("kgdistiller.static_export.subprocess.run", side_effect=completed),
@@ -438,12 +444,75 @@ class StaticSiteExportTests(unittest.TestCase):
             _source_checkout_revision(self.repo, [self.registry])
 
         tracked = self.registry.relative_to(self.repo).as_posix()
-        completed[-1] = subprocess.CompletedProcess([], 0, f"{tracked}\0", "")
+        completed[-1] = subprocess.CompletedProcess([], 0, tracked.encode(), b"")
+        with (
+            patch("kgdistiller.static_export.subprocess.run", side_effect=completed),
+            self.assertRaisesRegex(StaticExportError, "not NUL-terminated"),
+        ):
+            _source_checkout_revision(self.repo, [self.registry])
+
+        completed[-1] = subprocess.CompletedProcess(
+            [], 0, f"{tracked}\0\0".encode(), b""
+        )
+        with (
+            patch("kgdistiller.static_export.subprocess.run", side_effect=completed),
+            self.assertRaisesRegex(StaticExportError, "empty record"),
+        ):
+            _source_checkout_revision(self.repo, [self.registry])
+
+        completed[-1] = subprocess.CompletedProcess([], 0, f"{tracked}\0".encode(), b"")
         with patch("kgdistiller.static_export.subprocess.run", side_effect=completed):
             self.assertEqual(
                 self.SOURCE_REVISION,
                 _source_checkout_revision(self.repo, [self.registry]),
             )
+
+    def test_source_revision_reads_real_git_paths_as_utf8(self) -> None:
+        authority = self.repo / "notes/公开/测度论.md"
+        authority.parent.mkdir(parents=True)
+        authority.write_text("--[[可测空间]]--\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "tests@example.test"],
+            cwd=self.repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "kgdistiller tests"],
+            cwd=self.repo,
+            check=True,
+        )
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "中文 authority"], cwd=self.repo, check=True
+        )
+        revision = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.repo,
+            check=True,
+            capture_output=True,
+            text=False,
+        ).stdout.decode("ascii").strip()
+
+        self.assertEqual(
+            revision,
+            _source_checkout_revision(self.repo, [self.registry, authority]),
+        )
+
+    def test_git_machine_output_decode_failures_are_structured(self) -> None:
+        invalid = subprocess.CompletedProcess([], 0, b"\xff", b"")
+        for helper in (_run_product_git, _run_source_git):
+            stderr = io.StringIO()
+            with (
+                patch(
+                    "kgdistiller.static_export.subprocess.run", return_value=invalid
+                ) as run,
+                redirect_stderr(stderr),
+                self.assertRaisesRegex(StaticExportError, "not valid UTF-8"),
+            ):
+                helper(self.repo, ["status"], "fixture")
+            self.assertEqual("", stderr.getvalue())
+            self.assertIs(run.call_args.kwargs["text"], False)
 
     def test_site_bundle_is_hydrated_filtered_and_self_verifying(self) -> None:
         output = self.export()

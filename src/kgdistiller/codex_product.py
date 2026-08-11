@@ -636,15 +636,30 @@ def _create_junction(source: Path, staging: Path) -> None:
                 "Windows junction path contains unsafe command characters"
             )
     command = f'cmd.exe /d /c mklink /J "{staging}" "{source}"'
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-        creationflags=0x08000000,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=False,
+            creationflags=0x08000000,
+        )
+    except OSError as error:
+        try:
+            _remove_exact(staging)
+        except OSError as cleanup_error:
+            raise CodexProductError(
+                "Windows directory junction creation and cleanup failed"
+            ) from cleanup_error
+        raise CodexProductError("Windows directory junction creation failed") from error
     if completed.returncode != 0 or not _is_junction(staging):
-        _remove_exact(staging)
+        try:
+            _remove_exact(staging)
+        except OSError as error:
+            raise CodexProductError(
+                "Windows directory junction creation and cleanup failed"
+            ) from error
         raise CodexProductError("Windows directory junction creation failed")
 
 

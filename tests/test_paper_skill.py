@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = (
@@ -16,6 +18,17 @@ VALIDATOR = (
     / "scripts"
     / "validate_paper_markdown.py"
 )
+PREPARER = (
+    REPO_ROOT
+    / "skills"
+    / "extract-paper-markdown"
+    / "scripts"
+    / "prepare_paper.py"
+)
+PREPARE_SPEC = importlib.util.spec_from_file_location("kg_prepare_paper", PREPARER)
+assert PREPARE_SPEC is not None and PREPARE_SPEC.loader is not None
+prepare_paper = importlib.util.module_from_spec(PREPARE_SPEC)
+PREPARE_SPEC.loader.exec_module(prepare_paper)
 
 
 class PaperMarkdownSkillTests(unittest.TestCase):
@@ -107,6 +120,59 @@ class PaperMarkdownSkillTests(unittest.TestCase):
             self.assertNotEqual(0, completed.returncode)
             self.assertIn("package path escapes its root", completed.stderr)
             self.assertIn("forbidden Markdown image embed", completed.stderr)
+
+    def test_render_page_preserves_unicode_paths_with_byte_subprocess_io(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="kgdistiller-paper-unicode-"
+        ) as temporary:
+            root = Path(temporary)
+            source = root / "论文" / "输入.pdf"
+            target = root / "证据" / "第一个页面.png"
+            source.parent.mkdir()
+            source.write_bytes(b"%PDF-fixture\n")
+
+            def render(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                Path(arguments[-1]).with_suffix(".png").write_bytes(b"png")
+                return subprocess.CompletedProcess(arguments, 0, None, b"")
+
+            with (
+                patch.object(prepare_paper.shutil, "which", return_value="pdftoppm"),
+                patch.object(prepare_paper.subprocess, "run", side_effect=render) as run,
+            ):
+                prepare_paper.render_page(source, target, 1, 144)
+            self.assertEqual(b"png", target.read_bytes())
+            arguments = run.call_args.args[0]
+            self.assertIn(str(source), arguments)
+            self.assertIn(str(target.with_suffix("")), arguments)
+            self.assertIs(run.call_args.kwargs["text"], False)
+            self.assertEqual(subprocess.DEVNULL, run.call_args.kwargs["stdout"])
+            self.assertEqual(subprocess.PIPE, run.call_args.kwargs["stderr"])
+
+    def test_render_page_invalid_utf8_and_process_errors_are_structured(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="kgdistiller-paper-errors-"
+        ) as temporary:
+            root = Path(temporary)
+            source = root / "论文.pdf"
+            target = root / "页面.png"
+            source.write_bytes(b"%PDF-fixture\n")
+            invalid = subprocess.CompletedProcess([], 1, None, b"\xff")
+            with (
+                patch.object(prepare_paper.shutil, "which", return_value="pdftoppm"),
+                patch.object(prepare_paper.subprocess, "run", return_value=invalid),
+                self.assertRaisesRegex(prepare_paper.PrepareError, "not valid UTF-8"),
+            ):
+                prepare_paper.render_page(source, target, 1, 144)
+            with (
+                patch.object(prepare_paper.shutil, "which", return_value="pdftoppm"),
+                patch.object(
+                    prepare_paper.subprocess,
+                    "run",
+                    side_effect=OSError("injected process failure"),
+                ),
+                self.assertRaisesRegex(prepare_paper.PrepareError, "cannot run"),
+            ):
+                prepare_paper.render_page(source, target, 1, 144)
 
 
 if __name__ == "__main__":

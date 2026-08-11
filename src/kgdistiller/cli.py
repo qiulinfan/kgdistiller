@@ -17,9 +17,10 @@ import sys
 import tempfile
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import quote
 
 try:
@@ -1168,6 +1169,44 @@ def select_scope(
     return list(unique.values()), set(unique), full
 
 
+def _decode_machine_output(value: object, label: str) -> str:
+    if not isinstance(value, bytes):
+        raise KnowledgeError(f"{label} machine output is not bytes")
+    try:
+        return value.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise KnowledgeError(f"{label} machine output is not valid UTF-8") from error
+
+
+def _decode_git_machine_output(value: object, label: str) -> str:
+    return _decode_machine_output(value, f"Git {label}")
+
+
+def _parse_git_name_status(raw: str) -> list[dict[str, str]]:
+    if not raw:
+        return []
+    if not raw.endswith("\0"):
+        raise KnowledgeError("Git diff machine output is not NUL-terminated")
+    parts = raw[:-1].split("\0")
+    changes: list[dict[str, str]] = []
+    cursor = 0
+    while cursor < len(parts):
+        code = parts[cursor]
+        cursor += 1
+        if not code:
+            raise KnowledgeError("Git diff machine output has an empty status")
+        path_count = 2 if code.startswith(("R", "C")) else 1
+        if cursor + path_count > len(parts):
+            raise KnowledgeError(f"Git diff machine output is truncated after {code}")
+        old_path = parts[cursor]
+        new_path = parts[cursor + 1] if path_count == 2 else old_path
+        cursor += path_count
+        if not old_path or not new_path:
+            raise KnowledgeError(f"Git diff machine output has an empty path after {code}")
+        changes.append({"status": code, "old_path": old_path, "new_path": new_path})
+    return changes
+
+
 def git_source_context(
     repo_root: Path,
     base_revision: str | None,
@@ -1175,53 +1214,55 @@ def git_source_context(
 ) -> dict[str, Any]:
     """Describe source changes relative to the last synchronized Git revision."""
     try:
-        head = subprocess.run(
+        head_result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo_root,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
-        ).stdout.strip()
+            text=False,
+        )
     except (OSError, subprocess.CalledProcessError):
         return {"head": None, "dirty": False, "changes": []}
+    head = _decode_git_machine_output(head_result.stdout, "HEAD").strip()
 
     roots = [relative_path(repo_root, spec.root) for spec in specs]
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all", "--", *roots],
-        cwd=repo_root,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    ).stdout
+    try:
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all", "--", *roots],
+            cwd=repo_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=False,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise KnowledgeError("cannot read Git source status") from error
+    status = _decode_git_machine_output(status_result.stdout, "status")
     changes: list[dict[str, str]] = []
     if base_revision:
         try:
-            raw = subprocess.run(
-                ["git", "diff", "--name-status", "-z", "-M", base_revision, "--", *roots],
+            diff_result = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--name-status",
+                    "-z",
+                    "-M",
+                    base_revision,
+                    "--",
+                    *roots,
+                ],
                 cwd=repo_root,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-            ).stdout.decode("utf-8", errors="strict")
-            parts = raw.split("\0")
-            cursor = 0
-            while cursor < len(parts) and parts[cursor]:
-                code = parts[cursor]
-                cursor += 1
-                if code.startswith(("R", "C")):
-                    old_path, new_path = parts[cursor], parts[cursor + 1]
-                    cursor += 2
-                else:
-                    old_path = parts[cursor]
-                    new_path = old_path
-                    cursor += 1
-                changes.append(
-                    {"status": code, "old_path": old_path, "new_path": new_path}
-                )
-        except (OSError, subprocess.CalledProcessError, UnicodeError):
-            changes = []
+                text=False,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise KnowledgeError("cannot read Git source diff") from error
+        raw = _decode_git_machine_output(diff_result.stdout, "diff")
+        changes = _parse_git_name_status(raw)
     return {"head": head, "dirty": bool(status.strip()), "changes": changes}
 
 
@@ -2098,15 +2139,28 @@ def render_typst_labels(state: GraphState) -> None:
                 ],
                 check=False,
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
+                text=False,
             )
-        except FileNotFoundError as error:
+        except OSError as error:
             raise KnowledgeError("Typst is required to render knowledge-node labels") from error
         if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or "unknown Typst error"
+            try:
+                stdout = _decode_machine_output(result.stdout, "Typst stdout")
+                stderr = _decode_machine_output(result.stderr, "Typst stderr")
+            except KnowledgeError as error:
+                raise KnowledgeError(
+                    "knowledge-label rendering returned invalid UTF-8"
+                ) from error
+            detail = stderr.strip() or stdout.strip() or "unknown Typst error"
             raise KnowledgeError(f"knowledge-label rendering failed: {detail}")
-        document = output.read_text(encoding="utf-8")
+        try:
+            document = output.read_text(encoding="utf-8")
+        except UnicodeError as error:
+            raise KnowledgeError(
+                "rendered knowledge labels are not valid UTF-8"
+            ) from error
+        except OSError as error:
+            raise KnowledgeError("cannot read rendered knowledge labels") from error
     rendered = {
         match.group("id"): match.group("html").strip()
         for match in LABEL_HTML_RE.finditer(document)

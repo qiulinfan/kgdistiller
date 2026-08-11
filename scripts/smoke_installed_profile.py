@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from kgdistiller.agent import write_agent_index
 from kgdistiller.contracts import sha256_json, validate_contract
@@ -125,7 +125,7 @@ def _run_agent(
     sentinels: tuple[str, ...],
     *,
     expected_status: int = 0,
-    database: Optional[Path] = None,
+    database: Path | None = None,
 ) -> dict[str, Any]:
     database_arguments = [] if database is None else ["--database", str(database)]
     completed = subprocess.run(
@@ -270,6 +270,7 @@ def main() -> int:
         )
         environment = dict(os.environ)
         environment.pop("PYTHONPATH", None)
+        environment["PYTHONIOENCODING"] = "utf-8"
         environment["KGDISTILLER_PRIMARY_SMOKE_KEY"] = primary_secret
         environment["KGDISTILLER_SECONDARY_SMOKE_KEY"] = secondary_secret
 

@@ -126,24 +126,39 @@ def _source_checkout_root() -> Path | None:
     return root if (root / ".git").exists() else None
 
 
-def _run_product_git(root: Path, arguments: list[str], label: str) -> str:
+def _run_git_machine(
+    root: Path,
+    arguments: list[str],
+    error_message: str,
+) -> str:
     try:
         result = subprocess.run(
             ["git", *arguments],
             cwd=root,
             check=False,
             capture_output=True,
-            text=True,
+            text=False,
         )
     except OSError as error:
-        raise StaticExportError(
-            f"cannot establish product source-checkout {label} provenance"
-        ) from error
+        raise StaticExportError(error_message) from error
     if result.returncode != 0:
+        raise StaticExportError(error_message)
+    if not isinstance(result.stdout, bytes):
+        raise StaticExportError(f"{error_message}: Git machine output is not bytes")
+    try:
+        return result.stdout.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
         raise StaticExportError(
-            f"cannot establish product source-checkout {label} provenance"
-        )
-    return result.stdout
+            f"{error_message}: Git machine output is not valid UTF-8"
+        ) from error
+
+
+def _run_product_git(root: Path, arguments: list[str], label: str) -> str:
+    return _run_git_machine(
+        root,
+        arguments,
+        f"cannot establish product source-checkout {label} provenance",
+    )
 
 
 def _source_checkout_commit() -> str | None:
@@ -201,19 +216,22 @@ def resolve_product_commit(explicit: str | None = None) -> str:
 
 
 def _run_source_git(root: Path, arguments: list[str], label: str) -> str:
-    try:
-        result = subprocess.run(
-            ["git", *arguments],
-            cwd=root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as error:
-        raise StaticExportError(f"cannot establish source checkout {label}") from error
-    if result.returncode != 0:
-        raise StaticExportError(f"cannot establish source checkout {label}")
-    return result.stdout
+    return _run_git_machine(
+        root,
+        arguments,
+        f"cannot establish source checkout {label}",
+    )
+
+
+def _parse_git_nul_records(value: str, label: str) -> list[str]:
+    if not value:
+        return []
+    if not value.endswith("\0"):
+        raise StaticExportError(f"Git {label} machine output is not NUL-terminated")
+    records = value[:-1].split("\0")
+    if any(not record for record in records):
+        raise StaticExportError(f"Git {label} machine output has an empty record")
+    return records
 
 
 def _source_checkout_revision(repo_root: Path, inputs: list[Path]) -> str:
@@ -260,7 +278,7 @@ def _source_checkout_revision(repo_root: Path, inputs: list[Path]) -> str:
         ["ls-files", "--full-name", "-z"],
         "tracked input inventory",
     )
-    tracked = {value for value in tracked_text.split("\0") if value}
+    tracked = set(_parse_git_nul_records(tracked_text, "tracked input inventory"))
     for path in sorted(set(inputs), key=str):
         if path.is_symlink() or not path.is_file():
             raise StaticExportError(f"export input is missing or symbolic: {path}")

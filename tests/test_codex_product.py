@@ -316,6 +316,70 @@ class CodexProductTests(unittest.TestCase):
             checked = doctor_product(codex_home=home, source_root=REPO_ROOT)
             self.assertEqual(linked["modes"], checked["modes"])
 
+    @unittest.skipUnless(os.name == "nt", "Windows junction regression")
+    def test_unicode_auto_install_uses_junction_fallback_and_remains_healthy(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="kgdistiller-codex-unicode-"
+        ) as temporary:
+            root = Path(temporary)
+            source = copy_product_root(root / "产品版本")
+            home = root / "用户配置" / ".codex"
+            with patch.object(
+                codex_product_module.os,
+                "symlink",
+                side_effect=OSError("symlinks disabled for test"),
+            ):
+                linked = link_product(
+                    codex_home=home,
+                    mode="auto",
+                    source_root=source,
+                )
+            self.assertGreater(linked["modes"].get("junction", 0), 0)
+            self.assertTrue(linked["real_time"])
+            checked = doctor_product(codex_home=home, source_root=source)
+            self.assertEqual(linked["modes"], checked["modes"])
+            self.assertEqual(
+                "kgdistiller-workflows-v1",
+                json.loads(
+                    (
+                        home
+                        / "workflow-products"
+                        / "kgdistiller"
+                        / "workflows"
+                        / "manifest.json"
+                    ).read_text(encoding="utf-8")
+                )["schema"],
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction regression")
+    def test_junction_process_error_removes_exact_staging_path(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="kgdistiller-codex-junction-error-"
+        ) as temporary:
+            root = Path(temporary)
+            source = root / "产品源"
+            staging = root / ".产品链接.kgdistiller-staging"
+            source.mkdir()
+
+            def fail_after_staging(*args: object, **kwargs: object) -> None:
+                staging.mkdir()
+                raise OSError("injected process failure")
+
+            with (
+                patch(
+                    "kgdistiller.codex_product.subprocess.run",
+                    side_effect=fail_after_staging,
+                ) as run,
+                self.assertRaisesRegex(CodexProductError, "junction creation failed"),
+            ):
+                codex_product_module._create_junction(source, staging)
+            self.assertFalse(staging.exists())
+            self.assertEqual(subprocess.DEVNULL, run.call_args.kwargs["stdout"])
+            self.assertEqual(subprocess.DEVNULL, run.call_args.kwargs["stderr"])
+            self.assertIs(run.call_args.kwargs["text"], False)
+
     def test_live_install_exposes_edits_and_canonical_workflows_from_unrelated_cwd(
         self,
     ) -> None:

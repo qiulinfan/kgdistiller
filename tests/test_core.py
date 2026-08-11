@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -8,8 +9,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
-
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "src/kgdistiller/cli.py"
@@ -19,7 +21,7 @@ knowledge = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = knowledge
 SPEC.loader.exec_module(knowledge)
 
-from kgdistiller.agent import remove_agent_index, resolve_agent_index_path  # noqa: E402
+from kgdistiller.agent import remove_agent_index, resolve_agent_index_path
 
 
 class KnowledgeGraphTest(unittest.TestCase):
@@ -554,24 +556,24 @@ class KnowledgeGraphTest(unittest.TestCase):
         )
         knowledge.apply_delta(self.graph, self.database, self.typst_registry, entry)
 
-        renamed = self.chapter.with_name("01-renamed-foundations.typ")
+        renamed = self.chapter.with_name("02-重定位.typ")
         subprocess.run(
             ["git", "mv", str(self.chapter.relative_to(self.repo)), str(renamed.relative_to(self.repo))],
             cwd=self.repo,
             check=True,
         )
         state, _, report = self.sync(
-            files=[Path("notes/math/demo/chapters/01-renamed-foundations.typ")]
+            files=[Path("notes/math/demo/chapters/02-重定位.typ")]
         )
 
         self.assertEqual(
-            "notes/math/demo/chapters/01-renamed-foundations.typ",
+            "notes/math/demo/chapters/02-重定位.typ",
             state.nodes["sigma-algebra"]["provenance"]["authority"],
         )
         self.assertEqual("active", state.nodes["sigma-algebra"]["properties"]["source_status"])
         self.assertEqual("Durable entry.", state.nodes["sigma-algebra"]["text"])
         self.assertEqual(
-            "notes/math/demo/chapters/01-renamed-foundations.typ",
+            "notes/math/demo/chapters/02-重定位.typ",
             state.references[0]["authority"],
         )
         self.assertEqual(
@@ -579,7 +581,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             report["source_changes"]["deleted"],
         )
         self.assertEqual(
-            ["notes/math/demo/chapters/01-renamed-foundations.typ"],
+            ["notes/math/demo/chapters/02-重定位.typ"],
             report["source_changes"]["added"],
         )
         self.assertFalse(
@@ -587,6 +589,74 @@ class KnowledgeGraphTest(unittest.TestCase):
                 "entries/by-source/notes/math/demo/chapters/01-foundations.typ.jsonl"
             ).exists()
         )
+
+    def test_git_machine_output_decode_failures_are_structured(self) -> None:
+        specs = knowledge.load_sources(self.repo, self.registry)
+        for invalid in (b"\xff", "not-bytes"):
+            completed = subprocess.CompletedProcess([], 0, invalid, b"")
+            stderr = io.StringIO()
+            with (
+                patch.object(knowledge.subprocess, "run", return_value=completed) as run,
+                redirect_stderr(stderr),
+                self.assertRaisesRegex(
+                    knowledge.KnowledgeError, "machine output is not"
+                ),
+            ):
+                knowledge.git_source_context(self.repo, None, specs)
+            self.assertEqual("", stderr.getvalue())
+            self.assertIs(run.call_args.kwargs["text"], False)
+
+    def test_git_name_status_truncation_fails_closed(self) -> None:
+        specs = knowledge.load_sources(self.repo, self.registry)
+        head = subprocess.CompletedProcess([], 0, b"a" * 40 + b"\n", b"")
+        status = subprocess.CompletedProcess([], 0, b"", b"")
+        for malformed in (b"R100\0old\0", b"M\0"):
+            diff = subprocess.CompletedProcess([], 0, malformed, b"")
+            with (
+                patch.object(
+                    knowledge.subprocess,
+                    "run",
+                    side_effect=[head, status, diff],
+                ),
+                self.assertRaisesRegex(knowledge.KnowledgeError, "truncated"),
+            ):
+                knowledge.git_source_context(self.repo, "b" * 40, specs)
+
+    def test_typst_success_with_missing_or_invalid_output_is_structured(self) -> None:
+        def state() -> object:
+            return knowledge.GraphState(
+                nodes={
+                    "measurable-space": {
+                        "id": "measurable-space",
+                        "type": "knowledge",
+                        "properties": {"typst_name": "$cal(M)$"},
+                    }
+                },
+                edges={},
+                references=[],
+                manifest={},
+            )
+
+        completed = subprocess.CompletedProcess([], 0, b"", b"")
+        with (
+            patch.object(knowledge.subprocess, "run", return_value=completed),
+            self.assertRaisesRegex(
+                knowledge.KnowledgeError, "cannot read rendered knowledge labels"
+            ),
+        ):
+            knowledge.render_typst_labels(state())
+
+        def write_invalid(
+            arguments: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[bytes]:
+            Path(arguments[-1]).write_bytes(b"\xff")
+            return completed
+
+        with (
+            patch.object(knowledge.subprocess, "run", side_effect=write_invalid),
+            self.assertRaisesRegex(knowledge.KnowledgeError, "not valid UTF-8"),
+        ):
+            knowledge.render_typst_labels(state())
 
     def test_definition_change_marks_entries_and_edges_for_review(self) -> None:
         self.sync()
