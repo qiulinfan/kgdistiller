@@ -1,0 +1,30 @@
+{
+  "schema": "qlkg-store-operation-receipt-v1",
+  "operation": "verify",
+  "store_schema": "qlkg-store-v1",
+  "integrity_status": "integrity-valid",
+  "portable_status": "unmanaged",
+  "retrieval_status": "retrieval-not-ready",
+  "materialization_status": "not-checked",
+  "semantic_status": "not-checked",
+  "working_state": "current",
+  "store_generation_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "knowledge_generation_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "embedding_generation_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "document_generation_sha256": null,
+  "embedding_policy_sha256": null,
+  "readiness_sha256": null,
+  "documents": 1,
+  "embeddings": 2,
+  "counts": {
+    "nodes": 3,
+    "edges": 1,
+    "references": 2
+  },
+  "optional_similarity_state": "absent",
+  "coverage": null,
+  "warnings": [
+    "embedding-policy-unmanaged"
+  ],
+  "receipt_sha256": "5671b4c4c0fe7f6d1d1f620e97f359dcb47707b24f28a8c9ebc32366c973149f"
+}

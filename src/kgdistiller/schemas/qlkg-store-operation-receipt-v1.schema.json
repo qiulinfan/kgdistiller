@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-store-operation-receipt-v1.schema.json",
+  "title": "kgdistiller portable store operation receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "operation", "store_schema", "integrity_status",
+    "portable_status", "retrieval_status", "materialization_status",
+    "semantic_status", "working_state", "store_generation_sha256",
+    "knowledge_generation_sha256", "embedding_generation_sha256",
+    "document_generation_sha256", "embedding_policy_sha256",
+    "readiness_sha256", "documents", "embeddings", "counts",
+    "optional_similarity_state", "coverage", "warnings", "receipt_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-store-operation-receipt-v1"},
+    "operation": {"enum": ["snapshot", "verify", "materialize"]},
+    "store_schema": {"enum": ["qlkg-store-v1", "qlkg-store-v2"]},
+    "integrity_status": {"const": "integrity-valid"},
+    "portable_status": {"enum": ["ready", "partial", "unmanaged"]},
+    "retrieval_status": {"enum": ["retrieval-ready", "retrieval-not-ready"]},
+    "materialization_status": {"enum": ["not-checked", "materialized", "current"]},
+    "semantic_status": {"enum": ["not-checked", "semantic-search-ready", "semantic-search-not-ready"]},
+    "working_state": {"const": "current"},
+    "store_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "knowledge_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "embedding_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "document_generation_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "embedding_policy_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "readiness_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "documents": {"type": "integer", "minimum": 0, "maximum": 100000},
+    "embeddings": {"type": "integer", "minimum": 0, "maximum": 200000},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "references"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "edges": {"type": "integer", "minimum": 0, "maximum": 100000000},
+        "references": {"type": "integer", "minimum": 0, "maximum": 100000000}
+      }
+    },
+    "optional_similarity_state": {"const": "absent"},
+    "coverage": {"oneOf": [{"$ref": "#/$defs/readiness"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"enum": ["required-coverage-incomplete", "embedding-policy-unmanaged", "semantic-configuration-not-ready"]}
+    },
+    "changed": {"type": "boolean"},
+    "root": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]+$"},
+    "mode": {"enum": ["in-place", "snapshot-copy"]},
+    "database": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]+$"},
+    "materialized": {"type": "boolean"},
+    "receipt_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nodeTypeCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_type", "eligible", "ready", "missing", "stale", "incompatible", "coverage", "readiness"],
+      "properties": {
+        "node_type": {"enum": ["knowledge", "field", "topic"]},
+        "eligible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "ready": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "missing": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "stale": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "incompatible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "coverage": {"oneOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]},
+        "readiness": {"enum": ["ready", "partial", "unavailable", "not-applicable"]}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "provider", "model", "dimensions", "required_node_types",
+        "required", "minimum_coverage", "provider_config_sha256",
+        "configuration_status", "eligible", "ready", "missing", "stale",
+        "incompatible", "coverage", "readiness", "node_types"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+        "model": {"type": "string", "minLength": 1, "maxLength": 256},
+        "dimensions": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "required_node_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"enum": ["knowledge", "field", "topic"]}
+        },
+        "required": {"type": "boolean"},
+        "minimum_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "provider_config_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "configuration_status": {"enum": ["ready", "missing", "mismatch", "invalid"]},
+        "eligible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "ready": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "missing": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "stale": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "incompatible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "coverage": {"oneOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]},
+        "readiness": {"enum": ["ready", "partial", "unavailable", "not-applicable"]},
+        "node_types": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/nodeTypeCounts"}}
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "snapshot_sha256", "graph_sha256", "policy_sha256", "state", "profiles", "unmanaged", "optional_similarity_state"],
+      "properties": {
+        "namespace": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "policy_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "state": {"enum": ["ready", "partial", "unmanaged"]},
+        "profiles": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/profile"}},
+        "unmanaged": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["records"],
+          "properties": {"records": {"type": "integer", "minimum": 0, "maximum": 200000}}
+        },
+        "optional_similarity_state": {"const": "absent"}
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@
   "properties": {
     "schema": {"const": "qlkg-document-record-v2"},
     "document_id": {"$ref": "#/$defs/documentId"},
-    "source_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "source_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9._:-]*$"},
     "authority": {"$ref": "#/$defs/relativePath"},
     "authority_history": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/relativePath"}},
     "format": {"enum": ["md", "typ", "tex"]},

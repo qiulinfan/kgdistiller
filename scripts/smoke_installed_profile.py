@@ -117,6 +117,79 @@ def _run_embedding(
     return payload
 
 
+def _run_store(
+    root: Path,
+    command: str,
+    arguments: list[str],
+    environment: dict[str, str],
+    sentinels: tuple[str, ...],
+    *,
+    expected_status: int = 0,
+    global_arguments: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "kgdistiller",
+            "--repo-root",
+            str(root),
+            *(global_arguments or []),
+            "store",
+            command,
+            *arguments,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    transcript = completed.stdout + completed.stderr
+    for sentinel in sentinels:
+        _require(sentinel not in transcript, "store command exposed a credential sentinel")
+    _require(
+        completed.returncode == expected_status,
+        f"installed store {command} returned {completed.returncode}, expected {expected_status}",
+    )
+    encoded = completed.stdout if expected_status in {0, 3} else completed.stderr
+    try:
+        payload = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("installed store command did not return JSON") from error
+    _require(isinstance(payload, dict), "installed store result was not an object")
+    if payload.get("schema") == "qlkg-store-operation-receipt-v1":
+        validate_contract(payload)
+    return payload
+
+
+def _run_knowledge(
+    root: Path,
+    arguments: list[str],
+    environment: dict[str, str],
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "kgdistiller",
+            "--repo-root",
+            str(root),
+            *arguments,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    _require(
+        completed.returncode == 0,
+        f"installed knowledge command failed: {' '.join(arguments)}",
+    )
+    return json.loads(completed.stdout) if completed.stdout.strip() else {}
+
+
 def _run_agent(
     root: Path,
     command: str,
@@ -225,6 +298,299 @@ def _retrieval_plan(*, semantic_queries: list[str]) -> dict[str, Any]:
         },
         "limit": 20,
     }
+
+
+def _installed_store_smoke(
+    root: Path,
+    environment: dict[str, str],
+    sentinels: tuple[str, ...],
+) -> None:
+    unmanaged_root = root / "portable-store-unmanaged-smoke"
+    unmanaged_root.mkdir()
+    _run_knowledge(unmanaged_root, ["init", "--source-root", "notes"], environment)
+    unmanaged_authority = unmanaged_root / "notes/unmanaged.md"
+    unmanaged_authority.write_text(
+        "# Unmanaged portable smoke\n\n"
+        "--[[Unmanaged portable concept]]--\n\n"
+        "A policy-free compatibility fixture.\n",
+        encoding="utf-8",
+    )
+    _run_knowledge(unmanaged_root, ["sync"], environment)
+    unmanaged = _run_store(
+        unmanaged_root,
+        "snapshot",
+        [],
+        environment,
+        sentinels,
+    )
+    _require(
+        unmanaged.get("portable_status") == "unmanaged"
+        and unmanaged.get("retrieval_status") == "retrieval-not-ready",
+        "installed policy-free snapshot did not preserve unmanaged semantics",
+    )
+    unmanaged_override = _run_store(
+        unmanaged_root,
+        "snapshot",
+        ["--allow-partial"],
+        environment,
+        sentinels,
+    )
+    _require(
+        unmanaged_override.get("portable_status") == "unmanaged",
+        "installed allow-partial flag relabeled an unmanaged store",
+    )
+    unmanaged_verified = _run_store(
+        unmanaged_root,
+        "verify",
+        [],
+        environment,
+        sentinels,
+    )
+    _require(
+        unmanaged_verified.get("integrity_status") == "integrity-valid",
+        "installed unmanaged store failed integrity-only verification",
+    )
+    unmanaged_blocked = _run_store(
+        unmanaged_root,
+        "verify",
+        ["--require-ready"],
+        environment,
+        sentinels,
+        expected_status=3,
+    )
+    _require(
+        unmanaged_blocked.get("portable_status") == "unmanaged",
+        "installed unmanaged readiness gate did not return its receipt",
+    )
+    before_explicit_missing = _tree_snapshot(unmanaged_root)
+    explicit_missing = _run_store(
+        unmanaged_root,
+        "snapshot",
+        [],
+        environment,
+        sentinels,
+        expected_status=1,
+        global_arguments=[
+            "--embedding-policy",
+            "knowledge/explicitly-missing-policy.json",
+        ],
+    )
+    _require(
+        explicit_missing.get("code") == "embedding-policy-not-found",
+        "installed explicit missing policy did not fail distinctly",
+    )
+    _require(
+        _tree_snapshot(unmanaged_root) == before_explicit_missing,
+        "installed explicit missing policy changed the project tree",
+    )
+
+    store_root = root / "portable-store-smoke"
+    store_root.mkdir()
+    _run_knowledge(store_root, ["init", "--source-root", "notes"], environment)
+    authority = store_root / "notes/smoke.md"
+    authority.write_text(
+        "# Portable wheel smoke\n\n"
+        "--[[Portable wheel concept]]--\n\n"
+        "A source-backed concept restored from exact portable vectors.\n",
+        encoding="utf-8",
+    )
+    profile_path = store_root / "knowledge/build/local-profile.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema": "qlkg-local-profile-v1",
+                "database": "state/knowledge.sqlite",
+                "portable_store": str(store_root),
+                "embedding_profile": "fixture",
+                "provider_profiles": {
+                    "fixture": {
+                        "adapter": "deterministic-fixture",
+                        "model": "installed-store-fixture-v1",
+                        "dimensions": 3,
+                        "base_url": "https://fixture.invalid/v1",
+                        "credential_env": "KGDISTILLER_FIXTURE_UNUSED_KEY",
+                    }
+                },
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    policy_path = store_root / "knowledge/embedding-policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema": "qlkg-embedding-policy-v1",
+                "profiles": [
+                    {
+                        "name": "fixture",
+                        "provider": "deterministic-fixture",
+                        "model": "installed-store-fixture-v1",
+                        "dimensions": 3,
+                        "required_node_types": ["knowledge"],
+                        "minimum_coverage": 1.0,
+                        "required": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    _run_knowledge(store_root, ["sync"], environment)
+    _run_embedding(
+        store_root,
+        "sync",
+        ["--embedding-profile", "fixture"],
+        environment,
+        sentinels,
+    )
+    snapshot = _run_store(
+        store_root,
+        "snapshot",
+        ["--require-ready"],
+        environment,
+        sentinels,
+    )
+    _require(
+        snapshot.get("portable_status") == "ready"
+        and snapshot.get("retrieval_status") == "retrieval-ready",
+        "installed ready snapshot did not report retrieval readiness",
+    )
+    verified = _run_store(
+        store_root,
+        "verify",
+        ["--require-ready"],
+        environment,
+        sentinels,
+    )
+    _require(
+        verified.get("integrity_status") == "integrity-valid"
+        and verified.get("store_generation_sha256")
+        == snapshot.get("store_generation_sha256"),
+        "installed ready store did not verify",
+    )
+
+    authority.write_text(
+        authority.read_text(encoding="utf-8")
+        + "\n--[[Portable wheel addition]]--\n\nA newly eligible concept.\n",
+        encoding="utf-8",
+    )
+    _run_knowledge(store_root, ["sync"], environment)
+    before_block = _tree_snapshot(store_root)
+    blocked = _run_store(
+        store_root,
+        "snapshot",
+        [],
+        environment,
+        sentinels,
+        expected_status=3,
+    )
+    _require(
+        blocked.get("portable_status") == "partial"
+        and blocked.get("retrieval_status") == "retrieval-not-ready",
+        "installed partial snapshot did not return a truthful blocked receipt",
+    )
+    _require(
+        _tree_snapshot(store_root) == before_block,
+        "installed coverage block changed portable generation bytes",
+    )
+
+    partial = _run_store(
+        store_root,
+        "snapshot",
+        ["--allow-partial"],
+        environment,
+        sentinels,
+    )
+    _require(
+        partial.get("portable_status") == "partial"
+        and partial.get("retrieval_status") == "retrieval-not-ready",
+        "installed allow-partial snapshot overstated retrieval readiness",
+    )
+    partial_verified = _run_store(
+        store_root,
+        "verify",
+        [],
+        environment,
+        sentinels,
+    )
+    _require(
+        partial_verified.get("integrity_status") == "integrity-valid",
+        "installed partial generation failed integrity verification",
+    )
+    partial_blocked = _run_store(
+        store_root,
+        "verify",
+        ["--require-ready"],
+        environment,
+        sentinels,
+        expected_status=3,
+    )
+    _require(
+        partial_blocked.get("portable_status") == "partial",
+        "installed partial readiness gate did not preserve partial status",
+    )
+
+    _run_embedding(
+        store_root,
+        "sync",
+        ["--embedding-profile", "fixture"],
+        environment,
+        sentinels,
+    )
+    refreshed = _run_store(
+        store_root,
+        "snapshot",
+        ["--require-ready"],
+        environment,
+        sentinels,
+    )
+    _require(
+        refreshed.get("portable_status") == "ready",
+        "installed refreshed store was not ready",
+    )
+    restored_database = store_root / "restored/knowledge.sqlite"
+    materialized = _run_store(
+        store_root,
+        "materialize",
+        ["--require-ready"],
+        environment,
+        sentinels,
+        global_arguments=["--database", str(restored_database)],
+    )
+    _require(
+        materialized.get("materialization_status") == "materialized",
+        "installed store did not materialize a fresh database",
+    )
+
+    plan = _retrieval_plan(
+        semantic_queries=["A source-backed concept restored from exact vectors."]
+    )
+    plan["identity_queries"] = ["portable-wheel-concept"]
+    plan["lexical_queries"] = ["portable restored exact vectors"]
+    plan["graph"]["seed_ids"] = ["portable-wheel-concept"]
+    plan_path = store_root / "restored-plan.json"
+    plan_path.write_text(
+        json.dumps(plan, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    search = _run_agent(
+        store_root,
+        "search",
+        ["--plan", str(plan_path)],
+        environment,
+        sentinels,
+        database=restored_database,
+    )
+    _require(
+        search.get("result", {}).get("lanes", {}).get("semantic", {}).get("status")
+        == "enabled",
+        "installed materialized vectors did not support semantic query smoke",
+    )
 
 
 def main() -> int:
@@ -552,7 +918,9 @@ def main() -> int:
             "installed missing-index retrieval created materialized state",
         )
 
-    print("installed profile, embedding, and retrieval smoke passed")
+        _installed_store_smoke(root, environment, sentinels)
+
+    print("installed profile, embedding, retrieval, and portable-store smoke passed")
     return 0
 
 

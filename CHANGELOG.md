@@ -49,6 +49,10 @@ a new schema version.
   context packing without implicit index or document writes.
 - Add reproducible 1k/10k/100k exact semantic-vector benchmarks and document
   the record, byte, query-vector, and dot-product work boundaries.
+- Gate new portable generations on the committed embedding policy and every
+  required profile, publish explicit `ready`, `partial`, or `unmanaged` state,
+  retain v1 stores as integrity-only legacy input, and return one bounded
+  machine-readable receipt from snapshot, verify, and materialize.
 - Document local deployment, backup/restore, compatibility, migration, and
   public release order, including a measured 100,000-node baseline.
 

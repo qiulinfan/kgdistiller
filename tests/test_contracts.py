@@ -35,7 +35,7 @@ def load_fixture(group: str, schema: str) -> dict:
 
 class ContractResourceTests(unittest.TestCase):
     def test_all_new_schemas_load_from_package_resources(self) -> None:
-        self.assertEqual(8, len(CONTRACT_SCHEMAS))
+        self.assertEqual(9, len(CONTRACT_SCHEMAS))
         for discriminator, filename in CONTRACT_SCHEMAS.items():
             with self.subTest(schema=discriminator):
                 schema = load_contract_schema(discriminator)
@@ -156,6 +156,13 @@ class CanonicalDigestTests(unittest.TestCase):
             with self.subTest(schema=discriminator):
                 with self.assertRaisesRegex(ContractError, "does not match canonical"):
                     validate_contract(payload)
+
+        store_receipt = load_fixture(
+            "valid", "qlkg-store-operation-receipt-v1"
+        )
+        store_receipt["documents"] += 1
+        with self.assertRaisesRegex(ContractError, "does not match canonical"):
+            validate_contract(store_receipt)
 
 
 class ContractNegativeTests(unittest.TestCase):
@@ -324,6 +331,12 @@ class ContractNegativeTests(unittest.TestCase):
         document = load_fixture("valid", "qlkg-document-record-v2")
         document["external_ids"]["doi"] = "10.1234/SYNTHETIC"
         self.assert_invalid(document, "lowercase normalized")
+
+        document = load_fixture("valid", "qlkg-document-record-v2")
+        self.assertEqual("local:notes", validate_contract(document)["source_id"])
+
+        document["source_id"] = "local/notes"
+        self.assert_invalid(document, "must match pattern")
 
     def test_upsert_authority_must_match_bounded_registered_glob(self) -> None:
         request = load_fixture("valid", "qlkg-document-upsert-request-v1")
@@ -537,6 +550,82 @@ class ReceiptInvariantTests(unittest.TestCase):
         receipt["git_ready"] = False
         receipt = finalize_self_digest(receipt, "receipt_sha256")
         self.assertEqual("pending", validate_contract(receipt)["overall_status"])
+
+
+class StoreReceiptInvariantTests(unittest.TestCase):
+    def ready_receipt(self) -> dict:
+        receipt = load_fixture("valid", "qlkg-store-operation-receipt-v1")
+        receipt.update(
+            {
+                "store_schema": "qlkg-store-v2",
+                "portable_status": "ready",
+                "retrieval_status": "retrieval-ready",
+                "document_generation_sha256": "4" * 64,
+                "embedding_policy_sha256": "5" * 64,
+                "coverage": {
+                    "namespace": "personal",
+                    "snapshot_sha256": "7" * 64,
+                    "graph_sha256": "8" * 64,
+                    "policy_sha256": "5" * 64,
+                    "state": "ready",
+                    "profiles": [],
+                    "unmanaged": {"records": 0},
+                    "optional_similarity_state": "absent",
+                },
+                "warnings": [],
+            }
+        )
+        receipt["readiness_sha256"] = sha256_json(receipt["coverage"])
+        return finalize_self_digest(receipt, "receipt_sha256")
+
+    def test_ready_retrieval_and_coverage_state_are_equivalent(self) -> None:
+        receipt = self.ready_receipt()
+        self.assertEqual(receipt, validate_contract(receipt))
+
+        receipt["retrieval_status"] = "retrieval-not-ready"
+        receipt = finalize_self_digest(receipt, "receipt_sha256")
+        self.assert_invalid(receipt, "equivalent")
+
+        receipt = self.ready_receipt()
+        receipt["coverage"]["state"] = "partial"
+        receipt["readiness_sha256"] = sha256_json(receipt["coverage"])
+        receipt = finalize_self_digest(receipt, "receipt_sha256")
+        self.assert_invalid(receipt, "coverage state")
+
+        receipt = self.ready_receipt()
+        receipt["coverage"]["unmanaged"]["records"] = 1
+        receipt = finalize_self_digest(receipt, "receipt_sha256")
+        self.assert_invalid(receipt, "readiness digest")
+
+    def test_legacy_receipt_cannot_claim_v2_readiness(self) -> None:
+        receipt = load_fixture("valid", "qlkg-store-operation-receipt-v1")
+        receipt["portable_status"] = "ready"
+        receipt["retrieval_status"] = "retrieval-ready"
+        receipt["warnings"] = []
+        receipt = finalize_self_digest(receipt, "receipt_sha256")
+        self.assert_invalid(receipt, "legacy store receipt")
+
+    def test_semantic_readiness_requires_materialized_ready_retrieval(self) -> None:
+        receipt = self.ready_receipt()
+        receipt.update(
+            {
+                "operation": "materialize",
+                "database": "knowledge/build/knowledge.sqlite",
+                "materialized": False,
+                "materialization_status": "not-checked",
+                "semantic_status": "semantic-search-ready",
+            }
+        )
+        receipt = finalize_self_digest(receipt, "receipt_sha256")
+        self.assert_invalid(receipt, "requires ready retrieval and materialization")
+
+        receipt["materialization_status"] = "current"
+        receipt = finalize_self_digest(receipt, "receipt_sha256")
+        self.assertEqual(receipt, validate_contract(receipt))
+
+    def assert_invalid(self, payload: dict, message: str) -> None:
+        with self.assertRaisesRegex(ContractError, message):
+            validate_contract(payload)
 
 
 class CompatibilityTests(unittest.TestCase):

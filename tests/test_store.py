@@ -22,7 +22,9 @@ from kgdistiller.agent import (  # noqa: E402
     resolve_agent_index_path,
 )
 from kgdistiller.cli import make_artifacts, synchronize, write_artifacts  # noqa: E402
+from kgdistiller.contracts import validate_contract  # noqa: E402
 from kgdistiller.project import initialize_project  # noqa: E402
+from kgdistiller.providers import provider_config_sha256  # noqa: E402
 import kgdistiller.store as store_module  # noqa: E402
 from kgdistiller.store import (  # noqa: E402
     StoreError,
@@ -111,6 +113,71 @@ class PortableStoreTest(unittest.TestCase):
         finally:
             connection.close()
 
+    @staticmethod
+    def tree_bytes(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        }
+
+    def managed_configuration(self) -> tuple[dict[str, object], dict[str, object]]:
+        config: dict[str, object] = {
+            "adapter": "fixture",
+            "model": FixtureEmbeddingProvider.model,
+            "dimensions": FixtureEmbeddingProvider.dimensions,
+            "base_url": "https://fixture.invalid/v1",
+            "credential_env": "KGDISTILLER_STORE_FIXTURE_KEY",
+        }
+        policy: dict[str, object] = {
+            "schema": "qlkg-embedding-policy-v1",
+            "profiles": [
+                {
+                    "name": "primary",
+                    "provider": FixtureEmbeddingProvider.name,
+                    "model": FixtureEmbeddingProvider.model,
+                    "dimensions": FixtureEmbeddingProvider.dimensions,
+                    "required_node_types": ["knowledge"],
+                    "minimum_coverage": 1.0,
+                    "required": True,
+                }
+            ],
+        }
+        digest = provider_config_sha256(config)
+        with store_module._mutable_agent_index(self.database) as connection:
+            connection.execute(
+                "UPDATE embeddings SET provider_config_sha256 = ?",
+                (digest,),
+            )
+        policy_path = self.source / "knowledge/embedding-policy.json"
+        store_module._atomic_write_text(
+            policy_path,
+            store_module._pretty_json(policy),
+        )
+        return policy, config
+
+    def managed_snapshot(
+        self,
+        *,
+        allow_partial: bool = False,
+        require_ready: bool = False,
+    ) -> dict[str, object]:
+        policy, config = self.managed_configuration()
+        return snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+            policy=policy,
+            provider_configs={"primary": config},
+            policy_path=self.source / "knowledge/embedding-policy.json",
+            require_ready=require_ready,
+            allow_partial=allow_partial,
+        )
+
     def test_snapshot_copy_round_trips_exact_vectors_without_provider(self) -> None:
         expected_embeddings = self.embedding_rows(self.database)
 
@@ -126,6 +193,10 @@ class PortableStoreTest(unittest.TestCase):
         verified = verify_store(self.store)
 
         self.assertEqual("snapshot-copy", created["mode"])
+        self.assertEqual("qlkg-store-v2", created["store_schema"])
+        self.assertEqual("unmanaged", created["portable_status"])
+        self.assertEqual("retrieval-not-ready", created["retrieval_status"])
+        self.assertEqual(created, validate_contract(created))
         self.assertEqual(created["store_generation_sha256"], verified["store_generation_sha256"])
         self.assertEqual(len(expected_embeddings), verified["embeddings"])
         portable_manifest = json.loads(
@@ -146,6 +217,14 @@ class PortableStoreTest(unittest.TestCase):
         )
         self.assertTrue((self.store / "notes/roundtrip.typ").is_file())
         self.assertTrue((self.store / "knowledge/graph/manifest.json").is_file())
+        document = json.loads(
+            (self.store / "knowledge/documents.jsonl")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+        self.assertEqual("qlkg-document-record-v2", document["schema"])
+        self.assertTrue(str(document["document_id"]).startswith("doc:sha256:"))
+        self.assertEqual("local:notes", document["source_id"])
         self.assertEqual(
             "build/\n",
             (self.store / "knowledge/.gitignore").read_text(encoding="utf-8"),
@@ -193,6 +272,206 @@ class PortableStoreTest(unittest.TestCase):
             "qlkg-node-embedding-text-v1",
             restored_status["providers"]["embedding"]["embedding_input_schema"],
         )
+
+    def test_managed_ready_generation_materializes_semantic_ready(self) -> None:
+        policy, config = self.managed_configuration()
+        created = snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+            policy=policy,
+            provider_configs={"primary": config},
+            policy_path=self.source / "knowledge/embedding-policy.json",
+        )
+
+        self.assertEqual("ready", created["portable_status"])
+        self.assertEqual("retrieval-ready", created["retrieval_status"])
+        self.assertEqual([], created["warnings"])
+        self.assertEqual(
+            provider_config_sha256(config),
+            created["coverage"]["profiles"][0]["provider_config_sha256"],
+        )
+        verified = verify_store(self.store, require_ready=True)
+        self.assertEqual("ready", verified["portable_status"])
+
+        target = self.store / "knowledge/build/managed.sqlite"
+        materialized = materialize_store(
+            self.store,
+            target,
+            require_ready=True,
+            provider_configs={"primary": config},
+        )
+        self.assertEqual("materialized", materialized["materialization_status"])
+        self.assertEqual("semantic-search-ready", materialized["semantic_status"])
+        status = index_status(target)
+        self.assertEqual(created["readiness_sha256"], status["readiness_sha256"])
+        self.assertEqual("ready", status["portable_status"])
+
+        with store_module._mutable_agent_index(target) as connection:
+            connection.execute(
+                "DELETE FROM embeddings WHERE rowid = (SELECT min(rowid) FROM embeddings)"
+            )
+        repaired = materialize_store(
+            self.store,
+            target,
+            provider_configs={"primary": config},
+        )
+        self.assertTrue(repaired["materialized"])
+        self.assertEqual(created["embeddings"], len(self.embedding_rows(target)))
+
+    def test_partial_gate_preserves_last_generation_and_override_is_explicit(self) -> None:
+        policy, config = self.managed_configuration()
+        first = snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+            policy=policy,
+            provider_configs={"primary": config},
+            policy_path=self.source / "knowledge/embedding-policy.json",
+        )
+        before = self.tree_bytes(self.store)
+        knowledge_id = next(
+            str(node["id"])
+            for node in store_module.make_agent_snapshot(
+                store_module.load_state(self.graph)
+            )["nodes"]
+            if node["type"] == "knowledge"
+        )
+        with store_module._mutable_agent_index(self.database) as connection:
+            connection.execute(
+                "DELETE FROM embeddings WHERE namespace = 'personal' AND node_id = ?",
+                (knowledge_id,),
+            )
+
+        with self.assertRaises(StoreError) as blocked:
+            snapshot_store(
+                self.source,
+                self.store,
+                registry=self.registry,
+                graph_dir=self.graph,
+                identities=self.identities,
+                alignments=self.alignments,
+                database=self.database,
+                policy=policy,
+                provider_configs={"primary": config},
+                policy_path=self.source / "knowledge/embedding-policy.json",
+            )
+        self.assertEqual("coverage-blocked", blocked.exception.code)
+        self.assertEqual("partial", blocked.exception.receipt["portable_status"])
+        self.assertEqual(before, self.tree_bytes(self.store))
+        self.assertEqual(
+            first["store_generation_sha256"],
+            verify_store(self.store, require_ready=True)["store_generation_sha256"],
+        )
+
+        partial = snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+            policy=policy,
+            provider_configs={"primary": config},
+            policy_path=self.source / "knowledge/embedding-policy.json",
+            allow_partial=True,
+        )
+        self.assertEqual("partial", partial["portable_status"])
+        self.assertEqual("retrieval-not-ready", partial["retrieval_status"])
+        self.assertIn("required-coverage-incomplete", partial["warnings"])
+        with self.assertRaises(StoreError) as verify_blocked:
+            verify_store(self.store, require_ready=True)
+        self.assertEqual("coverage-blocked", verify_blocked.exception.code)
+
+        policy["profiles"][0]["minimum_coverage"] = 0.5
+        store_module._atomic_write_text(
+            self.source / "knowledge/embedding-policy.json",
+            store_module._pretty_json(policy),
+        )
+        threshold = snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.database,
+            policy=policy,
+            provider_configs={"primary": config},
+            policy_path=self.source / "knowledge/embedding-policy.json",
+        )
+        self.assertEqual(0.5, threshold["coverage"]["profiles"][0]["coverage"])
+        self.assertEqual("ready", threshold["portable_status"])
+
+    def test_zero_eligible_required_profile_is_not_applicable_not_ready(self) -> None:
+        policy, config = self.managed_configuration()
+        policy["profiles"][0]["required_node_types"] = ["topic"]
+        policy["profiles"][0]["minimum_coverage"] = 0.0
+        store_module._atomic_write_text(
+            self.source / "knowledge/embedding-policy.json",
+            store_module._pretty_json(policy),
+        )
+
+        with self.assertRaises(StoreError) as blocked:
+            snapshot_store(
+                self.source,
+                self.store,
+                registry=self.registry,
+                graph_dir=self.graph,
+                identities=self.identities,
+                alignments=self.alignments,
+                database=self.database,
+                policy=policy,
+                provider_configs={"primary": config},
+                policy_path=self.source / "knowledge/embedding-policy.json",
+            )
+        profile = blocked.exception.receipt["coverage"]["profiles"][0]
+        self.assertEqual(0, profile["eligible"])
+        self.assertIsNone(profile["coverage"])
+        self.assertEqual("not-applicable", profile["readiness"])
+        self.assertEqual("partial", blocked.exception.receipt["portable_status"])
+        self.assertFalse((self.store / "knowledge/store.json").exists())
+
+    def test_unmanaged_require_ready_is_a_receipted_gate(self) -> None:
+        created = self.snapshot()
+        self.assertEqual("unmanaged", created["portable_status"])
+        with self.assertRaises(StoreError) as blocked:
+            verify_store(self.store, require_ready=True)
+        self.assertEqual("coverage-blocked", blocked.exception.code)
+        self.assertEqual("unmanaged", blocked.exception.receipt["portable_status"])
+
+    def test_nondefault_namespace_round_trips_without_local_vectors(self) -> None:
+        created = snapshot_store(
+            self.source,
+            self.store,
+            registry=self.registry,
+            graph_dir=self.graph,
+            identities=self.identities,
+            alignments=self.alignments,
+            database=self.source / "knowledge/build/missing.sqlite",
+            namespace="research",
+        )
+        self.assertEqual("research", created["coverage"]["namespace"])
+        self.assertEqual(0, created["embeddings"])
+        verified = verify_store(self.store)
+        self.assertEqual("research", verified["coverage"]["namespace"])
+        target = self.store / "knowledge/build/research.sqlite"
+        materialized = materialize_store(
+            self.store,
+            target,
+            namespace="research",
+        )
+        self.assertTrue(materialized["materialized"])
+        self.assertEqual("research", index_status(target)["namespace"])
 
     def test_v1_bundle_remains_verifiable_and_materializes_legacy_digest(self) -> None:
         self.snapshot()
@@ -423,6 +702,120 @@ class PortableStoreTest(unittest.TestCase):
 
         self.assertFalse(agent_index_exists(target))
 
+    def test_snapshot_publication_failure_rolls_back_exact_tree(self) -> None:
+        self.snapshot()
+        before = self.tree_bytes(self.store)
+        index_embeddings(
+            self.database,
+            ReplacementEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        real_copy = store_module._copy_file
+        records_target = (
+            self.store / "knowledge/embeddings/records.jsonl"
+        ).resolve()
+
+        def failing_copy(source: Path, destination: Path) -> None:
+            if (
+                destination.resolve(strict=False) == records_target
+                and "candidate" in source.parts
+            ):
+                raise RuntimeError("injected publication failure")
+            real_copy(source, destination)
+
+        with patch("kgdistiller.store._copy_file", side_effect=failing_copy):
+            with self.assertRaisesRegex(RuntimeError, "injected publication failure"):
+                self.snapshot()
+
+        self.assertEqual(before, self.tree_bytes(self.store))
+        self.assertFalse(store_module._journal_path(self.store).exists())
+        verify_store(self.store)
+
+    def test_snapshot_index_generation_change_preserves_exact_tree(self) -> None:
+        self.snapshot()
+        before = self.tree_bytes(self.store)
+        index_embeddings(
+            self.database,
+            ReplacementEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        real_token = store_module.index_generation_token
+        calls = 0
+
+        def changed_on_install(database: Path) -> str:
+            nonlocal calls
+            calls += 1
+            token = real_token(database)
+            return "0" * 64 if calls == 3 else token
+
+        with patch(
+            "kgdistiller.store.index_generation_token",
+            side_effect=changed_on_install,
+        ):
+            with self.assertRaises(StoreError) as stale:
+                self.snapshot()
+        self.assertEqual("stale-generation", stale.exception.code)
+        self.assertEqual(before, self.tree_bytes(self.store))
+        verify_store(self.store)
+
+    def test_verify_recovers_interrupted_precommit_publication(self) -> None:
+        self.snapshot()
+        before = self.tree_bytes(self.store)
+        index_embeddings(
+            self.database,
+            ReplacementEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        real_copy = store_module._copy_file
+        real_recover = store_module._recover_publication
+        records_target = (
+            self.store / "knowledge/embeddings/records.jsonl"
+        ).resolve()
+
+        def failing_copy(source: Path, destination: Path) -> None:
+            if (
+                destination.resolve(strict=False) == records_target
+                and "candidate" in source.parts
+            ):
+                raise RuntimeError("injected publication failure")
+            real_copy(source, destination)
+
+        def interrupted_recovery(root: Path) -> None:
+            if store_module._journal_path(root).is_file():
+                raise RuntimeError("injected recovery interruption")
+            real_recover(root)
+
+        with patch(
+            "kgdistiller.store._copy_file", side_effect=failing_copy
+        ), patch(
+            "kgdistiller.store._recover_publication",
+            side_effect=interrupted_recovery,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "injected recovery interruption"
+            ):
+                self.snapshot()
+
+        self.assertTrue(store_module._journal_path(self.store).is_file())
+        verified = verify_store(self.store)
+        self.assertEqual("integrity-valid", verified["integrity_status"])
+        self.assertEqual(before, self.tree_bytes(self.store))
+        self.assertFalse(store_module._journal_path(self.store).exists())
+
+    def test_embedding_export_preflight_enforces_record_bound(self) -> None:
+        with patch.object(store_module, "MAX_EMBEDDING_RECORDS", 0):
+            with self.assertRaisesRegex(StoreError, "record budget"):
+                self.snapshot()
+        self.assertFalse((self.store / "knowledge/store.json").exists())
+
+    def test_store_writer_lock_has_stable_bounded_busy_error(self) -> None:
+        with store_module._store_writer_lock(self.store):
+            with patch.object(store_module, "STORE_LOCK_TIMEOUT_SECONDS", 0.0):
+                with self.assertRaises(StoreError) as blocked:
+                    with store_module._store_writer_lock(self.store):
+                        self.fail("a second writer unexpectedly acquired the lock")
+        self.assertEqual("store-busy", blocked.exception.code)
+
     def test_materialize_exposes_only_complete_old_or_new_generation(self) -> None:
         created = snapshot_store(
             self.source,
@@ -478,6 +871,48 @@ class PortableStoreTest(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_materialize_rechecks_store_generation_before_publication(self) -> None:
+        first = self.snapshot()
+        target = self.store / "knowledge/build/toctou.sqlite"
+        materialize_store(self.store, target)
+        self.assertEqual(
+            first["store_generation_sha256"],
+            index_status(target)["store_generation_sha256"],
+        )
+        index_embeddings(
+            self.database,
+            ReplacementEmbeddingProvider(),
+            build_similarity_edges=False,
+        )
+        second = self.snapshot()
+        self.assertNotEqual(
+            first["store_generation_sha256"], second["store_generation_sha256"]
+        )
+
+        real_validate = store_module._validated_store
+        calls = 0
+
+        def changed_on_recheck(root: Path) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            validated = real_validate(root)
+            if calls == 2:
+                validated = dict(validated)
+                validated["manifest"] = dict(validated["manifest"])
+                validated["manifest"]["store_sha256"] = "0" * 64
+            return validated
+
+        with patch(
+            "kgdistiller.store._validated_store", side_effect=changed_on_recheck
+        ):
+            with self.assertRaises(StoreError) as stale:
+                materialize_store(self.store, target)
+        self.assertEqual("stale-generation", stale.exception.code)
+        self.assertEqual(
+            first["store_generation_sha256"],
+            index_status(target)["store_generation_sha256"],
+        )
+
     def snapshot(self) -> dict[str, object]:
         return snapshot_store(
             self.source,
@@ -505,7 +940,7 @@ class PortableStoreTest(unittest.TestCase):
     ) -> None:
         records_path = self.store / "knowledge/embeddings/records.jsonl"
         records_text = store_module._jsonl(records)
-        records_path.write_text(records_text, encoding="utf-8")
+        store_module._atomic_write_text(records_path, records_text)
         manifest_path = self.store / "knowledge/embeddings/manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["schema"] = bundle_schema
@@ -529,9 +964,7 @@ class PortableStoreTest(unittest.TestCase):
         ]
         manifest.pop("embedding_generation_sha256", None)
         manifest["embedding_generation_sha256"] = store_module.sha256_json(manifest)
-        manifest_path.write_text(
-            store_module._pretty_json(manifest), encoding="utf-8"
-        )
+        store_module._atomic_write_text(manifest_path, store_module._pretty_json(manifest))
 
         store_path = self.store / "knowledge/store.json"
         store = json.loads(store_path.read_text(encoding="utf-8"))
@@ -539,19 +972,16 @@ class PortableStoreTest(unittest.TestCase):
         store["embedding_generation_sha256"] = manifest[
             "embedding_generation_sha256"
         ]
-        store["store_generation_sha256"] = store_module.sha256_json(
-            {
-                "knowledge_generation_sha256": store[
-                    "knowledge_generation_sha256"
-                ],
-                "embedding_generation_sha256": store[
-                    "embedding_generation_sha256"
-                ],
-            }
-        )
+        store_generation = {
+            "knowledge_generation_sha256": store["knowledge_generation_sha256"],
+            "embedding_generation_sha256": store["embedding_generation_sha256"],
+        }
+        if store.get("schema") == store_module.STORE_SCHEMA:
+            store_generation["readiness_sha256"] = store["readiness_sha256"]
+        store["store_generation_sha256"] = store_module.sha256_json(store_generation)
         store.pop("store_sha256", None)
         store["store_sha256"] = store_module.sha256_json(store)
-        store_path.write_text(store_module._pretty_json(store), encoding="utf-8")
+        store_module._atomic_write_text(store_path, store_module._pretty_json(store))
 
     def convert_embedding_bundle_to_v1(self) -> list[dict[str, object]]:
         records = self.embedding_records()
@@ -564,6 +994,89 @@ class PortableStoreTest(unittest.TestCase):
             records, bundle_schema=store_module.LEGACY_EMBEDDING_BUNDLE_SCHEMA
         )
         return records
+
+    def convert_store_to_v1(self) -> None:
+        documents_path = self.store / "knowledge/documents.jsonl"
+        current = [
+            json.loads(line)
+            for line in documents_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        formats = {"md": "markdown", "typ": "typst", "tex": "latex"}
+        legacy = [
+            {
+                "schema": store_module.LEGACY_DOCUMENT_RECORD_SCHEMA,
+                "source_id": record["source_id"],
+                "subject": "local",
+                "course": "notes",
+                "knowledge_origin": record["knowledge_origin"],
+                "authority": record["authority"],
+                "format": formats[record["format"]],
+                "source_sha256": record["source_sha256"],
+                "definition_ids": record["definition_ids"],
+                "reference_count": record["reference_count"],
+            }
+            for record in current
+        ]
+        documents_text = store_module._jsonl(legacy)
+        store_module._atomic_write_text(documents_path, documents_text)
+        store_path = self.store / "knowledge/store.json"
+        manifest = json.loads(store_path.read_text(encoding="utf-8"))
+        manifest["schema"] = store_module.LEGACY_STORE_SCHEMA
+        manifest["paths"].pop("embedding_policy", None)
+        manifest["documents"] = {
+            "count": len(legacy),
+            "sha256": store_module._sha256_text(documents_text),
+            "source_snapshot_sha256": store_module.sha256_json(legacy),
+        }
+        for key in (
+            "embedding_policy_file_sha256",
+            "embedding_policy_sha256",
+            "readiness",
+            "readiness_sha256",
+        ):
+            manifest.pop(key, None)
+        manifest["knowledge_generation_sha256"] = store_module.sha256_json(
+            {
+                "registry_sha256": manifest["registry_sha256"],
+                "source_snapshot_sha256": manifest["documents"][
+                    "source_snapshot_sha256"
+                ],
+                "graph_sha256": manifest["graph_sha256"],
+                "identity_sha256": manifest["identity_sha256"],
+                "alignment_sha256": manifest["alignment_sha256"],
+            }
+        )
+        manifest["store_generation_sha256"] = store_module.sha256_json(
+            {
+                "knowledge_generation_sha256": manifest[
+                    "knowledge_generation_sha256"
+                ],
+                "embedding_generation_sha256": manifest[
+                    "embedding_generation_sha256"
+                ],
+            }
+        )
+        manifest.pop("store_sha256", None)
+        manifest["store_sha256"] = store_module.sha256_json(manifest)
+        store_module._atomic_write_text(store_path, store_module._pretty_json(manifest))
+
+    def test_v1_store_is_readable_but_always_unmanaged(self) -> None:
+        self.snapshot()
+        self.convert_store_to_v1()
+
+        verified = verify_store(self.store)
+        self.assertEqual(store_module.LEGACY_STORE_SCHEMA, verified["store_schema"])
+        self.assertEqual("unmanaged", verified["portable_status"])
+        self.assertIsNone(verified["coverage"])
+        with self.assertRaises(StoreError) as blocked:
+            verify_store(self.store, require_ready=True)
+        self.assertEqual("coverage-blocked", blocked.exception.code)
+
+        target = self.store / "knowledge/build/legacy.sqlite"
+        materialized = materialize_store(self.store, target)
+        self.assertTrue(materialized["materialized"])
+        self.assertEqual("unmanaged", index_status(target)["portable_status"])
 
     def test_snapshot_copy_removes_only_unchanged_stale_authority(self) -> None:
         snapshot_store(
@@ -602,7 +1115,10 @@ class PortableStoreTest(unittest.TestCase):
 
         self.assertEqual(0, refreshed["documents"])
         self.assertFalse((self.store / "notes/roundtrip.typ").exists())
-        self.assertEqual(refreshed["store_generation_sha256"], verify_store(self.store)["store_generation_sha256"])
+        self.assertEqual(
+            refreshed["store_generation_sha256"],
+            verify_store(self.store)["store_generation_sha256"],
+        )
 
 
 if __name__ == "__main__":

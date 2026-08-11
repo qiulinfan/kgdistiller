@@ -1,7 +1,7 @@
 {
   "schema": "qlkg-document-record-v2",
   "document_id": "doc:synthetic-note",
-  "source_id": "notes",
+  "source_id": "local:notes",
   "authority": "notes/synthetic.typ",
   "authority_history": ["notes/old-synthetic.typ"],
   "format": "typ",

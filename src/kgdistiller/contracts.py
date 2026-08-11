@@ -21,6 +21,7 @@ CONTRACT_SCHEMAS = {
         "qlkg-retrieval-plan-v1",
         "qlkg-search-result-v2",
         "qlkg-search-execution-v1",
+        "qlkg-store-operation-receipt-v1",
         "qlkg-document-record-v2",
         "qlkg-document-upsert-request-v1",
         "qlkg-document-ingest-receipt-v1",
@@ -29,6 +30,7 @@ CONTRACT_SCHEMAS = {
 SELF_DIGEST_FIELDS = {
     "qlkg-document-upsert-request-v1": "request_sha256",
     "qlkg-document-ingest-receipt-v1": "receipt_sha256",
+    "qlkg-store-operation-receipt-v1": "receipt_sha256",
 }
 
 
@@ -255,6 +257,108 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
         )
 
 
+def _validate_store_receipt(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-store-operation-receipt-v1":
+        return
+
+    operation = payload.get("operation")
+    portable = payload.get("portable_status")
+    retrieval = payload.get("retrieval_status")
+    materialization = payload.get("materialization_status")
+    semantic = payload.get("semantic_status")
+    store_schema = payload.get("store_schema")
+    coverage = payload.get("coverage")
+    warnings = set(payload.get("warnings") or [])
+
+    if (portable == "ready") != (retrieval == "retrieval-ready"):
+        raise ContractError(
+            "retrieval-ready must be equivalent to portable_status ready"
+        )
+    if store_schema == "qlkg-store-v1":
+        if (
+            portable != "unmanaged"
+            or coverage is not None
+            or payload.get("document_generation_sha256") is not None
+            or payload.get("embedding_policy_sha256") is not None
+            or payload.get("readiness_sha256") is not None
+        ):
+            raise ContractError(
+                "legacy store receipt must be unmanaged without v2 bindings"
+            )
+    else:
+        if not isinstance(coverage, dict) or coverage.get("state") != portable:
+            raise ContractError(
+                "v2 receipt coverage state must match portable_status"
+            )
+        if payload.get("document_generation_sha256") is None:
+            raise ContractError("v2 receipt requires a document generation binding")
+        if payload.get("readiness_sha256") is None:
+            raise ContractError("v2 receipt requires a readiness binding")
+        if payload.get("readiness_sha256") != sha256_json(coverage):
+            raise ContractError(
+                "receipt readiness digest must match the exact coverage payload"
+            )
+        policy_digest = payload.get("embedding_policy_sha256")
+        if coverage.get("policy_sha256") != policy_digest:
+            raise ContractError(
+                "receipt coverage policy digest must match embedding_policy_sha256"
+            )
+        if (portable == "unmanaged") != (policy_digest is None):
+            raise ContractError(
+                "v2 unmanaged status must be equivalent to a missing policy binding"
+            )
+
+    expected_warning = {
+        "partial": "required-coverage-incomplete",
+        "unmanaged": "embedding-policy-unmanaged",
+    }.get(portable)
+    for warning in ("required-coverage-incomplete", "embedding-policy-unmanaged"):
+        if (warning in warnings) != (warning == expected_warning):
+            raise ContractError("portable status warning does not match receipt state")
+    if (
+        "semantic-configuration-not-ready" in warnings
+    ) != (semantic == "semantic-search-not-ready"):
+        raise ContractError("semantic status warning does not match receipt state")
+
+    if operation in {"snapshot", "verify"}:
+        if materialization != "not-checked" or semantic != "not-checked":
+            raise ContractError(
+                "snapshot and verify receipts must not claim local materialization"
+            )
+    if operation == "snapshot":
+        if not all(name in payload for name in ("changed", "root", "mode")):
+            raise ContractError("snapshot receipt is missing publication fields")
+        if any(name in payload for name in ("database", "materialized")):
+            raise ContractError("snapshot receipt contains materialization fields")
+    elif operation == "verify":
+        if any(
+            name in payload
+            for name in ("changed", "root", "mode", "database", "materialized")
+        ):
+            raise ContractError("verify receipt contains operation-specific fields")
+    elif operation == "materialize":
+        if not all(name in payload for name in ("database", "materialized")):
+            raise ContractError("materialize receipt is missing local result fields")
+        if any(name in payload for name in ("changed", "root", "mode")):
+            raise ContractError("materialize receipt contains snapshot fields")
+        materialized = payload.get("materialized")
+        if materialization == "materialized" and materialized is not True:
+            raise ContractError("materialized status requires materialized=true")
+        if materialization == "current" and materialized is not False:
+            raise ContractError("current status requires materialized=false")
+        if materialization == "not-checked" and materialized is not False:
+            raise ContractError("not-checked materialization requires materialized=false")
+
+    if semantic == "semantic-search-ready" and (
+        portable != "ready"
+        or retrieval != "retrieval-ready"
+        or materialization not in {"materialized", "current"}
+    ):
+        raise ContractError(
+            "semantic-search-ready requires ready retrieval and materialization"
+        )
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -275,6 +379,7 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
     _validate_upsert_source(payload)
     _validate_receipt_state(payload)
     _validate_search_execution(payload)
+    _validate_store_receipt(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

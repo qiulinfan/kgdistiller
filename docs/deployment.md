@@ -5,7 +5,7 @@ SQLite and not an Agent conversation—is the unit to back up and synchronize.
 It can be the notes repository itself or a dedicated private Git repository
 created from an existing knowledge project.
 
-Design rationale, rejected alternatives, versioned contracts, and the v1
+Design rationale, rejected alternatives, versioned contracts, and the portable
 implementation map are recorded in
 [portable-store-development.md](portable-store-development.md).
 
@@ -22,7 +22,7 @@ personal-knowledge-store/
 │   ├── documents.jsonl            # committed authority inventory
 │   ├── embedding-policy.json      # committed credential-free vector policy
 │   ├── embeddings/                # committed exact float32 vector objects
-│   ├── store.json                 # committed qlkg-store-v1 generation
+│   ├── store.json                 # committed qlkg-store-v2 generation
 │   ├── .gitignore                 # keeps build/ local; existing rules preserved
 │   └── build/                     # ignored SQLite, plans, receipts, previews
 └── vendor/kgdistiller/            # optional pinned Git submodule
@@ -32,8 +32,8 @@ Create or refresh this layout in place with:
 
 ```sh
 kgdistiller --repo-root . check
-kgdistiller --repo-root . store snapshot
-kgdistiller --repo-root . store verify
+kgdistiller --repo-root . store snapshot --require-ready
+kgdistiller --repo-root . store verify --require-ready
 ```
 
 To migrate from a different notes project, write a self-contained copy to a
@@ -41,7 +41,7 @@ separate directory:
 
 ```sh
 kgdistiller --repo-root /absolute/path/to/notes store snapshot \
-  --output /absolute/path/to/personal-knowledge-store
+  --output /absolute/path/to/personal-knowledge-store --require-ready
 ```
 
 The destination cannot be nested inside the source project. Only registered,
@@ -183,10 +183,16 @@ publishes nothing, and a graph/snapshot change during provider work or before
 the final status observation returns `stale-generation`. Query and MCP paths never
 invoke document sync; a query-vector request is a separate read operation.
 
-This status is not yet a portable-store readiness gate. Until that later gate
-is implemented, `store snapshot` and `store verify` must not be described as
-RAG-ready merely because they succeeded; inspect embedding coverage
-separately.
+Portable snapshotting reuses this provider-free analysis for every profile
+marked `required`. It binds the policy digest, non-secret provider-configuration
+digests, and exact coverage to the generation. It never constructs a provider,
+reads a credential value, or makes a network call.
+
+Ordinary snapshotting is fail-closed when a policy exists: coverage below a
+required threshold installs no candidate portable artifact. Use
+`--allow-partial` only when an integrity-valid but explicitly non-ready
+generation is useful. Use `--require-ready` when policy-free, legacy, partial,
+and otherwise unmanaged generations must all be rejected.
 
 ## Planned hybrid retrieval
 
@@ -305,8 +311,8 @@ successful push of the containing commit.
 Before changing machines:
 
 ```sh
-kgdistiller --repo-root . store snapshot
-kgdistiller --repo-root . store verify
+kgdistiller --repo-root . store snapshot --require-ready
+kgdistiller --repo-root . store verify --require-ready
 git status --short
 git bundle create ../notes-backup.bundle --all
 ```
@@ -318,13 +324,39 @@ private authority data only in storage appropriate for that data.
 
 1. Clone the authority store or restore its Git bundle.
 2. Initialize the pinned submodule or install the recorded kgdistiller version.
-3. Run `kgdistiller store verify` before changing any tracked file.
+3. Run `kgdistiller store verify --require-ready` before changing any tracked
+   file when semantic retrieval coverage is required. Plain `store verify`
+   checks integrity only.
 4. Delete any restored `knowledge/build/` directory; it is disposable.
 5. Run `kgdistiller store materialize`; it restores SQLite and exact vectors
    without provider calls.
 6. Run `kgdistiller agent status` and confirm the store generation.
 7. Resolve several known IDs and build one bounded context bundle.
 8. Run `ingest plan` for a disposable reviewed request before allowing writes.
+
+Snapshot, verify, and materialize return
+`qlkg-store-operation-receipt-v1`. Deployment reporting must preserve its
+independent status dimensions:
+
+- integrity: `integrity-valid`;
+- portable: `ready`, `partial`, or `unmanaged`;
+- retrieval: `retrieval-ready` or `retrieval-not-ready`;
+- materialization: `not-checked`, `materialized`, or `current`;
+- semantic search: `not-checked`, `semantic-search-ready`, or
+  `semantic-search-not-ready`;
+- working state: `current` for these completed store operations.
+
+Higher-level ingest/deploy reporting may separately use
+`graph-committed/embedding-pending` or `graph-committed/portable-pending`, and
+must keep Git publication state (`local-only`, `committed-locally`, or
+`remote-confirmed`) outside this receipt.
+
+A readiness gate miss is exit status 3 and still returns a valid receipt on
+stdout. Integrity, schema, and I/O failures are exit status 1 with a bounded,
+credential-safe JSON error on stderr. Materialization can restore an
+integrity-valid partial or unmanaged generation, but must not upgrade its
+retrieval or semantic-search claim. Add `store materialize --require-ready`
+when that restore must reject either state before publishing the local index.
 
 Do not run `sync` first merely to make a failed `check` disappear. A mismatch
 between committed authority and graph is evidence to review.

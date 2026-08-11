@@ -169,8 +169,9 @@ personal-knowledge-store/
 │   ├── identities.json                     # optional qlkg-identities-v1
 │   ├── alignments.json                     # qlkg-alignments-v1
 │   ├── graph/                              # qlkg-v2 + entry shards
-│   ├── documents.jsonl                     # qlkg-document-record-v1
-│   ├── store.json                          # qlkg-store-v1
+│   ├── documents.jsonl                     # qlkg-document-record-v2
+│   ├── embedding-policy.json               # qlkg-embedding-policy-v1
+│   ├── store.json                          # qlkg-store-v2
 │   └── embeddings/
 │       ├── manifest.json                   # qlkg-embedding-bundle-v2
 │       ├── records.jsonl                   # qlkg-embedding-record-v2
@@ -191,13 +192,13 @@ SQLite 可以被删除和重建。其 schema 不构成跨机器协议，也不�
 
 ## 6. 数据契约
 
-### 6.1 `qlkg-store-v1`
+### 6.1 `qlkg-store-v2` and v1 compatibility
 
 `knowledge/store.json` 是最后写入的顶层 manifest，主要字段包括：
 
 ```json
 {
-  "schema": "qlkg-store-v1",
+  "schema": "qlkg-store-v2",
   "generator": "kgdistiller",
   "paths": {
     "registry": "knowledge/sources.json",
@@ -205,8 +206,23 @@ SQLite 可以被删除和重建。其 schema 不构成跨机器协议，也不�
     "alignments": "knowledge/alignments.json",
     "graph": "knowledge/graph",
     "documents": "knowledge/documents.jsonl",
+    "embedding_policy": "knowledge/embedding-policy.json",
     "embedding_manifest": "knowledge/embeddings/manifest.json"
   },
+  "documents": {
+    "record_schema": "qlkg-document-record-v2",
+    "count": 1,
+    "sha256": "...",
+    "source_snapshot_sha256": "...",
+    "document_generation_sha256": "..."
+  },
+  "readiness": {
+    "state": "ready",
+    "profiles": [{"name": "primary", "readiness": "ready"}]
+  },
+  "embedding_policy_file_sha256": "...",
+  "embedding_policy_sha256": "...",
+  "readiness_sha256": "...",
   "registry_sha256": "...",
   "identity_sha256": "...",
   "alignment_sha256": "...",
@@ -218,30 +234,35 @@ SQLite 可以被删除和重建。其 schema 不构成跨机器协议，也不�
 }
 ```
 
-三个 generation digest 含义如下：
+Generation digest 含义如下：
 
 - `knowledge_generation_sha256`：绑定 registry、source inventory、graph、
   identities 和 alignments；
 - `embedding_generation_sha256`：绑定 embedding records、objects 和 provider
   configurations；
-- `store_generation_sha256`：绑定前两个 generation，作为本机 materialize
-  的幂等键。
+- `store_generation_sha256`：绑定 knowledge、document、embedding、policy 和
+  readiness generation，作为本机 materialize 的幂等键。
 
-`store_sha256` 对 manifest 除自身之外的 canonical JSON 计算 SHA-256。
+`store_sha256` 对 manifest 除自身之外的 canonical JSON 计算 SHA-256。v1
+manifest 继续可读和 materialize，但没有 policy、required configuration 或
+coverage binding，因此 verify 必须合成 `unmanaged` / `retrieval-not-ready`，不能
+根据 vector 数量推断 readiness。
 
-### 6.2 `qlkg-document-record-v1`
+### 6.2 `qlkg-document-record-v2` and v1 compatibility
 
 `knowledge/documents.jsonl` 每行描述一个进入当前图谱 generation 的文件：
 
-- `source_id`、`subject`、`course` 和 `knowledge_origin`；
+- stable `document_id`、`source_id` 和 `knowledge_origin`；
 - repo-relative `authority`；
-- `markdown`、`typst` 或 `latex` 格式；
+- reviewed `authority_history` 和 normalized external IDs；
+- `md`、`typ` 或 `tex` 格式；
 - exact `source_sha256`；
 - 该文件当前拥有的 active definition IDs；
 - reference count。
 
 Inventory 必须与 `qlkg-v2` manifest 的 `source_hashes` 完全相等。多余、缺失
-或 hash 不一致的 authority 都会导致 verify 失败。
+或 hash 不一致的 authority 都会导致 verify 失败。已发布 v1 records 继续可读，
+但 writer 不会向 v1 增加 required identity 字段或伪装成 v2。
 
 ### 6.3 `qlkg-embedding-bundle-v2`
 
@@ -303,6 +324,32 @@ Vector object 必须满足：
 - 所有值 finite；
 - 不能是全零向量。
 
+### 6.5 `qlkg-store-operation-receipt-v1`
+
+Snapshot、verify 和 materialize 返回同一 bounded/self-digested receipt。它把
+以下维度分开，避免一个“success”掩盖降级：
+
+- `integrity_status: integrity-valid`；
+- `portable_status: ready | partial | unmanaged`；
+- `retrieval_status: retrieval-ready | retrieval-not-ready`；
+- `materialization_status: not-checked | materialized | current`；
+- `semantic_status: not-checked | semantic-search-ready |
+  semantic-search-not-ready`；
+- `working_state: current`。
+
+`graph-committed/embedding-pending` 和 `graph-committed/portable-pending` 属于
+更高层 ingest/deploy orchestration，不会被一次已经完成的 store operation
+伪装进该 receipt。
+
+Snapshot 另外携带 `changed`、`root`、`mode`；materialize 携带 `database` 和
+`materialized`。`warnings` 只使用 bounded stable codes，`receipt_sha256` 绑定除
+自身外的 canonical receipt，包括完整 coverage payload。
+
+Receipt 只包含 digests、bounded counts、coverage summary 和稳定 reason，不含
+authority 原文、vector bytes、local profile、base URL 或 credential value。
+Readiness gate 未满足时 CLI 在 stdout 返回 receipt 并使用 exit 3；损坏、schema
+或 I/O failure 使用 exit 1 和 stderr 上的结构化错误。Argparse usage 保留 exit 2。
+
 ## 7. 核心工作流
 
 ### 7.1 原地创建或刷新
@@ -310,22 +357,24 @@ Vector object 必须满足：
 ```sh
 kgdistiller --repo-root PROJECT check
 kgdistiller --repo-root PROJECT agent status
-kgdistiller --repo-root PROJECT store snapshot
-kgdistiller --repo-root PROJECT store verify
+kgdistiller --repo-root PROJECT store snapshot --require-ready
+kgdistiller --repo-root PROJECT store verify --require-ready
 ```
 
 `snapshot` 首先确认 authority 与 committed graph 一致，并确认现有 SQLite
 属于相同 graph generation。它不会调用模型，只导出 SQLite 中已经存在且
 input digest 仍然有效的 node embeddings。
 
-如果新节点尚未生成 embedding，store 允许 embedding count 小于 node count。
-命令必须如实报告数量，不能把 partial embedding coverage 描述为完整覆盖。
+如果新节点尚未生成 embedding，required coverage 会低于 policy threshold，
+普通 snapshot 不安装候选 generation。只有显式 `--allow-partial` 才能发布
+`partial`；它仍然报告 `retrieval-not-ready`。默认 policy 不存在时保留 legacy
+兼容路径，但 generation 必须标为 `unmanaged`。
 
 ### 7.2 从现有项目创建独立 store
 
 ```sh
-kgdistiller --repo-root SOURCE store snapshot --output STORE
-kgdistiller --repo-root STORE store verify
+kgdistiller --repo-root SOURCE store snapshot --output STORE --require-ready
+kgdistiller --repo-root STORE store verify --require-ready
 ```
 
 输出目录会收到：
@@ -362,9 +411,11 @@ snapshot 会拒绝覆盖，避免误伤非 kgdistiller 数据。
 
 Git 操作的状态必须明确区分：
 
-- `store verified locally`：仅表示本地 verify 成功；
-- `committed locally`：仅表示包含该 generation 的 commit 已创建；
-- `remote confirmed`：仅在 push 成功并确认 remote ref 包含该 commit 后使用。
+- `integrity-valid`：仅表示 portable bytes 与 manifest 一致；
+- `retrieval-ready`：额外表示 required policy coverage 已满足；
+- `local-only`：generation 尚未确认进入一个 commit；
+- `committed-locally`：仅表示包含该 generation 的 commit 已创建；
+- `remote-confirmed`：仅在 push 成功并确认 remote ref 包含该 commit 后使用。
 
 生成 store 不等于完成备份。本地磁盘损坏场景只有在 commit 已存在于其他
 存储介质或远端后才真正得到覆盖。
@@ -374,7 +425,7 @@ Git 操作的状态必须明确区分：
 ```sh
 git clone PRIVATE_REMOTE personal-kb
 cd personal-kb
-kgdistiller store verify
+kgdistiller store verify --require-ready
 kgdistiller store materialize
 kgdistiller agent status
 ```
@@ -417,16 +468,16 @@ commit 或 push。
 仍然位于 store root 下。Embedding object 也经过相同的 resolved-path 检查，
 避免通过 symlink 或构造路径读取 store 外部内容。
 
-### 8.2 Manifest-last 和 partial generation
+### 8.2 Staged publication、manifest-last 和恢复
 
-Snapshot 对单个文本或二进制文件使用临时文件加 `os.replace`。顶层
-`store.json` 在其他 artifact 之后写入，所以 reader 只接受能够完整验证的
-generation。
+Snapshot 在私有 staging 中生成 document inventory、embedding bundle、policy
+binding、coverage 和候选顶层 manifest，并在安装前完整验证。Coverage gate 失败
+会丢弃 staging，旧 manifest 及其引用 bytes 保持不变。
 
-第一版不是跨所有文件的文件系统事务。如果进程在多文件刷新中途终止，
-当前工作树可能暂时无法通过 verify。正确处理方式是重新运行 snapshot，
-或从上一个 Git commit 恢复；不得通过跳过 digest 检查把 partial generation
-伪装成成功。
+安装由单 writer lock 串行化，使用 durable publication journal 和 backup。顶层
+`store.json` 仍是最后的 commit point；如果进程在多文件刷新中途终止，下一次
+snapshot、verify 或 materialize 会先恢复上一份完整 generation。Stale cleanup
+只在新 manifest 成为 commit point 后执行，不能破坏 last-known-good。
 
 ### 8.3 Stale artifact cleanup
 
@@ -465,9 +516,9 @@ store 应默认使用 private repository 或合适的加密备份。任何情况
   - index rebuild 按 digest 保留仍然有效的 vectors；
   - 记录 embedding provider configurations 和 retrieval lane。
 - `src/kgdistiller/cli.py`
-  - `store snapshot [--output STORE]`；
-  - `store verify`；
-  - `store materialize`。
+  - `store snapshot [--output STORE] [--require-ready|--allow-partial]`；
+  - `store verify [--require-ready]`；
+  - `store materialize [--require-ready]`。
 - `src/kgdistiller/project.py`
   - 新项目在缺失时创建 `knowledge/.gitignore`；
   - 永不覆盖已有 ignore policy。
@@ -475,7 +526,10 @@ store 应默认使用 private repository 或合适的加密备份。任何情况
 ### 9.2 Versioned schemas
 
 - `qlkg-store-v1.schema.json`；
+- `qlkg-store-v2.schema.json`；
+- `qlkg-store-operation-receipt-v1.schema.json`；
 - `qlkg-document-record-v1.schema.json`；
+- `qlkg-document-record-v2.schema.json`；
 - `qlkg-embedding-bundle-v1.schema.json`；
 - `qlkg-embedding-record-v1.schema.json`；
 - `qlkg-embedding-bundle-v2.schema.json`；
@@ -531,8 +585,8 @@ Skills 均通过 `quick_validate.py`。
    Git 小文件开销需要重新评估。
 2. 第一版只持久化 node embeddings，不持久化 query vectors、query logs 或
    embedding-similarity soft edges。
-3. Store 可以是 partial embedding coverage；缺失向量需要在具备 provider 的
-   机器上按需补齐。
+3. Store 只有在显式 `--allow-partial` 后才可以发布 partial coverage；缺失向量
+   需要在具备 provider 的机器上通过 `embedding sync` 补齐。
 4. Git 同步不是实时同步。两台机器同时入库时，仍然需要先 pull/rebase，
    解决 authority 冲突，再生成并提交一个完整的新 generation。
 5. `store snapshot` 不会自动 commit 或 push。这是有意的权限边界。
@@ -544,10 +598,10 @@ Skills 均通过 `quick_validate.py`。
 
 只有在真实数据规模或工作流证明需要时，才考虑：
 
-- 以 generation 为目录实现更强的多文件原子切换；
+- 评估 generation-directory 是否能进一步简化 journal-based publication；
 - 为大量向量增加 deterministic binary shards 和 compaction；
 - 增加 `store diff`，解释两个 generation 的 document/node/vector 变化；
-- 增加 embedding coverage 和按 provider/model 分组的状态报告；
+- 在不扩大 receipt 的前提下增加跨 generation coverage diff；
 - 在明确授权下增加 Git remote backup health check；
 - 为多机器写入增加 lock/lease 或更明确的 pull-before-ingest gate；
 - 支持用户选择的加密对象存储或 Git LFS adapter，但不改变 canonical

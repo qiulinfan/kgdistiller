@@ -223,9 +223,9 @@ are discarded with `stale-generation`.
 
 Query paths never call document embedding or trigger an implicit sync. A query
 vector, where a semantic query lane explicitly uses one, is separate from
-document synchronization. `embedding status` describes the local disposable
-index only: this release does not yet make policy coverage a `store snapshot`
-or `store verify` readiness gate.
+document synchronization. Snapshotting reuses the same provider-free coverage
+analysis for every policy profile marked `required`; it never constructs a
+provider or reads a credential value.
 
 ## Portable Git store
 
@@ -233,8 +233,8 @@ For backup and multi-machine use, make the knowledge project—not SQLite—the
 portable unit:
 
 ```sh
-kgdistiller store snapshot
-kgdistiller store verify
+kgdistiller store snapshot --require-ready
+kgdistiller store verify --require-ready
 git add notes knowledge/sources.json knowledge/alignments.json \
   knowledge/.gitignore knowledge/embedding-policy.json \
   knowledge/graph knowledge/documents.jsonl \
@@ -246,14 +246,26 @@ exists. `init` and `store snapshot` ensure `knowledge/.gitignore` has an
 effective `build/` rule, preserving existing rules and line endings while
 repairing a missing or later-negated rule.
 
-`store snapshot` writes the versioned `qlkg-store-v1` manifest, a canonical
-JSONL inventory of every ingested authority, and a content-addressed embedding
-bundle using `qlkg-embedding-bundle-v2` and `qlkg-embedding-record-v2` (while
-readers retain v1 compatibility). Vectors are the exact little-endian float32 bytes already in the
-current index; the command never calls a provider. Provider/model,
+`store snapshot` writes the versioned `qlkg-store-v2` manifest, binds the
+document inventory, portable embedding policy, required non-secret provider
+configuration digests, and exact readiness summary, and writes a
+content-addressed bundle using `qlkg-embedding-bundle-v2` and
+`qlkg-embedding-record-v2`. Readers retain v1 compatibility, but a v1 store is
+always reported as `unmanaged`, never retrieval-ready. Vectors are the exact
+little-endian float32 bytes already in the current index; the command never
+calls a provider. Provider/model,
 dimensions, canonical embedding-input digest, configuration digest, and vector
 digest remain attached to every record. Embeddings are portable retrieval
 artifacts, never graph identity or semantic authority.
+
+When a policy exists, ordinary snapshotting is fail-closed: required coverage
+below its threshold does not install the candidate inventory, embedding
+bundle, or top-level manifest. `--allow-partial` is the only override and
+publishes the actual `partial` state with `retrieval-not-ready`.
+`--require-ready` also rejects policy-free and legacy stores. For compatibility,
+an implicit missing default policy can still produce an `unmanaged` generation;
+an explicitly selected missing policy is an error. `--require-ready` and
+`--allow-partial` are mutually exclusive.
 
 Index rebuilds carry forward exact valid vector bytes for still-existing nodes
 so status can identify stale inputs; deleted-node vectors are removed. Query
@@ -271,16 +283,27 @@ On another machine:
 ```sh
 git clone PRIVATE_REMOTE personal-kb
 cd personal-kb
-kgdistiller store verify
+kgdistiller store verify --require-ready
 kgdistiller store materialize
 kgdistiller agent status
 ```
 
+Snapshot, verify, and materialize return a validated
+`qlkg-store-operation-receipt-v1`. It keeps `integrity-valid`, portable
+`ready`/`partial`/`unmanaged`, `retrieval-ready`, materialization, and local
+semantic-search state separate. A readiness gate miss returns exit status 3
+with the receipt on stdout; malformed or tampered data returns a structured
+error on stderr. Plain `store verify` establishes integrity even for a partial
+or unmanaged store, while `store verify --require-ready` requires both.
+`store materialize --require-ready` applies the same gate before writing the
+disposable local index.
+
 `materialize` verifies all content digests and atomically rebuilds the ignored
 `knowledge/build/knowledge.sqlite`; no document parsing or re-embedding is
 required. Re-running it is a no-op when SQLite already records the same store
-generation. Keep the store private when its sources or embeddings contain
-sensitive information.
+generation. Materializing a partial or unmanaged generation does not turn it
+into a semantic-search-ready one. Keep the store private when its sources or
+embeddings contain sensitive information.
 
 完整的原始需求、SQL/JSONL/向量存储方案比较、数据契约、失败边界和第一版
 实现说明见 [portable store development notes](docs/portable-store-development.md)。

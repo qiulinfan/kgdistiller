@@ -34,6 +34,7 @@ DELTA_SCHEMA = "qlkg-agent-delta-v2"
 IDENTITY_SCHEMA = "qlkg-identities-v1"
 ENTRY_STORE_SCHEMA = "qlkg-entry-shards-v1"
 AGENT_SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
+DEFAULT_EMBEDDING_POLICY = Path("knowledge/embedding-policy.json")
 ENTRY_SHARD_LIMIT = 48 * 1024 * 1024
 KNOWLEDGE_ORIGINS = {"personal-note", "research"}
 ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -2992,6 +2993,17 @@ def defaults(repo_root: Path, value: str) -> Path:
     return (repo_root / value).resolve()
 
 
+def embedding_policy_path(repo_root: Path, argument: Path | None) -> tuple[Path, bool]:
+    """Resolve the portable policy while preserving explicit-vs-default intent."""
+    selected = argument or DEFAULT_EMBEDDING_POLICY
+    path = (
+        selected.resolve()
+        if selected.is_absolute()
+        else (repo_root / selected).resolve()
+    )
+    return path, argument is not None
+
+
 def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--file", action="append", default=[], type=Path)
     parser.add_argument("--course")
@@ -3016,7 +3028,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--embedding-policy",
         type=Path,
-        default=Path("knowledge/embedding-policy.json"),
         help=(
             "portable qlkg-embedding-policy-v1 "
             "(default: knowledge/embedding-policy.json)"
@@ -3240,8 +3251,29 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="write a self-contained copy instead of refreshing this repository",
     )
-    store_commands.add_parser("verify")
-    store_commands.add_parser("materialize")
+    snapshot_readiness = store_snapshot.add_mutually_exclusive_group()
+    snapshot_readiness.add_argument(
+        "--require-ready",
+        action="store_true",
+        help="publish only a retrieval-ready portable generation",
+    )
+    snapshot_readiness.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="explicitly permit a non-ready managed generation",
+    )
+    store_verify = store_commands.add_parser("verify")
+    store_verify.add_argument(
+        "--require-ready",
+        action="store_true",
+        help="require both integrity validity and retrieval readiness",
+    )
+    store_materialize = store_commands.add_parser("materialize")
+    store_materialize.add_argument(
+        "--require-ready",
+        action="store_true",
+        help="materialize only a retrieval-ready portable generation",
+    )
     commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -3315,12 +3347,7 @@ def main() -> int:
                     default_provider_registry,
                 )
 
-            policy_argument = args.embedding_policy
-            policy_path = (
-                policy_argument.resolve()
-                if policy_argument.is_absolute()
-                else (repo_root / policy_argument).resolve()
-            )
+            policy_path, _ = embedding_policy_path(repo_root, args.embedding_policy)
             try:
                 policy = load_embedding_policy(policy_path)
                 if args.embedding_command == "status":
@@ -3553,52 +3580,107 @@ def main() -> int:
                 print(pretty_json(error.payload()), end="", file=sys.stderr)
                 return 1
         if args.command == "store":
-            from .store import materialize_store, snapshot_store, verify_store
+            from .embedding import EmbeddingError, load_embedding_policy
+            from .store import StoreError, materialize_store, snapshot_store, verify_store
 
-            if args.store_command == "snapshot":
-                _, artifacts, _ = synchronize(
-                    repo_root,
-                    registry,
-                    graph_dir,
-                    database,
-                    typst_registry,
-                    identities=identities,
-                    alignments=alignments,
-                    files=[],
-                    course=None,
-                    subject=None,
-                    write=False,
-                )
-                stale = [
-                    name
-                    for name, content in artifacts.items()
-                    if not (graph_dir / name).is_file()
-                    or (graph_dir / name).read_text(encoding="utf-8") != content
-                ]
-                if stale:
-                    raise KnowledgeError(
-                        f"stale graph artifacts: {', '.join(stale)}; run kgdistiller sync"
+            try:
+                if args.store_command == "snapshot":
+                    policy_path, explicit_policy = embedding_policy_path(
+                        repo_root, args.embedding_policy
                     )
-                ensure_database(database, load_state(graph_dir), alignments)
-                output = args.output or runtime.portable_store
-                output_root = (
-                    output.resolve()
-                    if output.is_absolute()
-                    else (repo_root / output).resolve()
+                    policy = None
+                    try:
+                        policy = load_embedding_policy(policy_path)
+                    except EmbeddingError as error:
+                        if error.code != "embedding-policy-not-found" or explicit_policy:
+                            raise
+
+                    _, artifacts, _ = synchronize(
+                        repo_root,
+                        registry,
+                        graph_dir,
+                        database,
+                        typst_registry,
+                        identities=identities,
+                        alignments=alignments,
+                        files=[],
+                        course=None,
+                        subject=None,
+                        write=False,
+                    )
+                    stale = [
+                        name
+                        for name, content in artifacts.items()
+                        if not (graph_dir / name).is_file()
+                        or (graph_dir / name).read_text(encoding="utf-8") != content
+                    ]
+                    if stale:
+                        raise KnowledgeError(
+                            "authority graph artifacts are stale; run kgdistiller sync"
+                        )
+                    ensure_database(database, load_state(graph_dir), alignments)
+                    output = args.output or runtime.portable_store
+                    output_root = (
+                        output.resolve()
+                        if output.is_absolute()
+                        else (repo_root / output).resolve()
+                    )
+                    result = snapshot_store(
+                        repo_root,
+                        output_root,
+                        registry=registry,
+                        graph_dir=graph_dir,
+                        identities=identities,
+                        alignments=alignments,
+                        database=database,
+                        policy=policy,
+                        provider_configs=runtime.provider_profiles,
+                        policy_path=policy_path if policy is not None else None,
+                        require_ready=bool(args.require_ready),
+                        allow_partial=bool(args.allow_partial),
+                    )
+                elif args.store_command == "verify":
+                    result = (
+                        verify_store(runtime.portable_store, require_ready=True)
+                        if args.require_ready
+                        else verify_store(runtime.portable_store)
+                    )
+                else:
+                    result = materialize_store(
+                        runtime.portable_store,
+                        database,
+                        require_ready=bool(args.require_ready),
+                        provider_configs=runtime.provider_profiles,
+                    )
+            except StoreError as error:
+                if error.code == "coverage-blocked" and error.receipt is not None:
+                    print(pretty_json(error.receipt), end="")
+                    return 3
+                print(pretty_json(error.payload()), end="", file=sys.stderr)
+                return 1
+            except EmbeddingError as error:
+                print(pretty_json(error.payload()), end="", file=sys.stderr)
+                return 1
+            except (
+                KnowledgeError,
+                OSError,
+                UnicodeError,
+                ValueError,
+                json.JSONDecodeError,
+                sqlite3.Error,
+            ):
+                print(
+                    pretty_json(
+                        {
+                            "kind": "kgdistiller-store-error",
+                            "code": "store-command-failed",
+                            "message": "store command could not be completed",
+                        }
+                    ),
+                    end="",
+                    file=sys.stderr,
                 )
-                result = snapshot_store(
-                    repo_root,
-                    output_root,
-                    registry=registry,
-                    graph_dir=graph_dir,
-                    identities=identities,
-                    alignments=alignments,
-                    database=database,
-                )
-            elif args.store_command == "verify":
-                result = verify_store(runtime.portable_store)
-            else:
-                result = materialize_store(runtime.portable_store, database)
+                return 1
             print(pretty_json(result), end="")
             return 0
         if args.command == "init":

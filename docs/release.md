@@ -14,8 +14,10 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-agent-delta-v2` | yes | yes | Low-level compatibility primitive. |
 | `qlkg-agent-snapshot-v1` | yes | yes | Self-contained hydrated query input. |
 | `qlkg-agent-index-v2` | yes | disposable | Rebuilt locally; never a migration authority. |
-| `qlkg-store-v1` | yes | yes | Portable authority generation; Git-friendly manifest. |
-| `qlkg-document-record-v1` | yes | yes | Canonical JSONL inventory of ingested sources. |
+| `qlkg-store-v1` | yes | legacy only | Integrity-verifiable legacy input; readiness is always unmanaged. |
+| `qlkg-store-v2` | yes | yes | Policy-, profile-binding-, inventory-, and coverage-bound portable generation. |
+| `qlkg-store-operation-receipt-v1` | output | output | Bounded snapshot/verify/materialize status with independent readiness dimensions. |
+| `qlkg-document-record-v1` | yes | legacy only | Canonical legacy inventory without stable document identity. |
 | `qlkg-embedding-bundle-v1` | yes | legacy only | Published four-key provider digest contract; new snapshots do not write it. |
 | `qlkg-embedding-record-v1` | yes | legacy only | Legacy digest is recomputed and retained exactly on materialization. |
 | `qlkg-embedding-bundle-v2` | yes | yes | Current exact portable retrieval artifacts, never identity. |
@@ -29,7 +31,7 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-retrieval-plan-v1` | yes | accepted input | Bounded lane-specific query input for Python, CLI, and MCP. |
 | `qlkg-search-result-v2` | output | output | Bounded per-lane status, deterministic fusion, and evidence. |
 | `qlkg-search-execution-v1` | output | output | Immutable plan-mode, generation, and identity-resolution envelope; its nested `qlkg-search-result-v2` is validated separately. |
-| `qlkg-document-record-v2` | proposed | proposed | Stable inventory identity only; it does not define graph node identity. |
+| `qlkg-document-record-v2` | yes | yes | Stable inventory identity only; it does not define graph node identity. |
 | `qlkg-document-upsert-request-v1` | proposed | proposed | Reviewed annotated-document input; plan/apply behavior is deferred. |
 | `qlkg-document-ingest-receipt-v1` | proposed | proposed | Resumable stage output; enrichment orchestration is deferred. |
 | MCP `2024-11-05` through `2025-11-25` | yes | read-only | No MCP mutation tools. |
@@ -62,10 +64,18 @@ with no retained credential, response body, or raw exception chain.
 a provider. `embedding sync` is the only CLI document-vector maintenance path:
 it batches only eligible missing/stale inputs, bounds retries and total work,
 validates the graph generation before one atomic publication, and is a provider
-no-op on a second unchanged run. Query paths do not invoke document sync. This
-release does not yet use embedding coverage as a `store snapshot` or
-`store verify` readiness gate, so a valid portable store must not be advertised
-as RAG-ready on that basis alone.
+no-op on a second unchanged run. Query paths do not invoke document sync.
+
+`store snapshot` evaluates every required policy profile without constructing a
+provider or reading credentials. A managed non-ready generation is blocked by
+default; `--allow-partial` is the only publication override, while
+`--require-ready` also rejects legacy and unmanaged stores. `store verify`
+establishes integrity independently; `store verify --require-ready` additionally
+requires the portable retrieval gate. A gate miss returns status 3 with a
+validated receipt, not an integrity error. Legacy v1 stores remain verifiable
+and materializable but are always unmanaged and never advertised as
+retrieval-ready. `store materialize --require-ready` applies the same optional
+gate before publishing a disposable local index.
 
 `agent search`, `agent context`, `kg_search`, and `kg_build_context` execute a
 bounded retrieval plan or adapt one legacy query. They never materialize an
@@ -113,6 +123,10 @@ Then verify:
 - that installed wheel exposes `embedding status` and `embedding sync`, resolves
   a repository-relative policy, synchronizes the selected/overridden profile,
   and performs zero document calls on an unchanged second invocation;
+- that the installed wheel validates store operation receipts, blocks a
+  required-coverage miss without publishing, verifies a ready generation with
+  `--require-ready`, and materializes exact vectors without document-provider
+  calls;
 - that the installed wheel loads a retrieval plan, executes planned and legacy
   search/context in fresh processes, validates the nested v2 result, makes zero
   document calls, and leaves missing/stale indexes unpublished;

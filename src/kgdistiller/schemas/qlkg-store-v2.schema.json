@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-store-v2.schema.json",
+  "title": "kgdistiller portable knowledge store v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "generator", "paths", "documents", "registry_sha256",
+    "identity_sha256", "alignment_sha256", "graph_sha256",
+    "embedding_manifest_sha256", "embedding_policy_file_sha256",
+    "embedding_policy_sha256", "readiness", "readiness_sha256",
+    "knowledge_generation_sha256", "embedding_generation_sha256",
+    "store_generation_sha256", "managed_paths", "store_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-store-v2"},
+    "generator": {"const": "kgdistiller"},
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "identities", "alignments", "graph", "documents", "embedding_manifest", "embedding_policy"],
+      "properties": {
+        "registry": {"$ref": "#/$defs/path"},
+        "identities": {"oneOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]},
+        "alignments": {"oneOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]},
+        "graph": {"$ref": "#/$defs/path"},
+        "documents": {"$ref": "#/$defs/path"},
+        "embedding_manifest": {"$ref": "#/$defs/path"},
+        "embedding_policy": {"oneOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]}
+      }
+    },
+    "documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_schema", "count", "sha256", "source_snapshot_sha256", "document_generation_sha256"],
+      "properties": {
+        "record_schema": {"const": "qlkg-document-record-v2"},
+        "count": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "source_snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "document_generation_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "registry_sha256": {"$ref": "#/$defs/sha256"},
+    "identity_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "alignment_sha256": {"$ref": "#/$defs/sha256"},
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "embedding_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "embedding_policy_file_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "embedding_policy_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "readiness": {"$ref": "#/$defs/readiness"},
+    "readiness_sha256": {"$ref": "#/$defs/sha256"},
+    "knowledge_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "embedding_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "store_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "managed_paths": {
+      "type": "array",
+      "maxItems": 400000,
+      "items": {"$ref": "#/$defs/path"}
+    },
+    "store_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))(?!.*//)(?!~)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\u0000\\r\\n]+$"
+    },
+    "nodeTypeCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_type", "eligible", "ready", "missing", "stale", "incompatible", "coverage", "readiness"],
+      "properties": {
+        "node_type": {"enum": ["knowledge", "field", "topic"]},
+        "eligible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "ready": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "missing": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "stale": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "incompatible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "coverage": {"oneOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]},
+        "readiness": {"enum": ["ready", "partial", "unavailable", "not-applicable"]}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "provider", "model", "dimensions", "required_node_types",
+        "required", "minimum_coverage", "provider_config_sha256",
+        "configuration_status", "eligible", "ready", "missing", "stale",
+        "incompatible", "coverage", "readiness", "node_types"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "provider": {"type": "string", "minLength": 1, "maxLength": 128},
+        "model": {"type": "string", "minLength": 1, "maxLength": 256},
+        "dimensions": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "required_node_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {"enum": ["knowledge", "field", "topic"]}
+        },
+        "required": {"type": "boolean"},
+        "minimum_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "provider_config_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "configuration_status": {"enum": ["ready", "missing", "mismatch", "invalid"]},
+        "eligible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "ready": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "missing": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "stale": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "incompatible": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "coverage": {"oneOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]},
+        "readiness": {"enum": ["ready", "partial", "unavailable", "not-applicable"]},
+        "node_types": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/nodeTypeCounts"}
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "snapshot_sha256", "graph_sha256", "policy_sha256", "state", "profiles", "unmanaged", "optional_similarity_state"],
+      "properties": {
+        "namespace": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "policy_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "state": {"enum": ["ready", "partial", "unmanaged"]},
+        "profiles": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/profile"}},
+        "unmanaged": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["records"],
+          "properties": {"records": {"type": "integer", "minimum": 0, "maximum": 200000}}
+        },
+        "optional_similarity_state": {"const": "absent"}
+      }
+    }
+  }
+}
