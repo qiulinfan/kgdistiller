@@ -4,7 +4,7 @@ Status: active execution plan
 
 Baseline date: 2026-08-09
 
-Current slice: `KB-REPAIR-03`
+Current slice: `KB-REPAIR-04`
 
 Repositories: 先修复 `kgdistiller`，再更新固定版本的 `qlblog` 宿主
 
@@ -489,8 +489,8 @@ Acceptance:
 | `KB-REPAIR-00` | COMPLETE | Commit `1cb7f31`、PR #1；本地 Windows 3.9/3.11/3.13 与 WSL 3.14 全量 178 项通过；build、distribution/wheel smoke 通过；GitHub Actions [run 31418772924](https://github.com/qiulinfan/kgdistiller/actions/runs/31418772924) 的 Linux 3.9/3.11/3.13、Windows、macOS 五项全部通过。 |
 | `KB-REPAIR-01` | COMPLETE | Commit `0fdf6be`、PR #2；本地 Windows Python 3.9/3.13 与 WSL Python 3.14 全量 194 项通过，Python 3.9/3.11/3.13 定向验收通过，build、distribution/wheel smoke 与独立安全/acceptance review 通过；GitHub Actions [run 31427799672](https://github.com/qiulinfan/kgdistiller/actions/runs/31427799672) 的 Linux 3.9/3.11/3.13、Windows、macOS 五项全部通过。 |
 | `KB-REPAIR-02` | COMPLETE | Commit `42f92b6`、PR #3；本地 Windows Python 3.9/3.13 与 WSL Python 3.14 全量 227 项通过，build、distribution/wheel smoke 与三路独立 security/acceptance/diff review 通过；GitHub Actions [run 31440537213](https://github.com/qiulinfan/kgdistiller/actions/runs/31440537213) 的 Linux 3.9/3.11/3.13、Windows、macOS 五项全部通过。 |
-| `KB-REPAIR-03` | IN PROGRESS | 执行公开的 bounded hybrid retrieval，并验证 query-only、lane degradation、budget 和 explainable fusion。 |
-| `KB-REPAIR-04` | NOT STARTED | — |
+| `KB-REPAIR-03` | COMPLETE | Commit `d4b6798`、PR #4；本地 Windows Python 3.9/3.13 与 WSL Python 3.14 全量 282 项通过，build、distribution/wheel smoke、1k/10k/100k semantic benchmark 与三路独立 acceptance/adversarial/package review 通过；GitHub Actions [run 31451709727](https://github.com/qiulinfan/kgdistiller/actions/runs/31451709727) 的 Linux 3.9/3.11/3.13、Windows、macOS 五项全部通过。 |
+| `KB-REPAIR-04` | IN PROGRESS | 用明确、可验证且 fail-closed 的 retrieval readiness gate 管控 portable generation。 |
 | `KB-REPAIR-05` | NOT STARTED | — |
 | `KB-REPAIR-06` | NOT STARTED | — |
 | `KB-REPAIR-07` | NOT STARTED | — |
@@ -501,4 +501,4 @@ Acceptance:
 | `KB-REPAIR-12` | NOT STARTED | — |
 | `KB-REPAIR-13` | NOT STARTED | — |
 
-当前只执行 `KB-REPAIR-03`；在它通过独立验收前不开始后续 repair slice。
+当前只执行 `KB-REPAIR-04`；在它通过独立验收前不开始后续 repair slice。
