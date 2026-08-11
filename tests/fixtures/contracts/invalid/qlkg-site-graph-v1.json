@@ -1,0 +1,11 @@
+{
+  "schema": "qlkg-site-graph-v1",
+  "namespace": "private",
+  "source_graph_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "counts": {"nodes": 0, "edges": 0, "references": 0},
+  "nodes": [],
+  "edges": [],
+  "references": [],
+  "diagnostics": {"errors": [], "warnings": [], "info": []},
+  "graph_sha256": "ccae7880989859fbeb6b19523e12ab40b23245cd72e7c496bfb2f48fad1bfc94"
+}

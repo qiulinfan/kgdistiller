@@ -35,7 +35,7 @@ def load_fixture(group: str, schema: str) -> dict:
 
 class ContractResourceTests(unittest.TestCase):
     def test_all_new_schemas_load_from_package_resources(self) -> None:
-        self.assertEqual(8, len(CONTRACT_SCHEMAS))
+        self.assertEqual(10, len(CONTRACT_SCHEMAS))
         for discriminator, filename in CONTRACT_SCHEMAS.items():
             with self.subTest(schema=discriminator):
                 schema = load_contract_schema(discriminator)
@@ -176,6 +176,24 @@ class ContractNegativeTests(unittest.TestCase):
         profile = load_fixture("valid", "qlkg-local-profile-v1")
         profile["schema"] = "qlkg-local-profile-v2"
         self.assert_invalid(profile, "unsupported contract schema")
+
+    def test_public_site_edges_reject_source_derived_fields(self) -> None:
+        graph = load_fixture("valid", "qlkg-site-graph-v1")
+        graph["nodes"] = [
+            {"id": "public-a", "type": "knowledge", "label": "Public A"},
+            {"id": "public-b", "type": "knowledge", "label": "Public B"},
+        ]
+        graph["edges"] = [
+            {
+                "source": "public-a",
+                "relation": "derived-from",
+                "target": "public-b",
+                "evidence": "private prose must not cross the export boundary",
+            }
+        ]
+        graph["counts"] = {"nodes": 2, "edges": 1, "references": 0}
+        graph = finalize_self_digest(graph, "graph_sha256")
+        self.assert_invalid(graph, "unknown property")
 
     def test_invalid_digest_syntax_enums_formats_dimensions_and_coverage(self) -> None:
         cases = []

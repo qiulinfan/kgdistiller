@@ -156,6 +156,49 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertRegex(manifest["graph_sha256"], r"^[0-9a-f]{64}$")
         self.assertNotIn("generated_at", manifest)
 
+    def test_source_hash_and_graph_check_are_crlf_portable(self) -> None:
+        state, _, _ = self.sync()
+        authority = self.chapter.relative_to(self.repo).as_posix()
+        expected = state.manifest["source_hashes"][authority]
+
+        canonical_text = self.chapter.read_text(encoding="utf-8")
+        self.chapter.write_bytes(
+            canonical_text.replace("\n", "\r\n").encode("utf-8")
+        )
+        self.assertEqual(expected, knowledge.sha256_authority_file(self.chapter))
+        self.assertNotEqual(expected, knowledge.sha256_file(self.chapter))
+
+        for path in sorted(self.graph.rglob("*")):
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+        hydrated = knowledge.load_state(self.graph)
+        self.assertEqual(
+            state.manifest["graph_sha256"],
+            knowledge.make_agent_snapshot(hydrated)["graph"]["sha256"],
+        )
+        _, artifacts, report = knowledge.synchronize(
+            self.repo,
+            self.registry,
+            self.graph,
+            self.database,
+            self.typst_registry,
+            identities=self.identities,
+            files=[],
+            course=None,
+            subject=None,
+            write=False,
+        )
+        self.assertEqual([], report["source_changes"]["modified"])
+        stale = [
+            name
+            for name, content in artifacts.items()
+            if not (self.graph / name).is_file()
+            or (self.graph / name).read_text(encoding="utf-8") != content
+        ]
+        self.assertEqual([], stale)
+
     def test_explicit_file_scope_must_match_a_bounded_source_pattern(self) -> None:
         excluded = self.source_root / "README.typ"
         excluded.write_text("#kn[Must not be ingested]", encoding="utf-8")

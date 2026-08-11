@@ -1,0 +1,829 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from kgdistiller.cli import (
+    GraphState,
+    make_artifacts,
+    sha256_authority_file,
+    sha256_file,
+    write_artifacts,
+)
+from kgdistiller.contracts import ContractError, finalize_self_digest, validate_contract
+from kgdistiller.static_export import (
+    StaticExportError,
+    _export_recovery_root,
+    _install_export,
+    _source_checkout_revision,
+    _source_inputs,
+    export_site_bundle,
+    resolve_product_commit,
+)
+from kgdistiller.static_export_verifier import ExportVerificationError, verify_export
+
+
+class StaticSiteExportTests(unittest.TestCase):
+    SOURCE_REVISION = "e" * 40
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-export-")
+        self.repo = Path(self.temporary.name)
+        self.public_source = self.repo / "notes/public/public.md"
+        self.private_source = self.repo / "notes/private/private.md"
+        self.public_source.parent.mkdir(parents=True)
+        self.private_source.parent.mkdir(parents=True)
+        self.public_source.write_text("--[[Public concept]]--\n", encoding="utf-8")
+        self.private_source.write_text("--[[Private concept]]--\n", encoding="utf-8")
+        self.registry = self.repo / "knowledge/sources.json"
+        self.registry.parent.mkdir(parents=True)
+        self.registry.write_text(
+            json.dumps(
+                {
+                    "schema": "qlkg-sources-v2",
+                    "fields": [
+                        {
+                            "id": "shared-field",
+                            "label": "Shared Field",
+                            "text": "A shared field.",
+                        }
+                    ],
+                    "sources": [
+                        {
+                            "id": "notes:public",
+                            "subject": "notes",
+                            "course": "public",
+                            "root": "notes/public",
+                            "files": ["*.md"],
+                            "fields": ["shared-field"],
+                            "knowledge_origin": "personal-note",
+                            "publish": True,
+                            "web": "https://example.test/public",
+                        },
+                        {
+                            "id": "notes:private",
+                            "subject": "notes",
+                            "course": "private",
+                            "root": "notes/private",
+                            "files": ["*.md"],
+                            "fields": ["shared-field"],
+                            "knowledge_origin": "research",
+                            "publish": False,
+                            "web": "https://example.test/private",
+                        },
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        state = GraphState(
+            nodes={
+                "shared-field": {
+                    "id": "shared-field",
+                    "type": "field",
+                    "label": "Shared Field",
+                    "text": "A shared field.",
+                    "properties": {
+                        "origin": "registry-taxonomy",
+                        "source_status": "meta",
+                    },
+                },
+                "public-concept": {
+                    "id": "public-concept",
+                    "type": "knowledge",
+                    "label": "Public concept",
+                    "text": "A hydrated public entry.",
+                    "properties": {
+                        "source_status": "active",
+                        "curation_status": "needs-review",
+                        "entry_origin": "agent-extracted",
+                        "fields": ["shared-field"],
+                        "knowledge_origin": "personal-note",
+                    },
+                    "provenance": {
+                        "active": True,
+                        "authority": "notes/public/public.md",
+                        "line": 1,
+                        "web": "https://example.test/public/#kn-public-concept",
+                    },
+                },
+                "private-concept": {
+                    "id": "private-concept",
+                    "type": "knowledge",
+                    "label": "Private concept",
+                    "text": "A secret research entry.",
+                    "properties": {
+                        "source_status": "active",
+                        "curation_status": "needs-review",
+                        "entry_origin": "agent-extracted",
+                        "fields": ["shared-field"],
+                        "knowledge_origin": "research",
+                    },
+                    "provenance": {
+                        "active": True,
+                        "authority": "notes/private/private.md",
+                        "line": 1,
+                        "web": "https://example.test/private/#kn-private-concept",
+                    },
+                },
+            },
+            edges={
+                ("shared-field", "contains", "public-concept"): {
+                    "source": "shared-field",
+                    "relation": "contains",
+                    "target": "public-concept",
+                },
+                ("shared-field", "contains", "private-concept"): {
+                    "source": "shared-field",
+                    "relation": "contains",
+                    "target": "private-concept",
+                },
+                ("private-concept", "contrasts-with", "public-concept"): {
+                    "source": "private-concept",
+                    "relation": "contrasts-with",
+                    "target": "public-concept",
+                    "origin": "agent",
+                    "confidence": "high",
+                    "evidence": "The fixture contrasts public and private concepts.",
+                },
+            },
+            references=[
+                {
+                    "id": "public-ref",
+                    "target": "public-concept",
+                    "authority": "notes/public/public.md",
+                    "line": 1,
+                    "source_format": "markdown",
+                },
+                {
+                    "id": "hidden-target-ref",
+                    "target": "private-concept",
+                    "authority": "notes/public/public.md",
+                    "line": 1,
+                    "source_format": "markdown",
+                },
+                {
+                    "id": "private-ref",
+                    "target": "private-concept",
+                    "authority": "notes/private/private.md",
+                    "line": 1,
+                    "source_format": "markdown",
+                },
+            ],
+            manifest={},
+        )
+        source_hashes = {
+            "notes/public/public.md": sha256_authority_file(self.public_source),
+            "notes/private/private.md": sha256_authority_file(self.private_source),
+        }
+        self.state = state
+        self.source_hashes = source_hashes
+        self.graph = self.repo / "knowledge/graph"
+        write_artifacts(
+            self.graph,
+            make_artifacts(state, source_hashes, git_revision="c" * 40),
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def export(
+        self,
+        name: str = "site",
+        *,
+        product_commit: str = "b" * 40,
+        replace: bool = False,
+    ) -> Path:
+        output = self.repo / "knowledge/export" / name
+        with (
+            patch(
+                "kgdistiller.static_export._source_checkout_commit", return_value=None
+            ),
+            patch("kgdistiller.static_export._distribution_commit", return_value=None),
+            patch(
+                "kgdistiller.static_export._source_checkout_revision",
+                return_value=self.SOURCE_REVISION,
+            ),
+        ):
+            self.last_export_result = export_site_bundle(
+                self.repo,
+                output,
+                registry=self.registry,
+                graph_dir=self.graph,
+                product_commit=product_commit,
+                source_repository="https://github.com/example/notes",
+                replace=replace,
+            )
+        return output
+
+    def rewrite_graph_bundle(self, output: Path, mutate) -> dict:
+        graph_path = output / "graph.json"
+        graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        mutate(graph)
+        graph = finalize_self_digest(graph, "graph_sha256")
+        graph_path.write_text(
+            json.dumps(graph, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        content = graph_path.read_text(encoding="utf-8").encode("utf-8")
+        manifest_path = output / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["graph"]["public_sha256"] = graph["graph_sha256"]
+        manifest["graph"]["public_counts"] = graph["counts"]
+        record = next(
+            item for item in manifest["artifacts"] if item["kind"] == "site-graph"
+        )
+        record["bytes"] = len(content)
+        record["sha256"] = hashlib.sha256(content).hexdigest()
+        manifest = finalize_self_digest(manifest, "export_sha256")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return graph
+
+    def rewrite_manifest_bundle(self, output: Path, mutate) -> dict:
+        manifest_path = output / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        mutate(manifest)
+        manifest = finalize_self_digest(manifest, "export_sha256")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
+
+    def test_product_commit_must_match_discovered_provenance(self) -> None:
+        discovered = "a" * 40
+        with (
+            patch(
+                "kgdistiller.static_export._source_checkout_commit",
+                return_value=discovered,
+            ),
+            patch("kgdistiller.static_export._distribution_commit", return_value=None),
+            self.assertRaisesRegex(StaticExportError, "does not match"),
+        ):
+            self.assertEqual(discovered, resolve_product_commit(discovered.upper()))
+            resolve_product_commit("b" * 40)
+
+        with (
+            patch(
+                "kgdistiller.static_export._source_checkout_commit", return_value=None
+            ),
+            patch(
+                "kgdistiller.static_export._distribution_commit",
+                return_value=discovered,
+            ),
+            self.assertRaisesRegex(StaticExportError, "does not match"),
+        ):
+            resolve_product_commit("b" * 40)
+
+    def test_source_checkout_and_direct_url_provenance_cannot_disagree(self) -> None:
+        with (
+            patch(
+                "kgdistiller.static_export._source_checkout_commit",
+                return_value="a" * 40,
+            ),
+            patch(
+                "kgdistiller.static_export._distribution_commit",
+                return_value="b" * 40,
+            ),
+            self.assertRaisesRegex(StaticExportError, "commits disagree"),
+        ):
+            resolve_product_commit("a" * 40)
+
+    def test_dirty_source_checkout_is_rejected_before_export_provenance(self) -> None:
+        dirty = subprocess.CompletedProcess(
+            args=["git", "status"],
+            returncode=0,
+            stdout="?? untracked-product-file\n",
+            stderr="",
+        )
+        with (
+            patch(
+                "kgdistiller.static_export._source_checkout_root",
+                return_value=self.repo,
+            ),
+            patch(
+                "kgdistiller.static_export.subprocess.run", return_value=dirty
+            ) as run,
+            self.assertRaisesRegex(StaticExportError, "source checkout is dirty"),
+        ):
+            resolve_product_commit("a" * 40)
+        self.assertEqual(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            run.call_args.args[0],
+        )
+
+    def test_dirty_instance_checkout_is_rejected_for_source_revision(self) -> None:
+        top_level = subprocess.CompletedProcess(
+            args=["git", "rev-parse"],
+            returncode=0,
+            stdout=f"{self.repo}\n",
+            stderr="",
+        )
+        dirty = subprocess.CompletedProcess(
+            args=["git", "status"],
+            returncode=0,
+            stdout=" M knowledge/graph/nodes.jsonl\n",
+            stderr="",
+        )
+        with (
+            patch(
+                "kgdistiller.static_export.subprocess.run",
+                side_effect=[top_level, dirty],
+            ) as run,
+            self.assertRaisesRegex(StaticExportError, "repository checkout is dirty"),
+        ):
+            _source_checkout_revision(self.repo, [self.registry])
+        self.assertEqual(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            run.call_args_list[1].args[0],
+        )
+
+    def test_source_graph_hash_must_match_current_authority_text(self) -> None:
+        self.public_source.write_text(
+            "changed after graph generation\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(
+            StaticExportError, "does not match the committed graph hash"
+        ):
+            self.export()
+
+    def test_private_graph_digest_is_recomputed_before_export(self) -> None:
+        nodes_path = self.graph / "nodes.jsonl"
+        records = [
+            json.loads(line)
+            for line in nodes_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        records[0]["label"] = "Tampered after graph generation"
+        nodes_path.write_text(
+            "".join(
+                json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+                for record in records
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(StaticExportError, "graph digest"):
+            self.export("stale-private-graph")
+
+    def test_crlf_checkout_matches_canonical_sources_graph_and_bundle(self) -> None:
+        expected_source_hash = self.source_hashes["notes/public/public.md"]
+        public_text = self.public_source.read_text(encoding="utf-8")
+        self.public_source.write_bytes(public_text.replace("\n", "\r\n").encode())
+        self.assertEqual(
+            expected_source_hash, sha256_authority_file(self.public_source)
+        )
+        self.assertNotEqual(expected_source_hash, sha256_file(self.public_source))
+
+        for path in sorted(self.graph.rglob("*")):
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+        graph_manifest = self.graph_manifest
+        inputs = _source_inputs(
+            self.repo,
+            self.registry,
+            self.graph,
+            graph_manifest,
+            self.source_hashes,
+        )
+        declared_shards = {
+            self.graph / str(shard["path"])
+            for shard in graph_manifest["entry_store"]["shards"]
+        }
+        self.assertTrue(declared_shards)
+        self.assertTrue(declared_shards.issubset(set(inputs)))
+
+        output = self.export("crlf")
+        manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            expected_source_hash,
+            manifest["source"]["published_hashes"]["notes/public/public.md"],
+        )
+
+        for path in sorted(output.iterdir()):
+            text = path.read_text(encoding="utf-8")
+            path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        self.assertEqual("ok", verify_export(output)["status"])
+        completed = subprocess.run(
+            [sys.executable, str(output / "verify_export.py"), str(output)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_source_revision_requires_every_export_input_to_be_tracked(self) -> None:
+        completed = [
+            subprocess.CompletedProcess([], 0, f"{self.repo}\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, f"{self.SOURCE_REVISION}\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]
+        with (
+            patch("kgdistiller.static_export.subprocess.run", side_effect=completed),
+            self.assertRaisesRegex(StaticExportError, "not tracked by source HEAD"),
+        ):
+            _source_checkout_revision(self.repo, [self.registry])
+
+        tracked = self.registry.relative_to(self.repo).as_posix()
+        completed[-1] = subprocess.CompletedProcess([], 0, f"{tracked}\0", "")
+        with patch("kgdistiller.static_export.subprocess.run", side_effect=completed):
+            self.assertEqual(
+                self.SOURCE_REVISION,
+                _source_checkout_revision(self.repo, [self.registry]),
+            )
+
+    def test_site_bundle_is_hydrated_filtered_and_self_verifying(self) -> None:
+        output = self.export()
+        self.assertEqual(
+            {
+                "manifest.json",
+                "graph.json",
+                "knowledge-registry.typ",
+                "verify_export.py",
+            },
+            {path.name for path in output.iterdir()},
+        )
+        graph = json.loads((output / "graph.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"shared-field", "public-concept"}, {node["id"] for node in graph["nodes"]}
+        )
+        public = next(node for node in graph["nodes"] if node["id"] == "public-concept")
+        self.assertEqual("A hydrated public entry.", public["text"])
+        self.assertNotIn("entry_path", public["properties"])
+        self.assertEqual(1, len(graph["edges"]))
+        self.assertEqual("contains", graph["edges"][0]["relation"])
+        self.assertEqual(1, len(graph["references"]))
+        self.assertEqual([], graph["diagnostics"]["errors"])
+        self.assertEqual([], graph["diagnostics"]["info"])
+        self.assertEqual(1, len(graph["diagnostics"]["warnings"]))
+        self.assertEqual("public-concept", graph["diagnostics"]["warnings"][0]["node"])
+        self.assertEqual(
+            "notes/public/public.md",
+            graph["diagnostics"]["warnings"][0]["source"],
+        )
+
+        manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual("b" * 40, manifest["producer"]["commit"])
+        self.assertEqual(self.SOURCE_REVISION, manifest["source"]["revision"])
+        self.assertEqual(
+            self.graph_manifest["graph_sha256"], manifest["graph"]["private_sha256"]
+        )
+        self.assertEqual(["notes:public"], manifest["visibility"]["published_sources"])
+        self.assertEqual(1, manifest["visibility"]["excluded_sources"])
+        self.assertEqual(
+            {"notes/public/public.md": sha256_authority_file(self.public_source)},
+            manifest["source"]["published_hashes"],
+        )
+        combined = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                output / "manifest.json",
+                output / "graph.json",
+                output / "knowledge-registry.typ",
+            )
+        )
+        self.assertNotIn("Private concept", combined)
+        self.assertNotIn("notes/private/private.md", combined)
+        self.assertEqual("ok", verify_export(output)["status"])
+
+        completed = subprocess.run(
+            [sys.executable, str(output / "verify_export.py"), str(output)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn('"status": "ok"', completed.stdout)
+
+    @property
+    def graph_manifest(self) -> dict:
+        return json.loads((self.graph / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_static_verifier_rejects_tampering(self) -> None:
+        output = self.export()
+        with (output / "graph.json").open("a", encoding="utf-8") as handle:
+            handle.write(" ")
+        with self.assertRaisesRegex(
+            ExportVerificationError, "(?:byte count|digest) mismatch"
+        ):
+            verify_export(output)
+
+    def test_site_graph_schema_and_verifier_reject_the_same_bad_value_types(
+        self,
+    ) -> None:
+        def public_node(graph: dict) -> dict:
+            return next(
+                node for node in graph["nodes"] if node["id"] == "public-concept"
+            )
+
+        mutations = {
+            "node-text": lambda graph: public_node(graph).__setitem__("text", []),
+            "node-entry": lambda graph: public_node(graph).__setitem__("entry", 7),
+            "node-properties": lambda graph: public_node(graph).__setitem__(
+                "properties", 7
+            ),
+            "node-provenance": lambda graph: public_node(graph).__setitem__(
+                "provenance", []
+            ),
+            "node-id-bound": lambda graph: public_node(graph).__setitem__(
+                "id", "n" * 257
+            ),
+            "diagnostic-code-bound": lambda graph: graph["diagnostics"]["warnings"][
+                0
+            ].__setitem__("code", "c" * 257),
+            "diagnostic-source-type": lambda graph: graph["diagnostics"]["warnings"][
+                0
+            ].__setitem__("source", []),
+            "count-bound": lambda graph: graph["counts"].__setitem__(
+                "nodes", 1_000_001
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                output = self.export(f"bad-graph-{name}")
+                graph = self.rewrite_graph_bundle(output, mutate)
+                with self.assertRaises(ContractError):
+                    validate_contract(graph)
+                with self.assertRaises(ExportVerificationError):
+                    verify_export(output)
+
+        output = self.export("bad-graph-standalone")
+        graph = self.rewrite_graph_bundle(
+            output,
+            lambda value: public_node(value).__setitem__("properties", 7),
+        )
+        with self.assertRaises(ContractError):
+            validate_contract(graph)
+        completed = subprocess.run(
+            [sys.executable, str(output / "verify_export.py"), str(output)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("verify_export:", completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_manifest_schema_and_verifier_share_exact_artifact_and_bounds(self) -> None:
+        def add_fourth_artifact(manifest: dict) -> None:
+            manifest["artifacts"].append(copy.deepcopy(manifest["artifacts"][0]))
+
+        def exceed_artifact_size(manifest: dict) -> None:
+            manifest["artifacts"][0]["bytes"] = 134_217_729
+
+        def mismatch_artifact_pair(manifest: dict) -> None:
+            manifest["artifacts"][0]["path"] = "wrong-graph.json"
+
+        mutations = {
+            "four-artifacts": add_fourth_artifact,
+            "source-count-bound": lambda manifest: manifest["source"].__setitem__(
+                "files", 1_000_001
+            ),
+            "source-count-type": lambda manifest: manifest["source"].__setitem__(
+                "files", True
+            ),
+            "visibility-count-bound": lambda manifest: manifest[
+                "visibility"
+            ].__setitem__("excluded_sources", 100_001),
+            "visibility-id-bound": lambda manifest: manifest["visibility"].__setitem__(
+                "published_sources", ["s" * 257]
+            ),
+            "artifact-size-bound": exceed_artifact_size,
+            "artifact-kind-path-pair": mismatch_artifact_pair,
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                output = self.export(f"bad-manifest-{name}")
+                manifest = self.rewrite_manifest_bundle(output, mutate)
+                with self.assertRaises(ContractError):
+                    validate_contract(manifest)
+                with self.assertRaises(ExportVerificationError):
+                    verify_export(output)
+
+    def test_private_edge_evidence_between_public_nodes_is_never_exported(self) -> None:
+        secret = "PRIVATE-EDGE-EVIDENCE-7f621db6"
+        peer = copy.deepcopy(self.state.nodes["public-concept"])
+        peer["id"] = "public-peer"
+        peer["label"] = "Public peer"
+        peer["text"] = "Another public entry."
+        self.state.nodes["public-peer"] = peer
+        self.state.edges[("shared-field", "contains", "public-peer")] = {
+            "source": "shared-field",
+            "relation": "contains",
+            "target": "public-peer",
+        }
+        self.state.edges[("public-concept", "derived-from", "public-peer")] = {
+            "source": "public-concept",
+            "relation": "derived-from",
+            "target": "public-peer",
+            "origin": "private-research",
+            "authority": "notes/private/private.md",
+            "evidence": secret,
+            "evidence_fingerprints": {
+                "notes/private/private.md": "f" * 64,
+            },
+        }
+        write_artifacts(
+            self.graph,
+            make_artifacts(
+                self.state,
+                self.source_hashes,
+                git_revision="c" * 40,
+            ),
+        )
+
+        output = self.export("private-edge")
+        graph = json.loads((output / "graph.json").read_text(encoding="utf-8"))
+        semantic = next(
+            edge for edge in graph["edges"] if edge["relation"] == "derived-from"
+        )
+        self.assertEqual(
+            {
+                "source": "public-concept",
+                "relation": "derived-from",
+                "target": "public-peer",
+            },
+            semantic,
+        )
+        bundle_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in output.iterdir()
+            if path.suffix in {".json", ".typ", ".py"}
+        )
+        self.assertNotIn(secret, bundle_text)
+        self.assertNotIn("notes/private/private.md", bundle_text)
+        self.assertEqual("ok", verify_export(output)["status"])
+
+    def test_export_rejects_existing_destination_and_credential_url(self) -> None:
+        output = self.export()
+        with self.assertRaisesRegex(StaticExportError, "already exists"):
+            export_site_bundle(
+                self.repo,
+                output,
+                registry=self.registry,
+                graph_dir=self.graph,
+                product_commit="b" * 40,
+                source_repository="https://github.com/example/notes",
+            )
+        with self.assertRaisesRegex(StaticExportError, "credential-free HTTPS"):
+            export_site_bundle(
+                self.repo,
+                self.repo / "knowledge/export/bad-url",
+                registry=self.registry,
+                graph_dir=self.graph,
+                product_commit="b" * 40,
+                source_repository="https://user:secret@example.test/notes",
+            )
+
+    def test_replace_advances_a_verified_bundle_and_records_the_previous_export(
+        self,
+    ) -> None:
+        output = self.export()
+        previous = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+
+        self.export(product_commit="d" * 40, replace=True)
+
+        current = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual("d" * 40, current["producer"]["commit"])
+        self.assertEqual(previous["export_sha256"], current["replaces_export_sha256"])
+        self.assertNotEqual(previous["export_sha256"], current["export_sha256"])
+        verification = verify_export(output)
+        self.assertEqual(
+            previous["export_sha256"], verification["replaces_export_sha256"]
+        )
+        self.assertEqual(
+            {
+                "manifest.json",
+                "graph.json",
+                "knowledge-registry.typ",
+                "verify_export.py",
+            },
+            {path.name for path in output.iterdir()},
+        )
+
+    def test_replace_validation_failure_preserves_every_old_bundle_byte(self) -> None:
+        output = self.export()
+        before = {path.name: path.read_bytes() for path in output.iterdir()}
+        real_verify = verify_export
+
+        def verify_old_but_reject_staging(path: Path) -> dict:
+            if Path(path).resolve() == output.resolve():
+                return real_verify(path)
+            raise ExportVerificationError("injected staging verification failure")
+
+        with (
+            patch(
+                "kgdistiller.static_export.verify_export",
+                side_effect=verify_old_but_reject_staging,
+            ),
+            self.assertRaisesRegex(ExportVerificationError, "injected"),
+        ):
+            self.export(product_commit="d" * 40, replace=True)
+
+        after = {path.name: path.read_bytes() for path in output.iterdir()}
+        self.assertEqual(before, after)
+        self.assertEqual("ok", verify_export(output)["status"])
+
+    def test_replace_refuses_an_unverified_directory_without_deleting_it(self) -> None:
+        output = self.repo / "knowledge/export/unmanaged"
+        output.mkdir(parents=True)
+        sentinel = output / "sentinel.txt"
+        sentinel.write_text("keep\n", encoding="utf-8")
+        with self.assertRaisesRegex(StaticExportError, "exactly a four-file"):
+            export_site_bundle(
+                self.repo,
+                output,
+                registry=self.registry,
+                graph_dir=self.graph,
+                product_commit="d" * 40,
+                source_repository="https://github.com/example/notes",
+                replace=True,
+            )
+        self.assertEqual("keep\n", sentinel.read_text(encoding="utf-8"))
+
+    def test_directory_swap_failure_restores_the_previous_bundle(self) -> None:
+        output = self.repo / "knowledge/export/swap-target"
+        staging = self.repo / "knowledge/export/swap-staging"
+        output.mkdir(parents=True)
+        staging.mkdir()
+        (output / "sentinel.txt").write_text("old\n", encoding="utf-8")
+        (staging / "sentinel.txt").write_text("new\n", encoding="utf-8")
+        real_replace = __import__("os").replace
+        failed = False
+
+        def fail_new_install(source: Path, target: Path) -> None:
+            nonlocal failed
+            if Path(source) == staging and Path(target) == output and not failed:
+                failed = True
+                raise OSError("injected directory swap failure")
+            real_replace(source, target)
+
+        with (
+            patch("kgdistiller.static_export.os.replace", side_effect=fail_new_install),
+            self.assertRaisesRegex(StaticExportError, "previous bundle was restored"),
+        ):
+            _install_export(
+                staging,
+                output,
+                True,
+                recovery_root=self.repo / "knowledge/build/direct-swap-recovery",
+                previous_export_sha256="a" * 64,
+                current_export_sha256="b" * 64,
+            )
+        self.assertEqual("old\n", (output / "sentinel.txt").read_text(encoding="utf-8"))
+        self.assertEqual(
+            "new\n", (staging / "sentinel.txt").read_text(encoding="utf-8")
+        )
+
+    def test_post_commit_cleanup_failure_returns_committed_and_next_run_recovers(
+        self,
+    ) -> None:
+        output = self.export()
+        previous = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        with patch(
+            "kgdistiller.static_export._remove_export_backup",
+            side_effect=OSError("injected post-commit cleanup failure"),
+        ):
+            self.export(product_commit="d" * 40, replace=True)
+
+        committed = self.last_export_result
+        self.assertTrue(committed["committed"])
+        self.assertEqual("pending", committed["cleanup_status"])
+        self.assertTrue(committed["warnings"])
+        self.assertEqual(1, len(committed["recovery_paths"]))
+        recovery_path = Path(committed["recovery_paths"][0])
+        self.assertTrue(recovery_path.is_dir())
+        self.assertIn("knowledge", recovery_path.parts)
+        self.assertIn("build", recovery_path.parts)
+        current = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual("d" * 40, current["producer"]["commit"])
+        self.assertEqual(previous["export_sha256"], current["replaces_export_sha256"])
+        self.assertEqual("ok", verify_export(output)["status"])
+
+        self.export(product_commit="f" * 40, replace=True)
+        recovered = self.last_export_result
+        self.assertTrue(recovered["committed"])
+        self.assertEqual("complete", recovered["cleanup_status"])
+        self.assertEqual([], recovered["warnings"])
+        self.assertEqual([], recovered["recovery_paths"])
+        final = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual("f" * 40, final["producer"]["commit"])
+        self.assertEqual(current["export_sha256"], final["replaces_export_sha256"])
+        self.assertFalse(_export_recovery_root(self.repo, output).exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

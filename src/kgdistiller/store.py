@@ -38,6 +38,7 @@ from .cli import (
     load_state,
     make_agent_snapshot,
     relative_path,
+    sha256_authority_file,
     sha256_file,
     source_format,
     unique_source_for_path,
@@ -572,7 +573,7 @@ def _validated_store(
         if not authority or authority in source_hashes:
             raise StoreError(f"duplicate or empty authority record: {authority!r}")
         source_path = _resolve(root, authority)
-        if sha256_file(source_path) != digest:
+        if sha256_authority_file(source_path) != digest:
             raise StoreError(f"authority snapshot digest mismatch: {authority}")
         source_hashes[authority] = digest
     expected_source_hashes = dict(state.manifest.get("source_hashes") or {})
@@ -648,7 +649,7 @@ def _remove_stale_managed(
         path = _resolve(root, relative)
         if path.is_file():
             expected = authority_hashes.get(relative)
-            if expected is not None and sha256_file(path) != expected:
+            if expected is not None and sha256_authority_file(path) != expected:
                 raise StoreError(
                     f"refusing to remove locally modified stale authority: {relative}"
                 )
@@ -771,7 +772,7 @@ def snapshot_store(
     source_paths: list[Path] = []
     for authority, digest in sorted(source_hashes.items()):
         source_path = (repo_root / authority).resolve()
-        if not source_path.is_file() or sha256_file(source_path) != digest:
+        if not source_path.is_file() or sha256_authority_file(source_path) != digest:
             raise StoreError(f"graph source hash is stale: {authority}")
         spec = unique_source_for_path(specs, source_path)
         source_paths.append(source_path)

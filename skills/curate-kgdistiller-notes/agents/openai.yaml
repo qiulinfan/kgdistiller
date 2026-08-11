@@ -1,0 +1,4 @@
+interface:
+  display_name: "Curate kgdistiller Notes"
+  short_description: "Turn registered notes into reviewed graph updates"
+  default_prompt: "Use $curate-kgdistiller-notes to extract and review knowledge from these registered notes, then hand one bounded update to kgdistiller."

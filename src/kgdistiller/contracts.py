@@ -24,11 +24,15 @@ CONTRACT_SCHEMAS = {
         "qlkg-document-record-v2",
         "qlkg-document-upsert-request-v1",
         "qlkg-document-ingest-receipt-v1",
+        "qlkg-static-export-v1",
+        "qlkg-site-graph-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
     "qlkg-document-upsert-request-v1": "request_sha256",
     "qlkg-document-ingest-receipt-v1": "receipt_sha256",
+    "qlkg-static-export-v1": "export_sha256",
+    "qlkg-site-graph-v1": "graph_sha256",
 }
 
 

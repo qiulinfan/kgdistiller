@@ -28,6 +28,7 @@ from kgdistiller.cli import (
     ensure_database,
     load_state,
     make_agent_snapshot,
+    sha256_authority_file,
     sha256_file,
     sha256_text,
     synchronize,
@@ -314,7 +315,7 @@ def _transaction_request(
                 {
                     "path": transaction.relative_to(paths.repo_root).as_posix(),
                     "operation": "write",
-                    "expected_sha256": sha256_file(transaction),
+                    "expected_sha256": sha256_authority_file(transaction),
                     "content": content,
                     "content_sha256": sha256_text(content),
                     "expected_markers": {

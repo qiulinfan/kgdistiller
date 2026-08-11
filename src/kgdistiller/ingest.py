@@ -47,7 +47,7 @@ from .cli import (
     relative_path,
     scan_scope,
     select_scope,
-    sha256_file,
+    sha256_authority_file,
     sha256_text,
     synchronize,
     unique_source_for_path,
@@ -604,7 +604,7 @@ def _validate_preconditions(
             unique_source_for_path(specs, path)
         except KnowledgeError as error:
             raise IngestError("source-ownership", str(error), stage="precondition") from error
-        actual = sha256_file(path) if path.is_file() else None
+        actual = sha256_authority_file(path) if path.is_file() else None
         expected = patch["expected_sha256"]
         if actual != expected:
             raise IngestError(
@@ -1015,7 +1015,7 @@ def _stage_ingest(
         after_alignment = _alignment_digest(shadow.alignments)
         after_source_hashes = {
             str(patch["path"]): (
-                sha256_file(shadow.repo_root / str(patch["path"]))
+                sha256_authority_file(shadow.repo_root / str(patch["path"]))
                 if (shadow.repo_root / str(patch["path"])).is_file()
                 else None
             )

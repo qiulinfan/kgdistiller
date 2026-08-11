@@ -29,6 +29,8 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-retrieval-plan-v1` | yes | accepted input | Bounded lane-specific query input for Python, CLI, and MCP. |
 | `qlkg-search-result-v2` | output | output | Bounded per-lane status, deterministic fusion, and evidence. |
 | `qlkg-search-execution-v1` | output | output | Immutable plan-mode, generation, and identity-resolution envelope; its nested `qlkg-search-result-v2` is validated separately. |
+| `qlkg-site-graph-v1` | output | output | Hydrated explicit-publish graph with privacy-filtered diagnostics and a self digest. |
+| `qlkg-static-export-v1` | output | output | Static consumer receipt binding producer/source provenance, graph digests, visibility, and artifact bytes. |
 | `qlkg-document-record-v2` | proposed | proposed | Stable inventory identity only; it does not define graph node identity. |
 | `qlkg-document-upsert-request-v1` | proposed | proposed | Reviewed annotated-document input; plan/apply behavior is deferred. |
 | `qlkg-document-ingest-receipt-v1` | proposed | proposed | Resumable stage output; enrichment orchestration is deferred. |
@@ -104,8 +106,9 @@ uv run python scripts/check_distribution.py
 
 Then verify:
 
-- wheel and sdist contain Python modules, static browser assets, and all JSON
-  Schemas;
+- wheel and sdist contain Python modules, static browser assets, all JSON
+  Schemas, every product Skill, the workflow manifest, product workflow docs,
+  and `.codex/agents` presets;
 - an isolated environment can install the wheel and run `kgdistiller --help`;
 - that installed wheel can load the default local profile in two fresh
   processes, apply database/store/embedding-profile overrides, expose the same
@@ -131,13 +134,28 @@ Then verify:
 - the semantic benchmark supports 1k, 10k, and 100k ready-vector cases and
   records p50/p95/max, provider call counts, exact-scan limits, and byte-stable
   read-only evidence;
-- Skills pass structural validation and a real isolated Agent evaluation;
+- every Skill passes `skill-creator` structural validation, the product doctor,
+  and a real isolated Agent evaluation;
+- a temporary Codex home passes copy-mode link/doctor on Windows and POSIX while
+  sentinel `AGENTS.md`, `config.toml`, unrelated Skills, and unrelated agents
+  remain byte-identical;
+- a static export passes its packaged schema and dependency-free verifier, and
+  its public graph contains only explicitly published nodes, sources,
+  references, edges, and diagnostics;
+- a static export refuses dirty or untracked instance inputs, verifies the
+  graph source hashes, and records the clean current instance `HEAD` as
+  `source.revision` before the bundle is adopted in a second commit;
+- CRLF and LF checkouts produce the same authority, private graph/shard, and
+  static bundle artifact digests while semantic text changes still fail;
+- `export site --replace` rejects unmanaged or invalid destinations, preserves
+  every old bundle byte on generation/verification failure, and installs a
+  verified successor with `replaces_export_sha256` on success;
 - no credential, personal graph, authority note, generated SQLite, build
   artifact, or stress fixture is tracked.
 
-Host integration must separately run its knowledge workflow, graph check,
-website check, and production build against the exact engine commit being
-released.
+Static consumers separately verify the adopted four-file bundle, run their own
+application checks, and record its manifest/export/public-graph digests. They do
+not install or vendor kgdistiller to validate an export.
 
 ## Supply-chain and publishing checklist
 
@@ -146,24 +164,27 @@ released.
 3. Inspect wheel/sdist file lists and install the wheel in an empty environment.
 4. Prefer a short-lived or trusted publishing mechanism; never commit a PyPI or
    GitHub token.
-5. Publish kgdistiller before updating a public host's submodule pointer.
+5. Publish kgdistiller before producing consumer exports that name its commit.
 6. Create checksums for the exact distributions and attach them to the release.
 7. Tag only after all release gates pass; do not move a published tag.
-8. Update the host repository and repeat its gates before publishing the host.
+8. Let consumers adopt an independently verified static export and repeat their
+   own gates before publication.
 9. Keep the previous compatible release available for rollback.
 
-## Release order for the current host
+## Release order for static consumers
 
-The qlblog integration references engine behavior introduced by kgdistiller.
-The safe order is:
+1. Merge and publish the kgdistiller release commit and distributions.
+2. Verify that the remote commit, wheel, and sdist contain the engine, schemas,
+   Skills, agents, manifest, standalone export verifier, and stress harness.
+3. Run project checks with that exact product, commit all instance inputs (and
+   the old adopted bundle on refresh), and confirm the instance checkout is
+   clean.
+4. Create `export site` with its full producer commit and source repository
+   provenance; the receipt records the clean instance commit from step 3.
+5. Run `python verify_export.py EXPORT_DIR` in an environment without
+   kgdistiller installed.
+6. Adopt and commit exactly the verified bundle bytes in the consumer, record the export
+   and graph digests, then run consumer-specific checks.
 
-1. merge and publish the kgdistiller release commit;
-2. verify that the remote commit and package contain the transactional ingest
-   schemas, candidate builder, query/index consistency fix, bounded GraphRAG,
-   and stress harness;
-3. update qlblog's submodule pointer to that published commit;
-4. run qlblog knowledge and site gates;
-5. publish qlblog.
-
-Reversing this order leaves the public host pointing at an unavailable engine
-commit.
+This order leaves product release, authority generation, and consumer adoption
+as separate auditable events without a submodule dependency.

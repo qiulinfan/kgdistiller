@@ -25,7 +25,6 @@ personal-knowledge-store/
 │   ├── store.json                 # committed qlkg-store-v1 generation
 │   ├── .gitignore                 # keeps build/ local; existing rules preserved
 │   └── build/                     # ignored SQLite, plans, receipts, previews
-└── vendor/kgdistiller/            # optional pinned Git submodule
 ```
 
 Create or refresh this layout in place with:
@@ -49,20 +48,20 @@ already-ingested `.md`, `.typ`, and `.tex` authorities are copied. Once the
 dedicated store becomes primary, run future ingest operations against it so
 source, graph, inventory, and embeddings advance as one generation.
 
-Keep domain extraction Skills in the host repository. Use the canonical
-`query-kgdistiller` and `ingest-kgdistiller` Skills from the installed package
-or pinned submodule. Model providers, API keys, and personal source content do
-not belong in the engine repository.
+Use the complete Skill suite and Codex presets shipped by the installed
+kgdistiller product. Model providers, API keys, personal source content, and
+generated project graphs do not belong in the product repository.
 
 ## Installation choices
 
-For a reproducible host repository, pin kgdistiller as a submodule and invoke
-the vendored source:
+For a reproducible knowledge project, record and install an exact kgdistiller
+package version and release commit:
 
 ```sh
-git submodule add -b main https://github.com/qiulinfan/kgdistiller.git vendor/kgdistiller
-git submodule update --init --recursive
-PYTHONPATH=vendor/kgdistiller/src python3 -m kgdistiller --repo-root . check
+uv tool install kgdistiller==0.3.0
+kgdistiller --repo-root . check
+kgdistiller codex link
+kgdistiller codex doctor
 ```
 
 For one machine, install the command with `uv tool`:
@@ -72,7 +71,7 @@ uv tool install kgdistiller==0.3.0
 kgdistiller --repo-root /absolute/path/to/notes check
 ```
 
-Do not mix an unpinned global executable with a host that assumes a newer
+Do not mix an unpinned global executable with a project that assumes a newer
 schema or capability. `kgdistiller agent status` reports the active graph,
 snapshot, alignment schemas, digests, and capabilities.
 
@@ -277,7 +276,8 @@ Commit these files together:
 - every deterministic file under `knowledge/graph/`;
 - `knowledge/documents.jsonl`, `knowledge/store.json`, and every file under
   `knowledge/embeddings/`;
-- a pinned submodule pointer or an explicit package version.
+- an explicit kgdistiller package version and product commit in deployment and
+  export provenance.
 
 Ignore `knowledge/build/`, SQLite and WAL files, transaction staging
 directories, plans, receipts, local Agent snapshots, rendered pages,
@@ -317,7 +317,7 @@ private authority data only in storage appropriate for that data.
 ## Restore drill
 
 1. Clone the authority store or restore its Git bundle.
-2. Initialize the pinned submodule or install the recorded kgdistiller version.
+2. Install the recorded kgdistiller version and verify its product commit.
 3. Run `kgdistiller store verify` before changing any tracked file.
 4. Delete any restored `knowledge/build/` directory; it is disposable.
 5. Run `kgdistiller store materialize`; it restores SQLite and exact vectors
@@ -369,11 +369,11 @@ mixed generation to look committed.
 
 1. Require a clean authority worktree and a passing `check`.
 2. Read the release compatibility and migration notes.
-3. Update the package pin or submodule on a branch.
-4. Run `agent status`, the full host workflow, and `check` before any sync.
+3. Update the package pin on a branch.
+4. Run `agent status`, the applicable product workflow, and `check` before any sync.
 5. Run a transaction `plan` with current candidate/query digests.
 6. Apply only after reviewing the plan and backing up the authority repository.
-7. Commit the engine pin and any deterministic graph migration atomically.
+7. Commit the product-version record and any deterministic graph migration atomically.
 
 Downgrades are safe only when the older release declares every committed schema
 readable. Keep the pre-upgrade Git revision until a restore drill succeeds.

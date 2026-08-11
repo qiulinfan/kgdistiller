@@ -105,6 +105,10 @@ resolution, use Markdown, Typst, or LaTeX, and match exactly one registered
 bounded source glob. `expected_sha256` is the reviewed pre-edit hash, or `null`
 only when the authority does not exist. `expected_markers` is the complete
 post-edit set of definition node IDs and reference target IDs for that file.
+Authority hashes use kgdistiller's UTF-8 authority-text boundary: universal
+newlines normalize CRLF and CR to LF before SHA-256. Review tools must use that
+boundary (not raw checkout bytes), matching sync, ingest receipts, stores, and
+exports across Windows and POSIX checkouts.
 
 ## Execution and transaction boundary
 

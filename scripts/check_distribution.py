@@ -8,7 +8,6 @@ import tarfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = REPO_ROOT / "src" / "kgdistiller"
 DIST_ROOT = REPO_ROOT / "dist"
@@ -39,6 +38,32 @@ def _expected_package_files() -> set[str]:
     return expected
 
 
+def _expected_product_files() -> tuple[set[str], set[str]]:
+    wheel: set[str] = set()
+    sdist: set[str] = set()
+    roots = (
+        REPO_ROOT / "skills",
+        REPO_ROOT / "workflows",
+        REPO_ROOT / ".codex" / "agents",
+    )
+    files = [path for root in roots for path in root.rglob("*") if path.is_file()]
+    files.append(REPO_ROOT / "docs" / "product-workflows.md")
+    files.extend(
+        (
+            REPO_ROOT / "scripts" / "link-codex-product.sh",
+            REPO_ROOT / "scripts" / "link-codex-product.ps1",
+        )
+    )
+    for path in files:
+        relative = path.relative_to(REPO_ROOT)
+        relative_posix = PurePosixPath(*relative.parts).as_posix()
+        wheel.add(PurePosixPath("kgdistiller", "product", *relative.parts).as_posix())
+        sdist.add(relative_posix)
+    if not any(name.startswith("kgdistiller/product/skills/") for name in wheel):
+        raise RuntimeError("source product Skill inventory is empty")
+    return wheel, sdist
+
+
 def _missing(expected: set[str], observed: set[str]) -> list[str]:
     return sorted(expected - observed)
 
@@ -59,7 +84,7 @@ def check_wheel(path: Path, expected: set[str]) -> None:
             raise RuntimeError("wheel is missing the kgdistiller console entry point")
 
 
-def check_sdist(path: Path, expected: set[str]) -> None:
+def check_sdist(path: Path, expected: set[str], product_sources: set[str]) -> None:
     with tarfile.open(path, "r:gz") as archive:
         names = {PurePosixPath(name).as_posix() for name in archive.getnames()}
     suffix = "/src/kgdistiller/__init__.py"
@@ -68,6 +93,7 @@ def check_sdist(path: Path, expected: set[str]) -> None:
         raise RuntimeError("sdist has no unique package root")
     root = next(iter(roots))
     expected_sdist = {f"{root}/src/{name}" for name in expected}
+    expected_sdist.update(f"{root}/{name}" for name in product_sources)
     missing = _missing(expected_sdist, names)
     if missing:
         raise RuntimeError(f"sdist is missing runtime files: {missing}")
@@ -78,20 +104,23 @@ def check_sdist(path: Path, expected: set[str]) -> None:
 
 def main() -> int:
     try:
-        expected = _expected_package_files()
+        package_files = _expected_package_files()
+        product_files, product_sources = _expected_product_files()
+        expected = package_files | product_files
         wheel = _single("kgdistiller-*.whl")
         sdist = _single("kgdistiller-*.tar.gz")
         check_wheel(wheel, expected)
-        check_sdist(sdist, expected)
+        check_sdist(sdist, package_files, product_sources)
     except (OSError, RuntimeError, tarfile.TarError, zipfile.BadZipFile) as error:
         print(f"distribution check failed: {error}", file=sys.stderr)
         return 1
     schemas = sum(name.startswith("kgdistiller/schemas/") for name in expected)
     static = sum(name.startswith("kgdistiller/static/") for name in expected)
     modules = sum(name.endswith(".py") for name in expected)
+    product = sum(name.startswith("kgdistiller/product/") for name in expected)
     print(
         f"distribution check passed: modules={modules} schemas={schemas} "
-        f"static={static} wheel={wheel.name} sdist={sdist.name}"
+        f"static={static} product={product} wheel={wheel.name} sdist={sdist.name}"
     )
     return 0
 

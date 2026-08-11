@@ -11,10 +11,10 @@ commands as a substitute for the transaction API.
 
 ## Load the write contract
 
-Read `docs/graph-contract.md` and `docs/transactional-ingest.md` completely
-before the first write. In qlblog read the copies under
-`vendor/kgdistiller/docs/` and use `python3 knowledge/kgd.py`; elsewhere use
-`kgdistiller --repo-root PROJECT`.
+Read [references/transaction-contract.md](references/transaction-contract.md)
+completely before the first write. Use the public
+`kgdistiller --repo-root PROJECT` CLI; do not depend on a repository wrapper or
+vendored engine tree.
 
 Start with `agent status`. Require `transactional-ingest-v1`,
 `qlkg-ingest-request-v1`, and the exact target graph, snapshot, and alignment
@@ -37,6 +37,11 @@ new identities. Preserve unrelated prose and user-authored markers. Paper
 snapshots remain read-only unless the user explicitly authorizes selected
 knowledge or mappings for import.
 
+Compute every expected source hash with the transaction contract's
+authority-text boundary: UTF-8 with universal newlines (CRLF/CR normalized to
+LF), not raw checkout bytes. This is the same digest stored by sync and checked
+by ingest, portable stores, `check`, and static export.
+
 ## Plan, review, then apply
 
 1. Build a canonical `qlkg-ingest-request-v1` in `plan` mode. Compute
@@ -44,7 +49,7 @@ knowledge or mappings for import.
 2. Run:
 
    ```sh
-   kgdistiller ingest plan REQUEST.json --output PLAN.json
+   kgdistiller --repo-root PROJECT ingest plan REQUEST.json --output PLAN.json
    ```
 
 3. Review the predicted source, node, edge, ref, alignment, and digest changes.
@@ -52,7 +57,7 @@ knowledge or mappings for import.
 4. Change only `mode` to `apply`, recompute `request_sha256`, then run:
 
    ```sh
-   kgdistiller ingest apply REQUEST.json --receipt RECEIPT.json
+   kgdistiller --repo-root PROJECT ingest apply REQUEST.json --receipt RECEIPT.json
    ```
 
 5. Accept success only when the returned `qlkg-ingest-receipt-v1` has
@@ -61,14 +66,18 @@ knowledge or mappings for import.
 6. If `knowledge/store.json` exists, refresh and verify the portable generation:
 
    ```sh
-   kgdistiller store snapshot
-   kgdistiller store verify
+   kgdistiller --repo-root PROJECT store snapshot
+   kgdistiller --repo-root PROJECT store verify
    ```
 
    This captures exact embeddings already present in SQLite without calling a
    provider. If no portable store exists, report that the ingest is local-only
    and recommend `$deploy-kgdistiller`; do not silently initialize Git, commit,
    or push.
+7. When a static consumer needs immutable graph data, run the scoped/global
+   checks and create a separate `kgdistiller export site` bundle. Treat its
+   `qlkg-static-export-v1` receipt as the only adoption handoff; never make the
+   consumer inspect this product checkout.
 
 The engine owns locking, optimistic concurrency, staging, scan, delta apply,
 sync, curation, global validation, atomic installation, crash recovery,
@@ -86,6 +95,8 @@ Return the receipt path and a compact summary of:
 - refs, edges, alignments, and source patches changed;
 - validation results, warnings, and unapplied review decisions.
 - portable store generation, document count, and embedding count when refreshed;
+- static export path, export digest, product repository/version/commit, source
+  revision/digest, and graph digest when an export was requested;
 - synchronization state as `local-only`, `committed locally`, or `remote
   confirmed`, with the latter two used only when the corresponding explicitly
   authorized Git operation has actually succeeded.

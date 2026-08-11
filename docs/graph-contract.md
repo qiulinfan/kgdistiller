@@ -138,6 +138,21 @@ staged Git rename; full sync also compares the previous source map, so rename
 handling does not depend on Git similarity detection. An exact-content rename
 can be paired before staging. A file path is provenance, never graph identity.
 
+Every `source_hashes` value uses the authority-text boundary: read the
+Markdown, Typst, or LaTeX file as UTF-8 with universal-newline translation,
+represent CRLF and lone CR as LF, then SHA-256 the resulting UTF-8 bytes. All
+other characters, including a final newline, remain significant. Scan/rename
+matching, sync, transactional ingest, `check`, portable-store verification,
+and static export share this one function, so Git's checkout newline policy
+cannot create a false source change. Raw-byte hashing remains reserved for
+binary and byte-stable artifacts.
+
+Generated graph JSON/JSONL and entry shards are serialized with LF.
+Hydration and `check` read those text projections with the same universal-
+newline behavior before comparing their manifest digests and canonical
+serialization. Thus an otherwise clean CRLF checkout still represents the
+same graph generation; semantic text changes continue to invalidate it.
+
 Every definition stores a hash and source span for its enclosing authored
 statement (or the smallest conservative source block when no formal statement
 wrapper exists). If that hash changes, an existing curated entry becomes

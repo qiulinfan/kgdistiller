@@ -18,6 +18,9 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
+[project.optional-dependencies]
+paper = ["pdfplumber>=0.11,<1"]
+
 [project.urls]
 Homepage = "https://github.com/qiulinfan/kgdistiller"
 Repository = "https://github.com/qiulinfan/kgdistiller"
@@ -30,9 +33,23 @@ kgd = "kgdistiller.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/kgdistiller"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "kgdistiller/product/skills"
+"workflows" = "kgdistiller/product/workflows"
+".codex/agents" = "kgdistiller/product/.codex/agents"
+"docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
+"scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
+"scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
+
 [tool.hatch.build]
 include = [
   "src/kgdistiller/**/*.py",
   "src/kgdistiller/schemas/*.json",
   "src/kgdistiller/static/*",
+  "skills/**",
+  "workflows/**",
+  ".codex/agents/*.toml",
+  "docs/product-workflows.md",
+  "scripts/link-codex-product.sh",
+  "scripts/link-codex-product.ps1",
 ]

@@ -22,6 +22,7 @@ from kgdistiller.cli import (
     ensure_database,
     load_state,
     make_agent_snapshot,
+    sha256_authority_file,
     sha256_file,
     sha256_text,
     synchronize,
@@ -247,7 +248,7 @@ class TransactionalIngestTest(unittest.TestCase):
                     {
                         "path": self.authority.relative_to(self.repo).as_posix(),
                         "operation": "write",
-                        "expected_sha256": sha256_file(self.authority),
+                        "expected_sha256": sha256_authority_file(self.authority),
                         "content": content,
                         "content_sha256": sha256_text(content),
                         "expected_markers": {
@@ -313,6 +314,20 @@ class TransactionalIngestTest(unittest.TestCase):
         self.assertEqual(["beta"], plan["changes"]["nodes"]["added"])
         self.assertNotEqual(plan["before"]["graph_sha256"], plan["after"]["graph_sha256"])
         self.assertEqual(before, self.material_hashes())
+
+    def test_plan_accepts_reviewed_hash_across_crlf_checkout(self) -> None:
+        request = self.request("plan")
+        expected = request["authority_patches"][0]["expected_sha256"]
+        text = self.authority.read_text(encoding="utf-8")
+        self.authority.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+        self.assertEqual(expected, sha256_authority_file(self.authority))
+        self.assertNotEqual(expected, sha256_file(self.authority))
+        plan = plan_ingest(self.paths, request)
+        self.assertEqual(
+            expected,
+            plan["before"]["source_hashes"]["notes/demo/chapter.md"],
+        )
 
     def test_apply_commits_once_and_returns_replayable_receipt(self) -> None:
         request = self.request("apply")

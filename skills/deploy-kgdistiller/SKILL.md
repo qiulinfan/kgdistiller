@@ -11,13 +11,13 @@ or graph authority.
 
 ## Load the deployment contract
 
-Read `docs/deployment.md` completely from the installed kgdistiller package or
-pinned submodule before changing a project. If creating the first graph, also
-read `docs/graph-contract.md`. Never place personal sources, vectors,
-credentials, or generated graphs in the kgdistiller engine repository.
+Read [references/deployment-contract.md](references/deployment-contract.md)
+completely before changing a project. Never place personal sources, vectors,
+credentials, or generated graphs in the kgdistiller product repository.
 
-Use `kgdistiller --repo-root PROJECT` below. In a pinned source checkout, use
-`PYTHONPATH=vendor/kgdistiller/src python3 -m kgdistiller --repo-root PROJECT`.
+Use `kgdistiller --repo-root PROJECT` below. Record the installed product
+version and exact product commit in deployment and export receipts. Do not make
+a knowledge project vendor the engine.
 
 ## Choose one store layout
 
@@ -106,3 +106,10 @@ Summarize the absolute store root, layout, schema, generation hashes, document
 and embedding counts, SQLite materialization state, Git commit when any, and
 whether a remote was actually confirmed. Never include full authority content,
 vectors, credentials, or unbounded excerpts.
+
+If a separate application consumes a static graph export, keep that export
+outside the portable-store claims. Verify its `qlkg-static-export-v1` manifest
+with the bundled standalone verifier and report product repository/version/commit,
+source repository revision/digest, graph digest, and export digest. A static
+consumer may adopt those files without installing kgdistiller and must use the
+receipt rather than an engine checkout as provenance.

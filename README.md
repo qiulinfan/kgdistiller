@@ -87,6 +87,9 @@ Synchronization remembers the Git revision and source hashes behind the last
 snapshot. Deleted paths and both sides of a Git rename are included in the next
 scope, so an unchanged `kn` is rehomed instead of duplicated and obsolete refs
 are retired. An exact-content rename is also recognized before it is staged.
+Source hashes are SHA-256 over UTF-8 authority text after CRLF/CR is normalized
+to LF, and that same boundary is used by sync, ingest, store, check, and export.
+Consequently Git checkout newline conversion alone is not a knowledge change.
 An explicit `--file` must match exactly one configured source pattern; merely
 living below a source root is not registration. Overlapping source patterns are
 rejected instead of silently assigning the file to whichever source was read
@@ -474,10 +477,11 @@ for the snapshot contract, retrieval pipeline, token-budget context bundles,
 MCP tools, paper comparison statuses, transaction boundary, security rules, and
 implementation phases.
 
-See [the Agentic knowledge base closure specification](docs/agentic-knowledge-base-closure-spec.md)
-for the remaining portable-RAG, document-upsert, Skill, paper-import, and qlblog
-integration requirements, quantitative acceptance metrics, dependency order,
-and issue-sized work packages intended for automated implementation.
+The historical
+[Agentic knowledge base closure specification](docs/agentic-knowledge-base-closure-spec.md)
+records earlier portable-RAG, document-upsert, Skill, and paper-import
+requirements. The current product workflow authority is
+[`workflows/manifest.json`](workflows/manifest.json).
 
 See [the active repair specification](docs/agentic-knowledge-base-repair-spec.md)
 for the 2026-08-09 audited baseline, the strictly sequential implementation
@@ -486,8 +490,8 @@ time.
 
 ## Agent Skills
 
-kgdistiller ships three narrow, provider-neutral Agent Skills alongside the
-engine:
+kgdistiller ships the complete provider-neutral knowledge and paper Skill suite
+alongside the engine:
 
 - [`query-kgdistiller`](skills/query-kgdistiller/SKILL.md) performs only batch
   resolution, bounded GraphRAG retrieval, candidate alignment, and graph
@@ -500,32 +504,125 @@ engine:
 - [`deploy-kgdistiller`](skills/deploy-kgdistiller/SKILL.md) creates, refreshes,
   verifies, and restores the portable store, including exact cached embeddings
   and the local-only/committed/remote-confirmed Git state.
+- [`curate-kgdistiller-notes`](skills/curate-kgdistiller-notes/SKILL.md)
+  extracts a bounded registered note set and prepares a reviewed handoff.
+- [`extract-paper-markdown`](skills/extract-paper-markdown/SKILL.md) acquires a
+  complete traceable paper package without recreating its visual layout.
+- [`distill-paper-knowledge`](skills/distill-paper-knowledge/SKILL.md) builds a
+  validated isolated paper graph and aligns it read-only.
+- [`import-paper-knowledge`](skills/import-paper-knowledge/SKILL.md) is the
+  explicit authorization boundary for selected paper candidates.
+- [`trace-concept-lineage`](skills/trace-concept-lineage/SKILL.md) produces
+  cited concept dossiers and a prerequisite-ordered learning route.
 
-Host-specific extraction Skills produce candidates and call these two engine
-Skills. A note exporter normally queries, turns known concepts into refs, then
-requests ingestion before publishing. A paper extractor queries before writing
-full entries and returns a cross-namespace snapshot by default; it requests
-ingestion only when the user explicitly authorizes import.
+The former mixed note/paper exporter is intentionally split: note curation,
+paper distillation, and explicitly authorized paper import have different
+mutation and review boundaries. Each Skill is self-contained, carries its own
+`agents/openai.yaml` and local references/scripts, and contains no personal
+path, credential, site style, or repository wrapper assumption.
 
 This separation keeps model-specific semantic reading outside the deterministic
-core while preventing each host Skill from loading or reimplementing the whole
+core while preventing each Skill from loading or reimplementing the whole
 knowledge graph. Review-first operation remains the default.
 
-## Use as a Git submodule
-
-Keeping the engine separate from personal data is a first-class workflow:
+The portable workflow manifest and project agent presets live at
+[`workflows/manifest.json`](workflows/manifest.json) and
+[`.codex/agents`](.codex/agents). Install or diagnose only the kgdistiller
+namespace with:
 
 ```sh
-git submodule add -b main https://github.com/qiulinfan/kgdistiller.git vendor/kgdistiller
-git submodule update --remote --merge vendor/kgdistiller
-PYTHONPATH=vendor/kgdistiller/src python3 -m kgdistiller --repo-root . sync
+kgdistiller codex link
+kgdistiller codex doctor
 ```
 
-The host repository owns `knowledge/sources.json`, `knowledge/graph/`, source
-documents, domain extraction Skills, and site integration. The submodule owns
-scanners, schemas, validation, the local browser, and the query/ingest Skills.
-A host that wants a moving engine can track `main` and update the submodule
-before local use or deployment.
+The default `auto` installation stays live: POSIX uses symbolic links, while
+Windows can use directory junctions for Skills/product workflow files and
+same-volume hardlinks for agent files when symbolic-link privileges are
+unavailable. It never silently falls back to a copy. Explicit `--mode copy`
+creates a non-live snapshot that must be refreshed after changes. The canonical
+entry at
+`$CODEX_HOME/workflow-products/kgdistiller/workflows/manifest.json` anchors the
+complete workflow from any knowledge-project current directory. The linker
+removes renamed or retired product assets only when its state still proves
+ownership, refuses unmanaged or modified collisions, and never writes global
+`AGENTS.md`, `config.toml`, unrelated Skills, or unrelated agent presets. See
+[product workflows](docs/product-workflows.md) for the complete role and
+workflow contract.
+
+As an additional guard, the Codex home cannot equal, contain, or be contained
+by the product root. The namespaced state must be an ordinary non-reparse file,
+and its source paths must match the active manifest before any managed target
+is replaced or removed. Before any mkdir or state publication, the linker also
+rejects a symlink, Junction, or other reparse parent at the Codex home,
+`skills`, `agents`, `workflow-products`, or its recovery namespace. When an
+editor atomically replaces a hardlinked agent source, `doctor` reports the
+detached link; rerunning `link` repairs it only if the target bytes still equal
+the state receipt's install digest. A mismatch remains untouched.
+
+## Independent product and static consumers
+
+Install kgdistiller as a versioned package or tool. A knowledge repository is
+an instance: it owns only authorities and generated knowledge data, and does
+not vendor the engine or product Skills.
+
+```sh
+uv tool install kgdistiller==0.3.0
+kgdistiller --repo-root /path/to/knowledge-project check
+```
+
+For a static consumer, produce one already hydrated, privacy-filtered bundle:
+
+```sh
+kgdistiller --repo-root /path/to/knowledge-project export site \
+  --output knowledge/export/site \
+  --product-commit FULL_PRODUCT_COMMIT \
+  --source-repository https://example.invalid/owner/knowledge
+python knowledge/export/site/verify_export.py knowledge/export/site
+```
+
+`--product-commit` is verified against any commit discoverable from a clean
+product checkout or installed `direct_url.json`; it cannot be used to relabel
+another revision. A source-checkout export rejects all tracked or untracked
+product changes. Only an installation with no discoverable VCS provenance may
+use the explicit full commit as its release assertion.
+
+The knowledge instance must also be a clean Git checkout, including untracked
+files. Every hashed authority must still match the private graph, and the
+registry, four core graph projections, manifest-declared entry shards, and
+hashed authorities must all be tracked at the current `HEAD`; that proven
+commit becomes `source.revision` and cannot be overridden. Use two commits:
+first commit and verify all instance inputs (and the old bundle during a
+refresh), export from that clean commit, then commit the exact verified
+successor bundle as the adoption commit. This avoids attributing dirty export
+inputs to an older revision. `--source-repository` remains required.
+
+To advance an already adopted bundle, repeat the command with `--replace`.
+Replacement is allowed only when the old four-file bundle verifies; the new
+bundle is built and verified in staging before a recoverable directory swap.
+Any build or verification failure leaves every old bundle byte unchanged, and
+the new manifest records `replaces_export_sha256`. The directory swap is the
+commit point. If verified-predecessor cleanup then fails, the command returns
+the committed successor with `cleanup_status: pending`, a warning, and a
+managed path below ignored `knowledge/build/.kgd-export-recovery/`. The next
+export verifies that receipt and completes cleanup before proceeding; do not
+pre-delete either path.
+
+The four-file bundle contains `manifest.json`, `graph.json`,
+`knowledge-registry.typ`, and a dependency-free `verify_export.py`. Its receipt
+binds product repository/version/commit, source repository/revision/digests,
+private and public graph digests/counts, published source hashes, visibility
+policy, and artifact hashes/bytes. Source hashes and artifact records use
+canonical LF UTF-8 text, so a Windows CRLF checkout verifies identically.
+The immutable v1 receipt has exactly three artifact records: the site graph,
+Typst registry, and standalone verifier at their fixed paths.
+`graph.json` includes privacy-filtered
+`diagnostics.errors`, `diagnostics.warnings`, and `diagnostics.info`, all inside
+the public graph digest. Every public edge is reduced to the exact structural
+triple `source`, `relation`, and `target`; edge evidence, fingerprints, origin,
+confidence, curation data, and other source-derived fields never cross the
+privacy boundary, even when both endpoints are public. A consumer validates
+and adopts these static bytes without installing kgdistiller, following a
+submodule pointer, or recomputing the graph.
 
 ## Compatibility
 

@@ -21,7 +21,12 @@ from kgdistiller.agent import (  # noqa: E402
     index_status,
     resolve_agent_index_path,
 )
-from kgdistiller.cli import make_artifacts, synchronize, write_artifacts  # noqa: E402
+from kgdistiller.cli import (  # noqa: E402
+    make_artifacts,
+    sha256_authority_file,
+    synchronize,
+    write_artifacts,
+)
 from kgdistiller.project import initialize_project  # noqa: E402
 import kgdistiller.store as store_module  # noqa: E402
 from kgdistiller.store import (  # noqa: E402
@@ -192,6 +197,32 @@ class PortableStoreTest(unittest.TestCase):
         self.assertEqual(
             "qlkg-node-embedding-text-v1",
             restored_status["providers"]["embedding"]["embedding_input_schema"],
+        )
+
+    def test_authority_hash_survives_store_checkout_newline_changes(self) -> None:
+        authority = self.source / "notes/roundtrip.typ"
+        expected = store_module.load_state(self.graph).manifest["source_hashes"][
+            "notes/roundtrip.typ"
+        ]
+        text = authority.read_text(encoding="utf-8")
+        authority.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+        self.assertEqual(expected, sha256_authority_file(authority))
+        self.assertNotEqual(expected, store_module.sha256_file(authority))
+
+        created = self.snapshot()
+        self.assertEqual(
+            created["store_generation_sha256"],
+            verify_store(self.store)["store_generation_sha256"],
+        )
+
+        portable_authority = self.store / "notes/roundtrip.typ"
+        portable_authority.write_bytes(
+            portable_authority.read_text(encoding="utf-8").encode("utf-8")
+        )
+        self.assertEqual(expected, sha256_authority_file(portable_authority))
+        self.assertEqual(
+            created["store_generation_sha256"],
+            verify_store(self.store)["store_generation_sha256"],
         )
 
     def test_v1_bundle_remains_verifiable_and_materializes_legacy_digest(self) -> None:

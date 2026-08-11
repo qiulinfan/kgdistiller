@@ -1,0 +1,4 @@
+interface:
+  display_name: "Distill Concept Lineage"
+  short_description: "Batch-distill papers into a cited concept graph"
+  default_prompt: "Use $trace-concept-lineage to distill this paper into parallel-researched concept files, a knowledge graph, and a prerequisite-ordered reading route."

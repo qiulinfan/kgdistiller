@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-site-graph-v1.schema.json",
+  "title": "kgdistiller filtered hydrated site graph v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "namespace", "source_graph_sha256", "counts", "nodes", "edges", "references", "diagnostics", "graph_sha256"],
+  "properties": {
+    "schema": {"const": "qlkg-site-graph-v1"},
+    "namespace": {"const": "public"},
+    "source_graph_sha256": {"$ref": "#/$defs/sha256"},
+    "counts": {"$ref": "#/$defs/counts"},
+    "nodes": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/node"}},
+    "edges": {"type": "array", "maxItems": 5000000, "items": {"$ref": "#/$defs/edge"}},
+    "references": {"type": "array", "maxItems": 5000000, "items": {"$ref": "#/$defs/reference"}},
+    "diagnostics": {"$ref": "#/$defs/diagnostics"},
+    "graph_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "references"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "edges": {"type": "integer", "minimum": 0, "maximum": 5000000},
+        "references": {"type": "integer", "minimum": 0, "maximum": 5000000}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "type", "label"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "type": {"enum": ["knowledge", "field", "topic"]},
+        "label": {"type": "string", "minLength": 1},
+        "text": {"type": "string"},
+        "entry": {"type": "object"},
+        "properties": {"type": "object"},
+        "provenance": {"type": "object"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "relation", "target"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "maxLength": 256},
+        "relation": {"type": "string", "minLength": 1, "maxLength": 256},
+        "target": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["target", "authority"],
+      "properties": {
+        "target": {"type": "string", "minLength": 1, "maxLength": 256},
+        "authority": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 256},
+        "message": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "node": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings", "info"],
+      "properties": {
+        "errors": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/diagnostic"}},
+        "warnings": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/diagnostic"}},
+        "info": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/diagnostic"}}
+      }
+    }
+  }
+}

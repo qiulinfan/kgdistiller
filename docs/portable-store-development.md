@@ -177,8 +177,11 @@ personal-knowledge-store/
 │       └── objects/
 │           └── ab/
 │               └── ab...cd.f32             # SHA-256 content-addressed bytes
-└── vendor/kgdistiller/                     # optional pinned engine
 ```
+
+kgdistiller 不属于 authority store，也不应以 vendor 目录或 submodule 嵌入。
+在开发机上安装并明确选择一个 kgdistiller 版本和 product revision；store
+receipt 与静态 export receipt 记录该 revision，而知识仓库只保存自身数据。
 
 ### 5.2 Local materialized index
 
@@ -236,7 +239,7 @@ SQLite 可以被删除和重建。其 schema 不构成跨机器协议，也不�
 - `source_id`、`subject`、`course` 和 `knowledge_origin`；
 - repo-relative `authority`；
 - `markdown`、`typst` 或 `latex` 格式；
-- exact `source_sha256`；
+- canonical authority-text `source_sha256`（UTF-8，CRLF/CR 归一为 LF）；
 - 该文件当前拥有的 active definition IDs；
 - reference count。
 
