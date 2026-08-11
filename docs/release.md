@@ -26,8 +26,9 @@ publishing a package, creating a GitHub release, or uploading personal data.
 | `qlkg-ingest-receipt-v1` | output | output | Canonical committed/rejected result. |
 | `qlkg-local-profile-v1` | yes | user-authored | Machine-local paths and credential environment-variable names; never portable. |
 | `qlkg-embedding-policy-v1` | yes | user-authored | Portable vector-space and required-coverage policy without credentials; drives local status/sync. |
-| `qlkg-retrieval-plan-v1` | proposed | proposed | Bounded lane-specific query input; execution is deferred. |
-| `qlkg-search-result-v2` | proposed | proposed | Bounded per-lane status and fusion evidence; public wiring is deferred. |
+| `qlkg-retrieval-plan-v1` | yes | accepted input | Bounded lane-specific query input for Python, CLI, and MCP. |
+| `qlkg-search-result-v2` | output | output | Bounded per-lane status, deterministic fusion, and evidence. |
+| `qlkg-search-execution-v1` | output | output | Immutable plan-mode, generation, and identity-resolution envelope; its nested `qlkg-search-result-v2` is validated separately. |
 | `qlkg-document-record-v2` | proposed | proposed | Stable inventory identity only; it does not define graph node identity. |
 | `qlkg-document-upsert-request-v1` | proposed | proposed | Reviewed annotated-document input; plan/apply behavior is deferred. |
 | `qlkg-document-ingest-receipt-v1` | proposed | proposed | Resumable stage output; enrichment orchestration is deferred. |
@@ -65,6 +66,14 @@ no-op on a second unchanged run. Query paths do not invoke document sync. This
 release does not yet use embedding coverage as a `store snapshot` or
 `store verify` readiness gate, so a valid portable store must not be advertised
 as RAG-ready on that basis alone.
+
+`agent search`, `agent context`, `kg_search`, and `kg_build_context` execute a
+bounded retrieval plan or adapt one legacy query. They never materialize an
+index or call document embedding. The semantic lane requires matching current
+materialized vectors and makes at most one query-only batch for all semantic
+expressions in a plan. Results bind to one snapshot/graph generation, preserve
+machine-readable ambiguity, and report lane-local degradation without exposing
+provider configuration or credentials through MCP arguments.
 
 ## Schema evolution
 
@@ -104,6 +113,9 @@ Then verify:
 - that installed wheel exposes `embedding status` and `embedding sync`, resolves
   a repository-relative policy, synchronizes the selected/overridden profile,
   and performs zero document calls on an unchanged second invocation;
+- that the installed wheel loads a retrieval plan, executes planned and legacy
+  search/context in fresh processes, validates the nested v2 result, makes zero
+  document calls, and leaves missing/stale indexes unpublished;
 - plain `PYTHONPATH=src python3` imports candidate and ingest without undeclared
   dependencies;
 - a Markdown/Typst/LaTeX fixture passes sync and check;
@@ -116,6 +128,9 @@ Then verify:
   baseline before any performance envelope is used as a release gate; the
   historical baseline in [the performance notes](performance.md) is
   informational only;
+- the semantic benchmark supports 1k, 10k, and 100k ready-vector cases and
+  records p50/p95/max, provider call counts, exact-scan limits, and byte-stable
+  read-only evidence;
 - Skills pass structural validation and a real isolated Agent evaluation;
 - no credential, personal graph, authority note, generated SQLite, build
   artifact, or stress fixture is tracked.

@@ -324,11 +324,14 @@ kgdistiller agent status
 kgdistiller agent resolve "Measure space" "sigma algebra"
 kgdistiller agent search "countably additive measure" --type knowledge \
   --graph-strategy hybrid --limit 10
+kgdistiller agent search --plan knowledge/build/retrieval-plan.json
 kgdistiller agent get measure-space
 kgdistiller agent expand measure-space --direction incoming --depth 2
 kgdistiller agent ppr measure-space --limit 20
 kgdistiller agent context "How does a measure depend on a sigma algebra?" \
   --budget 6000 --depth 2
+kgdistiller agent context --plan knowledge/build/retrieval-plan.json \
+  --budget 6000
 kgdistiller agent align knowledge/build/paper.snapshot.json \
   --output knowledge/reviews/paper.alignment.json
 kgdistiller agent compare knowledge/build/paper.snapshot.json
@@ -338,10 +341,12 @@ kgdistiller agent propose knowledge/build/paper.snapshot.json \
   --delta-output knowledge/reviews/paper.delta.json
 ```
 
-The SQLite index remains disposable. If it is absent or stale while the
-committed graph is current, any `agent` command or the `mcp` command rebuilds
-its provider-neutral lanes. A portable store can additionally restore cached
-embeddings with `store materialize`; the SQLite file itself is never committed.
+The SQLite index remains disposable, but query commands are strictly read-only.
+If it is absent or stale relative to the committed graph, `agent search`,
+`agent context`, and MCP return a stable `index-unavailable` or `stale-index`
+error and publish no files. Refresh it explicitly with `sync`, or restore a
+verified portable generation with `store materialize`; the SQLite file itself
+is never committed.
 
 The `qlkg-agent-index-v2` index stores nodes, normalized IDs/labels/global
 aliases, explicit scoped abbreviations, reviewed cross-namespace mappings,
@@ -350,13 +355,30 @@ optional locally materialized embeddings/similarity edges. Exact and alias
 resolution refuses ambiguous identities; FTS input is tokenized and quoted
 before reaching SQLite.
 
-Agent search fuses exact/scoped resolution, FTS, bounded typed traversal, and
-weighted Personalized PageRank with deterministic reciprocal-rank fusion.
-`--graph-strategy` selects `bfs`, `ppr`, or the `hybrid` default. Every result
-explains which retrieval lane selected it. `agent context` returns a
+Agent search accepts either the compatible single query or a bounded
+`qlkg-retrieval-plan-v1`. A plan keeps identity, lexical, semantic, and graph
+expressions separate. Search executes identity, FTS, already-materialized
+vectors, bounded typed BFS, and weighted Personalized PageRank, then applies
+deterministic weighted reciprocal-rank fusion. `--graph-strategy` selects
+`bfs`, `ppr`, or the `hybrid` default for a legacy query; a plan carries its
+own graph policy.
+The response is a `qlkg-search-execution-v1` envelope whose
+`qlkg-search-result-v2` records each lane as enabled, disabled, degraded, or
+error with a stable reason and per-result evidence. Exact/alias identities are
+protected from score pressure, and an over-budget ambiguous candidate set is
+not collapsed by lexical, semantic, or inferred graph ranking.
+
+The semantic lane is created only when the selected machine-local profile has
+current materialized vectors in the requested vector space. All semantic
+expressions in one plan use one query-only batch; no query path embeds document
+or node content. Missing credentials, adapters, coverage, vector space, or
+profile agreement degrade only that lane. `agent context` returns a
 `qlkg-context-bundle-v1` evidence package whose nodes, edge evidence, backlinks,
 sources, omissions, and retrieval paths fit the requested conservative token
-budget; it does not ask an LLM to generate an answer.
+budget. It preserves the plan's original question and does not ask an LLM to
+generate an answer. Machine-readable identity resolutions remain in its policy;
+ambiguous candidate groups are packed atomically or omitted as a whole when the
+budget cannot hold them.
 
 ### Connect an Agent over MCP
 
@@ -386,6 +408,12 @@ structured JSON and a backwards-compatible text content block. The
 implementation uses newline-delimited stdio JSON-RPC, supports stable MCP
 revisions through `2025-11-25`, bounds messages and tool arguments, and never
 writes logs to protocol stdout.
+
+`kg_search` and `kg_build_context` accept exactly one legacy `query` or one
+inline retrieval `plan`. Provider configuration and credentials are injected
+from the machine-local server profile; they are not accepted as MCP tool
+arguments. CLI and MCP apply the same depth, node-type, ambiguity, generation,
+and response bounds.
 
 Paper snapshots use an isolated namespace such as `paper:<digest>`. Comparison
 never imports them into `personal`: deterministic ID/label/alias resolution,

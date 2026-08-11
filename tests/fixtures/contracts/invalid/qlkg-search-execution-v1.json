@@ -1,0 +1,18 @@
+{
+  "schema": "qlkg-search-execution-v1",
+  "plan_mode": "planned",
+  "namespace": "personal",
+  "snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "graph_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "identity_resolutions": [
+    {
+      "query_index": 32,
+      "status": "exact",
+      "match_kind": "label",
+      "candidate_ids": ["synthetic-theorem"],
+      "overflow": false,
+      "identity_authority": true
+    }
+  ],
+  "result": {}
+}

@@ -1,0 +1,51 @@
+{
+  "schema": "qlkg-search-execution-v1",
+  "plan_mode": "planned",
+  "namespace": "personal",
+  "snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "graph_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "identity_resolutions": [
+    {
+      "query_index": 0,
+      "status": "exact",
+      "match_kind": "label",
+      "candidate_ids": ["synthetic-theorem"],
+      "overflow": false,
+      "identity_authority": true
+    },
+    {
+      "query_index": 1,
+      "status": "ambiguous",
+      "match_kind": null,
+      "candidate_ids": ["synthetic-premise", "synthetic-theorem"],
+      "overflow": false,
+      "identity_authority": true
+    }
+  ],
+  "result": {
+    "schema": "qlkg-search-result-v2",
+    "plan_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "lanes": {
+      "identity": {"status": "enabled", "queries": 2, "results": 2},
+      "lexical": {"status": "enabled", "queries": 1, "results": 1},
+      "semantic": {"status": "disabled", "queries": 1, "results": 0, "reason": "provider-unavailable"},
+      "graph": {"status": "enabled", "seeds": 1, "results": 1},
+      "ppr": {"status": "degraded", "seeds": 1, "results": 0, "reason": "insufficient-seeds"}
+    },
+    "results": [
+      {
+        "node_id": "synthetic-theorem",
+        "node_type": "knowledge",
+        "label": "Synthetic theorem",
+        "lanes": {
+          "identity": {"rank": 1, "score": 1.0},
+          "lexical": {"rank": 1, "score": 0.75},
+          "graph": {"rank": 1, "score": 1.0}
+        },
+        "seed_evidence": [{"lane": "graph", "seed_id": "synthetic-premise"}],
+        "path_evidence": [{"lane": "graph", "nodes": ["synthetic-premise", "synthetic-theorem"], "edge_types": ["prerequisite-for"]}],
+        "fusion": {"method": "rrf", "score": 0.048, "explanation": ["Matched identity, lexical, and graph lanes."]}
+      }
+    ]
+  }
+}

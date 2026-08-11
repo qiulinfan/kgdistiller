@@ -3100,16 +3100,25 @@ def parse_args() -> argparse.Namespace:
     resolve_command.add_argument("concept", nargs="+")
     resolve_command.add_argument("--namespace", default="personal")
     agent_search_command = agent_commands.add_parser("search")
-    agent_search_command.add_argument("query")
-    agent_search_command.add_argument("--namespace", default="personal")
-    agent_search_command.add_argument("--type", action="append", dest="node_types")
-    agent_search_command.add_argument("--limit", type=int, default=20)
-    agent_search_command.add_argument("--depth", type=int, default=1)
-    agent_search_command.add_argument("--include-taxonomy", action="store_true")
-    agent_search_command.add_argument("--include-stale", action="store_true")
-    agent_search_command.add_argument("--include-orphaned", action="store_true")
+    agent_search_command.add_argument("query", nargs="?")
     agent_search_command.add_argument(
-        "--graph-strategy", choices=("bfs", "ppr", "hybrid"), default="hybrid"
+        "--plan",
+        type=Path,
+        help="execute a qlkg-retrieval-plan-v1 JSON file instead of a legacy query",
+    )
+    agent_search_command.add_argument("--namespace")
+    agent_search_command.add_argument("--type", action="append", dest="node_types")
+    agent_search_command.add_argument("--limit", type=int)
+    agent_search_command.add_argument("--depth", type=int)
+    agent_search_command.add_argument(
+        "--include-taxonomy", action="store_true", default=None
+    )
+    agent_search_command.add_argument("--include-stale", action="store_true", default=None)
+    agent_search_command.add_argument(
+        "--include-orphaned", action="store_true", default=None
+    )
+    agent_search_command.add_argument(
+        "--graph-strategy", choices=("bfs", "ppr", "hybrid")
     )
     get_command = agent_commands.add_parser("get")
     get_command.add_argument("id")
@@ -3139,17 +3148,26 @@ def parse_args() -> argparse.Namespace:
     ppr_command.add_argument("--include-stale", action="store_true")
     ppr_command.add_argument("--include-orphaned", action="store_true")
     context_command = agent_commands.add_parser("context")
-    context_command.add_argument("query")
-    context_command.add_argument("--namespace", default="personal")
+    context_command.add_argument("query", nargs="?")
+    context_command.add_argument(
+        "--plan",
+        type=Path,
+        help="execute a qlkg-retrieval-plan-v1 JSON file instead of a legacy query",
+    )
+    context_command.add_argument("--namespace")
     context_command.add_argument("--type", action="append", dest="node_types")
     context_command.add_argument("--budget", type=int, default=6000)
-    context_command.add_argument("--limit", type=int, default=50)
-    context_command.add_argument("--depth", type=int, default=1)
-    context_command.add_argument("--include-taxonomy", action="store_true")
-    context_command.add_argument("--include-stale", action="store_true")
-    context_command.add_argument("--include-orphaned", action="store_true")
+    context_command.add_argument("--limit", type=int)
+    context_command.add_argument("--depth", type=int)
     context_command.add_argument(
-        "--graph-strategy", choices=("bfs", "ppr", "hybrid"), default="hybrid"
+        "--include-taxonomy", action="store_true", default=None
+    )
+    context_command.add_argument("--include-stale", action="store_true", default=None)
+    context_command.add_argument(
+        "--include-orphaned", action="store_true", default=None
+    )
+    context_command.add_argument(
+        "--graph-strategy", choices=("bfs", "ppr", "hybrid")
     )
     align_command = agent_commands.add_parser("align")
     align_command.add_argument("candidate", type=Path)
@@ -3229,7 +3247,33 @@ def parse_args() -> argparse.Namespace:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
     serve_command.add_argument("--no-open", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (
+        args.command == "agent"
+        and args.agent_command in {"search", "context"}
+        and ((args.query is None) == (args.plan is None))
+    ):
+        parser.error("agent search/context requires exactly one of query or --plan")
+    if (
+        args.command == "agent"
+        and args.agent_command in {"search", "context"}
+        and args.plan is not None
+        and any(
+            getattr(args, name) is not None
+            for name in (
+                "namespace",
+                "node_types",
+                "limit",
+                "depth",
+                "include_taxonomy",
+                "include_stale",
+                "include_orphaned",
+                "graph_strategy",
+            )
+        )
+    ):
+        parser.error("--plan cannot be combined with legacy retrieval controls")
+    return args
 
 
 def main() -> int:
@@ -3773,15 +3817,31 @@ def main() -> int:
             return 0
         if args.command == "mcp":
             from kgdistiller.mcp import serve_stdio
+            from kgdistiller.providers import default_provider_registry
 
-            ensure_database(database, load_state(graph_dir), alignments)
-            serve_stdio(database)
+            def current_mcp_authority_graph_sha256() -> str:
+                authority_state = load_state(graph_dir)
+                digest = str(authority_state.manifest.get("graph_sha256", ""))
+                if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    raise KnowledgeError("authority graph has no valid graph_sha256")
+                return digest
+
+            # Fail before entering a long-lived stdio loop, then re-resolve for every
+            # retrieval call so the server cannot silently outlive its authority view.
+            current_mcp_authority_graph_sha256()
+            serve_stdio(
+                database,
+                embedding_profile=runtime.embedding_profile,
+                provider_config=runtime.provider_profile,
+                provider_registry=default_provider_registry(),
+                environ=os.environ,
+                expected_graph_sha256_resolver=current_mcp_authority_graph_sha256,
+            )
             return 0
         if args.command == "agent":
             from kgdistiller.agent import (
                 PROPOSAL_SCHEMA,
                 align_graph,
-                build_context_bundle,
                 compare_graph,
                 create_proposal,
                 expand_index,
@@ -3789,10 +3849,22 @@ def main() -> int:
                 index_status,
                 personalized_pagerank,
                 resolve_concepts,
-                retrieve_index,
+            )
+            from kgdistiller.providers import default_provider_registry
+            from kgdistiller.retrieval import (
+                RetrievalError,
+                build_context_from_execution,
+                execute_retrieval_plan,
+                legacy_retrieval_plan,
+                load_retrieval_plan,
             )
 
-            ensure_database(database, load_state(graph_dir), alignments)
+            def current_authority_graph_sha256() -> str:
+                authority_state = load_state(graph_dir)
+                digest = str(authority_state.manifest.get("graph_sha256", ""))
+                if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                    raise KnowledgeError("authority graph has no valid graph_sha256")
+                return digest
 
             if args.agent_command == "status":
                 result = index_status(database)
@@ -3803,18 +3875,45 @@ def main() -> int:
                     namespace=args.namespace,
                 )
             elif args.agent_command == "search":
-                result = retrieve_index(
-                    database,
-                    args.query,
-                    namespace=args.namespace,
-                    node_types=args.node_types,
-                    limit=args.limit,
-                    max_depth=args.depth,
-                    include_taxonomy=args.include_taxonomy,
-                    include_stale=args.include_stale,
-                    include_orphaned=args.include_orphaned,
-                    graph_strategy=args.graph_strategy,
-                )
+                try:
+                    expected_graph_sha256 = current_authority_graph_sha256()
+                    if args.plan is not None:
+                        plan_path = (
+                            args.plan.resolve()
+                            if args.plan.is_absolute()
+                            else (repo_root / args.plan).resolve()
+                        )
+                        plan = load_retrieval_plan(plan_path)
+                        plan_mode = "planned"
+                        execution_namespace_argument = None
+                    else:
+                        execution_namespace_argument = args.namespace or "personal"
+                        plan = legacy_retrieval_plan(
+                            str(args.query),
+                            namespace=execution_namespace_argument,
+                            node_types=args.node_types,
+                            limit=args.limit if args.limit is not None else 20,
+                            max_depth=args.depth if args.depth is not None else 1,
+                            include_taxonomy=bool(args.include_taxonomy),
+                            include_stale=bool(args.include_stale),
+                            include_orphaned=bool(args.include_orphaned),
+                            graph_strategy=args.graph_strategy or "hybrid",
+                        )
+                        plan_mode = "legacy"
+                    result = execute_retrieval_plan(
+                        database,
+                        plan,
+                        plan_mode=plan_mode,
+                        namespace=execution_namespace_argument,
+                        embedding_profile=runtime.embedding_profile,
+                        provider_config=runtime.provider_profile,
+                        provider_registry=default_provider_registry(),
+                        environ=os.environ,
+                        expected_graph_sha256=expected_graph_sha256,
+                    )
+                except RetrievalError as error:
+                    print(pretty_json(error.to_payload()), end="", file=sys.stderr)
+                    return 1
             elif args.agent_command == "get":
                 result = get_index_node(
                     database,
@@ -3848,19 +3947,54 @@ def main() -> int:
                     include_orphaned=args.include_orphaned,
                 )
             elif args.agent_command == "context":
-                result = build_context_bundle(
-                    database,
-                    args.query,
-                    token_budget=args.budget,
-                    namespace=args.namespace,
-                    node_types=args.node_types,
-                    result_limit=args.limit,
-                    max_depth=args.depth,
-                    include_taxonomy=args.include_taxonomy,
-                    include_stale=args.include_stale,
-                    include_orphaned=args.include_orphaned,
-                    graph_strategy=args.graph_strategy,
-                )
+                try:
+                    expected_graph_sha256 = current_authority_graph_sha256()
+                    if args.plan is not None:
+                        plan_path = (
+                            args.plan.resolve()
+                            if args.plan.is_absolute()
+                            else (repo_root / args.plan).resolve()
+                        )
+                        plan = load_retrieval_plan(plan_path)
+                        plan_mode = "planned"
+                        execution_namespace = str(plan["namespace"])
+                        execution_namespace_argument = None
+                    else:
+                        execution_namespace = args.namespace or "personal"
+                        plan = legacy_retrieval_plan(
+                            str(args.query),
+                            namespace=execution_namespace,
+                            node_types=args.node_types,
+                            limit=args.limit if args.limit is not None else 50,
+                            max_depth=args.depth if args.depth is not None else 1,
+                            include_taxonomy=bool(args.include_taxonomy),
+                            include_stale=bool(args.include_stale),
+                            include_orphaned=bool(args.include_orphaned),
+                            graph_strategy=args.graph_strategy or "hybrid",
+                        )
+                        plan_mode = "legacy"
+                        execution_namespace_argument = execution_namespace
+                    execution = execute_retrieval_plan(
+                        database,
+                        plan,
+                        plan_mode=plan_mode,
+                        namespace=execution_namespace_argument,
+                        embedding_profile=runtime.embedding_profile,
+                        provider_config=runtime.provider_profile,
+                        provider_registry=default_provider_registry(),
+                        environ=os.environ,
+                        expected_graph_sha256=expected_graph_sha256,
+                    )
+                    result = build_context_from_execution(
+                        database,
+                        execution,
+                        plan=plan,
+                        token_budget=args.budget,
+                        namespace=execution_namespace,
+                    )
+                except RetrievalError as error:
+                    print(pretty_json(error.to_payload()), end="", file=sys.stderr)
+                    return 1
             elif args.agent_command == "align":
                 candidate_path = (
                     args.candidate.resolve()

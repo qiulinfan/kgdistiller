@@ -35,7 +35,7 @@ def load_fixture(group: str, schema: str) -> dict:
 
 class ContractResourceTests(unittest.TestCase):
     def test_all_new_schemas_load_from_package_resources(self) -> None:
-        self.assertEqual(7, len(CONTRACT_SCHEMAS))
+        self.assertEqual(8, len(CONTRACT_SCHEMAS))
         for discriminator, filename in CONTRACT_SCHEMAS.items():
             with self.subTest(schema=discriminator):
                 schema = load_contract_schema(discriminator)
@@ -50,6 +50,22 @@ class ContractResourceTests(unittest.TestCase):
             with self.subTest(schema=discriminator):
                 payload = load_fixture("valid", discriminator)
                 self.assertEqual(payload, validate_contract(payload))
+
+    def test_search_execution_result_validates_separately_as_v2(self) -> None:
+        execution = validate_contract(
+            load_fixture("valid", "qlkg-search-execution-v1")
+        )
+
+        self.assertEqual(
+            execution["result"],
+            validate_contract(execution["result"]),
+        )
+
+        invalid_nested = copy.deepcopy(execution)
+        del invalid_nested["result"]["lanes"]["semantic"]["reason"]
+        self.assertEqual(invalid_nested, validate_contract(invalid_nested))
+        with self.assertRaises(ContractError):
+            validate_contract(invalid_nested["result"])
 
     def test_invalid_fixture_for_every_contract_fails_closed(self) -> None:
         for discriminator in CONTRACT_SCHEMAS:
@@ -343,6 +359,132 @@ class ContractNegativeTests(unittest.TestCase):
         result = load_fixture("valid", "qlkg-search-result-v2")
         del result["lanes"]["semantic"]["reason"]
         self.assert_invalid(result, "missing required property 'reason'")
+
+    def test_search_execution_fields_and_identity_evidence_are_bounded(self) -> None:
+        cases = []
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["plan_mode"] = "implicit"
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["namespace"] = "Personal Namespace"
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["snapshot_sha256"] = "ABC"
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["graph_sha256"] = "f" * 63
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][0]["query_index"] = 32
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][0]["status"] = "resolved-by-score"
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][0]["match_kind"] = "semantic"
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][0]["candidate_ids"] = [
+            f"candidate-{index}" for index in range(501)
+        ]
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][0]["overflow"] = True
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][1]["overflow"] = True
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][0]["identity_authority"] = False
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"][1]["query_index"] = 0
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["identity_resolutions"] = [
+            {
+                "query_index": index,
+                "status": "missing",
+                "match_kind": None,
+                "candidate_ids": [],
+                "overflow": False,
+                "identity_authority": False,
+            }
+            for index in range(32)
+        ] + [
+            {
+                "query_index": 0,
+                "status": "missing",
+                "match_kind": None,
+                "candidate_ids": [],
+                "overflow": False,
+                "identity_authority": False,
+            }
+        ]
+        cases.append(execution)
+
+        execution = load_fixture("valid", "qlkg-search-execution-v1")
+        execution["result"] = []
+        cases.append(execution)
+
+        for index, payload in enumerate(cases):
+            with self.subTest(case=index):
+                self.assert_invalid(payload)
+
+    def test_search_execution_identity_statuses_preserve_resolution_meaning(self) -> None:
+        base = load_fixture("valid", "qlkg-search-execution-v1")
+        variants = (
+            ("exact", "id", ["synthetic-theorem"], False),
+            ("exact", "label", ["synthetic-theorem"], False),
+            ("alias", "alias", ["synthetic-theorem"], False),
+            (
+                "scoped-alias",
+                "scoped-alias",
+                ["synthetic-theorem"],
+                False,
+            ),
+            (
+                "ambiguous",
+                None,
+                ["synthetic-premise", "synthetic-theorem"],
+                False,
+            ),
+            (
+                "ambiguous",
+                "scoped-alias",
+                [f"candidate-{index}" for index in range(500)],
+                True,
+            ),
+            ("missing", None, [], False),
+        )
+
+        for status, match_kind, candidate_ids, overflow in variants:
+            execution = copy.deepcopy(base)
+            execution["identity_resolutions"] = [
+                {
+                    "query_index": 0,
+                    "status": status,
+                    "match_kind": match_kind,
+                    "candidate_ids": candidate_ids,
+                    "overflow": overflow,
+                    "identity_authority": status != "missing",
+                }
+            ]
+            with self.subTest(status=status, match_kind=match_kind):
+                self.assertEqual(execution, validate_contract(execution))
 
 
 class ReceiptInvariantTests(unittest.TestCase):

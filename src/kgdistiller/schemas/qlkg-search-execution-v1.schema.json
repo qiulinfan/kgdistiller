@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-search-execution-v1.schema.json",
+  "title": "kgdistiller search execution envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "plan_mode", "namespace", "snapshot_sha256", "graph_sha256", "identity_resolutions", "result"],
+  "properties": {
+    "schema": {"const": "qlkg-search-execution-v1"},
+    "plan_mode": {"enum": ["planned", "legacy"]},
+    "namespace": {"$ref": "#/$defs/namespace"},
+    "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "identity_resolutions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/identityResolution"}
+    },
+    "result": {
+      "type": "object",
+      "description": "A qlkg-search-result-v2 object that the executor validates separately against its immutable contract."
+    }
+  },
+  "$defs": {
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "identityResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query_index", "status", "match_kind", "candidate_ids", "overflow", "identity_authority"],
+      "properties": {
+        "query_index": {"type": "integer", "minimum": 0, "maximum": 31},
+        "status": {"enum": ["exact", "alias", "scoped-alias", "ambiguous", "missing"]},
+        "match_kind": {"enum": [null, "id", "label", "alias", "scoped-alias"]},
+        "candidate_ids": {
+          "type": "array",
+          "maxItems": 500,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nodeId"}
+        },
+        "overflow": {"type": "boolean"},
+        "identity_authority": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "exact"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"enum": ["id", "label"]},
+              "candidate_ids": {"minItems": 1, "maxItems": 1},
+              "overflow": {"const": false},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "alias"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"const": "alias"},
+              "candidate_ids": {"minItems": 1, "maxItems": 1},
+              "overflow": {"const": false},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "scoped-alias"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"const": "scoped-alias"},
+              "candidate_ids": {"minItems": 1, "maxItems": 1},
+              "overflow": {"const": false},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "ambiguous"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"enum": [null, "scoped-alias"]},
+              "candidate_ids": {"minItems": 2, "maxItems": 500},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {"const": "ambiguous"},
+              "overflow": {"const": true}
+            }
+          },
+          "then": {
+            "properties": {
+              "candidate_ids": {"minItems": 500, "maxItems": 500}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "missing"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"const": null},
+              "candidate_ids": {"maxItems": 0},
+              "overflow": {"const": false},
+              "identity_authority": {"const": false}
+            }
+          }
+        }
+      ]
+    }
+  }
+}
