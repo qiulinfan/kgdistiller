@@ -577,6 +577,271 @@ class StaticSiteExportTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn('"status": "ok"', completed.stdout)
 
+    def test_published_topic_roots_are_visible_without_knowledge_descendants(
+        self,
+    ) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        public = next(item for item in payload["sources"] if item["publish"])
+        private = next(item for item in payload["sources"] if not item["publish"])
+        public["topics"] = [
+            {
+                "glob": "*.md",
+                "id": topic_id,
+                "label": topic_id.replace("-", " ").title(),
+                "fields": ["shared-field"] if index < 2 else [],
+            }
+            for index, topic_id in enumerate(
+                (
+                    "cpp-programming",
+                    "programming-languages",
+                    "data-structures-algorithms",
+                    "data-structures-and-algorithms",
+                )
+            )
+        ]
+        private["topics"] = [
+            {
+                "glob": "*.md",
+                "id": topic_id,
+                "label": topic_id.replace("-", " ").title(),
+                "fields": ["shared-field"],
+            }
+            for topic_id in ("computer-organization", "computer-architecture")
+        ]
+        private["fields"].append("private-only-field")
+        payload["fields"].append(
+            {
+                "id": "private-only-field",
+                "label": "Private Only Field",
+                "text": "",
+            }
+        )
+        self.registry.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        public_topics = {item["id"] for item in public["topics"]}
+        private_topics = {item["id"] for item in private["topics"]}
+        for topic_id in sorted(public_topics | private_topics):
+            self.state.nodes[topic_id] = {
+                "id": topic_id,
+                "type": "topic",
+                "label": topic_id.replace("-", " ").title(),
+                "text": "",
+                "properties": {
+                    "origin": "registry-taxonomy",
+                    "source_status": "meta",
+                },
+            }
+        self.state.nodes["private-only-field"] = {
+            "id": "private-only-field",
+            "type": "field",
+            "label": "Private Only Field",
+            "text": "",
+            "properties": {
+                "origin": "registry-taxonomy",
+                "source_status": "meta",
+            },
+        }
+        for item in public["topics"]:
+            if not item["fields"]:
+                continue
+            topic_id = item["id"]
+            self.state.edges[("shared-field", "contains", topic_id)] = {
+                "source": "shared-field",
+                "relation": "contains",
+                "target": topic_id,
+                "origin": "registry-taxonomy",
+            }
+        for topic_id in private_topics:
+            self.state.edges[("shared-field", "contains", topic_id)] = {
+                "source": "shared-field",
+                "relation": "contains",
+                "target": topic_id,
+                "origin": "registry-taxonomy",
+            }
+        self.state.edges[("private-only-field", "contains", "cpp-programming")] = {
+            "source": "private-only-field",
+            "relation": "contains",
+            "target": "cpp-programming",
+            "origin": "registry-taxonomy",
+        }
+        write_artifacts(
+            self.graph,
+            make_artifacts(self.state, self.source_hashes, git_revision="c" * 40),
+        )
+
+        output = self.export("published-topic-roots")
+        graph = json.loads((output / "graph.json").read_text(encoding="utf-8"))
+        visible = {node["id"] for node in graph["nodes"]}
+        self.assertTrue(public_topics.issubset(visible))
+        self.assertTrue(private_topics.isdisjoint(visible))
+        self.assertIn("shared-field", visible)
+        self.assertEqual(6, graph["counts"]["nodes"])
+        self.assertEqual(3, graph["counts"]["edges"])
+        self.assertEqual(1, graph["counts"]["references"])
+        bundle = "\n".join(
+            path.read_text(encoding="utf-8") for path in output.iterdir()
+        )
+        self.assertNotIn("computer-organization", bundle)
+        self.assertNotIn("computer-architecture", bundle)
+        self.assertNotIn("private-only-field", bundle)
+        self.assertEqual("ok", verify_export(output)["status"])
+
+    def test_published_source_and_topic_fields_are_visibility_seeds(self) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        public = next(item for item in payload["sources"] if item["publish"])
+        private = next(item for item in payload["sources"] if not item["publish"])
+        public["fields"].append("published-source-field")
+        public["topics"] = [
+            {
+                "glob": "*.md",
+                "id": "published-topic-root",
+                "label": "Published Topic Root",
+                "fields": ["published-topic-field"],
+            }
+        ]
+        private["fields"].append("private-only-field")
+        payload["fields"].extend(
+            {
+                "id": field_id,
+                "label": field_id.replace("-", " ").title(),
+                "text": "",
+            }
+            for field_id in (
+                "published-source-field",
+                "published-topic-field",
+                "private-only-field",
+            )
+        )
+        self.registry.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        for field_id in (
+            "published-source-field",
+            "published-topic-field",
+            "private-only-field",
+        ):
+            self.state.nodes[field_id] = {
+                "id": field_id,
+                "type": "field",
+                "label": field_id.replace("-", " ").title(),
+                "text": "",
+                "properties": {
+                    "origin": "registry-taxonomy",
+                    "source_status": "meta",
+                },
+            }
+        self.state.nodes["published-topic-root"] = {
+            "id": "published-topic-root",
+            "type": "topic",
+            "label": "Published Topic Root",
+            "text": "",
+            "properties": {
+                "origin": "registry-taxonomy",
+                "source_status": "meta",
+            },
+        }
+        write_artifacts(
+            self.graph,
+            make_artifacts(self.state, self.source_hashes, git_revision="c" * 40),
+        )
+
+        output = self.export("published-field-roots")
+        graph = json.loads((output / "graph.json").read_text(encoding="utf-8"))
+        visible = {node["id"] for node in graph["nodes"]}
+        self.assertTrue(
+            {
+                "published-source-field",
+                "published-topic-field",
+                "published-topic-root",
+            }.issubset(visible)
+        )
+        self.assertNotIn("private-only-field", visible)
+
+    def test_published_taxonomy_seeds_must_match_registry_owned_graph_nodes(
+        self,
+    ) -> None:
+        original_registry = json.loads(self.registry.read_text(encoding="utf-8"))
+
+        def add_field_seed(
+            payload: dict,
+            state: GraphState,
+            field_id: str,
+            *,
+            node_type: str = "field",
+            origin: str = "registry-taxonomy",
+        ) -> None:
+            payload["fields"].append(
+                {"id": field_id, "label": field_id.replace("-", " ").title()}
+            )
+            payload["sources"][0]["fields"].append(field_id)
+            state.nodes[field_id] = {
+                "id": field_id,
+                "type": node_type,
+                "label": field_id.replace("-", " ").title(),
+                "text": "",
+                "properties": {
+                    "origin": origin,
+                    "source_status": "meta",
+                },
+            }
+
+        cases = {
+            "missing": (
+                "missing from the graph",
+                lambda payload, state: payload["sources"][0].setdefault(
+                    "topics", []
+                ).append(
+                    {
+                        "glob": "*.md",
+                        "id": "missing-public-topic",
+                        "label": "Missing Public Topic",
+                        "fields": [],
+                    }
+                ),
+            ),
+            "wrong-type": (
+                "must have type field",
+                lambda payload, state: add_field_seed(
+                    payload,
+                    state,
+                    "wrong-type-field",
+                    node_type="topic",
+                ),
+            ),
+            "wrong-origin": (
+                "not registry-owned",
+                lambda payload, state: add_field_seed(
+                    payload,
+                    state,
+                    "wrong-origin-field",
+                    origin="private-taxonomy",
+                ),
+            ),
+        }
+        for name, (message, mutate) in cases.items():
+            with self.subTest(name=name):
+                payload = copy.deepcopy(original_registry)
+                state = copy.deepcopy(self.state)
+                mutate(payload, state)
+                self.registry.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                write_artifacts(
+                    self.graph,
+                    make_artifacts(
+                        state,
+                        self.source_hashes,
+                        git_revision="c" * 40,
+                    ),
+                )
+                with self.assertRaisesRegex(StaticExportError, message):
+                    self.export(f"bad-taxonomy-{name}")
+
     @property
     def graph_manifest(self) -> dict:
         return json.loads((self.graph / "manifest.json").read_text(encoding="utf-8"))

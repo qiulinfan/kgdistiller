@@ -390,6 +390,61 @@ def _published_source_ids(registry_payload: dict[str, Any]) -> tuple[list[str], 
     return sorted(published), len(all_ids)
 
 
+def _taxonomy_visibility_seeds(
+    specs: list[Any],
+    published_set: set[str],
+    state: GraphState,
+) -> tuple[set[str], set[str]]:
+    expected_public_types: dict[str, str] = {}
+    all_explicit: set[str] = set()
+    public_explicit: set[str] = set()
+
+    def register_public(node_id: str, expected_type: str) -> None:
+        previous = expected_public_types.get(node_id)
+        if previous is not None and previous != expected_type:
+            raise StaticExportError(
+                f"published taxonomy id has conflicting roles: {node_id}"
+            )
+        expected_public_types[node_id] = expected_type
+
+    for spec in specs:
+        field_ids = set(spec.fields)
+        topic_ids: set[str] = set()
+        for _, topic_id, _, topic_fields in spec.topic_patterns:
+            topic_ids.add(topic_id)
+            field_ids.update(topic_fields)
+        explicit = field_ids | topic_ids
+        all_explicit.update(explicit)
+        if spec.id not in published_set:
+            continue
+        public_explicit.update(explicit)
+        for field_id in field_ids:
+            register_public(field_id, "field")
+        for topic_id in topic_ids:
+            register_public(topic_id, "topic")
+
+    for node_id, expected_type in sorted(expected_public_types.items()):
+        node = state.nodes.get(node_id)
+        if not isinstance(node, dict):
+            raise StaticExportError(
+                f"published taxonomy node is missing from the graph: {node_id}"
+            )
+        if node.get("type") != expected_type:
+            raise StaticExportError(
+                f"published taxonomy node {node_id} must have type {expected_type}"
+            )
+        properties = node.get("properties")
+        if (
+            not isinstance(properties, dict)
+            or properties.get("origin") != "registry-taxonomy"
+        ):
+            raise StaticExportError(
+                f"published taxonomy node is not registry-owned: {node_id}"
+            )
+
+    return set(expected_public_types), all_explicit - public_explicit
+
+
 def _public_diagnostics(
     repo_root: Path,
     specs: list[Any],
@@ -498,8 +553,13 @@ def build_site_graph(
     specs = load_sources(repo_root, registry)
     published_ids, source_count = _published_source_ids(registry_payload)
     published_set = set(published_ids)
+    taxonomy_seeds, private_taxonomy = _taxonomy_visibility_seeds(
+        specs,
+        published_set,
+        state,
+    )
 
-    visible: set[str] = set()
+    visible = set(taxonomy_seeds)
     for node in state.nodes.values():
         if node.get("type") != "knowledge":
             continue
@@ -520,10 +580,19 @@ def build_site_graph(
             if (
                 edge.get("relation") == "contains"
                 and target in visible
+                and source not in private_taxonomy
                 and source_node is not None
                 and source_node.get("type") in {"field", "topic"}
                 and source not in visible
             ):
+                properties = source_node.get("properties")
+                if (
+                    not isinstance(properties, dict)
+                    or properties.get("origin") != "registry-taxonomy"
+                ):
+                    raise StaticExportError(
+                        f"visible taxonomy ancestor is not registry-owned: {source}"
+                    )
                 visible.add(source)
                 changed = True
 
