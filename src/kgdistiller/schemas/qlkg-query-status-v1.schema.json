@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-query-status-v1.schema.json",
+  "title": "kgdistiller JSON query status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "snapshot_schema", "namespace", "snapshot_sha256",
+    "graph_schema", "graph_sha256", "generation", "counts", "backend",
+    "retrieval_lanes", "capabilities", "alignment_schema",
+    "alignment_sha256", "alignment_counts"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-query-status-v1"},
+    "snapshot_schema": {"const": "qlkg-agent-snapshot-v2"},
+    "namespace": {"$ref": "#/$defs/namespace"},
+    "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+    "graph_schema": {"const": "qlkg-v3"},
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "generation": {"$ref": "#/$defs/sha256"},
+    "counts": {"$ref": "#/$defs/counts"},
+    "backend": {"const": "json-memory"},
+    "retrieval_lanes": {"const": ["identity", "lexical", "graph", "ppr"]},
+    "capabilities": {"const": ["json-memory", "read-only-query-v3"]},
+    "alignment_schema": {"const": "qlkg-alignments-v2"},
+    "alignment_sha256": {"$ref": "#/$defs/sha256"},
+    "alignment_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mappings"],
+      "properties": {"mappings": {"type": "integer", "minimum": 0}}
+    }
+  },
+  "$defs": {
+    "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "references"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0},
+        "references": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

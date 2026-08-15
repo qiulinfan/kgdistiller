@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-store-report-v1.schema.json",
+  "title": "kgdistiller portable store operation report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "status", "artifact_schema", "root", "store_sha256",
+    "store_generation_sha256", "graph_sha256", "documents", "counts",
+    "query_backend", "layout"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-store-report-v1"},
+    "status": {"const": "verified"},
+    "artifact_schema": {"const": "qlkg-store-v2"},
+    "root": {"type": "string", "minLength": 1},
+    "store_sha256": {"$ref": "#/$defs/sha256"},
+    "store_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "documents": {"type": "integer", "minimum": 0},
+    "counts": {"$ref": "#/$defs/counts"},
+    "query_backend": {"const": "json-memory"},
+    "layout": {"enum": ["in-place", "snapshot-copy"]}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "references"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0},
+        "references": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

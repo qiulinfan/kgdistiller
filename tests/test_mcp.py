@@ -1,106 +1,46 @@
 from __future__ import annotations
 
-import io
-import json
+import copy
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.agent import (  # noqa: E402
-    embedding_inventory,
-    index_generation_token,
-    install_embedding_records,
-    write_agent_index,
-)
 from kgdistiller.mcp import (  # noqa: E402
-    MAX_MESSAGE_BYTES,
+    MAX_TOOL_RESPONSE_BYTES,
     MCPServer,
     TOOL_DEFINITIONS,
-    serve_stdio,
+    call_tool,
 )
-from kgdistiller.providers import (  # noqa: E402
-    ProviderAdapterRegistry,
-    provider_config_sha256,
-)
-from tests.test_agent import (  # noqa: E402
-    ac_candidate_snapshot,
-    candidate_snapshot,
-    fixture_snapshot,
-)
+from kgdistiller.query import QueryError, query_status  # noqa: E402
+from tests.test_query import candidate_snapshot_with, fixture_nodes, write_fixture_graph  # noqa: E402
 
 
-def retrieval_plan() -> dict:
-    return {
-        "schema": "qlkg-retrieval-plan-v1",
-        "question": "How does beta depend on alpha?",
-        "namespace": "personal",
-        "identity_queries": ["alpha"],
-        "lexical_queries": ["countable closure"],
-        "semantic_queries": [],
-        "graph": {
-            "seed_ids": ["alpha"],
-            "edge_types": ["prerequisite-for"],
-            "direction": "out",
-            "max_depth": 1,
-            "strategy": "hybrid",
-        },
-        "filters": {
-            "node_types": ["knowledge"],
-            "include_stale": False,
-            "include_orphaned": False,
-        },
-        "limit": 20,
-    }
-
-
-class MCPServerTest(unittest.TestCase):
+class MCPTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-mcp-test-")
-        self.database = Path(self.temporary.name) / "knowledge.sqlite"
-        write_agent_index(self.database, fixture_snapshot())
+        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-mcp-")
+        self.root = Path(self.temporary.name)
+        self.graph = write_fixture_graph(self.root)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def initialize(self, server: MCPServer) -> dict:
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test", "version": "1"},
-                },
-            }
-        )
-        assert response is not None
-        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        return response
+    def _files(self) -> dict[str, bytes]:
+        return {
+            path.relative_to(self.root).as_posix(): path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
+        }
 
-    def test_lifecycle_and_tools_are_read_only(self) -> None:
-        server = MCPServer(self.database)
-        before = server.handle(
-            {"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}}
-        )
-        self.assertEqual(-32002, before["error"]["code"])
-
-        initialized = self.initialize(server)
-        self.assertEqual("2025-06-18", initialized["result"]["protocolVersion"])
-        self.assertEqual("0.3.0", initialized["result"]["serverInfo"]["version"])
-        listed = server.handle(
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-        )
-        names = [tool["name"] for tool in listed["result"]["tools"]]
+    def test_tool_surface_is_exactly_the_json_memory_surface(self) -> None:
+        names = {tool["name"] for tool in TOOL_DEFINITIONS}
         self.assertEqual(
-            [
+            {
                 "kg_status",
                 "kg_resolve_concepts",
                 "kg_search",
@@ -111,615 +51,135 @@ class MCPServerTest(unittest.TestCase):
                 "kg_align_graph",
                 "kg_compare_graph",
                 "kg_create_proposal",
-            ],
+            },
             names,
         )
-        self.assertTrue(all(tool["annotations"]["readOnlyHint"] for tool in TOOL_DEFINITIONS))
-        self.assertTrue(all(not tool["annotations"]["destructiveHint"] for tool in TOOL_DEFINITIONS))
-
-    def test_tool_results_include_structured_and_text_content(self) -> None:
-        server = MCPServer(self.database)
-        self.initialize(server)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {"query": "countable closure", "max_depth": 1},
-                },
-            }
-        )
-
-        result = response["result"]
-        self.assertFalse(result["isError"])
-        execution = result["structuredContent"]
-        self.assertEqual("qlkg-search-execution-v1", execution["schema"])
-        self.assertEqual("legacy", execution["plan_mode"])
-        self.assertEqual("alpha", execution["result"]["results"][0]["node_id"])
+        ppr = next(tool for tool in TOOL_DEFINITIONS if tool["name"] == "kg_ppr")
         self.assertEqual(
-            result["structuredContent"],
-            json.loads(result["content"][0]["text"]),
-        )
-
-    def test_search_accepts_a_bounded_plan_without_legacy_controls(self) -> None:
-        server = MCPServer(self.database, expected_graph_sha256="a" * 64)
-        self.initialize(server)
-        before = self.database.read_bytes()
-
-        response = server.handle(
             {
-                "jsonrpc": "2.0",
-                "id": 30,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {"plan": retrieval_plan()},
-                },
-            }
+                "ids",
+                "namespace",
+                "node_types",
+                "edge_types",
+                "direction",
+                "limit",
+                "include_taxonomy",
+                "include_stale",
+                "include_orphaned",
+            },
+            set(ppr["inputSchema"]["properties"]),
         )
-
-        result = response["result"]
-        self.assertFalse(result["isError"])
-        execution = result["structuredContent"]
-        self.assertEqual("planned", execution["plan_mode"])
-        self.assertEqual("qlkg-search-result-v2", execution["result"]["schema"])
-        self.assertEqual(before, self.database.read_bytes())
-
-    def test_semantic_plan_uses_one_query_only_batch_and_never_embeds_documents(self) -> None:
-        config = {
-            "adapter": "mcp-query-fixture",
-            "model": "mcp-query-v1",
-            "dimensions": 2,
-            "base_url": "http://127.0.0.1",
-            "credential_env": "UNUSED_MCP_QUERY_KEY",
-        }
-        digest = provider_config_sha256(config)
-        inventory = embedding_inventory(self.database)
-        install_embedding_records(
-            self.database,
-            [
-                {
-                    "namespace": "personal",
-                    "node_id": node["node_id"],
-                    "provider": "mcp-query-fixture",
-                    "model": "mcp-query-v1",
-                    "dimensions": 2,
-                    "embedding_input_schema": "qlkg-node-embedding-text-v1",
-                    "provider_config_sha256": digest,
-                    "content_sha256": node["content_sha256"],
-                    "vector": [1.0, 0.0]
-                    if node["node_id"] == "alpha"
-                    else [0.0, 1.0],
-                }
-                for node in inventory["nodes"]
-            ],
-            expected_snapshot_sha256=inventory["snapshot_sha256"],
-            expected_graph_sha256=inventory["graph_sha256"],
-        )
-
-        class QueryOnlyProvider:
-            name = "mcp-query-fixture"
-            model = "mcp-query-v1"
-            dimensions = 2
-            provider_config_sha256 = digest
-
-            def __init__(self) -> None:
-                self.query_batches: list[list[str]] = []
-
-            def embed_queries(self, texts: list[str]) -> list[list[float]]:
-                self.query_batches.append(list(texts))
-                return [[1.0, 0.0] for _ in texts]
-
-            def embed_documents(self, texts: list[str]) -> list[list[float]]:
-                raise AssertionError("document embedding is forbidden during query")
-
-            def embed(self, texts: list[str]) -> list[list[float]]:
-                raise AssertionError("generic embedding is forbidden during query")
-
-        provider = QueryOnlyProvider()
-        creates: list[str] = []
-        registry = ProviderAdapterRegistry()
-
-        def factory(profile_name: str, raw_config: dict, credential: str):
-            creates.append(profile_name)
-            return provider
-
-        registry.register("mcp-query-fixture", factory, requires_credential=False)
-        plan = retrieval_plan()
-        plan["identity_queries"] = []
-        plan["lexical_queries"] = []
-        plan["semantic_queries"] = [f"query {index}" for index in range(32)]
-        plan["graph"]["seed_ids"] = []
-        before_token = index_generation_token(self.database)
-        before_bytes = self.database.read_bytes()
-        server = MCPServer(
-            self.database,
-            embedding_profile="fixture",
-            provider_config=config,
-            provider_registry=registry,
-            environ={},
-            expected_graph_sha256="a" * 64,
-        )
-        self.initialize(server)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 31,
-                "method": "tools/call",
-                "params": {"name": "kg_search", "arguments": {"plan": plan}},
-            }
-        )
-
-        self.assertFalse(response["result"]["isError"])
-        lane = response["result"]["structuredContent"]["result"]["lanes"]["semantic"]
-        self.assertEqual({"status": "enabled", "queries": 32, "results": 2}, lane)
-        self.assertEqual(["fixture"], creates)
-        self.assertEqual([plan["semantic_queries"]], provider.query_batches)
-        self.assertEqual(before_token, index_generation_token(self.database))
-        self.assertEqual(before_bytes, self.database.read_bytes())
-
-        unavailable = MCPServer(
-            self.database,
-            expected_graph_sha256="a" * 64,
-        )
-        self.initialize(unavailable)
-        degraded = unavailable.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 32,
-                "method": "tools/call",
-                "params": {"name": "kg_search", "arguments": {"plan": plan}},
-            }
-        )
-        degraded_lane = degraded["result"]["structuredContent"]["result"]["lanes"]["semantic"]
-        self.assertEqual("degraded", degraded_lane["status"])
-        self.assertEqual("provider-unavailable", degraded_lane["reason"])
-
-    def test_legacy_search_keeps_the_public_4096_character_input_bound(self) -> None:
-        server = MCPServer(self.database, expected_graph_sha256="a" * 64)
-        self.initialize(server)
-        query = "alpha " + ("q" * 2044)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 32,
-                "method": "tools/call",
-                "params": {"name": "kg_search", "arguments": {"query": query}},
-            }
-        )
-
-        result = response["result"]
-        self.assertFalse(result["isError"])
-        self.assertEqual("legacy", result["structuredContent"]["plan_mode"])
-
-    def test_legacy_search_accepts_depth_eight_and_advertises_bounded_node_types(
-        self,
-    ) -> None:
-        server = MCPServer(self.database, expected_graph_sha256="a" * 64)
-        self.initialize(server)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 33,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {
-                        "query": "alpha",
-                        "max_depth": 8,
-                        "node_types": ["knowledge"],
-                    },
-                },
-            }
-        )
-
-        self.assertFalse(response["result"]["isError"])
-        search_schema = next(
-            tool["inputSchema"]
-            for tool in TOOL_DEFINITIONS
-            if tool["name"] == "kg_search"
-        )
-        properties = search_schema["properties"]
-        self.assertEqual(8, properties["max_depth"]["maximum"])
-        self.assertEqual(
-            ["knowledge", "field", "topic"],
-            properties["node_types"]["items"]["enum"],
-        )
-
-        invalid = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 34,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {"query": "alpha", "node_types": ["arbitrary"]},
-                },
-            }
-        )
-        self.assertTrue(invalid["result"]["isError"])
-
-    def test_context_accepts_the_same_bounded_plan(self) -> None:
-        server = MCPServer(self.database, expected_graph_sha256="a" * 64)
-        self.initialize(server)
-        before = self.database.read_bytes()
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 31,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_build_context",
-                    "arguments": {"plan": retrieval_plan(), "token_budget": 5000},
-                },
-            }
-        )
-
-        result = response["result"]
-        self.assertFalse(result["isError"])
-        self.assertEqual(
-            "qlkg-context-bundle-v1",
-            result["structuredContent"]["schema"],
+        resolve = next(
+            tool for tool in TOOL_DEFINITIONS if tool["name"] == "kg_resolve_concepts"
         )
         self.assertEqual(
-            retrieval_plan()["question"],
-            result["structuredContent"]["query"],
-        )
-        self.assertEqual(before, self.database.read_bytes())
-
-    def test_legacy_context_preserves_the_full_question(self) -> None:
-        server = MCPServer(self.database, expected_graph_sha256="a" * 64)
-        self.initialize(server)
-        query = "alpha " + ("q" * 2044)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 35,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_build_context",
-                    "arguments": {"query": query},
-                },
-            }
+            4096,
+            resolve["inputSchema"]["properties"]["concepts"]["items"]["maxLength"],
         )
 
-        self.assertFalse(response["result"]["isError"])
-        self.assertEqual(query, response["result"]["structuredContent"]["query"])
+    def test_identity_and_node_id_inputs_are_bounded(self) -> None:
+        with self.assertRaisesRegex(QueryError, "invalid string length"):
+            call_tool(
+                self.graph,
+                "kg_resolve_concepts",
+                {"concepts": ["x" * 4097]},
+            )
+        with self.assertRaisesRegex(QueryError, "invalid length"):
+            call_tool(self.graph, "kg_get_node", {"id": "x" * 257})
 
-    def test_search_and_context_require_exactly_one_query_or_plan(self) -> None:
-        server = MCPServer(self.database)
-        self.initialize(server)
-        cases = (
-            ("kg_search", {}),
-            ("kg_search", {"query": "alpha", "plan": retrieval_plan()}),
-            ("kg_build_context", {}),
-            (
-                "kg_build_context",
-                {"query": "alpha", "plan": retrieval_plan()},
-            ),
-            ("kg_search", {"plan": retrieval_plan(), "namespace": "personal"}),
-        )
-
-        for request_id, (name, arguments) in enumerate(cases, start=40):
-            with self.subTest(name=name, arguments=sorted(arguments)):
-                response = server.handle(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "method": "tools/call",
-                        "params": {"name": name, "arguments": arguments},
-                    }
-                )
-                self.assertTrue(response["result"]["isError"])
-
-    def test_retrieval_tool_inputs_never_accept_provider_configuration_or_secrets(self) -> None:
-        by_name = {tool["name"]: tool for tool in TOOL_DEFINITIONS}
-        for name in ("kg_search", "kg_build_context"):
-            schema = by_name[name]["inputSchema"]
-            properties = schema["properties"]
-            rendered = json.dumps(schema, sort_keys=True).casefold()
-            with self.subTest(name=name):
-                self.assertIn("query", properties)
-                self.assertIn("plan", properties)
-                self.assertNotIn("provider_config", rendered)
-                self.assertNotIn("credential_env", rendered)
-                self.assertNotIn("api_key", rendered)
-                self.assertNotIn("secret", rendered)
-
-    def test_tool_validation_errors_are_tool_results(self) -> None:
-        server = MCPServer(self.database)
-        self.initialize(server)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {"query": "alpha", "unexpected": True},
-                },
-            }
-        )
-
-        self.assertTrue(response["result"]["isError"])
-        self.assertIn("unexpected tool arguments", response["result"]["structuredContent"]["error"]["message"])
-
-    def test_missing_or_stale_index_search_fails_without_publishing_files(self) -> None:
-        missing = Path(self.temporary.name) / "missing.sqlite"
-        missing_server = MCPServer(missing, expected_graph_sha256="a" * 64)
-        self.initialize(missing_server)
-        missing_response = missing_server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 50,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {"plan": retrieval_plan()},
-                },
-            }
-        )
-
-        self.assertTrue(missing_response["result"]["isError"])
-        self.assertFalse(missing.exists())
-        self.assertEqual([], list(missing.parent.glob("missing.sqlite*")))
-
-        stale_server = MCPServer(self.database, expected_graph_sha256="b" * 64)
-        self.initialize(stale_server)
-        before = {
-            path.name: path.read_bytes()
-            for path in self.database.parent.glob(f"{self.database.name}*")
-            if path.is_file()
-        }
-        stale_response = stale_server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 51,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_search",
-                    "arguments": {"plan": retrieval_plan()},
-                },
-            }
-        )
-        after = {
-            path.name: path.read_bytes()
-            for path in self.database.parent.glob(f"{self.database.name}*")
-            if path.is_file()
-        }
-
-        self.assertTrue(stale_response["result"]["isError"])
-        self.assertEqual(before, after)
-
-    def test_long_lived_server_rechecks_authority_digest_for_each_retrieval(self) -> None:
-        current = ["a" * 64]
-        calls: list[str] = []
-
-        def resolve_digest() -> str:
-            calls.append(current[0])
-            return current[0]
-
-        server = MCPServer(
-            self.database,
-            expected_graph_sha256_resolver=resolve_digest,
-        )
-        self.initialize(server)
-
-        def search(request_id: int) -> dict:
-            return server.handle(
+    def test_mcp_fails_closed_before_emitting_an_oversized_tool_result(self) -> None:
+        server = MCPServer(self.graph)
+        server.initialized = True
+        with patch(
+            "kgdistiller.mcp.call_tool",
+            return_value={"blob": "x" * (MAX_TOOL_RESPONSE_BYTES + 1)},
+        ):
+            response = server.handle(
                 {
                     "jsonrpc": "2.0",
-                    "id": request_id,
+                    "id": 1,
                     "method": "tools/call",
-                    "params": {
-                        "name": "kg_search",
-                        "arguments": {"plan": retrieval_plan()},
-                    },
+                    "params": {"name": "kg_status", "arguments": {}},
                 }
             )
-
-        self.assertFalse(search(60)["result"]["isError"])
-        current[0] = "b" * 64
-        stale = search(61)
-        self.assertTrue(stale["result"]["isError"])
-        self.assertEqual(
-            "stale-index",
-            stale["result"]["structuredContent"]["error"]["code"],
-        )
-        current[0] = "a" * 64
-        self.assertFalse(search(62)["result"]["isError"])
-        self.assertEqual(["a" * 64, "b" * 64, "a" * 64], calls)
-
-    def test_compare_tool_keeps_candidate_namespace_isolated(self) -> None:
-        server = MCPServer(self.database)
-        self.initialize(server)
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_compare_graph",
-                    "arguments": {"candidate_snapshot": candidate_snapshot()},
-                },
-            }
+        self.assertTrue(response["result"]["isError"])
+        self.assertIn(
+            "tool response exceeds",
+            response["result"]["structuredContent"]["error"]["message"],
         )
 
-        result = response["result"]
-        self.assertFalse(result["isError"])
-        self.assertEqual(1, result["structuredContent"]["summary"]["new"])
-        self.assertEqual("paper:fixture", result["structuredContent"]["candidate"]["namespace"])
+    def test_mcp_and_python_core_are_equivalent_and_do_not_write(self) -> None:
+        before = self._files()
+        direct = call_tool(self.graph, "kg_status", {})
+        self.assertEqual(query_status(self.graph), direct)
 
-    def test_ppr_and_alignment_tools_are_explainable_and_read_only(self) -> None:
-        server = MCPServer(self.database)
-        self.initialize(server)
-        before = self.database.read_bytes()
-
-        ppr_response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 7,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_ppr",
-                    "arguments": {"ids": ["alpha"], "limit": 2},
-                },
-            }
-        )
-        alignment_response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 8,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_align_graph",
-                    "arguments": {"candidate_snapshot": ac_candidate_snapshot()},
-                },
-            }
-        )
-
-        ppr = ppr_response["result"]
-        alignment = alignment_response["result"]
-        self.assertFalse(ppr["isError"])
-        self.assertEqual("qlkg-ppr-result-v1", ppr["structuredContent"]["schema"])
-        self.assertFalse(alignment["isError"])
-        self.assertEqual(
-            "qlkg-alignment-report-v1", alignment["structuredContent"]["schema"]
-        )
-        self.assertEqual(before, self.database.read_bytes())
-
-    def test_proposal_tool_generates_review_data_without_writing(self) -> None:
-        server = MCPServer(self.database)
-        self.initialize(server)
-        before = self.database.read_bytes()
-
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 6,
-                "method": "tools/call",
-                "params": {
-                    "name": "kg_create_proposal",
-                    "arguments": {
-                        "candidate_snapshot": candidate_snapshot(),
-                        "target_authority": "notes/research/paper.md",
-                    },
-                },
-            }
-        )
-
-        result = response["result"]
-        self.assertFalse(result["isError"])
-        self.assertEqual("qlkg-agent-proposal-v1", result["structuredContent"]["schema"])
-        self.assertEqual(before, self.database.read_bytes())
-
-    def test_stdio_is_newline_delimited_json_rpc_without_notification_output(self) -> None:
-        messages = [
+        server = MCPServer(self.graph)
+        initialized = server.handle(
             {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test", "version": "1"},
-                },
-            },
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                "params": {"protocolVersion": "2025-11-25"},
+            }
+        )
+        self.assertEqual("json-memory", initialized["result"]["capabilities"]["experimental"]["queryBackend"])
+        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        response = server.handle(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
                 "params": {"name": "kg_status", "arguments": {}},
-            },
-        ]
-        source = io.StringIO("".join(json.dumps(message) + "\n" for message in messages))
-        destination = io.StringIO()
-
-        serve_stdio(self.database, input_stream=source, output_stream=destination)
-
-        lines = destination.getvalue().splitlines()
-        self.assertEqual(2, len(lines))
-        responses = [json.loads(line) for line in lines]
-        self.assertEqual("2025-11-25", responses[0]["result"]["protocolVersion"])
-        self.assertEqual("qlkg-agent-index-v2", responses[1]["result"]["structuredContent"]["schema"])
-
-    def test_malformed_stdio_messages_are_bounded_and_do_not_stop_the_server(self) -> None:
-        deep = "[" * 2000 + "0" + "]" * 2000
-        huge_integer = (
-            '{"jsonrpc":"2.0","id":'
-            + "9" * 10_000
-            + ',"method":"ping"}'
-        )
-        non_finite = '{"jsonrpc":"2.0","id":NaN,"method":"ping"}'
-        raw_surrogate = '"\ud800"'
-        escaped_surrogate = '{"jsonrpc":"2.0","id":"\\ud800","method":"ping"}'
-        surrogate_key = '{"jsonrpc":"2.0","id":1,"method":"ping","\\ud800":1}'
-        oversized = "x" * (MAX_MESSAGE_BYTES + 10)
-        initialize = json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 7,
-                "method": "initialize",
-                "params": {"protocolVersion": "2025-11-25"},
             }
         )
-        source = io.StringIO(
-            "\n".join(
-                [
-                    deep,
-                    huge_integer,
-                    non_finite,
-                    raw_surrogate,
-                    escaped_surrogate,
-                    surrogate_key,
-                    oversized,
-                    initialize,
-                ]
-            )
-            + "\n"
-        )
-        destination = io.StringIO()
+        self.assertEqual(direct, response["result"]["structuredContent"])
+        self.assertEqual(before, self._files())
 
-        serve_stdio(self.database, input_stream=source, output_stream=destination)
+    def test_each_tool_call_loads_a_complete_fresh_view(self) -> None:
+        first = call_tool(self.graph, "kg_status", {})
+        nodes_path = self.graph / "nodes.jsonl"
+        original = nodes_path.read_text(encoding="utf-8")
+        # A mixed manual edit is rejected; no partial new view is returned.
+        tampered = original.replace("Sigma algebra", "Tampered sigma algebra", 1)
+        nodes_path.write_text(tampered, encoding="utf-8")
+        with self.assertRaisesRegex(Exception, "digest|duplicate|counts"):
+            call_tool(self.graph, "kg_status", {})
+        nodes_path.write_text(original, encoding="utf-8")
+        self.assertEqual(first["snapshot_sha256"], call_tool(self.graph, "kg_status", {})["snapshot_sha256"])
 
-        responses = [json.loads(line) for line in destination.getvalue().splitlines()]
-        self.assertEqual(
-            [-32700, -32700, -32700, -32700, -32700, -32700, -32600],
-            [response["error"]["code"] for response in responses[:7]],
+    def test_mcp_context_and_alignment_outputs_use_bound_v2_contracts(self) -> None:
+        status = call_tool(self.graph, "kg_status", {})
+        context = call_tool(
+            self.graph,
+            "kg_build_context",
+            {"query": "measure", "token_budget": 5000},
         )
-        self.assertEqual("2025-11-25", responses[7]["result"]["protocolVersion"])
+        candidate = copy.deepcopy(fixture_nodes()[1])
+        candidate.update({"id": "paper-measure", "label": "Paper measure"})
+        candidate["properties"]["aliases"] = []
+        candidate_snapshot = candidate_snapshot_with([candidate])
+        alignment = call_tool(
+            self.graph,
+            "kg_align_graph",
+            {"candidate_snapshot": candidate_snapshot},
+        )
+        comparison = call_tool(
+            self.graph,
+            "kg_compare_graph",
+            {"candidate_snapshot": candidate_snapshot},
+        )
+        proposal = call_tool(
+            self.graph,
+            "kg_create_proposal",
+            {"candidate_snapshot": candidate_snapshot},
+        )
 
-    def test_request_ids_and_method_params_have_protocol_safe_shapes(self) -> None:
-        server = MCPServer(self.database)
-        invalid_id = server.handle(
-            {"jsonrpc": "2.0", "id": ["nested"], "method": "ping"}
-        )
-        invalid_key = server.handle(
-            {"jsonrpc": "2.0", "id": 7, "method": "ping", "\ud800": 1}
-        )
-        invalid_initialize = server.handle(
-            {"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": [1]}
-        )
-        self.initialize(server)
-        invalid_call = server.handle(
-            {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": [1]}
-        )
-
-        self.assertEqual(-32600, invalid_id["error"]["code"])
-        self.assertEqual(-32600, invalid_key["error"]["code"])
-        self.assertEqual(-32602, invalid_initialize["error"]["code"])
-        self.assertEqual(-32602, invalid_call["error"]["code"])
+        self.assertEqual("qlkg-context-bundle-v2", context["schema"])
+        self.assertEqual("qlkg-alignment-report-v2", alignment["schema"])
+        self.assertEqual("qlkg-graph-comparison-v2", comparison["schema"])
+        self.assertEqual("qlkg-agent-proposal-v2", proposal["schema"])
+        for report in (alignment, comparison, proposal):
+            self.assertEqual(status["alignment_sha256"], report["alignment_sha256"])
 
 
 if __name__ == "__main__":

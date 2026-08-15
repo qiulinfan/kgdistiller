@@ -31,7 +31,7 @@ page, section, equation, theorem, figure, or table locations. Exclude passing
 terms, authors, headings, bibliography-only names, and local symbols.
 
 Write `knowledge/paper.candidate.json` as
-`qlkg-candidate-graph-v1` in an isolated namespace such as
+`qlkg-candidate-graph-v2` in an isolated namespace such as
 `paper:<source-digest-prefix>`. Build and validate the snapshot with the engine:
 
 ```sh

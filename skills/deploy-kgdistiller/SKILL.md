@@ -1,115 +1,130 @@
 ---
 name: deploy-kgdistiller
-description: Create, refresh, verify, clone, and restore a small personal kgdistiller knowledge base as a portable Git-friendly store. Use when setting up kgdistiller on a machine, protecting it against machine loss, synchronizing it across computers, preserving paid or slow embeddings, materializing local SQLite after git clone or pull, or explaining which knowledge files should be tracked versus ignored.
+description: Create, refresh, verify, clone, and restore a small personal kgdistiller knowledge base as a portable JSON-only Git-friendly store. Use when setting up kgdistiller on a machine, protecting native Markdown, Typst, or LaTeX authorities against machine loss, synchronizing them across computers, verifying qlkg-store-v2, serving the self-contained local frontend, or producing static-site and lossy Obsidian downstream exports.
 ---
 
 # Deploy kgdistiller
 
-Create a portable authority store and treat local SQLite as its materialized
-query view. Preserve exact embeddings without making vectors semantic identity
-or graph authority.
+Treat the knowledge project—not a product checkout or generated projection—as
+the portable authority store. Version 0.4 has no database, embedding, provider,
+profile, or materialization step.
+
+## Align language
+
+Match user-facing explanations, prompts, and handoffs to the user's language
+unless the user requests another language. Keep commands, identifiers, schema
+keys and action codes, and raw errors unchanged.
 
 ## Load the deployment contract
 
 Read [references/deployment-contract.md](references/deployment-contract.md)
-completely before changing a project. Never place personal sources, vectors,
-credentials, or generated graphs in the kgdistiller product repository.
-
-Use `kgdistiller --repo-root PROJECT` below. Record the installed product
-version and exact product commit in deployment and export receipts. Do not make
-a knowledge project vendor the engine.
+completely before changing a project. Use
+`kgdistiller --repo-root PROJECT`. Record installed product version and exact
+product commit when known. Never place personal sources, generated graphs,
+credentials, or exports in the kgdistiller product repository.
 
 ## Choose one store layout
 
-- If the notes repository itself is private and is the desired synchronization
-  unit, refresh it in place with `store snapshot`.
-- If notes live elsewhere or the user wants a dedicated backup repository, use
-  `store snapshot --output STORE`. The output must be separate from, not nested
-  in, the source project. It contains only registered, already-ingested
-  Markdown, Typst, and LaTeX authorities plus the deterministic graph,
-  registries, document inventory, and embedding bundle.
+- Refresh in place when the private notes repository is the backup unit.
+- Use `store snapshot --output STORE` when notes live elsewhere or the user
+  wants a separate private backup. `STORE` must be separate from and not nested
+  in `PROJECT`.
 
-Do not choose the kgdistiller engine checkout as `PROJECT` or `STORE`.
+Both layouts contain only registered, already-ingested Markdown, Typst, and
+LaTeX authorities, source/identity/alignment registries, deterministic graph
+artifacts, canonical document inventory, and `qlkg-store-v2` manifest.
 
-## Create or refresh
+## Create, refresh, and restore
 
-For a new project, initialize the bounded source registry, review its roots and
-globs, add explicit native markers, then run `sync`. Do not infer nodes from
-headings, order, or similarity.
+For a new project, initialize and review bounded source roots/globs, add native
+definition/reference markers, then run `sync`. Never infer nodes from headings,
+document order, proximity, or similarity.
 
-Before every portable snapshot run:
+For an in-place snapshot, run this complete command set:
 
 ```sh
 kgdistiller --repo-root PROJECT check
 kgdistiller --repo-root PROJECT agent status
-kgdistiller --repo-root PROJECT store snapshot [--output STORE]
+kgdistiller --repo-root PROJECT store snapshot
+kgdistiller --repo-root PROJECT store verify
+```
+
+For a separate snapshot, run this complete command set:
+
+```sh
+kgdistiller --repo-root PROJECT check
+kgdistiller --repo-root PROJECT agent status
+kgdistiller --repo-root PROJECT store snapshot --output STORE
 kgdistiller --repo-root STORE store verify
 ```
 
-`store snapshot` rejects stale authority/graph generations. It exports only
-embeddings already present in the current SQLite index; it never calls a model.
-Report the returned document count, embedding count, and store generation. If
-the embedding count is zero, say that explicitly rather than claiming the RAG
-cache was preserved.
-
-The embedding bundle records namespace, node ID, provider, model, dimensions,
-canonical input digest, provider-config digest, vector digest, and exact
-little-endian float32 bytes. These records rank retrieval only. They never
-merge identities or create trusted edges.
-
-## Initialize Git only with authorization
-
-Recommend a private Git repository, but run `git init`, add a remote, commit,
-or push only when the user requests that Git action. Track:
-
-- registered authority files and authored assets required by them;
-- `knowledge/sources.json`, optional `identities.json`, and `alignments.json`;
-- all files under `knowledge/graph/`;
-- `knowledge/documents.jsonl`, `knowledge/store.json`, and
-  `knowledge/embeddings/`.
-
-Ignore `knowledge/build/`, SQLite and WAL files, transaction staging, plans,
-receipts, credentials, query logs, and provider caches. Ordinary Git is the
-default for a small personal store; do not introduce Git LFS unless the user
-has chosen it and every clone environment can materialize LFS objects.
-
-After an authorized commit or push, distinguish these states in the response:
-
-- `store verified locally` only after `store verify` succeeds;
-- `committed locally` only after inspecting the new commit;
-- `remote confirmed` only after the push succeeds and the remote ref contains
-  that commit.
-
-## Restore or update another machine
-
-After `git clone` or a clean `git pull`, do not call an embedding provider:
+On clone or clean pull:
 
 ```sh
 kgdistiller --repo-root STORE store verify
-kgdistiller --repo-root STORE store materialize
 kgdistiller --repo-root STORE agent status
+kgdistiller --repo-root STORE agent resolve "KNOWN NAME"
 ```
 
-`materialize` verifies every source, graph, registry, record, and vector digest
-before atomically rebuilding `knowledge/build/knowledge.sqlite`. It skips work
-when that SQLite already records the same store generation. Resolve several
-known IDs or run one bounded context query as a smoke test.
+A verified store is immediately queryable through generation-checked
+`GraphView`; do not call or emulate materialization. If verification fails,
+stop. Restore a known-good Git revision or repair the native authority on the
+owning machine and publish one complete new snapshot generation.
 
-If verification fails, stop. Do not run `sync` merely to hide the mismatch and
-do not hand-edit generated manifests or vector records. Restore a known-good
-Git revision, or return to the authority machine, reconcile the source and
-graph there, produce a new snapshot, and synchronize that complete generation.
+Version 0.4 refuses `qlkg-v2`, `qlkg-sources-v2`,
+`qlkg-identities-v1`, and `qlkg-agent-delta-v2`. Do not claim an old core
+generation can be retained. Before an upgrade, require a committed Git rollback
+point for native authorities and reviewed registries. Export entries and edges
+that must survive for review while still on 0.3. With 0.4 installed, explicitly
+move the old generated `knowledge/graph/` outside the project or delete that
+exact directory after confirming the rollback commit. Review and update the
+registry discriminators, then run an unscoped `sync` to rebuild `qlkg-v3` from
+native authorities. Re-author reviewed metadata as `qlkg-agent-delta-v3` after
+the rebuild. State explicitly that marker-derived nodes and refs return, while
+un-reissued 0.3 Agent-curated entries and semantic edges are intentionally lost.
+
+## Initialize Git only with authorization
+
+Recommend private Git when appropriate, but run `git init`, commit, configure a
+remote, or push only when explicitly requested. Track registered authorities,
+`knowledge/sources.json`, optional `identities.json`/`alignments.json`,
+`knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
+Ignore `knowledge/build/`, journals, plans, receipts, credentials, query logs,
+and disposable projections.
+
+Say `store verified locally` only after verify succeeds, `committed locally`
+only after inspecting the commit, and `remote confirmed` only after a
+successful push whose remote ref contains that commit.
+
+## Serve and export
+
+`kgdistiller serve` uses packaged native assets and binds to `127.0.0.1` by
+default. Do not expose it on a network without an explicit separate decision.
+
+For a static consumer, create `export site`, run the bundled standalone
+verifier, and report the `qlkg-static-export-report-v1` operation result plus
+the bundle's `qlkg-static-export-v2` manifest digest. The consumer adopts the
+verified bundle, not the engine checkout.
+
+For editor-plus-browser use, open `PROJECT` itself as the Obsidian vault and
+keep the projection at its ignored default:
+
+```sh
+kgdistiller --repo-root PROJECT export obsidian --replace
+```
+
+`PROJECT` is the editor vault, and registered Markdown files there remain
+non-lossy native authorities. The managed `qlkg-obsidian-projection-v1`
+subtree is lossy and disposable. Never register that subtree in `sources.json`,
+scan/ingest it, or treat projected-note edits as round-trip authority. Source
+proxies for Typst and LaTeX navigate to their native files. An explicit external
+`--output VAULT` is a browsing-only vault/projection and links back to authority
+files. Regenerate either projection from the native authority graph.
 
 ## Return a deployment receipt
 
-Summarize the absolute store root, layout, schema, generation hashes, document
-and embedding counts, SQLite materialization state, Git commit when any, and
-whether a remote was actually confirmed. Never include full authority content,
-vectors, credentials, or unbounded excerpts.
-
-If a separate application consumes a static graph export, keep that export
-outside the portable-store claims. Verify its `qlkg-static-export-v1` manifest
-with the bundled standalone verifier and report product repository/version/commit,
-source repository revision/digest, graph digest, and export digest. A static
-consumer may adopt those files without installing kgdistiller and must use the
-receipt rather than an engine checkout as provenance.
+Summarize absolute roots, layout, `qlkg-store-v2` schema, graph/store generation
+digests, document count, installed version/commit, verified Git state, and any
+static/Obsidian export path and digest. Never include full authority content,
+credentials, or unbounded excerpts. Keep snapshot, Git, export, and network
+publication as separate authorities.

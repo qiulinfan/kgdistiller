@@ -16,14 +16,17 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .cli import (
+    GRAPH_SCHEMA,
     GraphState,
     KnowledgeError,
     atomic_write,
+    identity_registry_sha256,
     load_sources,
     load_state,
     make_agent_snapshot,
     pretty_json,
     sha256_authority_file,
+    source_registry_sha256,
     typst_registry_text,
     unique_source_for_path,
     validate_state,
@@ -31,7 +34,8 @@ from .cli import (
 from .contracts import finalize_self_digest, sha256_json, validate_contract
 from .static_export_verifier import verify_export
 
-EXPORT_SCHEMA = "qlkg-static-export-v1"
+EXPORT_SCHEMA = "qlkg-static-export-v2"
+EXPORT_REPORT_SCHEMA = "qlkg-static-export-report-v1"
 SITE_GRAPH_SCHEMA = "qlkg-site-graph-v1"
 PRODUCT_REPOSITORY = "https://github.com/qiulinfan/kgdistiller"
 GIT_COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -52,6 +56,45 @@ SOURCE_GRAPH_FILES = {
 
 class StaticExportError(ValueError):
     """Raised when a static export cannot be produced safely."""
+
+
+def _require_graph_generation_bindings(
+    state: GraphState,
+    registry: Path,
+    identities: Path | None,
+) -> None:
+    """Reject registry inputs from a generation other than the loaded graph."""
+
+    try:
+        registry_sha = source_registry_sha256(registry)
+        identity_sha = identity_registry_sha256(identities)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise StaticExportError(f"cannot hash the current registries: {error}") from error
+    if state.manifest.get("registry_sha256") != registry_sha:
+        raise StaticExportError(
+            "source registry is out of sync with the authority graph; "
+            "run kgdistiller sync"
+        )
+    if state.manifest.get("identity_sha256") != identity_sha:
+        raise StaticExportError(
+            "identity registry is out of sync with the authority graph; "
+            "run kgdistiller sync"
+        )
+
+
+def _require_same_graph_generation(graph_dir: Path, expected: GraphState) -> GraphState:
+    """Reload and validate the graph before committing a generated export."""
+
+    try:
+        current = load_state(graph_dir)
+        make_agent_snapshot(current)
+    except (KnowledgeError, OSError, UnicodeError, ValueError) as error:
+        raise StaticExportError(f"cannot reload the authority graph: {error}") from error
+    if sha256_json(current.manifest) != sha256_json(expected.manifest):
+        raise StaticExportError(
+            "authority graph generation changed during static export; retry the export"
+        )
+    return current
 
 
 def _strict_json(path: Path) -> dict[str, Any]:
@@ -939,6 +982,7 @@ def export_site_bundle(
     *,
     registry: Path,
     graph_dir: Path,
+    identities: Path | None = None,
     product_commit: str | None = None,
     product_repository: str = PRODUCT_REPOSITORY,
     source_repository: str,
@@ -948,6 +992,11 @@ def export_site_bundle(
     output = Path(os.path.abspath(output))
     registry = registry.resolve()
     graph_dir = graph_dir.resolve()
+    identities = (
+        (repo_root / "knowledge/identities.json").resolve()
+        if identities is None
+        else identities.resolve()
+    )
     if output == repo_root or output == graph_dir or repo_root == output.parent:
         raise StaticExportError("export output must be a dedicated non-root directory")
     recovery_root = _export_recovery_root(repo_root, output)
@@ -970,6 +1019,7 @@ def export_site_bundle(
     assert source_repository is not None
     producer_commit = resolve_product_commit(product_commit)
     state = load_state(graph_dir)
+    _require_graph_generation_bindings(state, registry, identities)
     graph_payload, filtered_state, published_hashes, published_ids, source_count = (
         build_site_graph(repo_root, registry, state)
     )
@@ -1037,7 +1087,7 @@ def export_site_bundle(
                 "excluded_sources": source_count - len(published_ids),
             },
             "graph": {
-                "private_schema": "qlkg-v2",
+                "private_schema": GRAPH_SCHEMA,
                 "private_sha256": str(state.manifest["graph_sha256"]),
                 "private_counts": private_counts,
                 "public_schema": SITE_GRAPH_SCHEMA,
@@ -1054,6 +1104,8 @@ def export_site_bundle(
         validate_contract(manifest)
         atomic_write(staging / "manifest.json", pretty_json(manifest))
         verify_export(staging)
+        current_state = _require_same_graph_generation(graph_dir, state)
+        _require_graph_generation_bindings(current_state, registry, identities)
         install = _install_export(
             staging,
             output,
@@ -1069,9 +1121,10 @@ def export_site_bundle(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return {
-        "schema": EXPORT_SCHEMA,
+    report = {
+        "schema": EXPORT_REPORT_SCHEMA,
         "status": "exported",
+        "artifact_schema": EXPORT_SCHEMA,
         "committed": install["committed"],
         "cleanup_status": install["cleanup_status"],
         "warnings": install["warnings"],
@@ -1092,3 +1145,5 @@ def export_site_bundle(
             previous_export["export_sha256"] if previous_export is not None else None
         ),
     }
+    validate_contract(report)
+    return report

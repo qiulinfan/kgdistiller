@@ -17,6 +17,7 @@ from kgdistiller.cli import (
     make_artifacts,
     sha256_authority_file,
     sha256_file,
+    source_registry_sha256,
     write_artifacts,
 )
 from kgdistiller.contracts import ContractError, finalize_self_digest, validate_contract
@@ -47,11 +48,12 @@ class StaticSiteExportTests(unittest.TestCase):
         self.public_source.write_text("--[[Public concept]]--\n", encoding="utf-8")
         self.private_source.write_text("--[[Private concept]]--\n", encoding="utf-8")
         self.registry = self.repo / "knowledge/sources.json"
+        self.identities = self.repo / "config/custom-identities.json"
         self.registry.parent.mkdir(parents=True)
         self.registry.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-sources-v2",
+                    "schema": "qlkg-sources-v3",
                     "fields": [
                         {
                             "id": "shared-field",
@@ -193,7 +195,12 @@ class StaticSiteExportTests(unittest.TestCase):
         self.graph = self.repo / "knowledge/graph"
         write_artifacts(
             self.graph,
-            make_artifacts(state, source_hashes, git_revision="c" * 40),
+            make_artifacts(
+                state,
+                source_hashes,
+                registry_sha256=source_registry_sha256(self.registry),
+                git_revision="c" * 40,
+            ),
         )
 
     def tearDown(self) -> None:
@@ -222,6 +229,7 @@ class StaticSiteExportTests(unittest.TestCase):
                 output,
                 registry=self.registry,
                 graph_dir=self.graph,
+                identities=self.identities,
                 product_commit=product_commit,
                 source_repository="https://github.com/example/notes",
                 replace=replace,
@@ -567,7 +575,6 @@ class StaticSiteExportTests(unittest.TestCase):
         self.assertNotIn("Private concept", combined)
         self.assertNotIn("notes/private/private.md", combined)
         self.assertEqual("ok", verify_export(output)["status"])
-
         completed = subprocess.run(
             [sys.executable, str(output / "verify_export.py"), str(output)],
             check=False,
@@ -576,6 +583,55 @@ class StaticSiteExportTests(unittest.TestCase):
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn('"status": "ok"', completed.stdout)
+
+    def test_unsynchronized_registry_generations_preserve_existing_export(self) -> None:
+        output = self.export()
+        baseline = {
+            path.relative_to(output).as_posix(): path.read_bytes()
+            for path in output.rglob("*")
+            if path.is_file()
+        }
+        original_registry = self.registry.read_bytes()
+
+        def assert_unchanged() -> None:
+            current = {
+                path.relative_to(output).as_posix(): path.read_bytes()
+                for path in output.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(baseline, current)
+
+        try:
+            registry = json.loads(original_registry)
+            registry["sources"][0]["subject"] = "changed-without-sync"
+            self.registry.write_text(json.dumps(registry), encoding="utf-8")
+            with self.assertRaisesRegex(StaticExportError, "source registry is out of sync"):
+                self.export(replace=True)
+            assert_unchanged()
+            self.registry.write_bytes(original_registry)
+
+            self.identities.parent.mkdir(parents=True)
+            self.identities.write_text(
+                json.dumps(
+                    {
+                        "schema": "qlkg-identities-v2",
+                        "identities": [
+                            {
+                                "id": "unsynchronized-identity",
+                                "canonical_name": "Unsynchronized identity",
+                                "aliases": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(StaticExportError, "identity registry is out of sync"):
+                self.export(replace=True)
+            assert_unchanged()
+        finally:
+            self.registry.write_bytes(original_registry)
+            self.identities.unlink(missing_ok=True)
 
     def test_published_topic_roots_are_visible_without_knowledge_descendants(
         self,
@@ -669,7 +725,12 @@ class StaticSiteExportTests(unittest.TestCase):
         }
         write_artifacts(
             self.graph,
-            make_artifacts(self.state, self.source_hashes, git_revision="c" * 40),
+            make_artifacts(
+                self.state,
+                self.source_hashes,
+                registry_sha256=source_registry_sha256(self.registry),
+                git_revision="c" * 40,
+            ),
         )
 
         output = self.export("published-topic-roots")
@@ -746,7 +807,12 @@ class StaticSiteExportTests(unittest.TestCase):
         }
         write_artifacts(
             self.graph,
-            make_artifacts(self.state, self.source_hashes, git_revision="c" * 40),
+            make_artifacts(
+                self.state,
+                self.source_hashes,
+                registry_sha256=source_registry_sha256(self.registry),
+                git_revision="c" * 40,
+            ),
         )
 
         output = self.export("published-field-roots")
@@ -836,6 +902,7 @@ class StaticSiteExportTests(unittest.TestCase):
                     make_artifacts(
                         state,
                         self.source_hashes,
+                        registry_sha256=source_registry_sha256(self.registry),
                         git_revision="c" * 40,
                     ),
                 )
@@ -853,6 +920,20 @@ class StaticSiteExportTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ExportVerificationError, "(?:byte count|digest) mismatch"
         ):
+            verify_export(output)
+
+    def test_static_verifier_refuses_superseded_v1_manifest(self) -> None:
+        output = self.export()
+        manifest_path = output / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["schema"] = "qlkg-static-export-v1"
+        manifest = finalize_self_digest(manifest, "export_sha256")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ExportVerificationError, "unsupported schema"):
             verify_export(output)
 
     def test_site_graph_schema_and_verifier_reject_the_same_bad_value_types(
@@ -975,6 +1056,7 @@ class StaticSiteExportTests(unittest.TestCase):
             make_artifacts(
                 self.state,
                 self.source_hashes,
+                registry_sha256=source_registry_sha256(self.registry),
                 git_revision="c" * 40,
             ),
         )

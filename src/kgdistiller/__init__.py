@@ -1,3 +1,3 @@
 """Local-first agentic knowledge graph distillation."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

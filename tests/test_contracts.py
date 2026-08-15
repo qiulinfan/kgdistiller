@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from importlib import resources
 from pathlib import Path
-from typing import Optional
 from unittest import mock
 
 from kgdistiller.contracts import (
@@ -25,89 +24,355 @@ from kgdistiller.json_schema import validate_json_schema
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "contracts"
+FIXTURE_CONTRACTS = (
+    "qlkg-retrieval-plan-v2",
+    "qlkg-search-result-v3",
+    "qlkg-search-execution-v2",
+    "qlkg-document-record-v1",
+    "qlkg-static-export-v2",
+    "qlkg-site-graph-v1",
+)
 
 
-def load_fixture(group: str, schema: str) -> dict:
+def fixture(schema: str, group: str = "valid") -> dict:
     return parse_contract_json(
         (FIXTURES / group / f"{schema}.json").read_text(encoding="utf-8")
     )
 
 
-class ContractResourceTests(unittest.TestCase):
-    def test_all_new_schemas_load_from_package_resources(self) -> None:
-        self.assertEqual(10, len(CONTRACT_SCHEMAS))
+def minimal_store() -> dict:
+    digest = "a" * 64
+    return finalize_self_digest(
+        {
+            "schema": "qlkg-store-v2",
+            "generator": "kgdistiller",
+            "layout": "in-place",
+            "paths": {
+                "registry": "knowledge/sources.json",
+                "identities": None,
+                "alignments": "knowledge/alignments.json",
+                "graph": "knowledge/graph",
+                "documents": "knowledge/documents.jsonl",
+            },
+            "documents": {
+                "count": 0,
+                "sha256": digest,
+                "source_snapshot_sha256": digest,
+            },
+            "graph_artifacts": [
+                {
+                    "path": "knowledge/graph/manifest.json",
+                    "bytes": 1,
+                    "sha256": digest,
+                },
+                {"path": "knowledge/graph/nodes.jsonl", "bytes": 0, "sha256": digest},
+                {"path": "knowledge/graph/edges.jsonl", "bytes": 0, "sha256": digest},
+                {"path": "knowledge/graph/references.jsonl", "bytes": 0, "sha256": digest},
+                {"path": "knowledge/graph/diagnostics.json", "bytes": 1, "sha256": digest},
+            ],
+            "registry_sha256": digest,
+            "identity_sha256": None,
+            "alignment_sha256": digest,
+            "graph_sha256": digest,
+            "store_generation_sha256": digest,
+            "managed_paths": ["knowledge/documents.jsonl", "knowledge/store.json"],
+        },
+        "store_sha256",
+    )
+
+
+def minimal_query_status() -> dict:
+    digest = "c" * 64
+    return {
+        "schema": "qlkg-query-status-v1",
+        "snapshot_schema": "qlkg-agent-snapshot-v2",
+        "namespace": "personal",
+        "snapshot_sha256": digest,
+        "graph_schema": "qlkg-v3",
+        "graph_sha256": digest,
+        "generation": digest,
+        "counts": {"nodes": 0, "edges": 0, "references": 0},
+        "backend": "json-memory",
+        "retrieval_lanes": ["identity", "lexical", "graph", "ppr"],
+        "capabilities": ["json-memory", "read-only-query-v3"],
+        "alignment_schema": "qlkg-alignments-v2",
+        "alignment_sha256": digest,
+        "alignment_counts": {"mappings": 0},
+    }
+
+
+def minimal_obsidian() -> dict:
+    digest = "b" * 64
+    return finalize_self_digest(
+        {
+            "schema": "qlkg-obsidian-projection-v1",
+            "status": "ready",
+            "source": {
+                "graph_schema": "qlkg-v3",
+                "graph_sha256": digest,
+                "snapshot_sha256": digest,
+                "source_hashes_sha256": digest,
+            },
+            "policy": {
+                "nodes": "active-knowledge",
+                "edges": "current-semantic",
+                "edge_semantics_in_obsidian_graph": "lossy",
+                "authority_links": "vault-relative",
+            },
+            "counts": {"concepts": 0, "sources": 0, "links": 0},
+            "artifacts": [],
+        },
+        "projection_sha256",
+    )
+
+
+def minimal_store_report() -> dict:
+    digest = "d" * 64
+    return {
+        "schema": "qlkg-store-report-v1",
+        "status": "verified",
+        "artifact_schema": "qlkg-store-v2",
+        "root": "/tmp/store",
+        "store_sha256": digest,
+        "store_generation_sha256": digest,
+        "graph_sha256": digest,
+        "documents": 0,
+        "counts": {"nodes": 0, "edges": 0, "references": 0},
+        "query_backend": "json-memory",
+        "layout": "snapshot-copy",
+    }
+
+
+def minimal_obsidian_report() -> dict:
+    digest = "e" * 64
+    return {
+        "schema": "qlkg-obsidian-export-report-v1",
+        "status": "verified",
+        "artifact_schema": "qlkg-obsidian-projection-v1",
+        "projection_sha256": digest,
+        "source": {
+            "graph_schema": "qlkg-v3",
+            "graph_sha256": digest,
+            "snapshot_sha256": digest,
+            "source_hashes_sha256": digest,
+        },
+        "policy": {
+            "nodes": "active-knowledge",
+            "edges": "current-semantic",
+            "edge_semantics_in_obsidian_graph": "lossy",
+            "authority_links": "vault-relative",
+        },
+        "counts": {"concepts": 0, "sources": 0, "links": 0},
+        "output": "/tmp/obsidian",
+        "changed": False,
+    }
+
+
+def minimal_static_report() -> dict:
+    digest = "f" * 64
+    counts = {"nodes": 0, "edges": 0, "references": 0}
+    return {
+        "schema": "qlkg-static-export-report-v1",
+        "status": "exported",
+        "artifact_schema": "qlkg-static-export-v2",
+        "committed": True,
+        "cleanup_status": "complete",
+        "warnings": [],
+        "recovery_paths": [],
+        "output": "/tmp/site",
+        "export_sha256": digest,
+        "producer": {
+            "name": "kgdistiller",
+            "repository": "https://github.com/example/kgdistiller",
+            "version": "0.4.0",
+            "commit": "a" * 40,
+        },
+        "source": {
+            "repository": "https://github.com/example/notes",
+            "revision": "b" * 40,
+            "digest": digest,
+            "published_digest": digest,
+        },
+        "graph": {
+            "private_schema": "qlkg-v3",
+            "private_sha256": digest,
+            "private_counts": counts,
+            "public_schema": "qlkg-site-graph-v1",
+            "public_sha256": digest,
+            "public_counts": counts,
+        },
+        "visibility": {
+            "policy": "explicit-publish",
+            "published_sources": [],
+            "excluded_sources": 0,
+        },
+        "replaced": False,
+        "replaces_export_sha256": None,
+    }
+
+
+class ContractTest(unittest.TestCase):
+    def test_current_contract_catalog_is_packaged(self) -> None:
+        self.assertEqual(
+            {
+                "qlkg-retrieval-plan-v2",
+                "qlkg-query-status-v1",
+                "qlkg-search-result-v3",
+                "qlkg-search-execution-v2",
+                "qlkg-document-record-v1",
+                "qlkg-store-v2",
+                "qlkg-store-report-v1",
+                "qlkg-obsidian-projection-v1",
+                "qlkg-obsidian-export-report-v1",
+                "qlkg-static-export-v2",
+                "qlkg-static-export-report-v1",
+                "qlkg-site-graph-v1",
+            },
+            set(CONTRACT_SCHEMAS),
+        )
         for discriminator, filename in CONTRACT_SCHEMAS.items():
             with self.subTest(schema=discriminator):
                 schema = load_contract_schema(discriminator)
-                self.assertEqual(
-                    discriminator, schema["properties"]["schema"]["const"]
-                )
-                packaged = resources.files("kgdistiller").joinpath("schemas", filename)
-                self.assertTrue(packaged.is_file())
+                self.assertEqual(discriminator, schema["properties"]["schema"]["const"])
+                self.assertTrue(resources.files("kgdistiller").joinpath("schemas", filename).is_file())
 
-    def test_valid_fixtures_validate_through_packaged_loader(self) -> None:
-        for discriminator in CONTRACT_SCHEMAS:
-            with self.subTest(schema=discriminator):
-                payload = load_fixture("valid", discriminator)
+    def test_current_valid_contracts_pass(self) -> None:
+        payloads = [fixture(name) for name in FIXTURE_CONTRACTS]
+        payloads.extend(
+            [
+                minimal_query_status(),
+                minimal_store(),
+                minimal_store_report(),
+                minimal_obsidian(),
+                minimal_obsidian_report(),
+                minimal_static_report(),
+            ]
+        )
+        for payload in payloads:
+            with self.subTest(schema=payload["schema"]):
                 self.assertEqual(payload, validate_contract(payload))
 
-    def test_search_execution_result_validates_separately_as_v2(self) -> None:
-        execution = validate_contract(
-            load_fixture("valid", "qlkg-search-execution-v1")
-        )
-
-        self.assertEqual(
-            execution["result"],
-            validate_contract(execution["result"]),
-        )
-
-        invalid_nested = copy.deepcopy(execution)
-        del invalid_nested["result"]["lanes"]["semantic"]["reason"]
-        self.assertEqual(invalid_nested, validate_contract(invalid_nested))
-        with self.assertRaises(ContractError):
-            validate_contract(invalid_nested["result"])
-
-    def test_invalid_fixture_for_every_contract_fails_closed(self) -> None:
-        for discriminator in CONTRACT_SCHEMAS:
+    def test_current_invalid_fixtures_fail_closed(self) -> None:
+        for discriminator in FIXTURE_CONTRACTS:
             with self.subTest(schema=discriminator):
-                payload = load_fixture("invalid", discriminator)
+                with self.assertRaises(ContractError):
+                    validate_contract(fixture(discriminator, "invalid"))
+
+    def test_removed_runtime_contracts_are_explicitly_unsupported(self) -> None:
+        for discriminator in (
+            "qlkg-local-profile-v1",
+            "qlkg-embedding-policy-v1",
+            "qlkg-store-v1",
+            "qlkg-retrieval-plan-v1",
+            "qlkg-static-export-v1",
+            "qlkg-document-upsert-request-v1",
+            "qlkg-document-ingest-receipt-v1",
+            "qlkg-document-record-v2",
+        ):
+            with self.subTest(schema=discriminator):
+                with self.assertRaisesRegex(ContractError, "unsupported contract schema"):
+                    validate_contract({"schema": discriminator})
+
+    def test_current_wrapper_contracts_reject_superseded_graph_schema(self) -> None:
+        cases = [
+            (minimal_query_status(), ("graph_schema",)),
+            (minimal_obsidian(), ("source", "graph_schema")),
+            (minimal_obsidian_report(), ("source", "graph_schema")),
+            (minimal_static_report(), ("graph", "private_schema")),
+            (fixture("qlkg-static-export-v2"), ("graph", "private_schema")),
+        ]
+        for payload, path in cases:
+            target = payload
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = "qlkg-v2"
+            with self.subTest(schema=payload["schema"]):
                 with self.assertRaises(ContractError):
                     validate_contract(payload)
 
-    def test_missing_packaged_schema_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            with mock.patch(
-                "kgdistiller.contracts.resources.files",
-                return_value=Path(temporary),
-            ):
-                with self.assertRaisesRegex(
-                    ContractError, "packaged contract schema is unavailable"
-                ):
-                    load_contract_schema("qlkg-local-profile-v1")
+    def test_store_and_obsidian_self_digests_detect_tampering(self) -> None:
+        for payload, field in (
+            (minimal_store(), "store_sha256"),
+            (minimal_obsidian(), "projection_sha256"),
+        ):
+            payload["status" if "status" in payload else "generator"] = "tampered"
+            with self.subTest(schema=payload["schema"]):
+                with self.assertRaises(ContractError):
+                    validate_contract(payload)
+            self.assertNotEqual(payload[field], self_digest(payload, field))
 
-    def test_malformed_packaged_schema_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            schema_dir = Path(temporary) / "schemas"
-            schema_dir.mkdir()
-            (schema_dir / "qlkg-local-profile-v1.schema.json").write_text(
-                "{", encoding="utf-8"
-            )
-            with mock.patch(
-                "kgdistiller.contracts.resources.files",
-                return_value=Path(temporary),
-            ):
-                with self.assertRaisesRegex(ContractError, "malformed contract JSON"):
-                    load_contract_schema("qlkg-local-profile-v1")
+    def test_search_execution_identity_indices_are_contiguous(self) -> None:
+        payload = fixture("qlkg-search-execution-v2")
+        payload["identity_resolutions"][1]["query_index"] = 3
+        with self.assertRaisesRegex(ContractError, "unique and contiguous"):
+            validate_contract(payload)
 
-    def test_malformed_fixture_json_and_nonfinite_constants_fail_closed(self) -> None:
+    def test_nested_search_result_is_validated_by_its_own_contract(self) -> None:
+        execution = validate_contract(fixture("qlkg-search-execution-v2"))
+        self.assertEqual(execution["result"], validate_contract(execution["result"]))
+        invalid = copy.deepcopy(execution["result"])
+        invalid["lanes"]["semantic"] = {
+            "status": "enabled",
+            "queries": 1,
+            "results": 1,
+        }
+        with self.assertRaisesRegex(ContractError, "unknown property"):
+            validate_contract(invalid)
+        execution["result"] = invalid
+        with self.assertRaisesRegex(ContractError, "unknown property"):
+            validate_contract(execution)
+
+    def test_search_result_seed_counts_obey_the_runtime_limit(self) -> None:
+        result = fixture("qlkg-search-result-v3")
+        result["lanes"]["ppr"]["seeds"] = 129
+        with self.assertRaisesRegex(ContractError, "must be <= 128"):
+            validate_contract(result)
+
+    def test_document_normalization_and_public_edge_privacy_are_enforced(self) -> None:
+        document = fixture("qlkg-document-record-v1")
+        document["format"] = "typst"
+        with self.assertRaisesRegex(ContractError, "authority extension"):
+            validate_contract(document)
+
+        graph = fixture("qlkg-site-graph-v1")
+        graph["nodes"] = [
+            {"id": "a", "type": "knowledge", "label": "A"},
+            {"id": "b", "type": "knowledge", "label": "B"},
+        ]
+        graph["edges"] = [
+            {
+                "source": "a",
+                "relation": "derived-from",
+                "target": "b",
+                "evidence": "must remain private",
+            }
+        ]
+        graph["counts"] = {"nodes": 2, "edges": 1, "references": 0}
+        graph = finalize_self_digest(graph, "graph_sha256")
+        with self.assertRaisesRegex(ContractError, "unknown property"):
+            validate_contract(graph)
+
+    def test_schema_loading_and_json_parsing_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch("kgdistiller.contracts.resources.files", return_value=Path(temporary)):
+                with self.assertRaisesRegex(ContractError, "unavailable"):
+                    load_contract_schema("qlkg-store-v2")
         with self.assertRaisesRegex(ContractError, "malformed contract JSON"):
             parse_contract_json("{")
         for constant in ("NaN", "Infinity", "-Infinity"):
-            with self.subTest(constant=constant):
-                with self.assertRaisesRegex(ContractError, "non-finite"):
-                    parse_contract_json(f'{{"value":{constant}}}')
+            with self.assertRaisesRegex(ContractError, "non-finite"):
+                parse_contract_json(f'{{"value":{constant}}}')
 
-    def test_unresolved_and_nonlocal_references_fail_closed(self) -> None:
+    def test_canonical_json_is_unicode_stable_and_finite(self) -> None:
+        first = {"b": [2, 1], "a": "é"}
+        second = {"a": "é", "b": [2, 1]}
+        self.assertEqual('{"a":"é","b":[2,1]}', canonical_json(first))
+        self.assertEqual(sha256_json(first), sha256_json(second))
+        for value in (math.nan, math.inf, -math.inf):
+            with self.assertRaisesRegex(ContractError, "not finite"):
+                canonical_json({"value": value})
+
+    def test_json_schema_references_remain_local(self) -> None:
         for reference, message in (
             ("#/$defs/missing", "unresolved JSON Schema reference"),
             ("https://example.invalid/remote", "unsupported non-local"),
@@ -115,494 +380,6 @@ class ContractResourceTests(unittest.TestCase):
             with self.subTest(reference=reference):
                 with self.assertRaisesRegex(ValueError, message):
                     validate_json_schema({}, {"$ref": reference})
-
-
-class CanonicalDigestTests(unittest.TestCase):
-    def test_canonical_json_is_unicode_compact_and_order_stable(self) -> None:
-        first = {"b": [2, 1], "a": "é"}
-        second = {"a": "é", "b": [2, 1]}
-        expected = '{"a":"é","b":[2,1]}'
-        self.assertEqual(expected, canonical_json(first))
-        self.assertEqual(expected, canonical_json(second))
-        self.assertEqual(sha256_json(first), sha256_json(second))
-        self.assertEqual([sha256_json(first)] * 10, [sha256_json(first) for _ in range(10)])
-
-    def test_canonical_json_rejects_nonfinite_numbers(self) -> None:
-        for value in (math.nan, math.inf, -math.inf):
-            with self.subTest(value=value):
-                with self.assertRaisesRegex(ContractError, "not finite canonical JSON"):
-                    canonical_json({"value": value})
-
-    def test_self_digest_omits_only_its_own_field(self) -> None:
-        payload = {"schema": "fixture", "value": "stable", "digest": "0" * 64}
-        finalized = finalize_self_digest(payload, "digest")
-        self.assertEqual(self_digest(finalized, "digest"), finalized["digest"])
-        reordered = {"value": "stable", "digest": finalized["digest"], "schema": "fixture"}
-        self.assertEqual(finalized["digest"], self_digest(reordered, "digest"))
-        tampered = copy.deepcopy(finalized)
-        tampered["value"] = "changed"
-        self.assertNotEqual(finalized["digest"], self_digest(tampered, "digest"))
-
-    def test_request_and_receipt_tampering_is_rejected(self) -> None:
-        for discriminator, path in (
-            ("qlkg-document-upsert-request-v1", ("source", "source_sha256")),
-            ("qlkg-document-ingest-receipt-v1", ("warnings",)),
-        ):
-            payload = load_fixture("valid", discriminator)
-            if len(path) == 2:
-                payload[path[0]][path[1]] = "f" * 64
-            else:
-                payload[path[0]].append("tampered")
-            with self.subTest(schema=discriminator):
-                with self.assertRaisesRegex(ContractError, "does not match canonical"):
-                    validate_contract(payload)
-
-
-class ContractNegativeTests(unittest.TestCase):
-    def assert_invalid(self, payload: dict, message: Optional[str] = None) -> None:
-        context = self.assertRaisesRegex(ContractError, message) if message else self.assertRaises(ContractError)
-        with context:
-            validate_contract(payload)
-
-    def test_missing_unknown_and_wrong_discriminator_are_rejected(self) -> None:
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        del profile["database"]
-        self.assert_invalid(profile, "missing required property")
-
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["unknown"] = True
-        self.assert_invalid(profile, "unknown property")
-
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["schema"] = "qlkg-local-profile-v2"
-        self.assert_invalid(profile, "unsupported contract schema")
-
-    def test_public_site_edges_reject_source_derived_fields(self) -> None:
-        graph = load_fixture("valid", "qlkg-site-graph-v1")
-        graph["nodes"] = [
-            {"id": "public-a", "type": "knowledge", "label": "Public A"},
-            {"id": "public-b", "type": "knowledge", "label": "Public B"},
-        ]
-        graph["edges"] = [
-            {
-                "source": "public-a",
-                "relation": "derived-from",
-                "target": "public-b",
-                "evidence": "private prose must not cross the export boundary",
-            }
-        ]
-        graph["counts"] = {"nodes": 2, "edges": 1, "references": 0}
-        graph = finalize_self_digest(graph, "graph_sha256")
-        self.assert_invalid(graph, "unknown property")
-
-    def test_invalid_digest_syntax_enums_formats_dimensions_and_coverage(self) -> None:
-        cases = []
-        search = load_fixture("valid", "qlkg-search-result-v2")
-        search["plan_sha256"] = "ABC"
-        cases.append(search)
-
-        search = load_fixture("valid", "qlkg-search-result-v2")
-        search["lanes"]["semantic"]["status"] = "silently-off"
-        cases.append(search)
-
-        document = load_fixture("valid", "qlkg-document-record-v2")
-        document["format"] = "pdf"
-        cases.append(document)
-
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["provider_profiles"]["primary"]["dimensions"] = 0
-        cases.append(profile)
-
-        policy = load_fixture("valid", "qlkg-embedding-policy-v1")
-        policy["profiles"][0]["minimum_coverage"] = -0.01
-        cases.append(policy)
-
-        for index, payload in enumerate(cases):
-            with self.subTest(case=index):
-                self.assert_invalid(payload)
-
-    def test_search_path_evidence_rejects_unknown_edge_type(self) -> None:
-        search = load_fixture("valid", "qlkg-search-result-v2")
-        search["results"][0]["path_evidence"][0]["edge_types"][0] = "not-a-relation"
-        self.assert_invalid(search, "must be one of")
-
-    def test_matching_evidence_values_are_kind_specific_and_bounded(self) -> None:
-        cases = (
-            ("explicit-document-id", "not-a-document-id"),
-            ("authority", "notes/../escaped.typ"),
-            ("content-sha256", "not-a-digest"),
-            ("external-id", "x" * 1025),
-        )
-        for kind, value in cases:
-            request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-            request["document"]["matching_evidence"] = [
-                {"kind": kind, "value": value}
-            ]
-            request = finalize_self_digest(request, "request_sha256")
-            with self.subTest(kind=kind):
-                self.assert_invalid(request, "must match exactly one oneOf branch")
-
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["document"]["matching_evidence"] = [
-            {"kind": "external-id", "value": "doi:10.1234/synthetic"}
-        ]
-        request = finalize_self_digest(request, "request_sha256")
-        self.assertEqual(request, validate_contract(request))
-
-    def test_secret_bearing_fields_and_urls_are_rejected(self) -> None:
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["provider_profiles"]["primary"]["api_key"] = "secret"
-        self.assert_invalid(profile, "unknown property")
-
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["provider_profiles"]["primary"]["credential_env"] = "sk-secret"
-        self.assert_invalid(profile, "must match pattern")
-
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["provider_profiles"]["primary"]["base_url"] = (
-            "https://user:secret@example.invalid/v1"
-        )
-        self.assert_invalid(profile, "must match pattern")
-
-        policy = load_fixture("valid", "qlkg-embedding-policy-v1")
-        policy["profiles"][0]["credential_env"] = "SECRET_ENV"
-        self.assert_invalid(policy, "unknown property")
-
-    def test_absolute_portable_paths_and_escape_representations_are_rejected(self) -> None:
-        document = load_fixture("valid", "qlkg-document-record-v2")
-        document["authority"] = "/private/synthetic.typ"
-        self.assert_invalid(document, "must match pattern")
-
-        for escape in (
-            "notes/../private.typ",
-            "notes/link/../../private.typ",
-            "notes\\..\\private.typ",
-            "file:///private/synthetic.typ",
-        ):
-            request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-            request["source"]["authority"] = escape
-            request = finalize_self_digest(request, "request_sha256")
-            with self.subTest(escape=escape):
-                self.assert_invalid(request, "must match pattern")
-
-        policy = load_fixture("valid", "qlkg-embedding-policy-v1")
-        policy["portable_store"] = "/private/store"
-        self.assert_invalid(policy, "unknown property")
-
-    def test_forbidden_embedded_payloads_are_rejected(self) -> None:
-        receipt = load_fixture("valid", "qlkg-document-ingest-receipt-v1")
-        receipt["vector_bytes"] = [0, 1, 2]
-        self.assert_invalid(receipt, "unknown property")
-
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["raw_prose"] = "Unreviewed discovery input is forbidden."
-        request = finalize_self_digest(request, "request_sha256")
-        self.assert_invalid(request, "unknown property")
-
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["reviewed"]["review"]["status"] = "proposed"
-        request = finalize_self_digest(request, "request_sha256")
-        self.assert_invalid(request, "must equal 'reviewed'")
-
-    def test_nonfinite_scores_fail_schema_validation(self) -> None:
-        result = load_fixture("valid", "qlkg-search-result-v2")
-        result["results"][0]["fusion"]["score"] = math.nan
-        self.assert_invalid(result, "must have type number")
-
-    def test_over_limit_arrays_and_strings_are_rejected(self) -> None:
-        plan = load_fixture("valid", "qlkg-retrieval-plan-v1")
-        plan["question"] = "q" * 8193
-        self.assert_invalid(plan, "at most 8192")
-
-        plan = load_fixture("valid", "qlkg-retrieval-plan-v1")
-        plan["identity_queries"] = [f"query-{index}" for index in range(33)]
-        self.assert_invalid(plan, "at most 32")
-
-        receipt = load_fixture("valid", "qlkg-document-ingest-receipt-v1")
-        receipt["warnings"] = [f"warning-{index}" for index in range(65)]
-        receipt = finalize_self_digest(receipt, "receipt_sha256")
-        self.assert_invalid(receipt, "at most 64")
-
-    def test_duplicate_policy_profile_names_are_rejected(self) -> None:
-        policy = load_fixture("valid", "qlkg-embedding-policy-v1")
-        duplicate = copy.deepcopy(policy["profiles"][0])
-        duplicate["model"] = "different-space"
-        policy["profiles"].append(duplicate)
-        self.assert_invalid(policy, "profile names must be unique")
-
-    def test_local_profile_selection_and_document_normalization_are_checked(self) -> None:
-        profile = load_fixture("valid", "qlkg-local-profile-v1")
-        profile["embedding_profile"] = "missing"
-        self.assert_invalid(profile, "must name a provider_profiles entry")
-
-        document = load_fixture("valid", "qlkg-document-record-v2")
-        document["authority_history"].append(document["authority"])
-        self.assert_invalid(document, "must not repeat")
-
-        document = load_fixture("valid", "qlkg-document-record-v2")
-        document["external_ids"]["doi"] = "10.1234/SYNTHETIC"
-        self.assert_invalid(document, "lowercase normalized")
-
-    def test_upsert_authority_must_match_bounded_registered_glob(self) -> None:
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["source"]["authority"] = "research/synthetic.typ"
-        request = finalize_self_digest(request, "request_sha256")
-        self.assert_invalid(request, "must match its registered bounded glob")
-
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["source"]["registered_glob"] = "**/*.typ"
-        request = finalize_self_digest(request, "request_sha256")
-        self.assert_invalid(request, "bounded relative prefix")
-
-        request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-        request["preconditions"]["query_sha256"] = "f" * 64
-        request = finalize_self_digest(request, "request_sha256")
-        self.assert_invalid(request, "query artifact digest")
-
-    def test_malformed_registered_glob_fails_with_contract_error(self) -> None:
-        for malformed_glob in (
-            "notes/[z-a].typ",
-            "notes/[.typ",
-            "notes/[].typ",
-            "notes/[!].typ",
-            "notes/[^].typ",
-        ):
-            with self.subTest(registered_glob=malformed_glob):
-                request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-                request["source"]["registered_glob"] = malformed_glob
-                request = finalize_self_digest(request, "request_sha256")
-                self.assert_invalid(request, "registered_glob is malformed")
-
-    def test_disabled_and_degraded_lanes_require_reason_codes(self) -> None:
-        result = load_fixture("valid", "qlkg-search-result-v2")
-        del result["lanes"]["semantic"]["reason"]
-        self.assert_invalid(result, "missing required property 'reason'")
-
-    def test_search_execution_fields_and_identity_evidence_are_bounded(self) -> None:
-        cases = []
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["plan_mode"] = "implicit"
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["namespace"] = "Personal Namespace"
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["snapshot_sha256"] = "ABC"
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["graph_sha256"] = "f" * 63
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][0]["query_index"] = 32
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][0]["status"] = "resolved-by-score"
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][0]["match_kind"] = "semantic"
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][0]["candidate_ids"] = [
-            f"candidate-{index}" for index in range(501)
-        ]
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][0]["overflow"] = True
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][1]["overflow"] = True
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][0]["identity_authority"] = False
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"][1]["query_index"] = 0
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["identity_resolutions"] = [
-            {
-                "query_index": index,
-                "status": "missing",
-                "match_kind": None,
-                "candidate_ids": [],
-                "overflow": False,
-                "identity_authority": False,
-            }
-            for index in range(32)
-        ] + [
-            {
-                "query_index": 0,
-                "status": "missing",
-                "match_kind": None,
-                "candidate_ids": [],
-                "overflow": False,
-                "identity_authority": False,
-            }
-        ]
-        cases.append(execution)
-
-        execution = load_fixture("valid", "qlkg-search-execution-v1")
-        execution["result"] = []
-        cases.append(execution)
-
-        for index, payload in enumerate(cases):
-            with self.subTest(case=index):
-                self.assert_invalid(payload)
-
-    def test_search_execution_identity_statuses_preserve_resolution_meaning(self) -> None:
-        base = load_fixture("valid", "qlkg-search-execution-v1")
-        variants = (
-            ("exact", "id", ["synthetic-theorem"], False),
-            ("exact", "label", ["synthetic-theorem"], False),
-            ("alias", "alias", ["synthetic-theorem"], False),
-            (
-                "scoped-alias",
-                "scoped-alias",
-                ["synthetic-theorem"],
-                False,
-            ),
-            (
-                "ambiguous",
-                None,
-                ["synthetic-premise", "synthetic-theorem"],
-                False,
-            ),
-            (
-                "ambiguous",
-                "scoped-alias",
-                [f"candidate-{index}" for index in range(500)],
-                True,
-            ),
-            ("missing", None, [], False),
-        )
-
-        for status, match_kind, candidate_ids, overflow in variants:
-            execution = copy.deepcopy(base)
-            execution["identity_resolutions"] = [
-                {
-                    "query_index": 0,
-                    "status": status,
-                    "match_kind": match_kind,
-                    "candidate_ids": candidate_ids,
-                    "overflow": overflow,
-                    "identity_authority": status != "missing",
-                }
-            ]
-            with self.subTest(status=status, match_kind=match_kind):
-                self.assertEqual(execution, validate_contract(execution))
-
-
-class ReceiptInvariantTests(unittest.TestCase):
-    def test_ready_requires_every_stage_ready(self) -> None:
-        receipt = load_fixture("valid", "qlkg-document-ingest-receipt-v1")
-        receipt["stages"]["embeddings"] = {
-            "status": "provider-failed",
-            "ready": 0,
-            "missing": 2,
-            "reason": "provider-unavailable",
-        }
-        receipt = finalize_self_digest(receipt, "receipt_sha256")
-        with self.assertRaisesRegex(ContractError, "ready receipt"):
-            validate_contract(receipt)
-
-    def test_graph_committed_failure_is_degraded_not_failed(self) -> None:
-        receipt = load_fixture("valid", "qlkg-document-ingest-receipt-v1")
-        receipt["overall_status"] = "failed"
-        receipt["git_ready"] = False
-        receipt = finalize_self_digest(receipt, "receipt_sha256")
-        with self.assertRaisesRegex(ContractError, "post-commit failure"):
-            validate_contract(receipt)
-
-    def test_degraded_post_commit_receipt_is_representable(self) -> None:
-        receipt = load_fixture("valid", "qlkg-document-ingest-receipt-v1")
-        receipt["overall_status"] = "degraded"
-        receipt["stages"]["embeddings"] = {
-            "status": "provider-failed",
-            "ready": 0,
-            "missing": 2,
-            "reason": "provider-unavailable",
-        }
-        receipt["stages"]["portable"] = {"status": "pending"}
-        receipt["stages"]["materialization"] = {"status": "pending"}
-        receipt["git_ready"] = False
-        receipt["warnings"] = ["Embedding enrichment is pending."]
-        receipt = finalize_self_digest(receipt, "receipt_sha256")
-        self.assertEqual("degraded", validate_contract(receipt)["overall_status"])
-
-    def test_pending_receipt_is_representable_and_not_git_ready(self) -> None:
-        receipt = load_fixture("valid", "qlkg-document-ingest-receipt-v1")
-        receipt["overall_status"] = "pending"
-        receipt["document"] = {"document_id": "doc:synthetic-note", "operation": "update"}
-        receipt["stages"] = {
-            "authority_graph": {"status": "pending"},
-            "embeddings": {"status": "pending", "ready": 0, "missing": 0, "reason": "authority-pending"},
-            "portable": {"status": "pending"},
-            "materialization": {"status": "pending"},
-        }
-        receipt["git_ready"] = False
-        receipt = finalize_self_digest(receipt, "receipt_sha256")
-        self.assertEqual("pending", validate_contract(receipt)["overall_status"])
-
-
-class CompatibilityTests(unittest.TestCase):
-    def test_published_v1_fixtures_remain_readable(self) -> None:
-        for path in sorted((FIXTURES / "compatibility").glob("*.json")):
-            with self.subTest(fixture=path.name):
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                schema_path = resources.files("kgdistiller").joinpath(
-                    "schemas", f"{payload['schema']}.schema.json"
-                )
-                schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                self.assertEqual([], validate_json_schema(payload, schema))
-
-    def test_document_v1_and_v2_are_isolated(self) -> None:
-        v1 = load_fixture("compatibility", "qlkg-document-record-v1")
-        v2 = load_fixture("valid", "qlkg-document-record-v2")
-        v1_schema = json.loads(
-            resources.files("kgdistiller")
-            .joinpath("schemas", "qlkg-document-record-v1.schema.json")
-            .read_text(encoding="utf-8")
-        )
-        v2_schema = load_contract_schema("qlkg-document-record-v2")
-        self.assertTrue(validate_json_schema(v2, v1_schema))
-        self.assertTrue(validate_json_schema(v1, v2_schema))
-        self.assertNotIn("document_id", v1_schema["required"])
-        self.assertIn("document_id", v2_schema["required"])
-
-    def test_unknown_future_schema_fails_explicitly(self) -> None:
-        future = load_fixture("valid", "qlkg-document-record-v2")
-        future["schema"] = "qlkg-document-record-v3"
-        with self.assertRaisesRegex(ContractError, "unsupported contract schema"):
-            validate_contract(future)
-
-    def test_markdown_typst_and_latex_share_document_contracts(self) -> None:
-        variants = (("md", "md"), ("typ", "typ"), ("tex", "tex"))
-        for format_name, extension in variants:
-            with self.subTest(format=format_name):
-                document = load_fixture("valid", "qlkg-document-record-v2")
-                document["format"] = format_name
-                document["authority"] = f"notes/synthetic.{extension}"
-                validate_contract(document)
-
-                request = load_fixture("valid", "qlkg-document-upsert-request-v1")
-                request["source"]["format"] = format_name
-                request["source"]["authority"] = f"notes/synthetic.{extension}"
-                request["source"]["registered_glob"] = f"notes/**/*.{extension}"
-                request = finalize_self_digest(request, "request_sha256")
-                validate_contract(request)
 
 
 if __name__ == "__main__":

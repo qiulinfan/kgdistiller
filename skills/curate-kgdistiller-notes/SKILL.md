@@ -9,6 +9,10 @@ Turn authored notes into a reviewed update. Treat source prose as authority,
 kgdistiller as the deterministic transaction boundary, and generated graphs as
 opaque derived data.
 
+Match user-facing explanations, prompts, and handoffs to the user's language
+unless the user requests another language. Keep commands, identifiers,
+structured keys and action codes, and raw errors unchanged.
+
 ## Establish the bounded source scope
 
 Start with:
@@ -17,6 +21,11 @@ Start with:
 kgdistiller --repo-root PROJECT agent status
 kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY
 ```
+
+Require status to report a `qlkg-v3` graph before curation. If the project still
+uses a superseded core discriminator, stop and hand it to
+`$deploy-kgdistiller` for the explicit Git-backed registry update and rebuild;
+never migrate or relabel the old graph inside a curation transaction.
 
 Require each input to match exactly one pattern in `knowledge/sources.json`.
 Use the smallest coherent registered file set, including both paths of a known
@@ -40,20 +49,28 @@ Build one bounded candidate batch containing names, aliases, source locations,
 short evidence, and direct source-supported relations. Do not write entries or
 choose identity from similarity yet.
 
-Pass the whole batch to `$query-kgdistiller`. Require one `known`, `partial`,
-`new`, `conflict`, or `uncertain` decision per candidate and retain the target
-graph, snapshot, and alignment digests. Stop on conflicts and unresolved
-identities.
+Pass the whole batch to `$query-kgdistiller`. Require
+`qlkg-graph-comparison-v2` with one `matched`, `ambiguous`, or `unmatched`
+identity decision per candidate and retain the target graph, snapshot, and
+alignment digests. Stop on ambiguous identities. Comparison v2 does not assess
+partial entries or semantic claim conflicts; do not infer either from ranked
+retrieval evidence.
 
 ## Prepare one reviewed update
 
-Use established identities as refs. Add an authority marker only for a reviewed
-new identity. Author only the missing portion for a partial identity. Write a
-compact source-grounded entry for every active authority in the selected scope
-and add only direct semantic edges with concrete evidence.
+Use matched identities as refs. Add an authority marker only for a reviewed
+unmatched identity. Any enrichment of a matched identity needs a separate,
+source-grounded human review because comparison v2 does not identify a missing
+portion. Write a compact source-grounded entry for every active authority in
+the selected scope and add only direct semantic edges with concrete evidence.
+
+Treat `qlkg-agent-proposal-v2` only as a digest-bound review package. Its
+`delta_ready` may be false, so build and review the required
+`qlkg-agent-delta-v3` independently from native source evidence; never apply a
+proposal operation or empty `delta_preview` as a write delta.
 
 Prepare the source patch, complete post-patch marker/ref state, and one
-`qlkg-agent-delta-v2`. Do not open or edit graph JSONL, entry shards, SQLite, or
+`qlkg-agent-delta-v3`. Do not open or edit graph JSONL, entry shards, or
 alignment files directly. Hand the reviewed artifacts and query digests to
 `$ingest-kgdistiller`; accept completion only from a committed canonical
 receipt whose after-digests match a fresh status call.
@@ -70,7 +87,8 @@ after these gates pass:
 
 ```sh
 kgdistiller --repo-root PROJECT export site --output EXPORT_DIR \
-  --product-commit FULL_PRODUCT_COMMIT
+  --product-commit FULL_PRODUCT_COMMIT \
+  --source-repository SOURCE_REPOSITORY
 ```
 
 If `EXPORT_DIR` is an already verified adopted bundle, add `--replace` to
@@ -84,6 +102,7 @@ replace the authored notes.
 
 Return the registered source scope, query digests, reviewed identities, source
 and delta paths, committed ingest receipt, validation results, and optional
-static-export receipt. Report deferred conflicts and uncertainties explicitly.
+static-export receipt. Report deferred ambiguity and separately reviewed
+content conflicts explicitly.
 Do not claim publication, remote synchronization, or retrieval readiness unless
 the corresponding verified receipt proves it.

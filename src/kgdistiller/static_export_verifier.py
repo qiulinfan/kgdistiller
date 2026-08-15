@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
-MANIFEST_SCHEMA = "qlkg-static-export-v1"
+MANIFEST_SCHEMA = "qlkg-static-export-v2"
 SITE_GRAPH_SCHEMA = "qlkg-site-graph-v1"
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_GRAPH_BYTES = 128 * 1024 * 1024
@@ -615,7 +615,7 @@ def _verify_export(path: str | Path) -> dict[str, Any]:
     }:
         raise ExportVerificationError("manifest graph record is invalid")
     if (
-        graph_manifest.get("private_schema") != "qlkg-v2"
+        graph_manifest.get("private_schema") != "qlkg-v3"
         or graph_manifest.get("public_schema") != SITE_GRAPH_SCHEMA
     ):
         raise ExportVerificationError("manifest graph schemas are invalid")

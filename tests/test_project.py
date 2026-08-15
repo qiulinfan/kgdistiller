@@ -31,7 +31,11 @@ class ProjectInitializationTest(unittest.TestCase):
             )
 
             self.assertEqual(
-                {"schema": "qlkg-alignments-v1", "mappings": []},
+                "qlkg-sources-v3",
+                json.loads(registry.read_text(encoding="utf-8"))["schema"],
+            )
+            self.assertEqual(
+                {"schema": "qlkg-alignments-v2", "mappings": []},
                 json.loads(alignments.read_text(encoding="utf-8")),
             )
             self.assertEqual(
@@ -39,7 +43,7 @@ class ProjectInitializationTest(unittest.TestCase):
                 (root / "knowledge/.gitignore").read_text(encoding="utf-8"),
             )
             reviewed = {
-                "schema": "qlkg-alignments-v1",
+                "schema": "qlkg-alignments-v2",
                 "mappings": [{"preserved": True}],
             }
             alignments.write_text(json.dumps(reviewed), encoding="utf-8")
@@ -84,7 +88,7 @@ class ProjectInitializationTest(unittest.TestCase):
             self.assertEqual(b"!build/\rbuild/\nbuild/\n", gitignore.read_bytes())
             self.assertFalse(ensure_knowledge_gitignore(gitignore))
 
-    def test_custom_registry_still_ignores_the_default_local_profile(self) -> None:
+    def test_custom_registry_still_ignores_default_build_projections(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
             root = Path(temporary)
             registry = root / "config/sources.json"

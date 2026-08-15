@@ -3,6 +3,10 @@
 Use this contract for Markdown, Typst, and LaTeX authorities registered in a
 kgdistiller project.
 
+Require a current `qlkg-v3` graph and prepare only `qlkg-agent-delta-v3`.
+Superseded core registries and graphs belong to the explicit deployment/rebuild
+workflow, not curation.
+
 ## Authority and identity
 
 Treat one complete source file as the normal curation unit. Read its statements,
@@ -61,12 +65,15 @@ co-occurrence, or similarity. Keep `contains` and `prerequisite-for` acyclic.
 The extraction handoff contains:
 
 1. exact registered authority paths and expected source hashes;
-2. a decision for every candidate;
+2. one `matched`, `ambiguous`, or `unmatched` identity decision from
+   `qlkg-graph-comparison-v2` for every candidate;
 3. the target graph, snapshot, and alignment digests;
 4. the reviewed source patch and complete marker/ref state;
-5. one reviewed delta with entries and evidence-backed direct edges;
+5. one independently reviewed `qlkg-agent-delta-v3` with entries and
+   evidence-backed direct edges; `qlkg-agent-proposal-v2` is only a review
+   package and may have `delta_ready: false`;
 6. unresolved decisions, which block automated apply.
 
 Use `$query-kgdistiller` for identity and retrieval and
 `$ingest-kgdistiller` for mutation. Never edit generated graph artifacts or
-SQLite to make a validation gate pass.
+other derived runtime state to make a validation gate pass.

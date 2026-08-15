@@ -2,60 +2,62 @@
 
 ## Portable authority boundary
 
-The knowledge project, not the kgdistiller product checkout and not SQLite, is
-the backup unit. It owns registered Markdown, Typst, or LaTeX authorities plus
-the committed credential-free files under `knowledge/`: source, identity,
-alignment, and embedding policy registries; deterministic graph artifacts;
-document inventory; exact embedding objects; and `store.json`.
+The knowledge project owns registered Markdown, Typst, and LaTeX authorities,
+reviewed source/identity/alignment registries, the deterministic `qlkg-v3`
+graph, canonical document inventory, and `qlkg-store-v2` manifest. Opening that
+project as an Obsidian vault does not change the authority boundary. The
+product checkout, local browser state, static site, and generated Obsidian
+projection directory are not authority or backup roots.
 
-Keep `knowledge/build/`, SQLite/WAL/generation files, local profiles,
-credentials, plans, receipts, rendered pages, and provider caches local and
-ignored. Exact committed embeddings are derived retrieval artifacts and never
-grant identity or relation authority.
+Keep `knowledge/build/`, journals, plans, receipts, credentials, query logs,
+and generated projections local and ignored. Version 0.4 has no database,
+embedding bundle, provider configuration, machine profile, or materialization
+contract.
+
+Version 0.4 refuses the old `qlkg-v2` graph, `qlkg-sources-v2`,
+`qlkg-identities-v1`, and `qlkg-agent-delta-v2` core discriminators. Do not
+silently relabel or preserve that derived graph. First require a committed Git
+rollback point containing the native authorities and reviewed registries, then
+export any entries and edges that must survive for human review on 0.3. With
+0.4 installed, move the old generated `knowledge/graph/` outside the project or
+delete that exact directory after confirming the rollback commit. Explicitly
+review and update registry discriminators and run an unscoped `sync` to derive
+`qlkg-v3`. Re-author reviewed metadata under `qlkg-agent-delta-v3`. The rebuild
+recovers marker-derived nodes and references, not un-reissued 0.3 Agent-curated
+entries or semantic edges; treat their loss as intentional.
 
 ## Required checks
 
-Before snapshot or export, run `check`, inspect embedding status separately,
-create the portable store snapshot, and run `store verify`. A verified store is
-not automatically semantically ready when a required embedding policy is
-degraded. Never call a provider during `store snapshot`, `store verify`, or
-`store materialize`.
+Before snapshot or export, run `check` and `agent status`. Run `store snapshot`
+then `store verify`; for a separate snapshot, verify its output root. On restore,
+verify before any query. A verified clone is directly queryable through the
+generation-checked JSON `GraphView`.
 
-On restore, verify before sync, delete only disposable build state when that is
-explicitly intended, materialize the verified generation, check Agent status,
-and exercise bounded resolution/context queries. Preserve an interrupted ingest
-journal for automatic recovery; do not delete it to hide a mixed generation.
+Never run `sync` to mask a verification mismatch and never hand-edit manifests,
+invent digests, or delete an interrupted ingest journal. Restore a known-good
+generation or repair the native authority on its owning machine.
 
 ## Product and publication provenance
 
-Record the installed kgdistiller version and exact full product commit. A
-static publication must be a `qlkg-static-export-v1` bundle produced by
-`kgdistiller export site`. Its receipt binds producer repository/version/commit,
-source revision/digests, private and public graph digests, visibility policy,
-and artifact bytes. The standalone verifier is the consumer boundary.
-Public edges contain only the structural `source`, `relation`, and `target`
-triple; source-derived evidence, fingerprints, origin, confidence, and
-curation fields stay private even when both endpoints are public.
-Export requires a clean instance checkout including untracked files. The
-source registry, four core private graph projections, every manifest-declared
-entry shard, and every authority named by `source_hashes` must be tracked by
-current `HEAD`. Authority hashes use UTF-8 text with CRLF/CR normalized to LF,
-matching scan, sync, ingest, store, and check on Windows and POSIX. That proven
-`HEAD` is `source.revision`; it has no manual override. Commit instance inputs
-first, export and verify second, then commit the exact four-file bundle as a
-separate adoption revision. Bundle artifact hashes and byte counts likewise
-use canonical LF UTF-8 text so the standalone verifier survives checkout EOL
-conversion.
-Periodic refresh uses explicit `--replace`: the old exact four-file bundle must
-verify, the successor is generated and verified in staging, and installation
-uses a rollback-safe directory swap. The successor manifest records the prior
-`export_sha256`; never pre-delete the adopted bundle. The successor swap is the
-commit point. A post-commit cleanup failure returns the committed export with
-`cleanup_status: pending` and an exact managed path under ignored
-`knowledge/build/.kgd-export-recovery/`; the next export verifies the successor
-receipt before finishing cleanup. V1 contains exactly the three non-manifest
-artifacts `graph.json`, `knowledge-registry.typ`, and `verify_export.py`.
+Record installed kgdistiller version and full product commit when discoverable.
+A static publication must be a `qlkg-static-export-v2` bundle produced by
+`export site` and verified by its packaged dependency-free verifier. Its
+receipt binds producer, clean source repository revision/digests, visibility
+policy, private/public graph digests, and exact artifact bytes. Public edges
+contain only the structural `source`, `relation`, and `target` triple.
+
+Refreshing a managed static bundle requires `--replace`: verify the predecessor,
+generate and verify a successor in staging, then use the rollback-safe swap.
+Never pre-delete an adopted bundle.
+
+The knowledge-project root may be the Obsidian editor vault; registered
+Markdown files there remain native authority. An Obsidian export is a managed
+`qlkg-obsidian-projection-v1` downstream subtree, or an external browsing-only
+vault/projection. It is lossy, disposable, and never a source. Do not add its
+root to the source registry or feed any projected note to scan, sync, candidate,
+or ingest.
 
 Installing, linking, snapshotting, exporting, committing, pushing, and making
-data network-public are separate authorities. Never place secrets in a project,
-receipt, command output, Codex configuration, or export.
+data network-public are separate authorities. Never place private sources or
+secrets in a product repository, receipt, command output, Codex configuration,
+or public export.

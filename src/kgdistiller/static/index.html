@@ -3,35 +3,66 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Browse a local source-backed knowledge graph." />
+    <meta name="description" content="Search and inspect a local source-backed knowledge graph." />
     <title>kgdistiller</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <header class="topbar">
-      <div><span class="mark">KG</span><strong>kgdistiller</strong></div>
+      <div class="brand"><span class="mark">KG</span><strong>kgdistiller</strong><span class="local">LOCAL</span></div>
       <p id="stats">Loading local graph…</p>
     </header>
     <main>
-      <aside class="browser">
-        <label for="query">Search the graph</label>
-        <input id="query" type="search" autocomplete="off" placeholder="Name, alias, entry, field…" />
+      <aside class="browser" aria-label="Knowledge search">
+        <div class="browser-heading">
+          <div><span class="kicker">RECALL</span><h1>Knowledge</h1></div>
+          <span id="result-count" class="count">0</span>
+        </div>
+        <label class="search" for="query">
+          <span class="sr-only">Search the graph</span>
+          <input id="query" type="search" autocomplete="off" placeholder="Name, alias, entry, field…" />
+          <button id="clear-query" type="button" aria-label="Clear search" hidden>×</button>
+        </label>
         <div class="filters" role="group" aria-label="Node type">
           <button class="active" data-type="all">All</button>
           <button data-type="field">Fields</button>
           <button data-type="topic">Topics</button>
           <button data-type="knowledge">Knowledge</button>
         </div>
+        <div class="filters origins" role="group" aria-label="Knowledge origin">
+          <button class="active" data-origin="all">Any source</button>
+          <button data-origin="personal-note">Personal</button>
+          <button data-origin="research">Research</button>
+        </div>
         <ol id="results" aria-live="polite"></ol>
       </aside>
+
       <section class="workspace">
-        <div class="graph-panel">
-          <header><span>LOCAL NEIGHBORHOOD</span><p>Click a node to follow its relations.</p></header>
-          <svg id="graph" role="img" aria-label="Selected node neighborhood"></svg>
-        </div>
-        <article id="detail" class="detail">
-          <p class="empty">Choose a node to inspect its source-backed entry.</p>
-        </article>
+        <section class="graph-panel" aria-label="Knowledge graph neighborhood">
+          <header>
+            <div><span class="kicker">LOCAL GRAPH</span><h2>Two-hop neighborhood</h2></div>
+            <div class="legend" aria-label="Graph legend">
+              <span><i class="personal"></i>personal</span>
+              <span><i class="research"></i>research</span>
+              <span><i class="semantic"></i>semantic</span>
+            </div>
+          </header>
+          <svg id="graph" role="img" aria-label="Selected node and its two-hop neighborhood"></svg>
+          <p class="graph-note">Select a node to continue · outer ring is the second hop</p>
+        </section>
+
+        <aside class="detail-panel" aria-label="Node detail">
+          <div class="tabs" role="tablist" aria-label="Detail panels">
+            <button type="button" class="active" role="tab" aria-selected="true" data-panel="node">Node</button>
+            <button type="button" role="tab" aria-selected="false" data-panel="diagnostics">
+              Diagnostics <span id="diagnostic-count">0</span>
+            </button>
+          </div>
+          <article id="detail" class="detail">
+            <p class="empty">Choose a node to inspect its source-backed entry.</p>
+          </article>
+          <section id="diagnostics" class="detail diagnostics" hidden></section>
+        </aside>
       </section>
     </main>
     <script type="module" src="/app.js"></script>

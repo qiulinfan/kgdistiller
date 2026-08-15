@@ -108,7 +108,7 @@ def initialize_project(
     except ValueError as error:
         raise ValueError("source root must be inside the project") from error
     payload = {
-        "schema": "qlkg-sources-v2",
+        "schema": "qlkg-sources-v3",
         "fields": [
             {
                 "id": "general",
@@ -145,7 +145,7 @@ def initialize_project(
         alignment_path.parent.mkdir(parents=True, exist_ok=True)
         alignment_path.write_text(
             json.dumps(
-                {"schema": "qlkg-alignments-v1", "mappings": []},
+                {"schema": "qlkg-alignments-v2", "mappings": []},
                 ensure_ascii=False,
                 indent=2,
             )

@@ -7,24 +7,19 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator
 
 from . import __version__
-from .agent import (
-    AgentIndexError,
-    agent_index_exists,
-    backup_agent_index,
-    publish_agent_index_file,
-    remove_agent_index,
-    validate_agent_snapshot,
-)
+from .query import COMPARISON_SCHEMA, PROPOSAL_SCHEMA, validate_agent_snapshot
 from .alignment import (
+    ALIGNMENT_REPORT_SCHEMA,
     AlignmentError,
     load_alignment_set,
     sha256_json,
@@ -52,14 +47,13 @@ from .cli import (
     synchronize,
     unique_source_for_path,
     apply_delta,
-    write_database,
 )
 from .json_schema import validate_json_schema
 
 
-REQUEST_SCHEMA = "qlkg-ingest-request-v1"
+REQUEST_SCHEMA = "qlkg-ingest-request-v2"
 PLAN_SCHEMA = "qlkg-ingest-plan-v1"
-RECEIPT_SCHEMA = "qlkg-ingest-receipt-v1"
+RECEIPT_SCHEMA = "qlkg-ingest-receipt-v2"
 ERROR_SCHEMA = "qlkg-ingest-error-v1"
 CAPABILITY = "transactional-ingest-v1"
 JOURNAL_SCHEMA = "qlkg-ingest-journal-v1"
@@ -72,6 +66,8 @@ MAX_DECISIONS = 4096
 MAX_ALIGNMENTS = 1024
 MAX_EVIDENCE_ITEMS = 4096
 MAX_TEXT_LENGTH = 16 * 1024
+MAX_JOURNAL_TARGETS = MAX_PATCHES + 3
+MAX_JOURNAL_PATH_LENGTH = 4096
 FailureInjector = Callable[[str], None]
 
 
@@ -110,7 +106,6 @@ class IngestPaths:
     graph_dir: Path
     identities: Path
     alignments: Path
-    database: Path
     typst_registry: Path
 
 
@@ -133,6 +128,23 @@ class StagedIngest:
     curation: dict[str, Any]
     validations: list[dict[str, Any]]
     durations_ms: dict[str, int]
+
+
+@dataclass(frozen=True)
+class _JournalTarget:
+    relative: str
+    target: Path
+    backup: Path
+    existed: bool
+    kind: str
+
+
+@dataclass(frozen=True)
+class _ValidatedJournal:
+    request_sha256: str
+    status: str
+    backup_root: Path
+    targets: tuple[_JournalTarget, ...]
 
 
 def canonical_digest(payload: dict[str, Any], field: str) -> str:
@@ -215,7 +227,7 @@ def _bounded_text(value: Any, field: str, *, required: bool = True) -> str:
 
 def validate_request(payload: Any, *, mode: str | None = None) -> dict[str, Any]:
     _validate_json_schema(
-        payload, "qlkg-ingest-request-v1.schema.json", "invalid-request"
+        payload, f"{REQUEST_SCHEMA}.schema.json", "invalid-request"
     )
     request = _require_object(payload, "request")
     _reject_unknown(
@@ -526,7 +538,7 @@ def _artifact_payload(paths: IngestPaths, reference: dict[str, Any], kind: str) 
     if kind == "candidate_snapshot":
         try:
             validate_agent_snapshot(payload)
-        except AgentIndexError as error:
+        except ValueError as error:
             raise IngestError("invalid-candidate-snapshot", str(error)) from error
         actual = str(payload.get("snapshot_sha256", ""))
     else:
@@ -542,13 +554,13 @@ def _artifact_payload(paths: IngestPaths, reference: dict[str, Any], kind: str) 
 
 def _query_report_digest(report: dict[str, Any]) -> str:
     schema = str(report.get("schema", ""))
-    if schema == "qlkg-alignment-report-v1":
+    if schema == ALIGNMENT_REPORT_SCHEMA:
         supplied = str(report.get("report_sha256", ""))
         expected = canonical_digest(report, "report_sha256")
-    elif schema == "qlkg-agent-proposal-v1":
+    elif schema == PROPOSAL_SCHEMA:
         supplied = str(report.get("proposal_sha256", ""))
         expected = canonical_digest(report, "proposal_sha256")
-    elif schema == "qlkg-graph-comparison-v1":
+    elif schema == COMPARISON_SCHEMA:
         supplied = sha256_json(report)
         expected = supplied
     else:
@@ -566,7 +578,6 @@ def _validate_preconditions(
         ("graph", paths.graph_dir),
         ("identities", paths.identities),
         ("alignments", paths.alignments),
-        ("database", paths.database),
         ("typst_registry", paths.typst_registry),
     ):
         _config_relative(paths, path, field)
@@ -630,6 +641,25 @@ def _validate_query_binding(
     schema = str(query_report.get("schema", ""))
     candidate_record = query_report.get("candidate") or {}
     target_record = query_report.get("target") or {}
+    bound_report_schemas = {
+        ALIGNMENT_REPORT_SCHEMA,
+        COMPARISON_SCHEMA,
+        PROPOSAL_SCHEMA,
+    }
+    if schema in bound_report_schemas:
+        report_alignment_sha = str(query_report.get("alignment_sha256", ""))
+        if not HEX_SHA256_RE.fullmatch(report_alignment_sha):
+            raise IngestError(
+                "stale-query-report",
+                "query report does not bind a valid alignment registry digest",
+                stage="precondition",
+            )
+        if report_alignment_sha != str(request["base_alignment_sha256"]):
+            raise IngestError(
+                "stale-query-report",
+                "query report targets a different alignment registry",
+                stage="precondition",
+            )
     if str(candidate_record.get("snapshot_sha256", "")) != str(
         candidate.get("snapshot_sha256", "")
     ):
@@ -638,7 +668,7 @@ def _validate_query_binding(
             "query report was not produced from the supplied candidate snapshot",
             stage="precondition",
         )
-    if schema in {"qlkg-graph-comparison-v1", "qlkg-agent-proposal-v1"}:
+    if schema in {COMPARISON_SCHEMA, PROPOSAL_SCHEMA}:
         if str(target_record.get("graph_sha256", "")) != str(
             request["base_graph_sha256"]
         ):
@@ -671,23 +701,56 @@ def _validate_decisions(
             "candidate decisions do not cover the snapshot",
             diagnostics=[{"missing": missing, "extra": extra}],
         )
-    results = {
-        str(item.get("candidate", {}).get("id", "")): str(item.get("status", ""))
-        for item in query_report.get("results", [])
-        if isinstance(item, dict)
-    }
+    schema = str(query_report.get("schema", ""))
+    allowed_statuses = (
+        {"exact", "candidate", "ambiguous", "unresolved"}
+        if schema == ALIGNMENT_REPORT_SCHEMA
+        else {"matched", "ambiguous", "unmatched"}
+    )
+    results: dict[str, str] = {}
+    for item in query_report.get("results", []):
+        if not isinstance(item, dict):
+            raise IngestError("invalid-query-report", "query result must be an object")
+        candidate_record = item.get("candidate")
+        if not isinstance(candidate_record, dict):
+            raise IngestError(
+                "invalid-query-report", "query result candidate must be an object"
+            )
+        candidate_id = str(candidate_record.get("id", ""))
+        status = str(item.get("status", ""))
+        if (
+            candidate_id not in candidate_ids
+            or candidate_id in results
+            or status not in allowed_statuses
+        ):
+            raise IngestError(
+                "invalid-query-report",
+                "query results do not satisfy the active report contract",
+            )
+        results[candidate_id] = status
+    if set(results) != candidate_ids:
+        raise IngestError(
+            "invalid-query-report",
+            "query results do not cover the candidate snapshot",
+        )
     for candidate_id, decision in decision_by_id.items():
         status = results.get(candidate_id)
         action = str(decision["action"])
-        if status in {"conflict", "uncertain"} and action not in {"reject", "defer"}:
+        if status == "ambiguous" and action not in {"reject", "defer"}:
             raise IngestError(
                 "unresolved-identity",
                 f"{candidate_id} is {status} and cannot be written",
             )
-        if status == "known" and action == "add":
-            raise IngestError("duplicate-identity", f"known candidate cannot be added: {candidate_id}")
-        if status == "new" and action == "reuse":
-            raise IngestError("invalid-decision", f"new candidate cannot be reused: {candidate_id}")
+        if status in {"matched", "exact"} and action == "add":
+            raise IngestError(
+                "duplicate-identity",
+                f"matched candidate cannot be added: {candidate_id}",
+            )
+        if status in {"unmatched", "unresolved"} and action == "reuse":
+            raise IngestError(
+                "invalid-decision",
+                f"unmatched candidate cannot be reused: {candidate_id}",
+            )
 
 
 def _copy_file(source: Path, target: Path) -> None:
@@ -745,7 +808,6 @@ def _shadow_paths(paths: IngestPaths, root: Path) -> IngestPaths:
         graph_dir=shadow(paths.graph_dir, "graph"),
         identities=shadow(paths.identities, "identities"),
         alignments=shadow(paths.alignments, "alignments"),
-        database=shadow(paths.database, "database"),
         typst_registry=shadow(paths.typst_registry, "typst_registry"),
     )
 
@@ -881,7 +943,6 @@ def _stage_ingest(
                     shadow.repo_root,
                     shadow.registry,
                     shadow.graph_dir,
-                    shadow.database,
                     shadow.typst_registry,
                     identities=shadow.identities,
                     alignments=shadow.alignments,
@@ -895,10 +956,8 @@ def _stage_ingest(
             durations["initial-sync"] = _duration(started)
             validations.append({"stage": "initial-sync", "status": "passed"})
         _invoke(failure_injector, "staged-initial-sync")
-        # The configured database path can be longer than Win32's legacy path
-        # limit even though this staging root is short. The delta is only an
-        # input to the staged apply, so keep it outside that mirrored path and
-        # use the extended-length-safe atomic writer.
+        # The delta is only an input to the staged apply, so keep it outside
+        # the mirrored repository and use the extended-length-safe writer.
         delta_path = temporary_root / f"{request_sha}.delta.json"
         _atomic_write_text(delta_path, pretty_json(request["delta"]))
         delta_has_changes = any(
@@ -916,10 +975,8 @@ def _stage_ingest(
             try:
                 delta_report = apply_delta(
                     shadow.graph_dir,
-                    shadow.database,
                     shadow.typst_registry,
                     delta_path,
-                    shadow.alignments,
                 )
             except (KnowledgeError, OSError, ValueError) as error:
                 raise IngestError("delta-failed", str(error), stage="delta") from error
@@ -932,7 +989,6 @@ def _stage_ingest(
                 shadow.repo_root,
                 shadow.registry,
                 shadow.graph_dir,
-                shadow.database,
                 shadow.typst_registry,
                 identities=shadow.identities,
                 alignments=shadow.alignments,
@@ -950,7 +1006,7 @@ def _stage_ingest(
             try:
                 reconcile_alignment_mapping(
                     after_state,
-                    shadow.database,
+                    shadow.graph_dir,
                     shadow.alignments,
                     candidate,
                     str(decision["candidate_id"]),
@@ -961,7 +1017,7 @@ def _stage_ingest(
                     evidence=str(decision["evidence"]),
                     target_namespace=str(decision.get("target_namespace", "personal")),
                 )
-            except (KnowledgeError, AgentIndexError, AlignmentError, OSError, ValueError) as error:
+            except (KnowledgeError, AlignmentError, OSError, ValueError) as error:
                 raise IngestError("alignment-failed", str(error), stage="alignment") from error
         validations.append({"stage": "alignment", "status": "passed"})
         _invoke(failure_injector, "staged-alignments")
@@ -982,7 +1038,6 @@ def _stage_ingest(
                 shadow.repo_root,
                 shadow.registry,
                 shadow.graph_dir,
-                shadow.database,
                 shadow.typst_registry,
                 identities=shadow.identities,
                 alignments=shadow.alignments,
@@ -1030,9 +1085,8 @@ def _stage_ingest(
         durable_shadow = _shadow_paths(paths, durable_stage)
         durable_ready = True
     finally:
-        # TemporaryDirectory uses ordinary Win32 spellings during cleanup and
-        # can mask the original failure for deep staged database paths. Cleanup
-        # through the I/O boundary and keep it strictly best-effort.
+        # Cleanup through the platform I/O boundary and keep it best-effort so
+        # it cannot mask the original staging failure.
         shutil.rmtree(_filesystem_path(temporary_root), ignore_errors=True)
         if durable_root is not None and not durable_ready:
             shutil.rmtree(_filesystem_path(durable_root), ignore_errors=True)
@@ -1220,7 +1274,7 @@ def plan_ingest(
 
 
 def _state_dir(paths: IngestPaths) -> Path:
-    return paths.database.parent / "kgdistiller-ingest"
+    return paths.repo_root / "knowledge/build/kgdistiller-ingest"
 
 
 def _receipt_path(paths: IngestPaths, request_sha256: str) -> Path:
@@ -1299,18 +1353,10 @@ def _backup_target(
     backup = backup_root / relative
     backup_source = source if source is not None else target
     filesystem_backup_source = _filesystem_path(backup_source)
-    target_kind = kind or (
-        "directory" if filesystem_backup_source.is_dir() else "file"
-    )
-    existed = (
-        agent_index_exists(target)
-        if target_kind == "agent-index"
-        else filesystem_backup_source.exists()
-    )
+    target_kind = kind or ("directory" if filesystem_backup_source.is_dir() else "file")
+    existed = filesystem_backup_source.exists()
     if existed:
-        if target_kind == "agent-index":
-            backup_agent_index(target, backup)
-        elif filesystem_backup_source.is_dir():
+        if filesystem_backup_source.is_dir():
             shutil.copytree(
                 filesystem_backup_source,
                 _filesystem_path(backup),
@@ -1328,32 +1374,379 @@ def _remove_target(target: Path) -> None:
         filesystem_target.unlink()
 
 
-def _restore_journal(paths: IngestPaths, journal: dict[str, Any]) -> None:
-    backup_root = Path(str(journal["backup_root"]))
-    errors: list[dict[str, Any]] = []
-    for target_record in reversed(journal.get("targets", [])):
-        relative = str(target_record["path"])
-        target = paths.repo_root / relative
-        backup = backup_root / relative
+def _journal_failure(message: str, *, stage: str) -> IngestError:
+    return IngestError("rollback-failed", message, stage=stage)
+
+
+def _journal_lstat(path: Path, *, field: str, stage: str) -> int | None:
+    try:
+        return _filesystem_path(path).lstat().st_mode
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise _journal_failure(
+            f"cannot inspect ingest journal {field}: {path}", stage=stage
+        ) from error
+
+
+def _validate_no_symlink_chain(
+    base: Path,
+    candidate: Path,
+    *,
+    field: str,
+    stage: str,
+) -> None:
+    base_absolute = Path(os.path.abspath(os.fspath(base)))
+    candidate_absolute = Path(os.path.abspath(os.fspath(candidate)))
+    try:
+        relative = candidate_absolute.relative_to(base_absolute)
+    except ValueError as error:
+        raise _journal_failure(
+            f"ingest journal {field} escapes its trusted root", stage=stage
+        ) from error
+
+    cursor = base_absolute
+    missing_parent = False
+    for part in relative.parts:
+        cursor /= part
+        if missing_parent:
+            continue
+        mode = _journal_lstat(cursor, field=field, stage=stage)
+        if mode is None:
+            missing_parent = True
+            continue
+        if stat.S_ISLNK(mode):
+            raise _journal_failure(
+                f"ingest journal {field} traverses a symlink: {cursor}", stage=stage
+            )
+        if cursor != candidate_absolute and not stat.S_ISDIR(mode):
+            raise _journal_failure(
+                f"ingest journal {field} has a non-directory parent: {cursor}",
+                stage=stage,
+            )
+
+
+def _journal_relative_path(value: Any, *, field: str, stage: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > MAX_JOURNAL_PATH_LENGTH
+        or "\0" in value
+        or "\\" in value
+        or re.match(r"^[A-Za-z]:", value)
+    ):
+        raise _journal_failure(
+            f"ingest journal {field} is not a portable relative path", stage=stage
+        )
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or relative.as_posix() != value
+    ):
+        raise _journal_failure(
+            f"ingest journal {field} is not a lexical relative path", stage=stage
+        )
+    return value
+
+
+def _configured_journal_target(
+    paths: IngestPaths,
+    target: Path,
+    *,
+    field: str,
+    stage: str,
+) -> str:
+    repository = Path(os.path.abspath(os.fspath(paths.repo_root)))
+    absolute_target = Path(
+        os.path.abspath(
+            os.fspath(target if target.is_absolute() else paths.repo_root / target)
+        )
+    )
+    try:
+        relative_path_value = absolute_target.relative_to(repository)
+    except ValueError as error:
+        raise _journal_failure(
+            f"configured {field} target escapes the repository", stage=stage
+        ) from error
+    relative = PurePosixPath(*relative_path_value.parts).as_posix()
+    try:
+        normalized, safe_target = _safe_relative_path(
+            paths.repo_root, relative, field=f"journal {field} target"
+        )
+    except IngestError as error:
+        raise _journal_failure(str(error), stage=stage) from error
+    if Path(os.path.abspath(os.fspath(safe_target))) != absolute_target:
+        raise _journal_failure(
+            f"configured {field} target is not lexical repository state", stage=stage
+        )
+    return normalized
+
+
+def _validate_backup_tree(path: Path, *, field: str, stage: str) -> None:
+    pending = [path]
+    while pending:
+        current = pending.pop()
+        mode = _journal_lstat(current, field=field, stage=stage)
+        if mode is None:
+            raise _journal_failure(
+                f"missing ingest journal backup: {current}", stage=stage
+            )
+        if stat.S_ISLNK(mode):
+            raise _journal_failure(
+                f"ingest journal backup must not contain symlinks: {current}",
+                stage=stage,
+            )
+        if stat.S_ISREG(mode):
+            continue
+        if not stat.S_ISDIR(mode):
+            raise _journal_failure(
+                f"ingest journal backup is not an ordinary file or directory: {current}",
+                stage=stage,
+            )
         try:
-            kind = target_record.get("kind")
-            if kind == "agent-index":
-                if target_record.get("existed"):
-                    _atomic_copy(backup, target, agent_index=True)
-                else:
-                    remove_agent_index(target)
-            else:
-                _remove_target(target)
-                if target_record.get("existed") and kind == "directory":
-                    shutil.copytree(
-                        _filesystem_path(backup),
-                        _filesystem_path(target),
+            pending.extend(_filesystem_path(current).iterdir())
+        except OSError as error:
+            raise _journal_failure(
+                f"cannot inspect ingest journal backup directory: {current}",
+                stage=stage,
+            ) from error
+
+
+def _validate_journal(
+    paths: IngestPaths,
+    journal: Any,
+    *,
+    stage: str,
+) -> _ValidatedJournal:
+    if not isinstance(journal, dict) or journal.get("schema") != JOURNAL_SCHEMA:
+        raise _journal_failure("invalid ingest journal", stage=stage)
+
+    request_sha256 = journal.get("request_sha256")
+    if not isinstance(request_sha256, str) or not HEX_SHA256_RE.fullmatch(
+        request_sha256
+    ):
+        raise _journal_failure(
+            "ingest journal has an invalid request_sha256", stage=stage
+        )
+    status = journal.get("status")
+    if not isinstance(status, str) or status not in {
+        "installing",
+        "committed",
+        "rolled-back",
+    }:
+        raise _journal_failure("ingest journal has an invalid status", stage=stage)
+
+    expected_backup_root = _state_dir(paths) / "backups" / request_sha256
+    backup_root_value = journal.get("backup_root")
+    if not isinstance(backup_root_value, str) or backup_root_value != os.fspath(
+        expected_backup_root
+    ):
+        raise _journal_failure(
+            "ingest journal backup_root does not match the request", stage=stage
+        )
+    _validate_no_symlink_chain(
+        paths.repo_root,
+        expected_backup_root,
+        field="backup_root",
+        stage=stage,
+    )
+    backup_root_mode = _journal_lstat(
+        expected_backup_root, field="backup_root", stage=stage
+    )
+    if backup_root_mode is not None and not stat.S_ISDIR(backup_root_mode):
+        raise _journal_failure(
+            "ingest journal backup_root is not an ordinary directory", stage=stage
+        )
+
+    raw_targets = journal.get("targets")
+    if not isinstance(raw_targets, list) or len(raw_targets) > MAX_JOURNAL_TARGETS:
+        raise _journal_failure(
+            f"ingest journal targets must be an array of at most {MAX_JOURNAL_TARGETS} items",
+            stage=stage,
+        )
+
+    configured: dict[str, str] = {}
+    for field, target, kind in (
+        ("graph", paths.graph_dir, "directory"),
+        ("alignments", paths.alignments, "file"),
+        ("typst_registry", paths.typst_registry, "file"),
+    ):
+        relative = _configured_journal_target(
+            paths, target, field=field, stage=stage
+        )
+        configured[os.path.normcase(relative)] = kind
+    try:
+        specs = load_sources(paths.repo_root, paths.registry)
+    except (
+        KnowledgeError,
+        OSError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        UnicodeError,
+        json.JSONDecodeError,
+    ) as error:
+        raise _journal_failure(
+            f"cannot validate journal authority ownership: {error}", stage=stage
+        ) from error
+
+    seen: set[str] = set()
+    targets: list[_JournalTarget] = []
+    for index, raw_record in enumerate(raw_targets):
+        if not isinstance(raw_record, dict) or set(raw_record) != {
+            "path",
+            "existed",
+            "kind",
+        }:
+            raise _journal_failure(
+                f"ingest journal target[{index}] has an invalid shape", stage=stage
+            )
+        relative = _journal_relative_path(
+            raw_record["path"], field=f"target[{index}].path", stage=stage
+        )
+        key = os.path.normcase(relative)
+        if key in seen:
+            raise _journal_failure(
+                f"ingest journal contains duplicate target: {relative}", stage=stage
+            )
+        seen.add(key)
+        existed = raw_record["existed"]
+        kind = raw_record["kind"]
+        if (
+            type(existed) is not bool
+            or not isinstance(kind, str)
+            or kind not in {"file", "directory"}
+        ):
+            raise _journal_failure(
+                f"ingest journal target[{index}] has invalid kind/existed values",
+                stage=stage,
+            )
+        try:
+            normalized, target = _safe_relative_path(
+                paths.repo_root, relative, field=f"journal target[{index}]"
+            )
+        except IngestError as error:
+            raise _journal_failure(str(error), stage=stage) from error
+        if normalized != relative:
+            raise _journal_failure(
+                f"ingest journal target[{index}] is not lexical", stage=stage
+            )
+
+        expected_kind = configured.get(key)
+        if expected_kind is None:
+            if target.suffix.lower() not in {".md", ".typ", ".tex"}:
+                raise _journal_failure(
+                    f"ingest journal target is not managed: {relative}", stage=stage
+                )
+            try:
+                unique_source_for_path(specs, target)
+            except KnowledgeError as error:
+                raise _journal_failure(
+                    f"ingest journal target is not uniquely source-owned: {relative}",
+                    stage=stage,
+                ) from error
+            expected_kind = "file"
+        if kind != expected_kind:
+            raise _journal_failure(
+                f"ingest journal target kind does not match {relative}", stage=stage
+            )
+
+        backup = expected_backup_root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            backup.relative_to(expected_backup_root)
+        except ValueError as error:
+            raise _journal_failure(
+                f"ingest journal backup escapes backup_root: {relative}", stage=stage
+            ) from error
+        _validate_no_symlink_chain(
+            expected_backup_root,
+            backup,
+            field=f"target[{index}] backup",
+            stage=stage,
+        )
+        backup_mode = _journal_lstat(
+            backup, field=f"target[{index}] backup", stage=stage
+        )
+        if not existed:
+            if backup_mode is not None:
+                raise _journal_failure(
+                    f"unexpected backup for non-existent target: {relative}", stage=stage
+                )
+        elif kind == "file":
+            if backup_mode is None or not stat.S_ISREG(backup_mode):
+                raise _journal_failure(
+                    f"file backup does not match journal target: {relative}", stage=stage
+                )
+        else:
+            if backup_mode is None or not stat.S_ISDIR(backup_mode):
+                raise _journal_failure(
+                    f"directory backup does not match journal target: {relative}",
+                    stage=stage,
+                )
+            _validate_backup_tree(
+                backup, field=f"target[{index}] backup", stage=stage
+            )
+        targets.append(
+            _JournalTarget(
+                relative=relative,
+                target=target,
+                backup=backup,
+                existed=existed,
+                kind=kind,
+            )
+        )
+
+    return _ValidatedJournal(
+        request_sha256=request_sha256,
+        status=status,
+        backup_root=expected_backup_root,
+        targets=tuple(targets),
+    )
+
+
+def _restore_validated_journal(
+    paths: IngestPaths, journal: _ValidatedJournal
+) -> None:
+    errors: list[dict[str, Any]] = []
+    for target_record in reversed(journal.targets):
+        relative = target_record.relative
+        try:
+            _, target = _safe_relative_path(
+                paths.repo_root, relative, field="journal rollback target"
+            )
+            _validate_no_symlink_chain(
+                journal.backup_root,
+                target_record.backup,
+                field="rollback backup",
+                stage="rollback",
+            )
+            if target_record.existed and target_record.kind == "directory":
+                _validate_backup_tree(
+                    target_record.backup,
+                    field="rollback backup",
+                    stage="rollback",
+                )
+            _remove_target(target)
+            if target_record.existed and target_record.kind == "directory":
+                shutil.copytree(
+                    _filesystem_path(target_record.backup),
+                    _filesystem_path(target),
+                )
+            elif target_record.existed:
+                mode = _journal_lstat(
+                    target_record.backup, field="rollback backup", stage="rollback"
+                )
+                if mode is None or not stat.S_ISREG(mode):
+                    raise _journal_failure(
+                        f"file backup changed during rollback: {relative}",
+                        stage="rollback",
                     )
-                elif target_record.get("existed"):
-                    _copy_file(backup, target)
-        except (OSError, AgentIndexError) as error:
+                _copy_file(target_record.backup, target)
+        except (OSError, IngestError) as error:
             errors.append({"path": relative, "message": str(error)})
-    receipt_path = _receipt_path(paths, str(journal.get("request_sha256", "")))
+    receipt_path = _receipt_path(paths, journal.request_sha256)
     try:
         _filesystem_path(receipt_path).unlink(missing_ok=True)
     except OSError as error:
@@ -1367,25 +1760,55 @@ def _restore_journal(paths: IngestPaths, journal: dict[str, Any]) -> None:
         )
 
 
+def _restore_journal(paths: IngestPaths, journal: dict[str, Any]) -> None:
+    validated = _validate_journal(paths, journal, stage="rollback")
+    _restore_validated_journal(paths, validated)
+
+
 def recover_ingest(paths: IngestPaths) -> dict[str, Any] | None:
     journal_path = _journal_path(paths)
-    if not _filesystem_path(journal_path).is_file():
+    _validate_no_symlink_chain(
+        paths.repo_root, journal_path, field="journal path", stage="recovery"
+    )
+    journal_mode = _journal_lstat(journal_path, field="path", stage="recovery")
+    if journal_mode is None:
         return None
-    journal = _read_json_file(journal_path, {})
-    if journal.get("schema") != JOURNAL_SCHEMA:
-        raise IngestError("rollback-failed", "invalid ingest journal", stage="recovery")
-    if journal.get("status") != "committed":
-        _restore_journal(paths, journal)
+    if not stat.S_ISREG(journal_mode):
+        raise _journal_failure(
+            "ingest journal path is not an ordinary file", stage="recovery"
+        )
+    try:
+        journal = _read_json_file(journal_path, {})
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise _journal_failure("invalid ingest journal", stage="recovery") from error
+    validated = _validate_journal(paths, journal, stage="recovery")
+    if validated.status != "committed":
+        _restore_validated_journal(paths, validated)
         outcome = "rolled-back"
     else:
         outcome = "committed"
-    backup_root = Path(str(journal.get("backup_root", "")))
-    shutil.rmtree(_filesystem_path(backup_root), ignore_errors=True)
-    _filesystem_path(journal_path).unlink(missing_ok=True)
-    return {"request_sha256": journal.get("request_sha256"), "status": outcome}
+    try:
+        backup_mode = _journal_lstat(
+            validated.backup_root, field="backup_root", stage="recovery"
+        )
+        if backup_mode is not None:
+            if not stat.S_ISDIR(backup_mode):
+                raise _journal_failure(
+                    "ingest journal backup_root changed before cleanup",
+                    stage="recovery",
+                )
+            shutil.rmtree(_filesystem_path(validated.backup_root))
+        _filesystem_path(journal_path).unlink()
+    except IngestError:
+        raise
+    except OSError as error:
+        raise _journal_failure(
+            "could not clean up a recovered ingest journal", stage="recovery"
+        ) from error
+    return {"request_sha256": validated.request_sha256, "status": outcome}
 
 
-def _atomic_copy(source: Path, target: Path, *, agent_index: bool = False) -> None:
+def _atomic_copy(source: Path, target: Path) -> None:
     filesystem_source = _filesystem_path(source)
     filesystem_target = _filesystem_path(target)
     filesystem_target.parent.mkdir(parents=True, exist_ok=True)
@@ -1398,10 +1821,7 @@ def _atomic_copy(source: Path, target: Path, *, agent_index: bool = False) -> No
             shutil.copyfileobj(input_, output)
             output.flush()
             os.fsync(output.fileno())
-        if agent_index:
-            publish_agent_index_file(temporary, target)
-        else:
-            os.replace(_filesystem_path(temporary), filesystem_target)
+        os.replace(_filesystem_path(temporary), filesystem_target)
     finally:
         try:
             _filesystem_path(temporary).unlink(missing_ok=True)
@@ -1445,7 +1865,7 @@ def _install_staged(
     targets: list[Path] = []
     for patch in staged.request["authority_patches"]:
         targets.append(paths.repo_root / str(patch["path"]))
-    targets.extend([paths.graph_dir, paths.alignments, paths.typst_registry, paths.database])
+    targets.extend([paths.graph_dir, paths.alignments, paths.typst_registry])
     unique_targets: list[Path] = []
     seen: set[str] = set()
     for target in targets:
@@ -1455,17 +1875,7 @@ def _install_staged(
             unique_targets.append(target)
     records: list[dict[str, Any]] = []
     for target in unique_targets:
-        if target == paths.database:
-            records.append(
-                _backup_target(
-                    paths.repo_root,
-                    target,
-                    backup_root,
-                    kind="agent-index",
-                )
-            )
-        else:
-            records.append(_backup_target(paths.repo_root, target, backup_root))
+        records.append(_backup_target(paths.repo_root, target, backup_root))
     journal = {
         "schema": JOURNAL_SCHEMA,
         "request_sha256": staged.request_sha256,
@@ -1492,8 +1902,6 @@ def _install_staged(
         if staged.paths.typst_registry.is_file():
             _atomic_copy(staged.paths.typst_registry, paths.typst_registry)
         _invoke(failure_injector, "installed-registry")
-        write_database(paths.database, load_state(paths.graph_dir), paths.alignments)
-        _invoke(failure_injector, "rebuilt-index")
         return journal
     except BaseException as error:
         try:
@@ -1516,7 +1924,7 @@ def _receipt_payload(staged: StagedIngest, plan: dict[str, Any]) -> dict[str, An
             "version": __version__,
             "capabilities": [CAPABILITY],
             "graph_schema": staged.after_state.manifest.get("schema"),
-            "index_schema": "qlkg-agent-index-v2",
+            "query_backend": "json-memory",
         },
         "before": plan["before"],
         "after": plan["after"],
@@ -1524,7 +1932,6 @@ def _receipt_payload(staged: StagedIngest, plan: dict[str, Any]) -> dict[str, An
         "validations": [
             *staged.validations,
             {"stage": "install", "status": "passed"},
-            {"stage": "index-rebuild", "status": "passed"},
         ],
         "durations_ms": staged.durations_ms,
         "warnings": plan["warnings"],
@@ -1532,7 +1939,7 @@ def _receipt_payload(staged: StagedIngest, plan: dict[str, Any]) -> dict[str, An
     }
     receipt["receipt_sha256"] = canonical_digest(receipt, "receipt_sha256")
     _validate_json_schema(
-        receipt, "qlkg-ingest-receipt-v1.schema.json", "invalid-receipt"
+        receipt, "qlkg-ingest-receipt-v2.schema.json", "invalid-receipt"
     )
     return receipt
 
@@ -1555,6 +1962,25 @@ def _find_request_conflict(paths: IngestPaths, request: dict[str, Any]) -> None:
             )
 
 
+def _validate_stored_receipt(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("schema") != RECEIPT_SCHEMA:
+        raise IngestError(
+            "unsupported-receipt-schema",
+            f"expected stored {RECEIPT_SCHEMA} receipt",
+            stage="idempotency",
+        )
+    _validate_json_schema(
+        payload, "qlkg-ingest-receipt-v2.schema.json", "invalid-receipt"
+    )
+    if payload.get("receipt_sha256") != canonical_digest(payload, "receipt_sha256"):
+        raise IngestError(
+            "invalid-receipt",
+            "stored receipt digest does not match its content",
+            stage="idempotency",
+        )
+    return payload
+
+
 def apply_ingest(
     paths: IngestPaths,
     request: dict[str, Any],
@@ -1567,7 +1993,7 @@ def apply_ingest(
         recover_ingest(paths)
         existing_path = _receipt_path(paths, request_sha)
         if _filesystem_path(existing_path).is_file():
-            return _read_json_file(existing_path, {})
+            return _validate_stored_receipt(_read_json_file(existing_path, {}))
         _find_request_conflict(paths, validated)
         staged = _stage_ingest(paths, validated, failure_injector=failure_injector)
         try:
@@ -1576,7 +2002,7 @@ def apply_ingest(
             journal = _install_staged(
                 paths, staged, failure_injector=failure_injector
             )
-            staged.durations_ms["install-and-index"] = _duration(install_started)
+            staged.durations_ms["install"] = _duration(install_started)
             try:
                 receipt = _receipt_payload(staged, plan)
                 receipt_path = _receipt_path(paths, request_sha)

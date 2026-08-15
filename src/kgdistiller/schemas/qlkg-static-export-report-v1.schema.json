@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-static-export-report-v1.schema.json",
+  "title": "kgdistiller static export operation report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "status", "artifact_schema", "committed", "cleanup_status",
+    "warnings", "recovery_paths", "output", "export_sha256", "producer",
+    "source", "graph", "visibility", "replaced", "replaces_export_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-static-export-report-v1"},
+    "status": {"const": "exported"},
+    "artifact_schema": {"const": "qlkg-static-export-v2"},
+    "committed": {"const": true},
+    "cleanup_status": {"enum": ["complete", "pending"]},
+    "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "recovery_paths": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "output": {"type": "string", "minLength": 1},
+    "export_sha256": {"$ref": "#/$defs/sha256"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "source": {"$ref": "#/$defs/source"},
+    "graph": {"$ref": "#/$defs/graph"},
+    "visibility": {"$ref": "#/$defs/visibility"},
+    "replaced": {"type": "boolean"},
+    "replaces_export_sha256": {
+      "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gitCommit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "repository": {"type": "string", "pattern": "^https://(?![^/]*@)[^?#\\s]+$", "maxLength": 2048},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "references"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0},
+        "references": {"type": "integer", "minimum": 0}
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "repository", "version", "commit"],
+      "properties": {
+        "name": {"const": "kgdistiller"},
+        "repository": {"$ref": "#/$defs/repository"},
+        "version": {"type": "string", "minLength": 1},
+        "commit": {"$ref": "#/$defs/gitCommit"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "digest", "published_digest"],
+      "properties": {
+        "repository": {"$ref": "#/$defs/repository"},
+        "revision": {"$ref": "#/$defs/gitCommit"},
+        "digest": {"$ref": "#/$defs/sha256"},
+        "published_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_schema", "private_sha256", "private_counts", "public_schema", "public_sha256", "public_counts"],
+      "properties": {
+        "private_schema": {"const": "qlkg-v3"},
+        "private_sha256": {"$ref": "#/$defs/sha256"},
+        "private_counts": {"$ref": "#/$defs/counts"},
+        "public_schema": {"const": "qlkg-site-graph-v1"},
+        "public_sha256": {"$ref": "#/$defs/sha256"},
+        "public_counts": {"$ref": "#/$defs/counts"}
+      }
+    },
+    "visibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "published_sources", "excluded_sources"],
+      "properties": {
+        "policy": {"const": "explicit-publish"},
+        "published_sources": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "excluded_sources": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

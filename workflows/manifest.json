@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-workflows-v1",
   "product": "kgdistiller",
-  "version": 1,
+  "version": 2,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -79,8 +79,24 @@
       ]
     },
     {
+      "id": "portable-store",
+      "description": "Create or verify a JSON-only portable generation that is immediately queryable without materialization.",
+      "steps": [
+        {"id": "snapshot", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "transaction"},
+        {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"}
+      ]
+    },
+    {
       "id": "publish-static",
       "description": "Verify a portable store and create a privacy-filtered, independently verifiable static site bundle.",
+      "steps": [
+        {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"},
+        {"id": "export", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "export"}
+      ]
+    },
+    {
+      "id": "export-obsidian",
+      "description": "Create a lossy downstream Obsidian projection that is never registered or rescanned as authority.",
       "steps": [
         {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"},
         {"id": "export", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "export"}

@@ -1,4 +1,4 @@
 interface:
   display_name: "Deploy kgdistiller"
   short_description: "Set up and restore portable Git knowledge stores"
-  default_prompt: "Use $deploy-kgdistiller to set up or refresh this portable knowledge store, verify it, and explain its materialization and Git state."
+  default_prompt: "Use $deploy-kgdistiller to set up or refresh this JSON-only portable knowledge store, verify it, and explain its query-ready and Git state."

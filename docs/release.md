@@ -1,98 +1,94 @@
 # Public release and compatibility policy
 
-This document prepares a release; it does not authorize pushing a branch,
-publishing a package, creating a GitHub release, or uploading personal data.
+This document defines release gates. It does not authorize a push, package
+publication, tag, GitHub release, or disclosure of personal knowledge.
 
-## Version 0.3 compatibility matrix
+## Version 0.4 contract matrix
 
-| Contract | Read | Write | Notes |
+| Contract | Read | Write | Role |
 | --- | --- | --- | --- |
-| `qlkg-v2` | yes | yes | Existing committed graphs remain authoritative. |
-| `qlkg-sources-v2` | yes | yes | Markdown, Typst, and LaTeX sources are supported. |
-| `qlkg-identities-v1` | yes | yes | Reviewed authored-name changes only. |
-| `qlkg-alignments-v1` | yes | yes | Fingerprint-bound reviewed mappings. |
-| `qlkg-agent-delta-v2` | yes | yes | Low-level compatibility primitive. |
-| `qlkg-agent-snapshot-v1` | yes | yes | Self-contained hydrated query input. |
-| `qlkg-agent-index-v2` | yes | disposable | Rebuilt locally; never a migration authority. |
-| `qlkg-store-v1` | yes | yes | Portable authority generation; Git-friendly manifest. |
-| `qlkg-document-record-v1` | yes | yes | Canonical JSONL inventory of ingested sources. |
-| `qlkg-embedding-bundle-v1` | yes | legacy only | Published four-key provider digest contract; new snapshots do not write it. |
-| `qlkg-embedding-record-v1` | yes | legacy only | Legacy digest is recomputed and retained exactly on materialization. |
-| `qlkg-embedding-bundle-v2` | yes | yes | Current exact portable retrieval artifacts, never identity. |
-| `qlkg-embedding-record-v2` | yes | yes | Four-field logical key with an exact opaque machine-local provider-config digest. |
-| `qlkg-candidate-graph-v1` | yes | builder input | Isolated namespace and source locations required. |
-| `qlkg-ingest-request-v1` | yes | accepted | Content-addressed plan/apply request. |
-| `qlkg-ingest-plan-v1` | output | output | Review artifact, not a commit receipt. |
-| `qlkg-ingest-receipt-v1` | output | output | Canonical committed/rejected result. |
-| `qlkg-local-profile-v1` | yes | user-authored | Machine-local paths and credential environment-variable names; never portable. |
-| `qlkg-embedding-policy-v1` | yes | user-authored | Portable vector-space and required-coverage policy without credentials; drives local status/sync. |
-| `qlkg-retrieval-plan-v1` | yes | accepted input | Bounded lane-specific query input for Python, CLI, and MCP. |
-| `qlkg-search-result-v2` | output | output | Bounded per-lane status, deterministic fusion, and evidence. |
-| `qlkg-search-execution-v1` | output | output | Immutable plan-mode, generation, and identity-resolution envelope; its nested `qlkg-search-result-v2` is validated separately. |
-| `qlkg-site-graph-v1` | output | output | Hydrated explicit-publish graph with privacy-filtered diagnostics and a self digest. |
-| `qlkg-static-export-v1` | output | output | Static consumer receipt binding producer/source provenance, graph digests, visibility, and artifact bytes. |
-| `qlkg-document-record-v2` | proposed | proposed | Stable inventory identity only; it does not define graph node identity. |
-| `qlkg-document-upsert-request-v1` | proposed | proposed | Reviewed annotated-document input; plan/apply behavior is deferred. |
-| `qlkg-document-ingest-receipt-v1` | proposed | proposed | Resumable stage output; enrichment orchestration is deferred. |
-| MCP `2024-11-05` through `2025-11-25` | yes | read-only | No MCP mutation tools. |
+| `qlkg-v3` | yes | yes | Deterministic authority graph. |
+| `qlkg-sources-v3` | yes | yes | Bounded Markdown/Typst/LaTeX registry. |
+| `qlkg-identities-v2` | yes | yes | Reviewed authored-name changes and aliases. |
+| `qlkg-scoped-aliases-v1` | yes | nested | Collision-aware aliases within one authority scope. |
+| `qlkg-alignments-v2` | yes | yes | Bounded fingerprint-bound reviewed mappings. |
+| `qlkg-agent-delta-v3` | yes | yes | Reviewed semantic graph delta. |
+| `qlkg-agent-snapshot-v2` | yes | yes | Bounded self-contained hydrated graph generation. |
+| `qlkg-query-status-v1` | yes | yes | GraphView status and generation binding. |
+| `qlkg-retrieval-plan-v2` | yes | yes | Identity, lexical, and bounded graph plan. |
+| `qlkg-search-result-v3` | yes | yes | Deterministic lane results. |
+| `qlkg-search-execution-v2` | yes | yes | Query execution/generation envelope. |
+| `qlkg-context-bundle-v2` | yes | yes | Budgeted source-backed query context. |
+| `qlkg-alignment-report-v2` | yes | output | Conservative cross-namespace alignment report. |
+| `qlkg-graph-comparison-v2` | yes | output | Matched-node and edge-presence comparison. |
+| `qlkg-agent-proposal-v2` | yes | output | Non-mutating review proposal package. |
+| `qlkg-candidate-graph-v2` | yes | yes | Bounded isolated source-grounded candidates. |
+| `qlkg-ingest-request-v2` | yes | yes | Transactional reviewed write request. |
+| `qlkg-ingest-plan-v1` | yes | output | Staged review result, not a receipt. |
+| `qlkg-ingest-receipt-v2` | yes | yes | JSON-memory committed-write receipt. |
+| `qlkg-ingest-error-v1` | yes | output | Stable transactional failure envelope. |
+| `qlkg-document-record-v1` | yes | output | Canonical store authority inventory row. |
+| `qlkg-store-v2` | yes | yes | JSON-only portable generation. |
+| `qlkg-store-report-v1` | yes | output | Verified store operation result. |
+| `qlkg-site-graph-v1` | yes | output | Privacy-filtered hydrated site graph. |
+| `qlkg-static-export-v2` | yes | yes | Verifiable privacy-filtered site export. |
+| `qlkg-static-export-report-v1` | yes | output | Static export operation and cleanup result. |
+| `qlkg-static-export-verification-v1` | yes | output | Standalone verifier result. |
+| `qlkg-obsidian-projection-v1` | yes | yes | Lossy downstream Obsidian projection. |
+| `qlkg-obsidian-export-report-v1` | yes | output | Obsidian build or verification result. |
+| `qlkg-obsidian-concept-v1` | yes | output | Generated concept-note frontmatter tag. |
+| `qlkg-obsidian-source-v1` | yes | output | Generated source-proxy frontmatter tag. |
+| `qlkg-curation-check-v1` | yes | output | Scoped curation readiness report. |
+| `qlkg-audit-v1` | yes | output | Whole-graph deterministic audit report. |
 
-The package requires Python 3.9 or newer. The required Windows-host acceptance
-matrix is:
+Published schema names are immutable. A changed invariant, required field,
+identity meaning, or digest algorithm requires a new schema version. Readers
+must fail closed on unknown incompatible schemas rather than silently
+downgrading them.
 
-| Environment | Python coverage | Typst | Role |
-| --- | --- | --- | --- |
-| Windows native | 3.13 CI job; 3.14.6 local pass | 0.15.1 | supported and required |
-| WSL Ubuntu 26.04 | 3.14.4 local pass | 0.15.1 | supported and required |
-| macOS GitHub runner | 3.13 CI job | 0.15.1 | supported release gate |
-| Ubuntu GitHub runner | 3.9, 3.11, 3.13 compatibility jobs | 0.15.1 | supported release gate |
+## Breaking boundary from 0.3
 
-Every full-suite CI job uses Typst 0.15.1. The deterministic core has no runtime
-model provider dependency. The optional `openai-compatible` embedding adapter
-uses only the Python standard library and reads credentials from the configured
-environment variable. Typst is an external requirement only when Typst-authored
-labels must be rendered.
+Version 0.4 removes the SQLite Agent index and every embedding, provider,
+machine-profile, database override, and store-materialization path. It also
+removes v1 retrieval/execution/result and portable-store compatibility from the
+active product boundary.
 
-The adapter requires HTTPS except for numeric-loopback HTTP fixtures, validates
-bounded header-safe bearer tokens, and applies one monotonic deadline to HTTP
-status, header, and body streaming after operating-system resolver/socket setup.
-Resolver and multi-address connection latency is OS-governed and is classified
-as a timeout when it returns after the deadline. Provider configuration,
-transport, framing, JSON, and vector failures must have stable structured codes
-with no retained credential, response body, or raw exception chain.
+There is no automatic core-contract or database migration. Version 0.4 refuses
+the 0.3 `qlkg-v2` graph, `qlkg-sources-v2`, `qlkg-identities-v1`, and
+`qlkg-agent-delta-v2` discriminators. Before upgrading, commit the native
+authorities and reviewed registries so Git history provides an exact rollback
+point. While still on 0.3, export any Agent-curated entries or semantic edges
+that must survive for later human review. With 0.4 installed, explicitly move
+the old generated `knowledge/graph/` outside the project or delete that exact
+directory after confirming the rollback commit. Review and update the
+source-registry discriminator to `qlkg-sources-v3` and the optional
+identity-registry discriminator to `qlkg-identities-v2`, then run an unscoped
+`sync` to rebuild a fresh `qlkg-v3` graph from the native Markdown, Typst, and
+LaTeX authorities. Reissue any still-needed reviewed metadata as
+`qlkg-agent-delta-v3`; do not relabel an old delta without re-reviewing it
+against the rebuilt generation. The rebuild restores marker-derived nodes and
+references but intentionally discards un-reissued 0.3 Agent-curated entries and
+semantic edges.
 
-`embedding status` reads every profile in the portable policy without creating
-a provider. `embedding sync` is the only CLI document-vector maintenance path:
-it batches only eligible missing/stale inputs, bounds retries and total work,
-validates the graph generation before one atomic publication, and is a provider
-no-op on a second unchanged run. Query paths do not invoke document sync. This
-release does not yet use embedding coverage as a `store snapshot` or
-`store verify` readiness gate, so a valid portable store must not be advertised
-as RAG-ready on that basis alone.
+Databases and vectors were derived data and are not migrated. After rebuilding,
+create and verify a new `qlkg-store-v2` snapshot. If only a `qlkg-store-v1`
+copy survives, first restore its native authorities with the earlier release;
+0.4 intentionally does not interpret the old store or core graph.
 
-`agent search`, `agent context`, `kg_search`, and `kg_build_context` execute a
-bounded retrieval plan or adapt one legacy query. They never materialize an
-index or call document embedding. The semantic lane requires matching current
-materialized vectors and makes at most one query-only batch for all semantic
-expressions in a plan. Results bind to one snapshot/graph generation, preserve
-machine-readable ambiguity, and report lane-local degradation without exposing
-provider configuration or credentials through MCP arguments.
+Version 0.4 also refuses the 0.3 `qlkg-static-export-v1` manifest. Rebuild a
+consumer bundle as `qlkg-static-export-v2` from the verified v3 authority graph
+instead of relabeling or reusing old bundle bytes.
 
-## Schema evolution
+Retrieval clients must emit `qlkg-retrieval-plan-v2`, omit
+`semantic_queries`, and consume `qlkg-search-execution-v2` with nested
+`qlkg-search-result-v3` plus `qlkg-context-bundle-v2`. The 0.3 context-bundle,
+alignment-report, graph-comparison, and Agent-proposal shapes are incompatible;
+0.4 emits only their v2 discriminators and binds alignment, comparison, and
+proposal review artifacts to `alignment_sha256`. A verified v2 store clone is
+immediately queryable; do not call or emulate a materialization command.
 
-- A published schema name is immutable.
-- Additive fields must be preserved by readers that round-trip compatible data.
-- A changed invariant, required field, identity meaning, or digest algorithm
-  requires a new schema version.
-- A writer must never silently downgrade or destructively rewrite an unknown
-  schema.
-- A migration must be explicit, deterministic, reversible from Git, and tested
-  on copies of old fixtures.
-- Candidate/personal namespaces and bridges remain separate across migrations.
-
-When a future release needs migration, ship a dry-run report first. It must
-state input/output schemas, affected paths, before/after digests, losses or
-defaults, rollback instructions, and validation commands. Do not couple a data
-migration to an Agent's semantic inference.
+Obsidian exports are new downstream projections, not a migration target. They
+must never be registered or scanned back into the authority graph.
 
 ## Release gates
 
@@ -100,91 +96,59 @@ Run from a clean engine worktree:
 
 ```sh
 uv run python -m unittest discover -s tests -v
-uv build
-uv run python scripts/check_distribution.py
+uv build --out-dir build/release/0.4.0
+uv run python scripts/check_distribution.py --dist-root build/release/0.4.0
 ```
 
-Then verify:
+Then verify that:
 
-- wheel and sdist contain Python modules, static browser assets, all JSON
-  Schemas, every product Skill, the workflow manifest, product workflow docs,
-  and `.codex/agents` presets;
-- an isolated environment can install the wheel and run `kgdistiller --help`;
-- that installed wheel can load the default local profile in two fresh
-  processes, apply database/store/embedding-profile overrides, expose the same
-  non-secret configuration digest, and keep credential sentinels out of output;
-- that installed wheel exposes `embedding status` and `embedding sync`, resolves
-  a repository-relative policy, synchronizes the selected/overridden profile,
-  and performs zero document calls on an unchanged second invocation;
-- that the installed wheel loads a retrieval plan, executes planned and legacy
-  search/context in fresh processes, validates the nested v2 result, makes zero
-  document calls, and leaves missing/stale indexes unpublished;
-- plain `PYTHONPATH=src python3` imports candidate and ingest without undeclared
-  dependencies;
-- a Markdown/Typst/LaTeX fixture passes sync and check;
+- wheel and sdist contain Python modules, native static frontend assets, every
+  current JSON Schema, product Skill, workflow manifest, workflow guide, and
+  `.codex/agents` preset;
+- an isolated environment installs the wheel and runs `kgdistiller --help`;
+- help exposes no profile, embedding, database, provider, or materialization
+  command/flag;
+- a Markdown/Typst/LaTeX fixture passes sync, check, `agent status`, exact and
+  lexical/graph query, MCP smoke, and loopback browser smoke tests;
+- GraphView load detects a generation change and never returns mixed old/new
+  graph records;
+- retrieval plan v2 rejects `semantic_queries` and all results bind to one
+  snapshot and graph digest;
 - transactional plan/apply, idempotency, stale preconditions, lock conflict,
   fault injection, crash recovery, and old/new reader isolation pass;
-- embedding category/coverage, batch/retry/work bounds, provider failure,
-  single-node invalidation, stale-generation rejection, and unchanged-vector
-  byte preservation pass without default network access;
-- the 100,000-node disposable stress harness records a Windows-native or WSL
-  baseline before any performance envelope is used as a release gate; the
-  historical baseline in [the performance notes](performance.md) is
-  informational only;
-- the semantic benchmark supports 1k, 10k, and 100k ready-vector cases and
-  records p50/p95/max, provider call counts, exact-scan limits, and byte-stable
-  read-only evidence;
-- every Skill passes `skill-creator` structural validation, the product doctor,
-  and a real isolated Agent evaluation;
-- a temporary Codex home passes copy-mode link/doctor on Windows and POSIX while
-  sentinel `AGENTS.md`, `config.toml`, unrelated Skills, and unrelated agents
-  remain byte-identical;
-- a static export passes its packaged schema and dependency-free verifier, and
-  its public graph contains only explicitly published nodes, sources,
-  references, edges, and diagnostics;
-- a static export refuses dirty or untracked instance inputs, verifies the
-  graph source hashes, and records the clean current instance `HEAD` as
-  `source.revision` before the bundle is adopted in a second commit;
-- CRLF and LF checkouts produce the same authority, private graph/shard, and
-  static bundle artifact digests while semantic text changes still fail;
-- `export site --replace` rejects unmanaged or invalid destinations, preserves
-  every old bundle byte on generation/verification failure, and installs a
-  verified successor with `replaces_export_sha256` on success;
-- no credential, personal graph, authority note, generated SQLite, build
-  artifact, or stress fixture is tracked.
+- `store snapshot` and `store verify` cover in-place and separate snapshots,
+  safe paths, digest failures, and a cold clone immediately queried without
+  materialization;
+- static export passes its packaged schema and dependency-free verifier,
+  rejects dirty/untracked instance inputs, and preserves an existing valid
+  destination on failed `--replace`;
+- Obsidian export validates its managed boundary, rejects unsafe/unmanaged
+  replacement, and can be regenerated solely from the native graph;
+- every materially updated Skill passes the active `skill-creator` validator,
+  product doctor, and an isolated Agent evaluation;
+- POSIX and Windows copy/link doctor tests preserve unrelated Codex files;
+- no credential, personal graph, authority note, generated store, build
+  artifact, or private fixture is tracked in the product repository.
 
-Static consumers separately verify the adopted four-file bundle, run their own
-application checks, and record its manifest/export/public-graph digests. They do
-not install or vendor kgdistiller to validate an export.
+## Static consumer release order
 
-## Supply-chain and publishing checklist
+1. Publish and verify the kgdistiller release commit and distributions.
+2. Install that exact product in the authority project, run checks, and commit
+   all instance inputs so its checkout is clean.
+3. Create `export site` with exact producer and source repository provenance.
+4. Run the bundled `verify_export.py` without kgdistiller installed.
+5. Adopt and commit exactly the verified bundle bytes in the consumer.
+6. Run consumer-specific checks and record manifest/export/graph digests.
 
-1. Review `git diff`, `git status`, the version, changelog, and license.
-2. Build from a clean tagged commit; do not reuse old `dist/` contents.
-3. Inspect wheel/sdist file lists and install the wheel in an empty environment.
-4. Prefer a short-lived or trusted publishing mechanism; never commit a PyPI or
-   GitHub token.
-5. Publish kgdistiller before producing consumer exports that name its commit.
-6. Create checksums for the exact distributions and attach them to the release.
-7. Tag only after all release gates pass; do not move a published tag.
-8. Let consumers adopt an independently verified static export and repeat their
-   own gates before publication.
-9. Keep the previous compatible release available for rollback.
+Product release, authority generation, export generation, and consumer
+adoption remain separate auditable events.
 
-## Release order for static consumers
+## Supply-chain checklist
 
-1. Merge and publish the kgdistiller release commit and distributions.
-2. Verify that the remote commit, wheel, and sdist contain the engine, schemas,
-   Skills, agents, manifest, standalone export verifier, and stress harness.
-3. Run project checks with that exact product, commit all instance inputs (and
-   the old adopted bundle on refresh), and confirm the instance checkout is
-   clean.
-4. Create `export site` with its full producer commit and source repository
-   provenance; the receipt records the clean instance commit from step 3.
-5. Run `python verify_export.py EXPORT_DIR` in an environment without
-   kgdistiller installed.
-6. Adopt and commit exactly the verified bundle bytes in the consumer, record the export
-   and graph digests, then run consumer-specific checks.
-
-This order leaves product release, authority generation, and consumer adoption
-as separate auditable events without a submodule dependency.
+Review the complete diff/status, version, changelog, schemas, and license.
+Build from a clean tagged commit into an empty distribution directory, inspect
+wheel/sdist contents, and smoke-install the wheel in an isolated environment.
+Use short-lived or trusted publishing credentials and never commit tokens. Tag
+only after all gates pass; do not move a published tag. Keep the previous
+release available for authority recovery, while treating 0.4 data/API changes
+as intentionally incompatible.

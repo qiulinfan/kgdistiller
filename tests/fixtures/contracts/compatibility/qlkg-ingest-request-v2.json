@@ -1,0 +1,16 @@
+{
+  "schema": "qlkg-ingest-request-v2",
+  "request_id": "synthetic-v2-request",
+  "request_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "mode": "plan",
+  "capabilities": ["transactional-ingest-v1"],
+  "base_graph_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "base_alignment_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "candidate_snapshot": {"path": "artifacts/candidate.json", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"},
+  "query_report": {"path": "artifacts/query.json", "sha256": "5555555555555555555555555555555555555555555555555555555555555555"},
+  "authority_patches": [],
+  "decisions": [],
+  "delta": {"schema": "qlkg-agent-delta-v3", "remove_nodes": [], "nodes": [], "edges": [], "remove_edges": []},
+  "alignment_decisions": [],
+  "review": {"status": "reviewed", "reviewer": "fixture-reviewer", "evidence": ["synthetic review"], "provenance": ["synthetic fixture"]}
+}

@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def candidate_graph() -> dict:
     return {
-        "schema": "qlkg-candidate-graph-v1",
+        "schema": "qlkg-candidate-graph-v2",
         "namespace": "paper:fixture",
         "nodes": [
             {
@@ -76,7 +76,8 @@ class CandidateBuilderTest(unittest.TestCase):
         second = build_candidate_snapshot(candidate_graph())
 
         self.assertEqual(first, second)
-        self.assertEqual("qlkg-agent-snapshot-v1", first["schema"])
+        self.assertEqual("qlkg-agent-snapshot-v2", first["schema"])
+        self.assertEqual("qlkg-v3", first["graph"]["schema"])
         self.assertEqual(
             ["first-concept", "second-concept"],
             [node["id"] for node in first["nodes"]],
@@ -98,6 +99,22 @@ class CandidateBuilderTest(unittest.TestCase):
         ungrounded["nodes"][0]["provenance"] = {"authority": "paper.tex"}
         with self.assertRaisesRegex(CandidateError, "bounded source location"):
             build_candidate_snapshot(ungrounded)
+
+    def test_candidate_contract_matches_snapshot_output_bounds(self) -> None:
+        overlong_id = candidate_graph()
+        overlong_id["nodes"][0]["id"] = "a" * 257
+        with self.assertRaisesRegex(CandidateError, "at most|invalid candidate node"):
+            build_candidate_snapshot(overlong_id)
+
+        overlong_label = candidate_graph()
+        overlong_label["nodes"][0]["label"] = "L" * 1025
+        with self.assertRaisesRegex(CandidateError, "at most|label is too long"):
+            build_candidate_snapshot(overlong_label)
+
+        overlong_namespace = candidate_graph()
+        overlong_namespace["namespace"] = "p:" + "a" * 255
+        with self.assertRaisesRegex(CandidateError, "at most|namespace"):
+            build_candidate_snapshot(overlong_namespace)
 
     def test_candidate_cli_builds_and_validates_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-candidate-test-") as temporary:
@@ -147,7 +164,7 @@ class CandidateBuilderTest(unittest.TestCase):
             )
             self.assertEqual(0, validated.returncode, validated.stderr)
             self.assertEqual(
-                "qlkg-agent-snapshot-v1", json.loads(validated.stdout)["schema"]
+                "qlkg-agent-snapshot-v2", json.loads(validated.stdout)["schema"]
             )
 
 

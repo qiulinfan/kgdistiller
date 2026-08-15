@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-store-v2.schema.json",
+  "title": "kgdistiller JSON-only portable knowledge store v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "generator", "layout", "paths", "documents", "graph_artifacts", "registry_sha256",
+    "identity_sha256", "alignment_sha256", "graph_sha256",
+    "store_generation_sha256", "managed_paths", "store_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-store-v2"},
+    "generator": {"const": "kgdistiller"},
+    "layout": {"enum": ["in-place", "snapshot-copy"]},
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "identities", "alignments", "graph", "documents"],
+      "properties": {
+        "registry": {"$ref": "#/$defs/path"},
+        "identities": {"anyOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]},
+        "alignments": {"anyOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]},
+        "graph": {"$ref": "#/$defs/path"},
+        "documents": {"$ref": "#/$defs/path"}
+      }
+    },
+    "documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "sha256", "source_snapshot_sha256"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "source_snapshot_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "graph_artifacts": {
+      "type": "array",
+      "minItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "bytes", "sha256"],
+        "properties": {
+          "path": {"$ref": "#/$defs/path"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "registry_sha256": {"$ref": "#/$defs/sha256"},
+    "identity_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "alignment_sha256": {"$ref": "#/$defs/sha256"},
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "store_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "managed_paths": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/path"}},
+    "store_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}
+  }
+}

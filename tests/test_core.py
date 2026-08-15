@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import io
 import json
@@ -21,12 +22,9 @@ knowledge = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = knowledge
 SPEC.loader.exec_module(knowledge)
 
-from kgdistiller.agent import remove_agent_index, resolve_agent_index_path
-
-
 class KnowledgeGraphTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="qlkg-v2-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="qlkg-v3-test-")
         self.repo = Path(self.temporary.name)
         self.source_root = self.repo / "notes/math/demo"
         self.chapter = self.source_root / "chapters/01-foundations.typ"
@@ -40,7 +38,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.registry.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-sources-v2",
+                    "schema": "qlkg-sources-v3",
                     "fields": [
                         {
                             "id": "analysis",
@@ -89,7 +87,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         )
         self.graph = self.repo / "knowledge/graph"
         self.identities = self.repo / "knowledge/identities.json"
-        self.database = self.repo / "knowledge/build/knowledge.sqlite"
+        (self.repo / "knowledge/build").mkdir(parents=True, exist_ok=True)
         self.typst_registry = self.repo / "notes/math/toolchain/generated/knowledge-registry.typ"
 
     def tearDown(self) -> None:
@@ -100,7 +98,6 @@ class KnowledgeGraphTest(unittest.TestCase):
             self.repo,
             self.registry,
             self.graph,
-            self.database,
             self.typst_registry,
             identities=self.identities,
             files=files or [],
@@ -154,14 +151,83 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual({"nodes": 0, "edges": 0, "references": 0}, report["delta"])
         manifest = json.loads(first["manifest.json"])
-        self.assertEqual("qlkg-v2", manifest["schema"])
+        self.assertEqual("qlkg-v3", manifest["schema"])
         self.assertRegex(manifest["graph_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            knowledge.source_registry_sha256(self.registry),
+            manifest["registry_sha256"],
+        )
         self.assertNotIn("generated_at", manifest)
+
+    def test_graph_loader_rejects_existing_superseded_or_non_object_manifest(self) -> None:
+        self.sync()
+        manifest_path = self.graph / "manifest.json"
+        original = manifest_path.read_bytes()
+
+        legacy = json.loads(original)
+        legacy["schema"] = "qlkg-v2"
+        manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
+        legacy_bytes = manifest_path.read_bytes()
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "expected qlkg-v3"):
+            self.sync()
+        self.assertEqual(legacy_bytes, manifest_path.read_bytes())
+
+        manifest_path.write_text("[]\n", encoding="utf-8")
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "JSON object"):
+            knowledge.load_state(self.graph)
+
+        manifest_path.write_text("{", encoding="utf-8")
+        with self.assertRaisesRegex(
+            knowledge.KnowledgeError, "invalid graph manifest JSON"
+        ):
+            knowledge.load_state(self.graph)
+
+        manifest_path.unlink()
+        empty = knowledge.load_state(self.graph)
+        self.assertEqual({}, empty.manifest)
+        self.assertEqual({}, empty.nodes)
+
+        manifest_path.write_bytes(original)
+
+    def test_superseded_source_identity_and_delta_contracts_are_rejected(self) -> None:
+        registry = json.loads(self.registry.read_text(encoding="utf-8"))
+        registry["schema"] = "qlkg-sources-v2"
+        self.registry.write_text(json.dumps(registry), encoding="utf-8")
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "qlkg-sources-v3"):
+            self.sync()
+
+        registry["schema"] = "qlkg-sources-v3"
+        self.registry.write_text(json.dumps(registry), encoding="utf-8")
+        self.sync()
+
+        self.identities.write_text(
+            json.dumps({"schema": "qlkg-identities-v1", "identities": []}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "qlkg-identities-v2"):
+            self.sync()
+        self.identities.unlink()
+
+        legacy_delta = self.repo / "knowledge/build/legacy-delta.json"
+        legacy_delta.write_text(
+            json.dumps({"schema": "qlkg-agent-delta-v2", "nodes": [], "edges": []}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "qlkg-agent-delta-v3"):
+            knowledge.apply_delta(self.graph, self.typst_registry, legacy_delta)
 
     def test_source_hash_and_graph_check_are_crlf_portable(self) -> None:
         state, _, _ = self.sync()
         authority = self.chapter.relative_to(self.repo).as_posix()
         expected = state.manifest["source_hashes"][authority]
+        registry_sha = state.manifest["registry_sha256"]
+
+        registry_payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        registry_text = json.dumps(
+            registry_payload, ensure_ascii=False, sort_keys=True, indent=2
+        ) + "\n"
+        self.registry.write_bytes(registry_text.replace("\n", "\r\n").encode("utf-8"))
+        self.assertEqual(registry_sha, knowledge.source_registry_sha256(self.registry))
 
         canonical_text = self.chapter.read_text(encoding="utf-8")
         self.chapter.write_bytes(
@@ -184,7 +250,6 @@ class KnowledgeGraphTest(unittest.TestCase):
             self.repo,
             self.registry,
             self.graph,
-            self.database,
             self.typst_registry,
             identities=self.identities,
             files=[],
@@ -200,6 +265,25 @@ class KnowledgeGraphTest(unittest.TestCase):
             or (self.graph / name).read_text(encoding="utf-8") != content
         ]
         self.assertEqual([], stale)
+
+    def test_registry_generation_binding_survives_delta_and_snapshot_recomputation(self) -> None:
+        state, _, _ = self.sync()
+        registry_sha = knowledge.source_registry_sha256(self.registry)
+        self.assertEqual(registry_sha, state.manifest["registry_sha256"])
+
+        delta = self.repo / "knowledge/build/no-op-generation.json"
+        delta.write_text(
+            json.dumps({"schema": "qlkg-agent-delta-v3", "nodes": [], "edges": []}),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+
+        hydrated = knowledge.load_state(self.graph)
+        self.assertEqual(registry_sha, hydrated.manifest["registry_sha256"])
+        self.assertEqual(
+            hydrated.manifest["graph_sha256"],
+            knowledge.make_agent_snapshot(hydrated)["graph"]["sha256"],
+        )
 
     def test_explicit_file_scope_must_match_a_bounded_source_pattern(self) -> None:
         excluded = self.source_root / "README.typ"
@@ -224,6 +308,65 @@ class KnowledgeGraphTest(unittest.TestCase):
         ):
             self.sync()
 
+    def test_source_root_must_remain_inside_repository_after_resolution(self) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        outside = self.repo.parent / f"{self.repo.name}-outside"
+        outside.mkdir()
+        try:
+            payload["sources"][0]["root"] = "../" + outside.name
+            self.registry.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(knowledge.KnowledgeError, "portable relative path"):
+                self.sync()
+        finally:
+            outside.rmdir()
+
+    def test_source_root_must_be_a_portable_lexical_relative_path(self) -> None:
+        original = json.loads(self.registry.read_text(encoding="utf-8"))
+        for root in (str(self.source_root), "notes/../notes"):
+            with self.subTest(root=root):
+                payload = copy.deepcopy(original)
+                payload["sources"][0]["root"] = root
+                self.registry.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaisesRegex(
+                    knowledge.KnowledgeError, "portable relative path"
+                ):
+                    self.sync()
+
+    def test_symlinked_source_root_inside_repository_is_not_portable(self) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        link = self.repo / "linked-notes"
+        try:
+            try:
+                link.symlink_to(self.source_root, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("directory symlink creation is unavailable")
+            payload["sources"][0]["root"] = "linked-notes"
+            self.registry.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(knowledge.KnowledgeError, "must not traverse"):
+                self.sync()
+        finally:
+            if link.is_symlink():
+                link.unlink()
+
+    def test_symlinked_source_root_cannot_escape_repository(self) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        outside = self.repo.parent / f"{self.repo.name}-symlink-target"
+        outside.mkdir()
+        link = self.repo / "notes/escaped-root"
+        try:
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("directory symlink creation is unavailable")
+            payload["sources"][0]["root"] = "notes/escaped-root"
+            self.registry.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(knowledge.KnowledgeError, "escapes repository"):
+                self.sync()
+        finally:
+            if link.is_symlink():
+                link.unlink()
+            outside.rmdir()
+
     def test_glob_matching_uses_segments_and_double_star(self) -> None:
         self.assertTrue(
             knowledge.glob_matches_path(Path("chapters/a.typ"), "chapters/*.typ")
@@ -238,19 +381,39 @@ class KnowledgeGraphTest(unittest.TestCase):
             knowledge.glob_matches_path(Path("nested/a.md"), "**/*.md")
         )
 
-    def test_agent_index_is_bootstrapped_and_reused_from_committed_graph(self) -> None:
-        state, _, _ = self.sync()
-        remove_agent_index(self.database)
+    def test_registry_node_id_over_output_limit_is_rejected(self) -> None:
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        payload["fields"][0]["id"] = "a" * 257
+        self.registry.write_text(json.dumps(payload), encoding="utf-8")
 
-        self.assertTrue(knowledge.ensure_database(self.database, state))
-        first = resolve_agent_index_path(self.database).read_bytes()
-        self.assertFalse(knowledge.ensure_database(self.database, state))
-        self.assertEqual(first, resolve_agent_index_path(self.database).read_bytes())
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "invalid field id"):
+            self.sync()
 
-        persisted = knowledge.load_state(self.graph)
-        self.assertEqual("", persisted.nodes["sigma-algebra"]["text"])
-        self.assertFalse(knowledge.ensure_database(self.database, persisted))
-        self.assertEqual(first, resolve_agent_index_path(self.database).read_bytes())
+    def test_scanned_node_label_over_output_limit_is_rejected(self) -> None:
+        oversized = self.source_root / "chapters/oversized.md"
+        oversized.write_text(
+            "> **Definition: --[[" + ("L" * 1025) + "]]--**\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "at most 1024"):
+            self.sync()
+
+    def test_delta_node_output_bounds_are_rejected(self) -> None:
+        self.sync()
+        cases = (
+            ({"id": "a" * 257, "label": "Too long an ID"}, "invalid delta node id"),
+            ({"id": "sigma-algebra", "label": "L" * 1025}, "at most 1024"),
+        )
+        for index, (node, message) in enumerate(cases):
+            with self.subTest(message=message):
+                delta = self.repo / f"knowledge/build/output-bound-{index}.json"
+                delta.write_text(
+                    json.dumps({"schema": "qlkg-agent-delta-v3", "nodes": [node]}),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(knowledge.KnowledgeError, message):
+                    knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
     def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
         self.sync()
@@ -259,7 +422,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {
                             "id": "sigma-algebra",
@@ -282,14 +445,14 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         state = knowledge.load_state(self.graph)
 
         first = knowledge.make_agent_snapshot(state, "paper:fixture")
         second = knowledge.make_agent_snapshot(state, "paper:fixture")
 
         self.assertEqual(first, second)
-        self.assertEqual("qlkg-agent-snapshot-v1", first["schema"])
+        self.assertEqual("qlkg-agent-snapshot-v2", first["schema"])
         self.assertEqual("paper:fixture", first["namespace"])
         self.assertEqual(state.manifest["graph_sha256"], first["graph"]["sha256"])
         self.assertEqual(len(state.nodes), first["graph"]["counts"]["nodes"])
@@ -367,7 +530,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         report = json.loads(result.stdout)
         snapshot = json.loads(output.read_text(encoding="utf-8"))
-        self.assertEqual("qlkg-agent-snapshot-v1", report["schema"])
+        self.assertEqual("qlkg-agent-snapshot-v2", report["schema"])
         self.assertEqual(snapshot["snapshot_sha256"], report["snapshot_sha256"])
         self.assertEqual("personal", snapshot["namespace"])
 
@@ -403,7 +566,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {
                             "id": "sigma-algebra",
@@ -419,7 +582,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
         manifest = json.loads((self.graph / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual("qlkg-entry-shards-v1", manifest["entry_store"]["schema"])
@@ -457,7 +620,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {
                             "id": "sigma-algebra",
@@ -468,7 +631,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
         state, _, _ = self.sync(
             files=[Path("notes/math/demo/chapters/01-foundations.typ")]
@@ -486,7 +649,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {
                             "id": "sigma-algebra",
@@ -507,7 +670,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
         self.chapter.write_text(
             self.chapter.read_text(encoding="utf-8").replace(
@@ -548,13 +711,13 @@ class KnowledgeGraphTest(unittest.TestCase):
         entry.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [{"id": "sigma-algebra", "text": "Durable entry."}],
                 }
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, entry)
+        knowledge.apply_delta(self.graph, self.typst_registry, entry)
 
         renamed = self.chapter.with_name("02-重定位.typ")
         subprocess.run(
@@ -665,7 +828,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {"id": "sigma-algebra", "text": "Reviewed sigma entry."},
                         {"id": "measure-space", "text": "Reviewed measure entry."},
@@ -682,7 +845,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         self.chapter.write_text(
             self.chapter.read_text(encoding="utf-8").replace(
                 "A family of sets closed under complement and countable union.",
@@ -702,7 +865,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(["sigma-algebra"], edge["stale_endpoints"])
         self.assertEqual({"nodes": 1, "edges": 1}, report["needs_review"])
 
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         refreshed = knowledge.load_state(self.graph)
         self.assertEqual("current", refreshed.nodes["sigma-algebra"]["properties"]["curation_status"])
         self.assertEqual(
@@ -717,7 +880,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {"id": "sigma-algebra", "text": "Reviewed sigma entry."},
                         {"id": "measure-space", "text": "Reviewed measure entry."},
@@ -726,7 +889,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         self.chapter.write_text(
             self.chapter.read_text(encoding="utf-8").replace(
                 "Later we use #ref[measure space].\n", ""
@@ -749,13 +912,13 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [{"id": "sigma-algebra", "text": "Reviewed identity entry."}],
                 }
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         state = knowledge.load_state(self.graph)
         result = knowledge.reconcile_node_name(
             state, self.identities, "sigma-algebra", "sigma field"
@@ -858,7 +1021,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {"id": "markdown-authority", "text": "Markdown entry."},
                         {"id": "latex-authority", "text": "LaTeX entry."},
@@ -868,7 +1031,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         state = knowledge.load_state(self.graph)
 
         markdown_path = state.nodes["markdown-authority"]["properties"]["entry_path"]
@@ -923,7 +1086,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {
                             "id": "publication-concept",
@@ -934,7 +1097,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
         ready = subprocess.run(command, check=False, capture_output=True, text=True)
 
@@ -995,7 +1158,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {"id": "sigma-algebra", "text": "Closed under the defining operations."},
                         {"id": "measure-space", "text": "A measurable space with a measure."},
@@ -1012,7 +1175,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, self.typst_registry, delta)
         report = knowledge.audit_report(knowledge.load_state(self.graph))
 
         self.assertEqual(2, report["counts"]["entries"])
@@ -1038,7 +1201,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "edges": [
                         {"source": "sigma-algebra", "relation": "prerequisite-for", "target": "measure-space"},
                         {"source": "measure-space", "relation": "prerequisite-for", "target": "sigma-algebra"},
@@ -1048,7 +1211,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(knowledge.KnowledgeError, "prerequisite-for cycle"):
-            knowledge.apply_delta(self.graph, self.database, self.typst_registry, delta)
+            knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
     def test_explicit_delta_can_remove_obsolete_meta_root(self) -> None:
         self.sync()
@@ -1080,7 +1243,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "remove_nodes": ["obsolete-discipline"],
                 }
             ),
@@ -1089,7 +1252,6 @@ class KnowledgeGraphTest(unittest.TestCase):
 
         report = knowledge.apply_delta(
             self.graph,
-            self.database,
             self.typst_registry,
             delta,
         )
@@ -1110,7 +1272,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {
                             "id": "mathematics",
@@ -1126,7 +1288,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         with self.assertRaisesRegex(knowledge.KnowledgeError, "unsupported node type"):
             knowledge.apply_delta(
                 self.graph,
-                self.database,
                 self.typst_registry,
                 delta,
             )
@@ -1147,7 +1308,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         entries.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {"id": "sigma-algebra", "text": "A family of sets closed under the required operations."},
                         {"id": "measure-space", "text": "A measurable space equipped with a measure."},
@@ -1156,7 +1317,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, entries)
+        knowledge.apply_delta(self.graph, self.typst_registry, entries)
 
         application = self.source_root / "chapters/02-application.typ"
         application.write_text(
@@ -1168,7 +1329,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         relation.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v2",
+                    "schema": "qlkg-agent-delta-v3",
                     "nodes": [
                         {"id": "completion-theorem", "text": "Every object in scope admits a completion."},
                     ],
@@ -1184,7 +1345,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.database, self.typst_registry, relation)
+        knowledge.apply_delta(self.graph, self.typst_registry, relation)
 
         application_authority = "notes/math/demo/chapters/02-application.typ"
         state = knowledge.load_state(self.graph)

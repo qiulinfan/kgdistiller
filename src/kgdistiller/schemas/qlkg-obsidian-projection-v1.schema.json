@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-obsidian-projection-v1.schema.json",
+  "title": "kgdistiller Obsidian projection v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "source", "policy", "counts", "artifacts", "projection_sha256"],
+  "properties": {
+    "schema": {"const": "qlkg-obsidian-projection-v1"},
+    "status": {"const": "ready"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
+      "properties": {
+        "graph_schema": {"const": "qlkg-v3"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "source_hashes_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "edge_semantics_in_obsidian_graph", "authority_links"],
+      "properties": {
+        "nodes": {"const": "active-knowledge"},
+        "edges": {"const": "current-semantic"},
+        "edge_semantics_in_obsidian_graph": {"const": "lossy"},
+        "authority_links": {"enum": ["vault-relative", "file-uri"]}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concepts", "sources", "links"],
+      "properties": {
+        "concepts": {"type": "integer", "minimum": 0},
+        "sources": {"type": "integer", "minimum": 0},
+        "links": {"type": "integer", "minimum": 0}
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path", "bytes", "sha256"],
+        "properties": {
+          "kind": {"enum": ["concept", "source"]},
+          "path": {"$ref": "#/$defs/path"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "projection_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"}
+  }
+}

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 import tarfile
 import zipfile
@@ -10,14 +11,14 @@ from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = REPO_ROOT / "src" / "kgdistiller"
-DIST_ROOT = REPO_ROOT / "dist"
+DEFAULT_DIST_ROOT = REPO_ROOT / "dist"
 
 
-def _single(pattern: str) -> Path:
-    matches = sorted(DIST_ROOT.glob(pattern))
+def _single(dist_root: Path, pattern: str) -> Path:
+    matches = sorted(dist_root.glob(pattern))
     if len(matches) != 1:
         raise RuntimeError(
-            f"expected exactly one {pattern!r} artifact in {DIST_ROOT}, "
+            f"expected exactly one {pattern!r} artifact in {dist_root}, "
             f"found {[path.name for path in matches]}"
         )
     return matches[0]
@@ -102,13 +103,22 @@ def check_sdist(path: Path, expected: set[str], product_sources: set[str]) -> No
             raise RuntimeError(f"sdist is missing {required}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dist-root",
+        type=Path,
+        default=DEFAULT_DIST_ROOT,
+        help="directory containing exactly one current wheel and source archive",
+    )
+    args = parser.parse_args(argv)
+    dist_root = args.dist_root.resolve()
     try:
         package_files = _expected_package_files()
         product_files, product_sources = _expected_product_files()
         expected = package_files | product_files
-        wheel = _single("kgdistiller-*.whl")
-        sdist = _single("kgdistiller-*.tar.gz")
+        wheel = _single(dist_root, "kgdistiller-*.whl")
+        sdist = _single(dist_root, "kgdistiller-*.tar.gz")
         check_wheel(wheel, expected)
         check_sdist(sdist, package_files, product_sources)
     except (OSError, RuntimeError, tarfile.TarError, zipfile.BadZipFile) as error:

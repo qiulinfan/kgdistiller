@@ -9,14 +9,16 @@ import re
 from importlib import resources
 from typing import Any
 
-from .agent import SNAPSHOT_SCHEMA, sha256_json, validate_agent_snapshot
+from .cli import GRAPH_SCHEMA, ID_RE, MAX_NODE_LABEL_LENGTH
+from .contracts import MAX_NAMESPACE_LENGTH, sha256_json
+from .query import QueryError, SNAPSHOT_SCHEMA, validate_agent_snapshot
 from .json_schema import validate_json_schema
 
 
-CANDIDATE_SOURCE_SCHEMA = "qlkg-candidate-graph-v1"
-ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+CANDIDATE_SOURCE_SCHEMA = "qlkg-candidate-graph-v2"
 NAMESPACE_RE = re.compile(
-    r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
+    rf"(?=.{{1,{MAX_NAMESPACE_LENGTH}}}\Z)[a-z0-9][a-z0-9._-]*"
+    r"(?::[a-z0-9][a-z0-9._-]*)*"
 )
 RELATIONS = {
     "contains",
@@ -38,7 +40,7 @@ class CandidateError(ValueError):
 def _schema() -> dict[str, Any]:
     return json.loads(
         resources.files("kgdistiller")
-        .joinpath("schemas", "qlkg-candidate-graph-v1.schema.json")
+        .joinpath("schemas", "qlkg-candidate-graph-v2.schema.json")
         .read_text(encoding="utf-8")
     )
 
@@ -69,6 +71,8 @@ def validate_candidate_graph(payload: Any) -> dict[str, Any]:
         node_id = str(node["id"])
         if not ID_RE.fullmatch(node_id) or node_id in node_ids:
             raise CandidateError(f"duplicate or invalid candidate node id: {node_id!r}")
+        if len(str(node.get("label", ""))) > MAX_NODE_LABEL_LENGTH:
+            raise CandidateError(f"candidate node label is too long: {node_id!r}")
         node_ids.add(node_id)
         provenance = node.get("provenance") or {}
         if not str(provenance.get("authority", "")).strip():
@@ -156,7 +160,7 @@ def build_candidate_snapshot(payload: Any) -> dict[str, Any]:
         "schema": SNAPSHOT_SCHEMA,
         "namespace": candidate["namespace"],
         "graph": {
-            "schema": "qlkg-v2",
+            "schema": GRAPH_SCHEMA,
             "sha256": sha256_json(graph_payload),
             "counts": {
                 "nodes": len(nodes),
@@ -168,5 +172,8 @@ def build_candidate_snapshot(payload: Any) -> dict[str, Any]:
         "diagnostics": copy.deepcopy(candidate["diagnostics"]),
     }
     snapshot["snapshot_sha256"] = sha256_json(snapshot)
-    validate_agent_snapshot(snapshot)
+    try:
+        validate_agent_snapshot(snapshot)
+    except QueryError as error:
+        raise CandidateError(f"candidate snapshot is invalid: {error}") from error
     return snapshot

@@ -3,8 +3,8 @@
 ## Authority
 
 Configured `.md`, `.typ`, and `.tex` files remain authoritative in their own
-formats. Generated graph artifacts, search databases, HTML, and converted files
-never become a second authority.
+formats. Generated graph artifacts, in-memory query views, HTML, static sites,
+and Obsidian projections never become a second authority.
 
 One authored knowledge name has at most one active definition marker across the
 whole project:
@@ -24,7 +24,7 @@ Changing an authored name is an explicit identity decision. The deterministic
 scanner does not infer it from document order, proximity, a matching Git hunk,
 or textual similarity. `kgdistiller reconcile rename-node <id> <new-name>`
 records the new canonical name and prior aliases in the optional
-`qlkg-identities-v1` registry before the source is synchronized.
+`qlkg-identities-v2` registry before the source is synchronized.
 
 ## Node selection
 
@@ -77,11 +77,11 @@ origin, confidence, and source-grounded evidence.
 
 ## Agent delta
 
-Semantic curation uses a reviewable `qlkg-agent-delta-v2` document:
+Semantic curation uses a reviewable `qlkg-agent-delta-v3` document:
 
 ```json
 {
-  "schema": "qlkg-agent-delta-v2",
+  "schema": "qlkg-agent-delta-v3",
   "remove_nodes": [],
   "nodes": [
     {
@@ -133,10 +133,15 @@ one bounded registry pattern; a shared directory root alone is not source
 registration, and overlapping source ownership is rejected.
 
 The graph manifest records the last usable Git revision alongside the complete
-source hash map. A later sync includes deleted authorities and both sides of a
-staged Git rename; full sync also compares the previous source map, so rename
-handling does not depend on Git similarity detection. An exact-content rename
-can be paired before staging. A file path is provenance, never graph identity.
+source hash map and canonical digests of the source registry and optional
+identity registry. Registry ownership, subject/origin metadata, authored-name
+changes, and reviewed aliases therefore belong to the same generation as the
+hydrated graph. Store and downstream export operations fail closed when those
+registries are newer than the graph. A later sync includes deleted authorities
+and both sides of a staged Git rename; full sync also compares the previous
+source map, so rename handling does not depend on Git similarity detection. An
+exact-content rename can be paired before staging. A file path is provenance,
+never graph identity.
 
 Every `source_hashes` value uses the authority-text boundary: read the
 Markdown, Typst, or LaTeX file as UTF-8 with universal-newline translation,
@@ -162,10 +167,38 @@ or becomes orphaned. The data is retained for review, while `curate-check` and
 publication reject stale curation. Reapplying reviewed node and edge deltas
 refreshes those fingerprints.
 
+## Read-only graph view
+
+CLI, MCP, and the native frontend query the committed JSON artifacts through a
+fully hydrated `GraphView`; they do not maintain a secondary database. The
+loader validates the manifest before and after loading the graph, snapshot, and
+alignments. If the generation changes, it retries a bounded number of times or
+fails without exposing a mixed view.
+
+Cross-language identity resolution relies on canonical labels, reviewed global
+and scoped aliases, Unicode NFKC/casefold normalization, and explicit alignment
+evidence. Lexical score, acronym expansion, and graph proximity retrieve or
+rank candidates but never create identity or semantic edges.
+
+`qlkg-retrieval-plan-v2` has deterministic identity, lexical, and bounded graph
+lanes. It has no semantic/vector lane. Read-only results bind their snapshot
+and graph digests so a later transaction can reject a stale decision.
+
+## Derived projections
+
+`qlkg-static-export-v2` is a privacy-filtered consumer bundle.
+`qlkg-obsidian-projection-v1` is a lossy, disposable managed downstream view.
+The project root may be the editor vault, where registered Markdown remains
+native authority; the managed projection subtree is not authority. It must
+never be registered in
+`knowledge/sources.json`, scanned, or ingested back; regenerate it from the
+Markdown, Typst, or LaTeX authorities and the deterministic graph.
+
 ## Required invariants
 
 - at most one active authority marker per global knowledge name;
 - deterministic graph artifacts and stable IDs;
+- one generation-consistent `GraphView` per independent query;
 - no dangling semantic edge endpoints;
 - no cycles in `contains` or `prerequisite-for`;
 - no field-to-field `contains` edges;

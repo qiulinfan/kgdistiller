@@ -6,32 +6,34 @@ import copy
 import hashlib
 import json
 from importlib import resources
-from pathlib import PurePosixPath
 from typing import Any
 
 from .json_schema import SchemaViolation, validate_json_schema
 
 
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
+MAX_NAMESPACE_LENGTH = 256
 CONTRACT_SCHEMAS = {
     name: f"{name}.schema.json"
     for name in (
-        "qlkg-local-profile-v1",
-        "qlkg-embedding-policy-v1",
-        "qlkg-retrieval-plan-v1",
-        "qlkg-search-result-v2",
-        "qlkg-search-execution-v1",
-        "qlkg-document-record-v2",
-        "qlkg-document-upsert-request-v1",
-        "qlkg-document-ingest-receipt-v1",
-        "qlkg-static-export-v1",
+        "qlkg-query-status-v1",
+        "qlkg-retrieval-plan-v2",
+        "qlkg-search-result-v3",
+        "qlkg-search-execution-v2",
+        "qlkg-document-record-v1",
+        "qlkg-store-v2",
+        "qlkg-store-report-v1",
+        "qlkg-obsidian-projection-v1",
+        "qlkg-obsidian-export-report-v1",
+        "qlkg-static-export-v2",
+        "qlkg-static-export-report-v1",
         "qlkg-site-graph-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
-    "qlkg-document-upsert-request-v1": "request_sha256",
-    "qlkg-document-ingest-receipt-v1": "receipt_sha256",
-    "qlkg-static-export-v1": "export_sha256",
+    "qlkg-store-v2": "store_sha256",
+    "qlkg-obsidian-projection-v1": "projection_sha256",
+    "qlkg-static-export-v2": "export_sha256",
     "qlkg-site-graph-v1": "graph_sha256",
 }
 
@@ -112,144 +114,23 @@ def _format_violation(error: SchemaViolation) -> str:
     return f"contract JSON Schema violation at {path}: {error.message}"
 
 
-def _validate_policy_profile_names(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-embedding-policy-v1":
-        return
-    names = [profile.get("name") for profile in payload.get("profiles", [])]
-    if len(names) != len(set(names)):
-        raise ContractError("embedding policy profile names must be unique")
-
-
-def _validate_local_profile(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-local-profile-v1":
-        return
-    selected = payload.get("embedding_profile")
-    profiles = payload.get("provider_profiles") or {}
-    if selected not in profiles:
-        raise ContractError("embedding_profile must name a provider_profiles entry")
-
-
 def _validate_document_record(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-document-record-v2":
+    if payload.get("schema") != "qlkg-document-record-v1":
         return
-    authority = payload.get("authority")
-    if authority in (payload.get("authority_history") or []):
-        raise ContractError("authority_history must not repeat the current authority")
-    expected_suffix = {"md": ".md", "typ": ".typ", "tex": ".tex"}.get(
+    authority = str(payload.get("authority", ""))
+    expected_suffix = {
+        "markdown": ".md",
+        "typst": ".typ",
+        "latex": ".tex",
+    }.get(
         payload.get("format")
     )
-    if expected_suffix and not str(authority).endswith(expected_suffix):
-        raise ContractError("document format must match the authority extension")
-    for name, value in (payload.get("external_ids") or {}).items():
-        if isinstance(value, str) and value != value.strip():
-            raise ContractError(f"external_ids.{name} must be normalized")
-        if name in {"doi", "arxiv"} and isinstance(value, str) and value != value.lower():
-            raise ContractError(f"external_ids.{name} must be lowercase normalized")
-
-
-def _glob_variants(pattern: str) -> set[str]:
-    variants = {pattern}
-    pending = [pattern]
-    while pending:
-        candidate = pending.pop()
-        marker = "**/"
-        offset = candidate.find(marker)
-        if offset < 0:
-            continue
-        shortened = candidate[:offset] + candidate[offset + len(marker) :]
-        if shortened not in variants:
-            variants.add(shortened)
-            pending.append(shortened)
-    return variants
-
-
-def _validate_registered_glob_syntax(pattern: str) -> None:
-    offset = 0
-    while offset < len(pattern):
-        if pattern[offset] != "[":
-            offset += 1
-            continue
-        closing = pattern.find("]", offset + 1)
-        if closing < 0:
-            raise ContractError("registered_glob is malformed")
-        character_class = pattern[offset + 1 : closing]
-        if character_class.startswith(("!", "^")):
-            character_class = character_class[1:]
-        if not character_class:
-            raise ContractError("registered_glob is malformed")
-        for index, character in enumerate(character_class):
-            if character != "-" or index == 0 or index == len(character_class) - 1:
-                continue
-            if ord(character_class[index - 1]) > ord(character_class[index + 1]):
-                raise ContractError("registered_glob is malformed")
-        offset = closing + 1
-
-
-def _validate_upsert_source(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-document-upsert-request-v1":
-        return
-    source = payload.get("source") or {}
-    authority = str(source.get("authority", ""))
-    registered_glob = str(source.get("registered_glob", ""))
-    wildcard_offsets = [
-        offset for token in ("*", "?", "[") if (offset := registered_glob.find(token)) >= 0
-    ]
-    static_prefix = registered_glob[: min(wildcard_offsets)] if wildcard_offsets else registered_glob
-    if not static_prefix or static_prefix.startswith("/"):
-        raise ContractError("registered_glob must have a bounded relative prefix")
-    _validate_registered_glob_syntax(registered_glob)
-    try:
-        matches_registered_glob = any(
-            PurePosixPath(authority).match(candidate)
-            for candidate in _glob_variants(registered_glob)
-        )
-    except ValueError as error:
-        raise ContractError("registered_glob is malformed") from error
-    if not matches_registered_glob:
-        raise ContractError("authority must match its registered bounded glob")
-    expected_suffix = {"md": ".md", "typ": ".typ", "tex": ".tex"}.get(
-        source.get("format")
-    )
     if expected_suffix and not authority.endswith(expected_suffix):
-        raise ContractError("source format must match the authority extension")
-    artifacts = payload.get("artifacts") or {}
-    preconditions = payload.get("preconditions") or {}
-    query = artifacts.get("query") or {}
-    if query.get("sha256") != preconditions.get("query_sha256"):
-        raise ContractError("query artifact digest must match its exact precondition")
-
-
-def _validate_receipt_state(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-document-ingest-receipt-v1":
-        return
-    overall = payload.get("overall_status")
-    stages = payload.get("stages") or {}
-    authority = (stages.get("authority_graph") or {}).get("status")
-    embeddings = (stages.get("embeddings") or {}).get("status")
-    portable = (stages.get("portable") or {}).get("status")
-    materialization = (stages.get("materialization") or {}).get("status")
-    git_ready = payload.get("git_ready")
-    if overall == "ready" and (
-        authority != "committed"
-        or embeddings not in {"complete", "not-required"}
-        or portable != "verified"
-        or materialization != "current"
-        or git_ready is not True
-    ):
-        raise ContractError("ready receipt requires every stage ready and git_ready=true")
-    if overall == "rejected" and (authority != "rejected" or git_ready is not False):
-        raise ContractError("rejected receipt requires rejected authority_graph and git_ready=false")
-    if authority == "committed" and overall == "failed":
-        raise ContractError("a post-commit failure must be reported as degraded, not failed")
-    if overall != "ready" and git_ready is not False:
-        raise ContractError("non-ready receipt must set git_ready=false")
-    operation = (payload.get("document") or {}).get("operation")
-    if overall == "ready" and operation in {"ambiguous", "rejected"}:
-        raise ContractError("ready receipt cannot report an ambiguous or rejected document")
+        raise ContractError("document format must match the authority extension")
 
 
 def _validate_search_execution(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-search-execution-v1":
+    if payload.get("schema") != "qlkg-search-execution-v2":
         return
     resolutions = payload.get("identity_resolutions") or []
     indices = [resolution.get("query_index") for resolution in resolutions]
@@ -257,6 +138,12 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
         raise ContractError(
             "identity resolution query_index values must be unique and contiguous"
         )
+    result = payload.get("result")
+    if not isinstance(result, dict) or result.get("schema") != "qlkg-search-result-v3":
+        raise ContractError(
+            "qlkg-search-execution-v2 must contain qlkg-search-result-v3"
+        )
+    validate_contract(result)
 
 
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
@@ -273,11 +160,7 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         raise ContractError(f"contract schema evaluation failed: {error}") from error
     if errors:
         raise ContractError(_format_violation(errors[0]))
-    _validate_local_profile(payload)
-    _validate_policy_profile_names(payload)
     _validate_document_record(payload)
-    _validate_upsert_source(payload)
-    _validate_receipt_state(payload)
     _validate_search_execution(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:

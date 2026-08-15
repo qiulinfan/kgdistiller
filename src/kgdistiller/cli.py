@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -23,23 +22,23 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-try:
-    from .profile import ProfileError, resolve_runtime_config
-except ImportError:  # Direct execution of this file during compatibility tests.
-    from kgdistiller.profile import ProfileError, resolve_runtime_config
-
-
-GRAPH_SCHEMA = "qlkg-v2"
-SOURCE_SCHEMA = "qlkg-sources-v2"
-DELTA_SCHEMA = "qlkg-agent-delta-v2"
-IDENTITY_SCHEMA = "qlkg-identities-v1"
+GRAPH_SCHEMA = "qlkg-v3"
+SOURCE_SCHEMA = "qlkg-sources-v3"
+DELTA_SCHEMA = "qlkg-agent-delta-v3"
+IDENTITY_SCHEMA = "qlkg-identities-v2"
 ENTRY_STORE_SCHEMA = "qlkg-entry-shards-v1"
-AGENT_SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v1"
+AGENT_SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v2"
 ENTRY_SHARD_LIMIT = 48 * 1024 * 1024
 KNOWLEDGE_ORIGINS = {"personal-note", "research"}
-ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MAX_NODE_ID_LENGTH = 256
+MAX_NODE_LABEL_LENGTH = 1024
+MAX_NAMESPACE_LENGTH = 256
+ID_RE = re.compile(
+    rf"(?=.{{1,{MAX_NODE_ID_LENGTH}}}\Z)[a-z0-9]+(?:-[a-z0-9]+)*"
+)
 NAMESPACE_RE = re.compile(
-    r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
+    rf"(?=.{{1,{MAX_NAMESPACE_LENGTH}}}\Z)[a-z0-9][a-z0-9._-]*"
+    r"(?::[a-z0-9][a-z0-9._-]*)*"
 )
 KN_RE = re.compile(r"#kn\s*\[")
 REF_RE = re.compile(r"#ref\s*\[")
@@ -316,7 +315,17 @@ def load_identity_registry(path: Path | None) -> dict[str, dict[str, Any]]:
 
 
 def identity_registry_sha256(path: Path | None) -> str | None:
-    return sha256_file(path) if path is not None and path.is_file() else None
+    return (
+        sha256_text(json_text(read_json(path, {})))
+        if path is not None and path.is_file()
+        else None
+    )
+
+
+def source_registry_sha256(path: Path) -> str:
+    """Hash a source registry's canonical JSON, independent of checkout newlines."""
+
+    return sha256_text(json_text(read_json(path, {})))
 
 
 def load_fields(registry: Path) -> list[FieldSpec]:
@@ -348,6 +357,7 @@ def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
     payload = read_json(registry, {})
     if payload.get("schema") != SOURCE_SCHEMA:
         raise KnowledgeError(f"expected {SOURCE_SCHEMA} source registry: {registry}")
+    repository = repo_root.resolve()
     result: list[SourceSpec] = []
     seen: set[str] = set()
     for raw in payload.get("sources", []):
@@ -355,7 +365,26 @@ def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
         if not source_id or source_id in seen:
             raise KnowledgeError(f"duplicate or empty source id: {source_id!r}")
         seen.add(source_id)
-        root = (repo_root / str(raw.get("root", ""))).resolve()
+        root_value = raw.get("root")
+        if not isinstance(root_value, str) or not root_value:
+            raise KnowledgeError(f"source {source_id} has no portable relative root")
+        relative_root = Path(root_value)
+        if relative_root.is_absolute() or ".." in relative_root.parts:
+            raise KnowledgeError(
+                f"source root must be a portable relative path for {source_id}: {root_value}"
+            )
+        lexical_root = repository / relative_root
+        root = lexical_root.resolve()
+        try:
+            root.relative_to(repository)
+        except ValueError as error:
+            raise KnowledgeError(
+                f"source root escapes repository for {source_id}: {root}"
+            ) from error
+        if lexical_root != root:
+            raise KnowledgeError(
+                f"source root must not traverse a symlink for {source_id}: {root_value}"
+            )
         if not root.is_dir():
             raise KnowledgeError(f"missing source root for {source_id}: {root}")
         patterns = tuple(str(item) for item in raw.get("files", []))
@@ -392,10 +421,23 @@ def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
     return result
 
 
+def _is_managed_build_path(path: Path) -> bool:
+    """Keep disposable projections out of authority discovery unconditionally."""
+    parts = tuple(part.casefold() for part in path.resolve().parts)
+    return any(
+        parts[index : index + 2] == ("knowledge", "build")
+        for index in range(max(0, len(parts) - 1))
+    )
+
+
 def expand_source(spec: SourceSpec) -> list[Path]:
     files: set[Path] = set()
     for pattern in spec.patterns:
-        files.update(path.resolve() for path in spec.root.glob(pattern) if path.is_file())
+        files.update(
+            path.resolve()
+            for path in spec.root.glob(pattern)
+            if path.is_file() and not _is_managed_build_path(path)
+        )
     return sorted(files, key=lambda item: item.as_posix())
 
 
@@ -424,6 +466,8 @@ def glob_matches_path(relative: Path, pattern: str) -> bool:
 
 def source_matches_path(spec: SourceSpec, path: Path) -> bool:
     """Return whether a file path is admitted by a source's bounded patterns."""
+    if _is_managed_build_path(path):
+        return False
     try:
         relative = path.resolve().relative_to(spec.root)
     except ValueError:
@@ -1053,9 +1097,24 @@ def scan_source(
 
 
 def load_state(graph_dir: Path) -> GraphState:
-    manifest = read_json(graph_dir / "manifest.json", {})
-    if manifest.get("schema") != GRAPH_SCHEMA:
+    manifest_path = graph_dir / "manifest.json"
+    if not manifest_path.exists():
+        if manifest_path.is_symlink():
+            raise KnowledgeError(f"graph manifest path is a broken symlink: {manifest_path}")
         return GraphState({}, {}, [], {})
+    if not manifest_path.is_file():
+        raise KnowledgeError(f"graph manifest is not a file: {manifest_path}")
+    try:
+        manifest = read_json(manifest_path, {})
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise KnowledgeError(f"invalid graph manifest JSON: {manifest_path}") from error
+    if not isinstance(manifest, dict):
+        raise KnowledgeError(f"graph manifest must be a JSON object: {manifest_path}")
+    if manifest.get("schema") != GRAPH_SCHEMA:
+        raise KnowledgeError(
+            f"expected {GRAPH_SCHEMA} graph manifest: {manifest_path}; "
+            f"got {manifest.get('schema')!r}"
+        )
     nodes = {item["id"]: item for item in read_jsonl(graph_dir / "nodes.jsonl")}
     entry_store = manifest.get("entry_store") or {}
     if entry_store:
@@ -1096,7 +1155,7 @@ def load_state(graph_dir: Path) -> GraphState:
     # authorities whose entry is still empty. The committed JSONL projection
     # omits that empty value. Rehydrate it here so snapshots built directly
     # during sync and snapshots rebuilt from committed artifacts are identical;
-    # otherwise the next nominally read-only Agent query rebuilds SQLite.
+    # otherwise a fresh read-only GraphView would differ from the sync snapshot.
     for node in nodes.values():
         node.setdefault("text", "")
     edges = {
@@ -1769,6 +1828,30 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
     node_ids = set(state.nodes)
     allowed_node_types = {"field", "topic", "knowledge"}
     for node in state.nodes.values():
+        raw_node_id = node.get("id")
+        raw_label = node.get("label")
+        node_id = str(raw_node_id or "")
+        if not isinstance(raw_node_id, str) or not ID_RE.fullmatch(raw_node_id):
+            errors.append(
+                diagnostic(
+                    "invalid-node-id",
+                    f"node ID must be lowercase ASCII kebab-case and at most {MAX_NODE_ID_LENGTH} characters",
+                    node=node_id,
+                )
+            )
+        if (
+            not isinstance(raw_label, str)
+            or not raw_label
+            or len(raw_label) > MAX_NODE_LABEL_LENGTH
+        ):
+            errors.append(
+                diagnostic(
+                    "invalid-node-label",
+                    "node label must be a non-empty string of at most "
+                    f"{MAX_NODE_LABEL_LENGTH} characters",
+                    node=node_id,
+                )
+            )
         if node.get("type") not in allowed_node_types:
             errors.append(
                 diagnostic(
@@ -1892,7 +1975,7 @@ def make_agent_snapshot(
     state: GraphState,
     namespace: str = "personal",
 ) -> dict[str, Any]:
-    """Create the deterministic, self-contained Agent index input contract."""
+    """Create the deterministic, self-contained Agent snapshot contract."""
     if not NAMESPACE_RE.fullmatch(namespace):
         raise KnowledgeError(f"invalid Agent snapshot namespace: {namespace!r}")
     if state.manifest.get("schema") != GRAPH_SCHEMA:
@@ -1936,6 +2019,7 @@ def make_agent_snapshot(
     computed_artifacts = make_artifacts(
         copy.deepcopy(state),
         dict(state.manifest.get("source_hashes") or {}),
+        registry_sha256=str(state.manifest.get("registry_sha256", "")) or None,
         identity_sha256=str(state.manifest.get("identity_sha256", "")) or None,
         git_revision=str(state.manifest.get("git_revision", "")) or None,
     )
@@ -1966,9 +2050,12 @@ def make_artifacts(
     state: GraphState,
     source_hashes: dict[str, str],
     *,
+    registry_sha256: str | None = None,
     identity_sha256: str | None = None,
     git_revision: str | None = None,
 ) -> dict[str, str]:
+    if registry_sha256 is None:
+        registry_sha256 = str(state.manifest.get("registry_sha256", "")) or None
     refresh_node_curation_defaults(state)
     nodes = sorted(state.nodes.values(), key=lambda item: item["id"])
     edges = sorted(
@@ -2068,6 +2155,8 @@ def make_artifacts(
             "shards": entry_shards,
         },
     }
+    if registry_sha256:
+        manifest["registry_sha256"] = registry_sha256
     if identity_sha256:
         manifest["identity_sha256"] = identity_sha256
     if git_revision:
@@ -2236,68 +2325,10 @@ def write_registry(path: Path, state: GraphState) -> None:
     atomic_write(path, typst_registry_text(state))
 
 
-def write_database(
-    path: Path,
-    state: GraphState,
-    alignments: Path | None = None,
-) -> None:
-    from kgdistiller.agent import write_agent_index
-    from kgdistiller.alignment import load_alignment_set
-
-    write_agent_index(
-        path,
-        make_agent_snapshot(state),
-        load_alignment_set(alignments),
-    )
-
-
-def ensure_database(
-    path: Path,
-    state: GraphState,
-    alignments: Path | None = None,
-) -> bool:
-    """Create or refresh the disposable Agent index only when inputs changed."""
-    from kgdistiller.agent import AgentIndexError, index_status, write_agent_index
-    from kgdistiller.alignment import load_alignment_set, sha256_json
-
-    journal_path = path.parent / "kgdistiller-ingest/journal.json"
-    journal = read_json(journal_path, {}) if journal_path.is_file() else {}
-    if journal.get("schema") == "qlkg-ingest-journal-v1" and journal.get(
-        "status"
-    ) == "installing":
-        try:
-            index_status(path)
-        except (AgentIndexError, OSError, sqlite3.Error, json.JSONDecodeError) as error:
-            raise KnowledgeError(
-                "transactional ingest is installing a new generation; retry the query"
-            ) from error
-        # Readers keep using the last complete disposable index until the
-        # transaction atomically replaces it and commits its journal.
-        return False
-    alignment_set = load_alignment_set(alignments)
-    try:
-        status = index_status(path)
-    except (AgentIndexError, OSError, sqlite3.Error, json.JSONDecodeError):
-        status = {}
-    if state.manifest.get("schema") != GRAPH_SCHEMA:
-        if status:
-            return False
-        raise KnowledgeError("expected a qlkg-v2 graph before Agent index bootstrap")
-    snapshot = make_agent_snapshot(state)
-    if (
-        status.get("snapshot_sha256") == snapshot["snapshot_sha256"]
-        and status.get("alignment_sha256") == sha256_json(alignment_set)
-    ):
-        return False
-    write_agent_index(path, snapshot, alignment_set)
-    return True
-
-
 def synchronize(
     repo_root: Path,
     registry: Path,
     graph_dir: Path,
-    database: Path,
     typst_registry: Path,
     *,
     identities: Path | None = None,
@@ -2392,6 +2423,7 @@ def synchronize(
     artifacts = make_artifacts(
         state,
         source_hashes,
+        registry_sha256=source_registry_sha256(registry),
         identity_sha256=identity_registry_sha256(identities),
         git_revision=git_revision,
     )
@@ -2438,24 +2470,17 @@ def synchronize(
     }
     if write:
         write_artifacts(graph_dir, artifacts)
-        # Build every downstream projection from the committed, hydrated
-        # representation. The JSONL projection omits empty text and stores
-        # entry bodies in shards, so using the pre-serialization state here
-        # can give SQLite a different snapshot digest from the graph that was
-        # just installed. That makes the next read-only query rebuild the
-        # disposable index even though no authority changed.
+        # All readers load and validate this committed JSON generation
+        # directly. There is no second runtime generation to publish.
         state = load_state(graph_dir)
         write_registry(typst_registry, state)
-        write_database(database, state, alignments)
     return state, artifacts, report
 
 
 def apply_delta(
     graph_dir: Path,
-    database: Path,
     typst_registry: Path,
     delta_path: Path,
-    alignments: Path | None = None,
 ) -> dict[str, Any]:
     delta = read_json(delta_path, {})
     if delta.get("schema") != DELTA_SCHEMA:
@@ -2556,6 +2581,7 @@ def apply_delta(
     artifacts = make_artifacts(
         state,
         dict(state.manifest.get("source_hashes") or {}),
+        registry_sha256=state.manifest.get("registry_sha256"),
         identity_sha256=state.manifest.get("identity_sha256"),
         git_revision=state.manifest.get("git_revision"),
     )
@@ -2566,7 +2592,6 @@ def apply_delta(
     write_artifacts(graph_dir, artifacts)
     state = load_state(graph_dir)
     write_registry(typst_registry, state)
-    write_database(database, state, alignments)
     after = state.manifest["counts"]
     return {
         "nodes_removed": removed_nodes,
@@ -2642,7 +2667,7 @@ def reconcile_node_name(
 
 def reconcile_alignment_mapping(
     state: GraphState,
-    database: Path,
+    graph_dir: Path,
     alignment_path: Path,
     candidate_snapshot: dict[str, Any],
     candidate_id: str,
@@ -2655,7 +2680,7 @@ def reconcile_alignment_mapping(
     target_namespace: str,
 ) -> dict[str, Any]:
     """Persist one reviewed cross-namespace decision with content fingerprints."""
-    from kgdistiller.agent import align_graph, get_index_node
+    from kgdistiller.query import align, get
     from kgdistiller.alignment import (
         load_alignment_set,
         make_reviewed_mapping,
@@ -2663,9 +2688,10 @@ def reconcile_alignment_mapping(
     )
 
     candidate_namespace = str(candidate_snapshot.get("namespace", ""))
-    align_graph(
-        database,
+    align(
+        graph_dir,
         candidate_snapshot,
+        alignments=alignment_path,
         target_namespace=target_namespace,
         limit_per_node=1,
     )
@@ -2681,9 +2707,10 @@ def reconcile_alignment_mapping(
         raise KnowledgeError(
             f"candidate snapshot has no node {candidate_namespace}:{candidate_id}"
         )
-    target = get_index_node(
-        database,
+    target = get(
+        graph_dir,
         target_id,
+        alignments=alignment_path,
         namespace=target_namespace,
     )["node"]
     mapping = make_reviewed_mapping(
@@ -2699,13 +2726,12 @@ def reconcile_alignment_mapping(
     alignment_set = upsert_mapping(load_alignment_set(alignment_path), mapping)
     alignment_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(alignment_path, pretty_json(alignment_set))
-    write_database(database, state, alignment_path)
     return {
         "schema": alignment_set["schema"],
         "mapping": mapping,
         "alignment_registry": str(alignment_path),
         "mappings": len(alignment_set["mappings"]),
-        "index_rebuilt": str(database),
+        "query_view": "reloads from the committed graph and alignment registry",
     }
 
 
@@ -3075,27 +3101,10 @@ def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument(
-        "--local-profile",
-        type=Path,
-        help="machine-local qlkg-local-profile-v1 (default: knowledge/build/local-profile.json)",
-    )
     parser.add_argument("--registry", default="knowledge/sources.json")
     parser.add_argument("--graph", default="knowledge/graph")
     parser.add_argument("--identities", default="knowledge/identities.json")
     parser.add_argument("--alignments", default="knowledge/alignments.json")
-    parser.add_argument("--database", type=Path)
-    parser.add_argument("--store", type=Path)
-    parser.add_argument("--embedding-profile")
-    parser.add_argument(
-        "--embedding-policy",
-        type=Path,
-        default=Path("knowledge/embedding-policy.json"),
-        help=(
-            "portable qlkg-embedding-policy-v1 "
-            "(default: knowledge/embedding-policy.json)"
-        ),
-    )
     parser.add_argument(
         "--typst-registry",
         default="knowledge/build/knowledge-registry.typ",
@@ -3178,7 +3187,7 @@ def parse_args() -> argparse.Namespace:
     agent_search_command.add_argument(
         "--plan",
         type=Path,
-        help="execute a qlkg-retrieval-plan-v1 JSON file instead of a legacy query",
+        help="execute a qlkg-retrieval-plan-v2 JSON file instead of a legacy query",
     )
     agent_search_command.add_argument("--namespace")
     agent_search_command.add_argument("--type", action="append", dest="node_types")
@@ -3216,9 +3225,13 @@ def parse_args() -> argparse.Namespace:
     ppr_command.add_argument("--namespace", default="personal")
     ppr_command.add_argument("--type", action="append", dest="node_types")
     ppr_command.add_argument("--relation", action="append", dest="edge_types")
+    ppr_command.add_argument(
+        "--direction",
+        choices=("incoming", "outgoing", "both"),
+        default="outgoing",
+    )
     ppr_command.add_argument("--limit", type=int, default=50)
     ppr_command.add_argument("--include-taxonomy", action="store_true")
-    ppr_command.add_argument("--no-similarity", action="store_true")
     ppr_command.add_argument("--include-stale", action="store_true")
     ppr_command.add_argument("--include-orphaned", action="store_true")
     context_command = agent_commands.add_parser("context")
@@ -3226,7 +3239,7 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument(
         "--plan",
         type=Path,
-        help="execute a qlkg-retrieval-plan-v1 JSON file instead of a legacy query",
+        help="execute a qlkg-retrieval-plan-v2 JSON file instead of a legacy query",
     )
     context_command.add_argument("--namespace")
     context_command.add_argument("--type", action="append", dest="node_types")
@@ -3267,43 +3280,6 @@ def parse_args() -> argparse.Namespace:
     ingest_apply = ingest_commands.add_parser("apply")
     ingest_apply.add_argument("request", type=Path)
     ingest_apply.add_argument("--receipt", type=Path)
-    profile_command = commands.add_parser("profile")
-    profile_commands = profile_command.add_subparsers(
-        dest="profile_command", required=True
-    )
-    profile_commands.add_parser("status")
-    embedding_command = commands.add_parser("embedding")
-    embedding_commands = embedding_command.add_subparsers(
-        dest="embedding_command", required=True
-    )
-    embedding_status_command = embedding_commands.add_parser("status")
-    embedding_status_command.add_argument("--namespace", default="personal")
-    embedding_sync_command = embedding_commands.add_parser("sync")
-    embedding_sync_command.add_argument("--namespace", default="personal")
-    embedding_sync_command.add_argument(
-        "--batch-size",
-        default=32,
-        help="document inputs per provider call (default: 32)",
-    )
-    embedding_sync_command.add_argument(
-        "--max-retries",
-        default=2,
-        help="retry bound for each provider batch (default: 2)",
-    )
-    embedding_sync_command.add_argument(
-        "--max-nodes",
-        default=10_000,
-        help="maximum missing or stale nodes in one sync (default: 10000)",
-    )
-    embedding_sync_command.add_argument(
-        "--profile",
-        action="append",
-        dest="embedding_sync_profiles",
-        help=(
-            "policy/profile name to synchronize; repeat for multiple profiles "
-            "(default: selected machine-local embedding profile)"
-        ),
-    )
     store_command = commands.add_parser("store")
     store_commands = store_command.add_subparsers(
         dest="store_command", required=True
@@ -3315,7 +3291,6 @@ def parse_args() -> argparse.Namespace:
         help="write a self-contained copy instead of refreshing this repository",
     )
     store_commands.add_parser("verify")
-    store_commands.add_parser("materialize")
     export_command = commands.add_parser("export")
     export_commands = export_command.add_subparsers(
         dest="export_command", required=True
@@ -3342,6 +3317,15 @@ def parse_args() -> argparse.Namespace:
         "--replace",
         action="store_true",
         help="atomically replace an existing verified four-file export bundle",
+    )
+    export_obsidian = export_commands.add_parser("obsidian")
+    export_obsidian.add_argument(
+        "--output", type=Path, default=Path("knowledge/build/obsidian")
+    )
+    export_obsidian.add_argument(
+        "--replace",
+        action="store_true",
+        help="atomically replace a previous verified Obsidian projection",
     )
     codex_command = commands.add_parser("codex")
     codex_commands = codex_command.add_subparsers(dest="codex_command", required=True)
@@ -3422,194 +3406,79 @@ def main() -> int:
             print(pretty_json(result), end="")
             return 0
         if args.command == "export":
-            from .static_export import StaticExportError, export_site_bundle
-
             registry = defaults(repo_root, args.registry)
             graph_dir = defaults(repo_root, args.graph)
+            identities = defaults(repo_root, args.identities)
             output = (
                 Path(os.path.abspath(args.output))
                 if args.output.is_absolute()
                 else Path(os.path.abspath(repo_root / args.output))
             )
-            try:
-                result = export_site_bundle(
-                    repo_root,
-                    output,
-                    registry=registry,
-                    graph_dir=graph_dir,
-                    product_commit=args.product_commit,
-                    product_repository=args.product_repository,
-                    source_repository=args.source_repository,
-                    replace=args.replace,
+            if args.export_command == "site":
+                from .static_export import StaticExportError, export_site_bundle
+
+                try:
+                    result = export_site_bundle(
+                        repo_root,
+                        output,
+                        registry=registry,
+                        graph_dir=graph_dir,
+                        identities=identities,
+                        product_commit=args.product_commit,
+                        product_repository=args.product_repository,
+                        source_repository=args.source_repository,
+                        replace=args.replace,
+                    )
+                except StaticExportError as error:
+                    print(
+                        pretty_json(
+                            {
+                                "kind": "kgdistiller-static-export-error",
+                                "code": "static-export-failed",
+                                "message": str(error),
+                            }
+                        ),
+                        end="",
+                        file=sys.stderr,
+                    )
+                    return 1
+            else:
+                from .obsidian_export import (
+                    ObsidianExportError,
+                    build_obsidian_projection,
                 )
-            except StaticExportError as error:
-                print(
-                    pretty_json(
-                        {
-                            "kind": "kgdistiller-static-export-error",
-                            "code": "static-export-failed",
-                            "message": str(error),
-                        }
-                    ),
-                    end="",
-                    file=sys.stderr,
-                )
-                return 1
+
+                try:
+                    result = build_obsidian_projection(
+                        repo_root,
+                        output,
+                        registry=registry,
+                        graph_dir=graph_dir,
+                        identities=identities,
+                        replace=args.replace,
+                    )
+                except ObsidianExportError as error:
+                    print(
+                        pretty_json(
+                            {
+                                "kind": "kgdistiller-obsidian-export-error",
+                                "code": "obsidian-export-failed",
+                                "message": str(error),
+                            }
+                        ),
+                        end="",
+                        file=sys.stderr,
+                    )
+                    return 1
             print(pretty_json(result), end="")
             return 0
-        runtime = resolve_runtime_config(
-            repo_root,
-            local_profile=args.local_profile,
-            database=args.database,
-            portable_store=args.store,
-            embedding_profile=args.embedding_profile,
-        )
         registry = defaults(repo_root, args.registry)
         graph_dir = defaults(repo_root, args.graph)
         identities = defaults(repo_root, args.identities)
         alignments = defaults(repo_root, args.alignments)
-        database = runtime.database
         typst_registry = defaults(repo_root, args.typst_registry)
-        if args.command == "embedding":
-            try:
-                from .embedding import (
-                    EmbeddingError,
-                    embedding_status,
-                    load_embedding_policy,
-                    sync_embeddings,
-                )
-                from .providers import ProviderError, default_provider_registry
-            except ImportError:  # Direct execution during compatibility tests.
-                from kgdistiller.embedding import (
-                    EmbeddingError,
-                    embedding_status,
-                    load_embedding_policy,
-                    sync_embeddings,
-                )
-                from kgdistiller.providers import (
-                    ProviderError,
-                    default_provider_registry,
-                )
-
-            policy_argument = args.embedding_policy
-            policy_path = (
-                policy_argument.resolve()
-                if policy_argument.is_absolute()
-                else (repo_root / policy_argument).resolve()
-            )
-            try:
-                policy = load_embedding_policy(policy_path)
-                if args.embedding_command == "status":
-                    result = embedding_status(
-                        database,
-                        policy,
-                        runtime.provider_profiles,
-                        namespace=args.namespace,
-                    )
-                else:
-                    profile_names = list(args.embedding_sync_profiles or [])
-                    if not profile_names and runtime.embedding_profile is not None:
-                        profile_names = [runtime.embedding_profile]
-                    if not profile_names:
-                        raise EmbeddingError(
-                            "profile-not-selected",
-                            "embedding sync requires a selected embedding profile",
-                        )
-                    work_budget: dict[str, int] = {}
-                    for name in ("batch_size", "max_retries", "max_nodes"):
-                        raw_value = str(getattr(args, name))
-                        if len(raw_value) > 16 or not re.fullmatch(
-                            r"-?[0-9]+", raw_value
-                        ):
-                            raise EmbeddingError(
-                                "invalid-work-budget",
-                                "embedding work budget is invalid",
-                            )
-                        work_budget[name] = int(raw_value)
-                    ensure_database(database, load_state(graph_dir), alignments)
-                    result = sync_embeddings(
-                        database,
-                        policy,
-                        runtime.provider_profiles,
-                        registry=default_provider_registry(),
-                        namespace=args.namespace,
-                        profile_names=profile_names,
-                        batch_size=work_budget["batch_size"],
-                        max_retries=work_budget["max_retries"],
-                        max_nodes=work_budget["max_nodes"],
-                    )
-            except (EmbeddingError, ProviderError) as error:
-                print(pretty_json(error.payload()), end="", file=sys.stderr)
-                return 1
-            except (
-                KnowledgeError,
-                OSError,
-                UnicodeError,
-                ValueError,
-                json.JSONDecodeError,
-                sqlite3.Error,
-            ):
-                print(
-                    pretty_json(
-                        {
-                            "kind": "kgdistiller-embedding-error",
-                            "code": "embedding-command-failed",
-                            "message": "embedding command could not be completed",
-                        }
-                    ),
-                    end="",
-                    file=sys.stderr,
-                )
-                return 1
-            print(pretty_json(result), end="")
-            return 0
-        if args.command == "profile":
-            try:
-                from .providers import (
-                    ProviderError,
-                    default_provider_registry,
-                    provider_status,
-                )
-            except ImportError:
-                from kgdistiller.providers import (
-                    ProviderError,
-                    default_provider_registry,
-                    provider_status,
-                )
-
-            adapter_registry = default_provider_registry()
-            selected_provider = runtime.provider_profile
-            try:
-                provider = (
-                    provider_status(
-                        str(runtime.embedding_profile),
-                        selected_provider,
-                        adapter_registry,
-                    )
-                    if selected_provider is not None
-                    else None
-                )
-            except ProviderError as error:
-                print(pretty_json(error.payload()), end="", file=sys.stderr)
-                return 1
-            print(
-                pretty_json(
-                    {
-                        "profile_path": str(runtime.profile_path),
-                        "profile_loaded": runtime.profile_loaded,
-                        "profile_sha256": runtime.profile_sha256,
-                        "database": str(runtime.database),
-                        "portable_store": str(runtime.portable_store),
-                        "embedding_profile": runtime.embedding_profile,
-                        "sources": runtime.sources,
-                        "provider": provider,
-                    }
-                ),
-                end="",
-            )
-            return 0
         if args.command == "candidate":
-            from .agent import validate_agent_snapshot
+            from .query import validate_agent_snapshot
             from .candidate import build_candidate_snapshot
 
             source_argument = (
@@ -3671,7 +3540,6 @@ def main() -> int:
                 graph_dir=graph_dir,
                 identities=identities,
                 alignments=alignments,
-                database=database,
                 typst_registry=typst_registry,
             )
             fail_stage = os.environ.get("KGDISTILLER_INGEST_FAIL_STAGE", "")
@@ -3729,14 +3597,13 @@ def main() -> int:
                 print(pretty_json(error.payload()), end="", file=sys.stderr)
                 return 1
         if args.command == "store":
-            from .store import materialize_store, snapshot_store, verify_store
+            from .store import snapshot_store, verify_store
 
             if args.store_command == "snapshot":
                 _, artifacts, _ = synchronize(
                     repo_root,
                     registry,
                     graph_dir,
-                    database,
                     typst_registry,
                     identities=identities,
                     alignments=alignments,
@@ -3755,8 +3622,7 @@ def main() -> int:
                     raise KnowledgeError(
                         f"stale graph artifacts: {', '.join(stale)}; run kgdistiller sync"
                     )
-                ensure_database(database, load_state(graph_dir), alignments)
-                output = args.output or runtime.portable_store
+                output = args.output or repo_root
                 output_root = (
                     output.resolve()
                     if output.is_absolute()
@@ -3769,12 +3635,9 @@ def main() -> int:
                     graph_dir=graph_dir,
                     identities=identities,
                     alignments=alignments,
-                    database=database,
                 )
-            elif args.store_command == "verify":
-                result = verify_store(runtime.portable_store)
             else:
-                result = materialize_store(runtime.portable_store, database)
+                result = verify_store(repo_root)
             print(pretty_json(result), end="")
             return 0
         if args.command == "init":
@@ -3791,7 +3654,6 @@ def main() -> int:
                 repo_root,
                 registry,
                 graph_dir,
-                database,
                 typst_registry,
                 identities=identities,
                 alignments=alignments,
@@ -3857,7 +3719,6 @@ def main() -> int:
                 repo_root,
                 registry,
                 graph_dir,
-                database,
                 typst_registry,
                 identities=identities,
                 alignments=alignments,
@@ -3874,10 +3735,8 @@ def main() -> int:
                 pretty_json(
                     apply_delta(
                         graph_dir,
-                        database,
                         typst_registry,
                         delta,
-                        alignments,
                     )
                 ),
                 end="",
@@ -3902,7 +3761,7 @@ def main() -> int:
                     pretty_json(
                         reconcile_alignment_mapping(
                             state,
-                            database,
+                            graph_dir,
                             alignments,
                             read_json(candidate_path, {}),
                             args.candidate_id,
@@ -3922,7 +3781,6 @@ def main() -> int:
                 repo_root,
                 registry,
                 graph_dir,
-                database,
                 typst_registry,
                 identities=identities,
                 alignments=alignments,
@@ -3960,7 +3818,6 @@ def main() -> int:
                     repo_root,
                     registry,
                     graph_dir,
-                    database,
                     typst_registry,
                     identities=identities,
                     alignments=alignments,
@@ -3993,40 +3850,24 @@ def main() -> int:
             return 0
         if args.command == "mcp":
             from kgdistiller.mcp import serve_stdio
-            from kgdistiller.providers import default_provider_registry
 
-            def current_mcp_authority_graph_sha256() -> str:
-                authority_state = load_state(graph_dir)
-                digest = str(authority_state.manifest.get("graph_sha256", ""))
-                if not re.fullmatch(r"[0-9a-f]{64}", digest):
-                    raise KnowledgeError("authority graph has no valid graph_sha256")
-                return digest
-
-            # Fail before entering a long-lived stdio loop, then re-resolve for every
-            # retrieval call so the server cannot silently outlive its authority view.
-            current_mcp_authority_graph_sha256()
             serve_stdio(
-                database,
-                embedding_profile=runtime.embedding_profile,
-                provider_config=runtime.provider_profile,
-                provider_registry=default_provider_registry(),
-                environ=os.environ,
-                expected_graph_sha256_resolver=current_mcp_authority_graph_sha256,
+                graph_dir,
+                alignments=alignments,
             )
             return 0
         if args.command == "agent":
-            from kgdistiller.agent import (
+            from kgdistiller.query import (
                 PROPOSAL_SCHEMA,
-                align_graph,
-                compare_graph,
-                create_proposal,
-                expand_index,
-                get_index_node,
-                index_status,
+                align,
+                compare,
+                expand,
+                get,
                 personalized_pagerank,
+                propose,
+                query_status,
                 resolve_concepts,
             )
-            from kgdistiller.providers import default_provider_registry
             from kgdistiller.retrieval import (
                 RetrievalError,
                 build_context_from_execution,
@@ -4043,11 +3884,12 @@ def main() -> int:
                 return digest
 
             if args.agent_command == "status":
-                result = index_status(database)
+                result = query_status(graph_dir, alignments=alignments)
             elif args.agent_command == "resolve":
                 result = resolve_concepts(
-                    database,
+                    graph_dir,
                     list(args.concept),
+                    alignments=alignments,
                     namespace=args.namespace,
                 )
             elif args.agent_command == "search":
@@ -4077,29 +3919,28 @@ def main() -> int:
                         )
                         plan_mode = "legacy"
                     result = execute_retrieval_plan(
-                        database,
+                        graph_dir,
                         plan,
+                        alignments=alignments,
                         plan_mode=plan_mode,
                         namespace=execution_namespace_argument,
-                        embedding_profile=runtime.embedding_profile,
-                        provider_config=runtime.provider_profile,
-                        provider_registry=default_provider_registry(),
-                        environ=os.environ,
                         expected_graph_sha256=expected_graph_sha256,
                     )
                 except RetrievalError as error:
                     print(pretty_json(error.to_payload()), end="", file=sys.stderr)
                     return 1
             elif args.agent_command == "get":
-                result = get_index_node(
-                    database,
+                result = get(
+                    graph_dir,
                     args.id,
+                    alignments=alignments,
                     namespace=args.namespace,
                 )
             elif args.agent_command == "expand":
-                result = expand_index(
-                    database,
+                result = expand(
+                    graph_dir,
                     list(args.id),
+                    alignments=alignments,
                     namespace=args.namespace,
                     direction=args.direction,
                     edge_types=args.edge_types,
@@ -4111,14 +3952,15 @@ def main() -> int:
                 )
             elif args.agent_command == "ppr":
                 result = personalized_pagerank(
-                    database,
+                    graph_dir,
                     {str(node_id): 1.0 for node_id in args.id},
+                    alignments=alignments,
                     namespace=args.namespace,
                     node_types=args.node_types,
                     edge_types=args.edge_types,
+                    direction=args.direction,
                     limit=args.limit,
                     include_taxonomy=args.include_taxonomy,
-                    include_similarity=not args.no_similarity,
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
                 )
@@ -4151,19 +3993,17 @@ def main() -> int:
                         plan_mode = "legacy"
                         execution_namespace_argument = execution_namespace
                     execution = execute_retrieval_plan(
-                        database,
+                        graph_dir,
                         plan,
+                        alignments=alignments,
                         plan_mode=plan_mode,
                         namespace=execution_namespace_argument,
-                        embedding_profile=runtime.embedding_profile,
-                        provider_config=runtime.provider_profile,
-                        provider_registry=default_provider_registry(),
-                        environ=os.environ,
                         expected_graph_sha256=expected_graph_sha256,
                     )
                     result = build_context_from_execution(
-                        database,
+                        graph_dir,
                         execution,
+                        alignments=alignments,
                         plan=plan,
                         token_budget=args.budget,
                         namespace=execution_namespace,
@@ -4177,9 +4017,10 @@ def main() -> int:
                     if args.candidate.is_absolute()
                     else (repo_root / args.candidate).resolve()
                 )
-                alignment_report = align_graph(
-                    database,
+                alignment_report = align(
+                    graph_dir,
                     read_json(candidate_path, {}),
+                    alignments=alignments,
                     target_namespace=args.target_namespace,
                     limit_per_node=args.limit,
                 )
@@ -4206,9 +4047,10 @@ def main() -> int:
                     if args.candidate.is_absolute()
                     else (repo_root / args.candidate).resolve()
                 )
-                result = compare_graph(
-                    database,
+                result = compare(
+                    graph_dir,
                     read_json(candidate_path, {}),
+                    alignments=alignments,
                     target_namespace=args.target_namespace,
                 )
             else:
@@ -4217,9 +4059,10 @@ def main() -> int:
                     if args.candidate.is_absolute()
                     else (repo_root / args.candidate).resolve()
                 )
-                proposal = create_proposal(
-                    database,
+                proposal = propose(
+                    graph_dir,
                     read_json(candidate_path, {}),
+                    alignments=alignments,
                     target_namespace=args.target_namespace,
                     target_authority=args.target_authority,
                 )
@@ -4310,10 +4153,7 @@ def main() -> int:
         elif args.command == "stats":
             print(pretty_json(state.manifest), end="")
         return 0
-    except ProfileError as error:
-        print(pretty_json(error.payload()), end="", file=sys.stderr)
-        return 1
-    except (KnowledgeError, OSError, UnicodeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (KnowledgeError, OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         print(f"knowledge command failed: {error}", file=sys.stderr)
         return 1
 

@@ -22,6 +22,14 @@ from kgdistiller.codex_product import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def real_temporary_directory(*, prefix: str) -> tempfile.TemporaryDirectory[str]:
+    """Place safety-boundary fixtures below a canonical non-symlink temp root."""
+    return tempfile.TemporaryDirectory(
+        prefix=prefix,
+        dir=Path(tempfile.gettempdir()).resolve(),
+    )
+
+
 def copy_product_root(destination: Path) -> Path:
     destination.mkdir(parents=True)
     manifest = json.loads(
@@ -61,7 +69,7 @@ class CodexProductTests(unittest.TestCase):
         self.assertEqual(8, len(manifest["skills"]))
         self.assertEqual(4, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
-        self.assertEqual(5, len(manifest["workflows"]))
+        self.assertEqual(7, len(manifest["workflows"]))
         result = doctor_product(source_only=True, source_root=REPO_ROOT)
         self.assertEqual("ok", result["status"])
         self.assertEqual("not-checked", result["installation"])
@@ -83,7 +91,7 @@ class CodexProductTests(unittest.TestCase):
         self.assertIn("eol: lf", completed.stdout)
 
     def test_copy_link_and_doctor_preserve_global_configuration(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="kgdistiller-codex-") as temporary:
+        with real_temporary_directory(prefix="kgdistiller-codex-") as temporary:
             home = Path(temporary) / ".codex"
             home.mkdir()
             agents_guidance = home / "AGENTS.md"
@@ -133,7 +141,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertEqual("linked", checked["installation"])
 
     def test_home_ancestor_of_product_fails_before_any_write(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-overlap-"
         ) as temporary:
             ancestor = Path(temporary)
@@ -150,7 +158,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertFalse((ancestor / "workflow-products").exists())
 
     def test_state_path_must_be_an_ordinary_single_link_file(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-state-"
         ) as temporary:
             root = Path(temporary)
@@ -162,7 +170,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertFalse((home / "skills").exists())
             self.assertFalse((home / "agents").exists())
 
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-state-link-"
         ) as temporary:
             home = Path(temporary) / "codex-home"
@@ -176,7 +184,7 @@ class CodexProductTests(unittest.TestCase):
         for namespace in ("skills", "agents", "workflow-products"):
             with (
                 self.subTest(namespace=namespace),
-                tempfile.TemporaryDirectory(
+                real_temporary_directory(
                     prefix="kgdistiller-codex-reparse-parent-"
                 ) as temporary,
             ):
@@ -210,7 +218,7 @@ class CodexProductTests(unittest.TestCase):
                 finally:
                     codex_product_module._remove_exact(linked_parent)
 
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-reparse-home-"
         ) as temporary:
             root = Path(temporary)
@@ -234,7 +242,7 @@ class CodexProductTests(unittest.TestCase):
                 codex_product_module._remove_exact(linked_home)
 
     def test_state_sources_must_belong_to_the_active_product_manifest(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-state-source-"
         ) as temporary:
             root = Path(temporary)
@@ -256,7 +264,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertEqual(before, target.read_bytes())
 
     def test_link_refuses_an_unmanaged_name_collision(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-collision-"
         ) as temporary:
             home = Path(temporary) / ".codex"
@@ -270,7 +278,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertFalse((home / STATE_NAME).exists())
 
     def test_doctor_detects_a_modified_managed_copy(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-modified-"
         ) as temporary:
             home = Path(temporary) / ".codex"
@@ -283,7 +291,7 @@ class CodexProductTests(unittest.TestCase):
                 doctor_product(codex_home=home, source_root=REPO_ROOT)
 
     def test_symbolic_link_mode_and_doctor_when_platform_allows_it(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-symlink-"
         ) as temporary:
             root = Path(temporary)
@@ -306,7 +314,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertEqual({"symlink": 13}, checked["modes"])
 
     def test_auto_mode_selects_only_supported_link_strategies(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="kgdistiller-codex-auto-") as temporary:
+        with real_temporary_directory(prefix="kgdistiller-codex-auto-") as temporary:
             home = Path(temporary) / ".codex"
             linked = link_product(codex_home=home, mode="auto", source_root=REPO_ROOT)
             self.assertEqual(13, sum(linked["modes"].values()))
@@ -320,7 +328,7 @@ class CodexProductTests(unittest.TestCase):
     def test_unicode_auto_install_uses_junction_fallback_and_remains_healthy(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-unicode-"
         ) as temporary:
             root = Path(temporary)
@@ -355,7 +363,7 @@ class CodexProductTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows junction regression")
     def test_junction_process_error_removes_exact_staging_path(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-junction-error-"
         ) as temporary:
             root = Path(temporary)
@@ -383,7 +391,7 @@ class CodexProductTests(unittest.TestCase):
     def test_live_install_exposes_edits_and_canonical_workflows_from_unrelated_cwd(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory(prefix="kgdistiller-codex-live-") as temporary:
+        with real_temporary_directory(prefix="kgdistiller-codex-live-") as temporary:
             root = Path(temporary)
             source = copy_product_root(root / "product")
             home = root / "codex-home"
@@ -434,7 +442,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertEqual(str(canonical_manifest), checked["canonical_manifest"])
 
     def test_skill_rename_removes_only_the_owned_retired_target(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-rename-"
         ) as temporary:
             root = Path(temporary)
@@ -496,7 +504,7 @@ class CodexProductTests(unittest.TestCase):
             )
 
     def test_wrong_owner_retired_copy_is_preserved_and_blocks_cleanup(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-wrong-owner-"
         ) as temporary:
             root = Path(temporary)
@@ -527,7 +535,7 @@ class CodexProductTests(unittest.TestCase):
             )
 
     def test_detached_agent_hardlink_doctor_fails_but_link_repairs(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-hardlink-"
         ) as temporary:
             root = Path(temporary)
@@ -563,7 +571,7 @@ class CodexProductTests(unittest.TestCase):
     def test_retired_detached_agent_hardlink_is_removed_by_recorded_digest(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-retired-hardlink-"
         ) as temporary:
             root = Path(temporary)
@@ -608,7 +616,7 @@ class CodexProductTests(unittest.TestCase):
             doctor_product(codex_home=home, source_root=source)
 
     def test_detached_agent_hardlink_digest_mismatch_is_preserved(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-hardlink-owner-"
         ) as temporary:
             root = Path(temporary)
@@ -636,7 +644,7 @@ class CodexProductTests(unittest.TestCase):
             )
 
     def test_link_cleanup_failure_reports_committed_state_and_recovers(self) -> None:
-        with tempfile.TemporaryDirectory(
+        with real_temporary_directory(
             prefix="kgdistiller-codex-commit-point-"
         ) as temporary:
             root = Path(temporary)

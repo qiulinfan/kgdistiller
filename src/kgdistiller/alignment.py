@@ -8,11 +8,11 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
-from .contracts import canonical_json, sha256_json
+from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
 
 
-ALIGNMENT_SCHEMA = "qlkg-alignments-v1"
-ALIGNMENT_REPORT_SCHEMA = "qlkg-alignment-report-v1"
+ALIGNMENT_SCHEMA = "qlkg-alignments-v2"
+ALIGNMENT_REPORT_SCHEMA = "qlkg-alignment-report-v2"
 SCOPED_ALIAS_SCHEMA = "qlkg-scoped-aliases-v1"
 ALIGNMENT_PREDICATES = {
     "exact-match",
@@ -31,8 +31,10 @@ ALIGNMENT_STATUSES = {
 }
 HEX_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 NAMESPACE_RE = re.compile(
-    r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
+    rf"(?=.{{1,{MAX_NAMESPACE_LENGTH}}}\Z)[a-z0-9][a-z0-9._-]*"
+    r"(?::[a-z0-9][a-z0-9._-]*)*"
 )
+NODE_ID_RE = re.compile(r"(?=.{1,256}\Z)[a-z0-9]+(?:-[a-z0-9]+)*")
 SHORT_FORM_RE = re.compile(r"^[A-Z][A-Z0-9-]{1,15}$")
 PARENTHETICAL_RE = re.compile(r"\((?P<inside>[^()\n]{2,120})\)")
 REVERSE_DEFINITION_RE = re.compile(
@@ -303,8 +305,8 @@ def validate_alignment_set(payload: dict[str, Any] | None) -> dict[str, Any]:
             subject_namespace
         ) or not NAMESPACE_RE.fullmatch(object_namespace):
             raise AlignmentError("alignment mapping has an invalid namespace")
-        if not subject_id or not object_id:
-            raise AlignmentError("alignment mapping has an empty node id")
+        if not NODE_ID_RE.fullmatch(subject_id) or not NODE_ID_RE.fullmatch(object_id):
+            raise AlignmentError("alignment mapping has an invalid bounded node id")
         if subject_namespace == object_namespace and subject_id == object_id:
             raise AlignmentError("alignment mapping cannot map a node to itself")
         predicate = str(raw.get("predicate", ""))

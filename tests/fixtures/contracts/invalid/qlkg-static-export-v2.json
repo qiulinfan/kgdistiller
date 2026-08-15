@@ -1,0 +1,34 @@
+{
+  "schema": "qlkg-static-export-v2",
+  "status": "exported",
+  "producer": {
+    "name": "kgdistiller",
+    "repository": "https://user:secret@example.test/kgdistiller",
+    "version": "1.0.0",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "source": {
+    "repository": null,
+    "revision": null,
+    "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "files": 0,
+    "published_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "published_files": 0,
+    "published_hashes": {}
+  },
+  "visibility": {"policy": "explicit-publish", "published_sources": [], "excluded_sources": 0},
+  "graph": {
+    "private_schema": "qlkg-v3",
+    "private_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "private_counts": {"nodes": 0, "edges": 0, "references": 0},
+    "public_schema": "qlkg-site-graph-v1",
+    "public_sha256": "ccae7880989859fbeb6b19523e12ab40b23245cd72e7c496bfb2f48fad1bfc94",
+    "public_counts": {"nodes": 0, "edges": 0, "references": 0}
+  },
+  "artifacts": [
+    {"kind": "site-graph", "path": "graph.json", "bytes": 2, "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+    {"kind": "typst-registry", "path": "knowledge-registry.typ", "bytes": 2, "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+    {"kind": "standalone-verifier", "path": "verify_export.py", "bytes": 2, "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}
+  ],
+  "export_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

@@ -24,16 +24,16 @@ jobs:
         with:
           typst-version: 0.15.1
       - run: uv run python -m unittest discover -s tests -v
-      - run: uv build
-      - run: uv run python scripts/check_distribution.py
+      - run: uv build --out-dir build/release
+      - run: uv run python scripts/check_distribution.py --dist-root build/release
       - name: Wheel smoke test
         run: |
-          wheel=$(find dist -name 'kgdistiller-*.whl' -print -quit)
+          wheel=$(find build/release -name 'kgdistiller-*.whl' -print -quit)
           uv venv .wheel-smoke
           uv pip install --python .wheel-smoke/bin/python "$wheel"
           .wheel-smoke/bin/kgdistiller --help
-          .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
-          .wheel-smoke/bin/python scripts/smoke_installed_profile.py
+          .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v2.schema.json').is_file()"
+          .wheel-smoke/bin/python scripts/smoke_installed_runtime.py
 
   windows:
     runs-on: windows-latest
@@ -47,18 +47,18 @@ jobs:
         with:
           typst-version: 0.15.1
       - run: uv run python -m unittest discover -s tests -v
-      - run: uv build
-      - run: uv run python scripts/check_distribution.py
+      - run: uv build --out-dir build/release
+      - run: uv run python scripts/check_distribution.py --dist-root build/release
       - name: Wheel smoke test
         shell: pwsh
         run: |
-          $wheel = Get-ChildItem dist -Filter 'kgdistiller-*.whl' | Select-Object -First 1
+          $wheel = Get-ChildItem build/release -Filter 'kgdistiller-*.whl' | Select-Object -First 1
           if ($null -eq $wheel) { throw 'built wheel was not found' }
           uv venv .wheel-smoke
           uv pip install --python .wheel-smoke\Scripts\python.exe $wheel.FullName
           .wheel-smoke\Scripts\kgdistiller.exe --help
-          .wheel-smoke\Scripts\python.exe -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
-          .wheel-smoke\Scripts\python.exe scripts/smoke_installed_profile.py
+          .wheel-smoke\Scripts\python.exe -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v2.schema.json').is_file()"
+          .wheel-smoke\Scripts\python.exe scripts/smoke_installed_runtime.py
 
   macos:
     runs-on: macos-latest
@@ -72,14 +72,14 @@ jobs:
         with:
           typst-version: 0.15.1
       - run: uv run python -m unittest discover -s tests -v
-      - run: uv build
-      - run: uv run python scripts/check_distribution.py
+      - run: uv build --out-dir build/release
+      - run: uv run python scripts/check_distribution.py --dist-root build/release
       - name: Wheel smoke test
         run: |
-          wheel=$(find dist -name 'kgdistiller-*.whl' -print -quit)
+          wheel=$(find build/release -name 'kgdistiller-*.whl' -print -quit)
           test -n "$wheel"
           uv venv .wheel-smoke
           uv pip install --python .wheel-smoke/bin/python "$wheel"
           .wheel-smoke/bin/kgdistiller --help
-          .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v1.schema.json').is_file()"
-          .wheel-smoke/bin/python scripts/smoke_installed_profile.py
+          .wheel-smoke/bin/python -c "from importlib.resources import files; assert files('kgdistiller').joinpath('schemas/qlkg-ingest-request-v2.schema.json').is_file()"
+          .wheel-smoke/bin/python scripts/smoke_installed_runtime.py
