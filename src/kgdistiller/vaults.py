@@ -219,6 +219,92 @@ def _absolute_path(value: Path | str, *, field: str) -> Path:
     return path
 
 
+def _remove_created_directories(created: list[Path]) -> None:
+    for directory in reversed(created):
+        try:
+            metadata = _lstat(directory)
+            if (
+                metadata is not None
+                and stat.S_ISDIR(metadata.st_mode)
+                and not _is_link_or_reparse(directory, metadata)
+            ):
+                directory.rmdir()
+        except OSError:
+            pass
+
+
+def _safe_directory_chain(
+    path: Path,
+    *,
+    field: str,
+    error_code: str,
+    create: bool,
+) -> list[Path]:
+    """Validate/create a directory without traversing link-like ancestors."""
+
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    anchor = Path(absolute.anchor)
+    anchor_metadata = _lstat(anchor)
+    if anchor_metadata is None or not stat.S_ISDIR(anchor_metadata.st_mode):
+        raise VaultError(error_code, f"{field} has no trusted filesystem anchor: {anchor}")
+    try:
+        relative_parts = absolute.relative_to(anchor).parts
+    except ValueError as error:
+        raise VaultError(error_code, f"{field} is not below its filesystem anchor") from error
+
+    created: list[Path] = []
+    current = anchor
+    try:
+        for part in relative_parts:
+            candidate = current / part
+            metadata = _lstat(candidate)
+            if metadata is None:
+                if not create:
+                    break
+                parent_metadata = _lstat(current)
+                if (
+                    parent_metadata is None
+                    or not stat.S_ISDIR(parent_metadata.st_mode)
+                    or _is_link_or_reparse(current, parent_metadata)
+                ):
+                    raise VaultError(
+                        error_code,
+                        f"{field} has an unsafe directory ancestor: {current}",
+                    )
+                try:
+                    os.mkdir(candidate)
+                except OSError as error:
+                    raise VaultError(
+                        error_code, f"cannot create {field}: {candidate}"
+                    ) from error
+                created.append(candidate)
+                metadata = _lstat(candidate)
+            if (
+                metadata is None
+                or not stat.S_ISDIR(metadata.st_mode)
+                or _is_link_or_reparse(candidate, metadata)
+            ):
+                raise VaultError(
+                    error_code,
+                    f"{field} must use ordinary, non-reparse directory components: {candidate}",
+                )
+            current = candidate
+        if create:
+            try:
+                resolved = absolute.resolve(strict=True)
+            except OSError as error:
+                raise VaultError(error_code, f"cannot resolve {field}: {absolute}") from error
+            if not _same_path(absolute, resolved):
+                raise VaultError(
+                    error_code,
+                    f"{field} traverses a symlink or reparse point: {absolute}",
+                )
+        return created
+    except BaseException:
+        _remove_created_directories(created)
+        raise
+
+
 def kgdistiller_home(explicit: Path | str | None = None, *, create: bool = False) -> Path:
     """Return the selected machine-local kgdistiller home directory."""
 
@@ -232,33 +318,37 @@ def kgdistiller_home(explicit: Path | str | None = None, *, create: bool = False
     else:
         selected = Path.home() / ".kgdistiller"
     home = _absolute_path(selected, field="kgdistiller home")
+    created = _safe_directory_chain(
+        home,
+        field="kgdistiller home",
+        error_code="invalid-home",
+        create=create,
+    )
     metadata = _lstat(home)
-    if metadata is None and create:
-        try:
-            home.mkdir(parents=True, exist_ok=True)
-        except OSError as error:
-            raise VaultError(
-                "invalid-home", f"cannot create kgdistiller home: {home}"
-            ) from error
-        metadata = _lstat(home)
-    if metadata is not None:
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or _is_link_or_reparse(home, metadata)
-        ):
-            raise VaultError(
-                "invalid-home",
-                f"kgdistiller home must be an ordinary, non-reparse directory: {home}",
-            )
-        try:
-            resolved = home.resolve(strict=True)
-        except OSError as error:
-            raise VaultError("invalid-home", f"cannot resolve kgdistiller home: {home}") from error
-        if not _same_path(home, resolved):
-            raise VaultError(
-                "invalid-home",
-                f"kgdistiller home traverses a symlink or reparse point: {home}",
-            )
+    try:
+        if metadata is not None:
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or _is_link_or_reparse(home, metadata)
+            ):
+                raise VaultError(
+                    "invalid-home",
+                    f"kgdistiller home must be an ordinary, non-reparse directory: {home}",
+                )
+            try:
+                resolved = home.resolve(strict=True)
+            except OSError as error:
+                raise VaultError(
+                    "invalid-home", f"cannot resolve kgdistiller home: {home}"
+                ) from error
+            if not _same_path(home, resolved):
+                raise VaultError(
+                    "invalid-home",
+                    f"kgdistiller home traverses a symlink or reparse point: {home}",
+                )
+    except BaseException:
+        _remove_created_directories(created)
+        raise
     return home
 
 
@@ -695,15 +785,64 @@ def _registry_lock(home: Path) -> Iterator[None]:
             "invalid-registry-lock",
             f"registry lock must be an ordinary, non-reparse file: {lock_path}",
         )
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOINHERIT", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = -1
     acquired = False
     try:
-        handle = lock_path.open("a+b")
+        descriptor = os.open(lock_path, flags, 0o600)
     except OSError as error:
-        raise VaultError("invalid-registry-lock", f"cannot open registry lock: {lock_path}") from error
+        raise VaultError(
+            "invalid-registry-lock", f"cannot safely open registry lock: {lock_path}"
+        ) from error
     try:
-        opened = os.fstat(handle.fileno())
-        if not stat.S_ISREG(opened.st_mode) or _is_reparse_stat(opened):
-            raise VaultError("invalid-registry-lock", "registry lock is not an ordinary file")
+        opened = os.fstat(descriptor)
+        current = _lstat(lock_path)
+        if (
+            current is None
+            or not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or _is_reparse_stat(opened)
+            or _is_link_or_reparse(lock_path, current)
+            or opened.st_ino == 0
+            or current.st_ino == 0
+            or not os.path.samestat(opened, current)
+            or opened.st_nlink != 1
+            or current.st_nlink != 1
+        ):
+            raise VaultError(
+                "invalid-registry-lock",
+                "registry lock handle does not identify the ordinary file at its selected path",
+            )
+        try:
+            resolved = lock_path.resolve(strict=True)
+        except OSError as error:
+            raise VaultError(
+                "invalid-registry-lock", f"cannot resolve registry lock: {lock_path}"
+            ) from error
+        final_metadata = _lstat(lock_path)
+        if (
+            final_metadata is None
+            or not stat.S_ISREG(final_metadata.st_mode)
+            or _is_link_or_reparse(lock_path, final_metadata)
+            or final_metadata.st_ino == 0
+            or final_metadata.st_nlink != 1
+            or not os.path.samestat(opened, final_metadata)
+            or not _same_path(lock_path, resolved)
+            or not _contains_path(selected, resolved, allow_equal=False)
+        ):
+            raise VaultError(
+                "invalid-registry-lock",
+                "registry lock changed or escaped its selected home during open",
+            )
+        handle = os.fdopen(descriptor, "r+b")
+        descriptor = -1
         handle.seek(0, os.SEEK_END)
         if handle.tell() == 0:
             handle.write(b"\0")
@@ -718,9 +857,12 @@ def _registry_lock(home: Path) -> Iterator[None]:
         os.fsync(handle.fileno())
         yield
     finally:
-        if acquired:
-            _release_lock(handle)
-        handle.close()
+        if descriptor >= 0:
+            os.close(descriptor)
+        else:
+            if acquired:
+                _release_lock(handle)
+            handle.close()
 
 
 def _fsync_directory(path: Path) -> None:
@@ -927,7 +1069,7 @@ def _exclusive_write(path: Path, content: bytes) -> None:
 def _cleanup_initialized(
     *,
     root: Path,
-    root_created: bool,
+    created_root_directories: list[Path],
     created_directories: list[Path],
     manifest_path: Path,
     manifest_content: bytes,
@@ -953,11 +1095,7 @@ def _cleanup_initialized(
             directory.rmdir()
         except OSError:
             pass
-    if root_created:
-        try:
-            root.rmdir()
-        except OSError:
-            pass
+    _remove_created_directories(created_root_directories)
 
 
 def init_vault(
@@ -974,9 +1112,15 @@ def init_vault(
         label, field="vault label", maximum=MAX_LABEL_BYTES, allow_empty=False
     )
     manifest = _default_manifest(vault_id, label)
-    selected_home = kgdistiller_home(home, create=True)
     root = _absolute_path(path, field="vault path")
-    root_created = False
+    _safe_directory_chain(
+        root,
+        field="Vault root",
+        error_code="invalid-vault",
+        create=False,
+    )
+    selected_home = kgdistiller_home(home, create=True)
+    created_root_directories: list[Path] = []
     created_directories: list[Path] = []
     manifest_path = root / ".kgdistiller" / "vault.json"
     manifest_content = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode(
@@ -987,36 +1131,28 @@ def init_vault(
         current = _read_registry(selected_home, validate_vaults=False)
         _validate_registered_vaults(current)
         _ensure_registration_available(current, vault_id=vault_id, root=root)
-        root_metadata = _lstat(root)
-        if root_metadata is None:
-            try:
-                root.mkdir(parents=True, exist_ok=False)
-            except OSError as error:
-                raise VaultError("invalid-vault", f"cannot create Vault root: {root}") from error
-            root_created = True
-        elif (
-            not stat.S_ISDIR(root_metadata.st_mode)
-            or _is_link_or_reparse(root, root_metadata)
-        ):
-            raise VaultError(
-                "invalid-vault", f"Vault root must be an ordinary, non-reparse directory: {root}"
-            )
-        root = _canonical_vault_root(root)
-        manifest_path = root / ".kgdistiller" / "vault.json"
-        if _lstat(manifest_path) is not None:
-            raise VaultError(
-                "manifest-exists",
-                f"Vault manifest already exists and was not overwritten: {manifest_path}",
-            )
-        expected_directories = {
-            *_LAYOUT_DIRECTORIES,
-            manifest["concept_root"],
-            manifest["field_root"],
-            manifest["topic_root"],
-            "Knowledge",
-        }
-        _compatible_empty_layout(root, expected_directories)
         try:
+            created_root_directories = _safe_directory_chain(
+                root,
+                field="Vault root",
+                error_code="invalid-vault",
+                create=True,
+            )
+            root = _canonical_vault_root(root)
+            manifest_path = root / ".kgdistiller" / "vault.json"
+            if _lstat(manifest_path) is not None:
+                raise VaultError(
+                    "manifest-exists",
+                    f"Vault manifest already exists and was not overwritten: {manifest_path}",
+                )
+            expected_directories = {
+                *_LAYOUT_DIRECTORIES,
+                manifest["concept_root"],
+                manifest["field_root"],
+                manifest["topic_root"],
+                "Knowledge",
+            }
+            _compatible_empty_layout(root, expected_directories)
             for relative in sorted(
                 expected_directories,
                 key=lambda value: (len(PurePosixPath(value).parts), value),
@@ -1044,7 +1180,7 @@ def init_vault(
         except BaseException:
             _cleanup_initialized(
                 root=root,
-                root_created=root_created,
+                created_root_directories=created_root_directories,
                 created_directories=created_directories,
                 manifest_path=manifest_path,
                 manifest_content=manifest_content,
@@ -1098,7 +1234,14 @@ def list_vaults(*, home: Path | str | None = None) -> dict[str, Any]:
     )
 
 
+def _windows_path_semantics() -> bool:
+    return os.name == "nt"
+
+
 def _glob_matches(relative: str, pattern: str) -> bool:
+    if _windows_path_semantics():
+        relative = relative.casefold()
+        pattern = pattern.casefold()
     path_parts = relative.split("/")
     pattern_parts = pattern.split("/")
 
@@ -1146,7 +1289,7 @@ def _validate_source_path(vault: Vault, file_path: Path) -> str:
         for field in ("concept_root", "field_root", "topic_root")
     }
     folded_parts = tuple(part.casefold() for part in parts)
-    if folded_parts[0] in {"knowledge", ".kgdistiller"}:
+    if folded_parts[0] == ".kgdistiller":
         raise VaultError("source-excluded", f"managed Vault content is not source input: {relative}")
     for managed in managed_roots:
         left = tuple(part.casefold() if os.name == "nt" else part for part in parts)

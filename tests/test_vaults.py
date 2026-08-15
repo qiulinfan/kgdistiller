@@ -4,13 +4,14 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from kgdistiller import cli
+from kgdistiller import cli, vaults as vault_module
 from kgdistiller.contracts import canonical_json, sha256_json, validate_contract
 from kgdistiller.vaults import (
     REGISTRY_SCHEMA,
@@ -20,6 +21,7 @@ from kgdistiller.vaults import (
     add_vault,
     doctor_vaults,
     init_vault,
+    kgdistiller_home,
     list_vaults,
     load_registry,
     locate_file,
@@ -66,6 +68,22 @@ class VaultTests(unittest.TestCase):
             encoding="utf-8",
         )
         return root
+
+    def _make_directory_link(self, link: Path, target: Path) -> bool:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+            return True
+        except (OSError, NotImplementedError):
+            pass
+        if os.name != "nt":
+            return False
+        completed = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+            check=False,
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return completed.returncode == 0 and os.path.lexists(link)
 
     def _cli(self, *arguments: str) -> tuple[int, dict[str, object], str]:
         stdout = io.StringIO()
@@ -234,13 +252,99 @@ class VaultTests(unittest.TestCase):
         outside.mkdir()
         (outside / "escaped.md").write_text("outside", encoding="utf-8")
         link = vault / "linked-sources"
-        try:
-            link.symlink_to(outside, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            self.skipTest("directory symlinks are unavailable")
+        if not self._make_directory_link(link, outside):
+            self.skipTest("directory symlinks and junctions are unavailable")
         add_vault(vault, home=self.home)
         with self.assertRaisesRegex(VaultError, "symlink or reparse"):
             locate_file(link / "escaped.md", home=self.home)
+
+    def test_creation_rejects_unsafe_ancestor_without_writing_through_it(self) -> None:
+        outside = self.root / "outside-ancestor"
+        outside.mkdir()
+        linked_parent = self.root / "linked-parent"
+        if not self._make_directory_link(linked_parent, outside):
+            self.skipTest("directory symlinks or junctions are unavailable")
+
+        with self.assertRaisesRegex(VaultError, "non-reparse directory components"):
+            kgdistiller_home(linked_parent / "new-home", create=True)
+        self.assertFalse((outside / "new-home").exists())
+
+        with self.assertRaisesRegex(VaultError, "non-reparse directory components"):
+            init_vault(
+                linked_parent / "new-vault",
+                vault_id="unsafe",
+                label="Unsafe",
+                home=self.home,
+            )
+        self.assertFalse((outside / "new-vault").exists())
+        self.assertFalse(self.home.exists())
+
+    def test_registry_lock_link_is_rejected_without_modifying_target(self) -> None:
+        kgdistiller_home(self.home, create=True)
+        target = self.root / "lock-target.txt"
+        original = b"do not modify this target"
+        target.write_bytes(original)
+        lock_path = self.home / "vaults.lock"
+        try:
+            lock_path.symlink_to(target)
+        except (OSError, NotImplementedError):
+            try:
+                os.link(target, lock_path)
+            except OSError:
+                self.skipTest("file links are unavailable")
+
+        with self.assertRaisesRegex(VaultError, "registry lock"):
+            with vault_module._registry_lock(self.home):
+                self.fail("unsafe lock was acquired")
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_custom_managed_roots_do_not_reserve_all_of_knowledge(self) -> None:
+        vault = self._make_vault("custom-roots", "custom-roots", "Custom Roots")
+        manifest_path = vault / ".kgdistiller/vault.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.update(
+            {
+                "concept_root": "Managed/Concepts",
+                "field_root": "Managed/Fields",
+                "topic_root": "Managed/Topics",
+                "source_exclude": [".kgdistiller/**"],
+            }
+        )
+        for relative in ("Managed/Concepts", "Managed/Fields", "Managed/Topics"):
+            (vault / relative).mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        ordinary_knowledge = vault / "Knowledge" / "ordinary.md"
+        ordinary_knowledge.write_text("ordinary source", encoding="utf-8")
+        managed = vault / "Managed/Concepts/managed.md"
+        managed.write_text("managed", encoding="utf-8")
+        add_vault(vault, home=self.home)
+
+        located = locate_file(ordinary_knowledge, home=self.home)
+        self.assertEqual(located["result"]["relative_path"], "Knowledge/ordinary.md")
+        with self.assertRaisesRegex(VaultError, "managed Vault content"):
+            locate_file(managed, home=self.home)
+
+    def test_windows_glob_matching_case_normalizes_path_and_pattern(self) -> None:
+        with mock.patch(
+            "kgdistiller.vaults._windows_path_semantics", return_value=True
+        ):
+            self.assertTrue(
+                vault_module._glob_matches("NOTES/Chapter.MD", "notes/**/*.md")
+            )
+            self.assertTrue(
+                vault_module._glob_matches(
+                    "notes/PRIVATE/Secret.TEX", "Notes/Private/**/*.tex"
+                )
+            )
+        with mock.patch(
+            "kgdistiller.vaults._windows_path_semantics", return_value=False
+        ):
+            self.assertFalse(
+                vault_module._glob_matches("NOTES/Chapter.MD", "notes/**/*.md")
+            )
 
     def test_doctor_reports_bad_manifest_and_cli_returns_nonzero(self) -> None:
         vault = self._make_vault("doctor", "doctor", "Doctor")
