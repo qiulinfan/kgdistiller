@@ -3127,6 +3127,18 @@ def parse_args() -> argparse.Namespace:
     vault_locate.add_argument("file", type=Path)
     vault_doctor = vault_commands.add_parser("doctor")
     vault_doctor.add_argument("id", nargs="?")
+    source_command = commands.add_parser("source")
+    source_commands = source_command.add_subparsers(
+        dest="source_command", required=True
+    )
+    source_capture = source_commands.add_parser("capture")
+    source_capture.add_argument("file", type=Path)
+    source_status = source_commands.add_parser("status")
+    source_status.add_argument("file", type=Path)
+    source_diff = source_commands.add_parser("diff")
+    source_diff.add_argument("file", type=Path)
+    source_diff.add_argument("--from", dest="from_version")
+    source_diff.add_argument("--to", dest="to_version")
     init_command = commands.add_parser("init")
     init_command.add_argument("--source-root", type=Path, default=Path("notes"))
     init_command.add_argument("--force", action="store_true")
@@ -3440,6 +3452,43 @@ def main() -> int:
             return 1
         print(pretty_json(result), end="")
         return 1 if result["status"] == "failed" else 0
+    if args.command == "source":
+        from .source_archive import (
+            SourceArchiveError,
+            capture_source,
+            diff_source,
+            source_status,
+        )
+
+        try:
+            if args.source_command == "capture":
+                result = capture_source(args.file)
+            elif args.source_command == "status":
+                result = source_status(args.file)
+            else:
+                result = diff_source(
+                    args.file,
+                    from_version=args.from_version,
+                    to_version=args.to_version,
+                )
+        except SourceArchiveError as error:
+            print(pretty_json(error.payload()), end="", file=sys.stderr)
+            return 1
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+            print(
+                pretty_json(
+                    {
+                        "kind": "kgdistiller-source-error",
+                        "code": "source-command-failed",
+                        "message": str(error),
+                    }
+                ),
+                end="",
+                file=sys.stderr,
+            )
+            return 1
+        print(pretty_json(result), end="")
+        return 0
     repo_root = args.repo_root.resolve()
     try:
         if args.command == "codex":

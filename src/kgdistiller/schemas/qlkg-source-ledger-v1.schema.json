@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-source-ledger-v1.schema.json",
+  "title": "kgdistiller immutable source-ledger pointer v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generation_sha256", "generation_path", "artifacts"],
+  "properties": {
+    "schema": {"const": "qlkg-source-ledger-v1"},
+    "generation_sha256": {"$ref": "#/$defs/sha256"},
+    "generation_path": {"type": "string", "pattern": "^generations/[0-9a-f]{64}$"},
+    "artifacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["documents", "versions", "derivations"],
+      "properties": {
+        "documents": {"$ref": "#/$defs/artifact"},
+        "versions": {"$ref": "#/$defs/artifact"},
+        "derivations": {"$ref": "#/$defs/artifact"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "bytes", "rows", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 255},
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 67108864},
+        "rows": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

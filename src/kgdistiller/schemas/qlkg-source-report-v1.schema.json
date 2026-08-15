@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-source-report-v1.schema.json",
+  "title": "kgdistiller source archive operation report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "action", "status", "vault_id", "registry_generation", "ledger_generation", "result"],
+  "properties": {
+    "schema": {"const": "qlkg-source-report-v1"},
+    "action": {"enum": ["capture", "status", "diff"]},
+    "status": {"const": "ok"},
+    "vault_id": {"$ref": "#/$defs/vault_id"},
+    "registry_generation": {"$ref": "#/$defs/sha256"},
+    "ledger_generation": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "result": {
+      "oneOf": [
+        {"$ref": "#/$defs/capture_result"},
+        {"$ref": "#/$defs/status_result"},
+        {"$ref": "#/$defs/diff_result"}
+      ]
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"const": "capture"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/capture_result"}}}},
+    {"if": {"properties": {"action": {"const": "status"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/status_result"}}}},
+    {"if": {"properties": {"action": {"const": "diff"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/diff_result"}}}}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "uuid": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "version_id": {"type": "string", "pattern": "^doc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:v[0-9]{8}$"},
+    "nullable_version_id": {"anyOf": [{"$ref": "#/$defs/version_id"}, {"type": "null"}]},
+    "lifecycle": {"enum": ["captured", "reviewed-empty", "distilled", "stale", "failed"]},
+    "concept_ids": {"type": "array", "maxItems": 100000, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "diff": {
+      "type": "object", "additionalProperties": false,
+      "required": ["from_version_id", "to_version_id", "text", "truncated", "emitted_lines", "max_bytes", "max_lines"],
+      "properties": {
+        "from_version_id": {"$ref": "#/$defs/nullable_version_id"},
+        "to_version_id": {"$ref": "#/$defs/version_id"},
+        "text": {"type": "string", "maxLength": 1048576},
+        "truncated": {"type": "boolean"},
+        "emitted_lines": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "max_bytes": {"const": 1048576},
+        "max_lines": {"const": 10000}
+      }
+    },
+    "capture_result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "outcome", "document_id", "path", "format", "semantic_changed", "effective_status", "predecessor_version_id", "current_version_id", "diff", "affected_concept_ids"],
+      "properties": {
+        "kind": {"const": "source-capture"},
+        "outcome": {"enum": ["capture", "move", "no_op"]},
+        "document_id": {"$ref": "#/$defs/uuid"},
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "format": {"enum": ["markdown", "typst", "latex"]},
+        "semantic_changed": {"type": "boolean"},
+        "effective_status": {"$ref": "#/$defs/lifecycle"},
+        "predecessor_version_id": {"$ref": "#/$defs/nullable_version_id"},
+        "current_version_id": {"$ref": "#/$defs/version_id"},
+        "diff": {"anyOf": [{"$ref": "#/$defs/diff"}, {"type": "null"}]},
+        "affected_concept_ids": {"$ref": "#/$defs/concept_ids"}
+      }
+    },
+    "status_result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "outcome", "document_id", "path", "format", "raw_changed", "semantic_changed", "effective_status", "predecessor_version_id", "current_version_id"],
+      "properties": {
+        "kind": {"const": "source-status"},
+        "outcome": {"enum": ["current", "raw-changed", "semantic-change", "uncaptured"]},
+        "document_id": {"anyOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]},
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "format": {"enum": ["markdown", "typst", "latex"]},
+        "raw_changed": {"type": "boolean"},
+        "semantic_changed": {"type": "boolean"},
+        "effective_status": {"$ref": "#/$defs/lifecycle"},
+        "predecessor_version_id": {"$ref": "#/$defs/nullable_version_id"},
+        "current_version_id": {"$ref": "#/$defs/nullable_version_id"}
+      }
+    },
+    "diff_result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "document_id", "path", "format", "semantic_changed", "effective_status", "predecessor_version_id", "current_version_id", "diff", "affected_concept_ids"],
+      "properties": {
+        "kind": {"const": "source-diff"},
+        "document_id": {"$ref": "#/$defs/uuid"},
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "format": {"enum": ["markdown", "typst", "latex"]},
+        "semantic_changed": {"type": "boolean"},
+        "effective_status": {"$ref": "#/$defs/lifecycle"},
+        "predecessor_version_id": {"$ref": "#/$defs/nullable_version_id"},
+        "current_version_id": {"$ref": "#/$defs/version_id"},
+        "diff": {"$ref": "#/$defs/diff"},
+        "affected_concept_ids": {"$ref": "#/$defs/concept_ids"}
+      }
+    }
+  }
+}

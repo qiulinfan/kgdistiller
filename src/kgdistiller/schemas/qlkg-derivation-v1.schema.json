@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-derivation-v1.schema.json",
+  "title": "kgdistiller reviewed source derivation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "version_id", "graph_generation_sha256", "candidate_dispositions",
+    "concept_ids", "concept_evidence", "relation_evidence", "status",
+    "inherited_from_version_id", "ingest_receipt_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-derivation-v1"},
+    "version_id": {"$ref": "#/$defs/version_id"},
+    "graph_generation_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "candidate_dispositions": {
+      "type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/candidate_disposition"}
+    },
+    "concept_ids": {
+      "type": "array", "maxItems": 100000, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/concept_id"}
+    },
+    "concept_evidence": {
+      "type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/concept_evidence"}
+    },
+    "relation_evidence": {
+      "type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/relation_evidence"}
+    },
+    "status": {"enum": ["planned", "committed", "reviewed-empty", "carried-forward", "superseded", "failed"]},
+    "inherited_from_version_id": {"anyOf": [{"$ref": "#/$defs/version_id"}, {"type": "null"}]},
+    "ingest_receipt_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "carried-forward"}}},
+      "then": {
+        "properties": {
+          "graph_generation_sha256": {"type": "null"},
+          "candidate_dispositions": {"maxItems": 0},
+          "concept_ids": {"maxItems": 0},
+          "concept_evidence": {"maxItems": 0},
+          "relation_evidence": {"maxItems": 0},
+          "inherited_from_version_id": {"$ref": "#/$defs/version_id"},
+          "ingest_receipt_sha256": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "committed"}}},
+      "then": {
+        "properties": {
+          "graph_generation_sha256": {"$ref": "#/$defs/sha256"},
+          "concept_ids": {"minItems": 1},
+          "inherited_from_version_id": {"type": "null"},
+          "ingest_receipt_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "reviewed-empty"}}},
+      "then": {
+        "properties": {
+          "graph_generation_sha256": {"$ref": "#/$defs/sha256"},
+          "candidate_dispositions": {"maxItems": 0},
+          "concept_ids": {"maxItems": 0},
+          "concept_evidence": {"maxItems": 0},
+          "relation_evidence": {"maxItems": 0},
+          "inherited_from_version_id": {"type": "null"},
+          "ingest_receipt_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["planned", "superseded", "failed"]}}},
+      "then": {"properties": {"inherited_from_version_id": {"type": "null"}, "ingest_receipt_sha256": {"type": "null"}}}
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "version_id": {
+      "type": "string",
+      "pattern": "^doc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:v[0-9]{8}$"
+    },
+    "concept_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "candidate_disposition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_id", "disposition"],
+      "properties": {
+        "candidate_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "disposition": {"enum": ["reuse", "add", "update", "reject", "defer"]}
+      }
+    },
+    "span": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version_id", "start_line", "end_line", "excerpt_sha256"],
+      "properties": {
+        "version_id": {"$ref": "#/$defs/version_id"},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "start_column": {"type": "integer", "minimum": 0},
+        "end_column": {"type": "integer", "minimum": 0},
+        "excerpt_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "concept_evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["concept_id", "spans"],
+      "properties": {
+        "concept_id": {"$ref": "#/$defs/concept_id"},
+        "spans": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/span"}}
+      }
+    },
+    "relation_evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "relation", "target", "spans"],
+      "properties": {
+        "source": {"$ref": "#/$defs/concept_id"},
+        "relation": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+        "target": {"$ref": "#/$defs/concept_id"},
+        "spans": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/span"}}
+      }
+    }
+  }
+}

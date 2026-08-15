@@ -327,11 +327,13 @@ may be cleaned only by an explicit doctor/repair action.
 generation, writes/reuses the blob, and appends canonical metadata atomically.
 
 For an unchanged raw digest it returns a verified no-op. If raw bytes changed
-but normalized UTF-8 text did not, it captures the exact new raw version and
-atomically records a `carried-forward` derivation referencing the predecessor.
-Because normalized line/column coordinates and excerpt hashes are identical,
-that row inherits the predecessor's reviewed concept, relation, and evidence
-mapping without asking for semantic re-distillation. For a changed normalized
+but normalized UTF-8 text did not, it captures the exact new raw version. It
+atomically records a `carried-forward` derivation referencing the predecessor
+only when that predecessor resolves to reviewed data; otherwise it archives the
+event without a derivation and keeps it unreviewed. Because normalized
+line/column coordinates and excerpt hashes are identical, a carry row inherits
+the predecessor's reviewed concept, relation, and evidence mapping without
+asking for semantic re-distillation. For a changed normalized
 digest it returns a bounded line diff against the predecessor and the concept
 IDs resolved through the predecessor's effective derivation. Resolution follows
 `inherited_from_version_id` through zero or more `carried-forward` rows until a

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-source-version-v1.schema.json",
+  "title": "kgdistiller source capture event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "version_id", "document_id", "sequence", "raw_sha256",
+    "normalized_text_sha256", "blob_path", "captured_path", "format",
+    "byte_count", "captured_at", "predecessor_version_id"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-source-version-v1"},
+    "version_id": {"$ref": "#/$defs/version_id"},
+    "document_id": {"$ref": "#/$defs/uuid"},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 99999999},
+    "raw_sha256": {"$ref": "#/$defs/sha256"},
+    "normalized_text_sha256": {"$ref": "#/$defs/sha256"},
+    "blob_path": {"type": "string", "pattern": "^blobs/sha256/[0-9a-f]{2}/[0-9a-f]{64}$"},
+    "captured_path": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "format": {"enum": ["markdown", "typst", "latex"]},
+    "byte_count": {"type": "integer", "minimum": 0, "maximum": 67108864},
+    "captured_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"
+    },
+    "predecessor_version_id": {
+      "anyOf": [{"$ref": "#/$defs/version_id"}, {"type": "null"}]
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "version_id": {
+      "type": "string",
+      "pattern": "^doc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:v[0-9]{8}$"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-source-document-v1.schema.json",
+  "title": "kgdistiller source document v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "document_id", "path", "format", "normalized_text_sha256",
+    "current_version_id", "status"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-source-document-v1"},
+    "document_id": {"$ref": "#/$defs/uuid"},
+    "path": {"$ref": "#/$defs/path"},
+    "format": {"enum": ["markdown", "typst", "latex"]},
+    "normalized_text_sha256": {"$ref": "#/$defs/sha256"},
+    "current_version_id": {"$ref": "#/$defs/version_id"},
+    "status": {"enum": ["captured", "reviewed-empty", "distilled", "stale", "failed"]}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "version_id": {
+      "type": "string",
+      "pattern": "^doc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:v[0-9]{8}$"
+    },
+    "path": {"type": "string", "minLength": 1, "maxLength": 4096}
+  }
+}

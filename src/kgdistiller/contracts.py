@@ -31,6 +31,11 @@ CONTRACT_SCHEMAS = {
         "qlkg-vault-registry-v1",
         "qlkg-vault-v1",
         "qlkg-vault-report-v1",
+        "qlkg-source-document-v1",
+        "qlkg-source-version-v1",
+        "qlkg-derivation-v1",
+        "qlkg-source-ledger-v1",
+        "qlkg-source-report-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
