@@ -3110,6 +3110,23 @@ def parse_args() -> argparse.Namespace:
         default="knowledge/build/knowledge-registry.typ",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    vault_command = commands.add_parser("vault")
+    vault_commands = vault_command.add_subparsers(
+        dest="vault_command", required=True
+    )
+    vault_init = vault_commands.add_parser("init")
+    vault_init.add_argument("path", type=Path)
+    vault_init.add_argument("--id", required=True, dest="vault_id")
+    vault_init.add_argument("--label", required=True)
+    vault_add = vault_commands.add_parser("add")
+    vault_add.add_argument("path", type=Path)
+    vault_remove = vault_commands.add_parser("remove")
+    vault_remove.add_argument("id")
+    vault_commands.add_parser("list")
+    vault_locate = vault_commands.add_parser("locate")
+    vault_locate.add_argument("file", type=Path)
+    vault_doctor = vault_commands.add_parser("doctor")
+    vault_doctor.add_argument("id", nargs="?")
     init_command = commands.add_parser("init")
     init_command.add_argument("--source-root", type=Path, default=Path("notes"))
     init_command.add_argument("--force", action="store_true")
@@ -3377,6 +3394,52 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     configure_console_streams()
     args = parse_args()
+    if args.command == "vault":
+        from .vaults import (
+            VaultError,
+            add_vault,
+            doctor_vaults,
+            init_vault,
+            list_vaults,
+            locate_file,
+            remove_vault,
+        )
+
+        try:
+            if args.vault_command == "init":
+                result = init_vault(
+                    args.path,
+                    vault_id=args.vault_id,
+                    label=args.label,
+                )
+            elif args.vault_command == "add":
+                result = add_vault(args.path)
+            elif args.vault_command == "remove":
+                result = remove_vault(args.id)
+            elif args.vault_command == "list":
+                result = list_vaults()
+            elif args.vault_command == "locate":
+                result = locate_file(args.file)
+            else:
+                result = doctor_vaults(args.id)
+        except VaultError as error:
+            print(pretty_json(error.payload()), end="", file=sys.stderr)
+            return 1
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+            print(
+                pretty_json(
+                    {
+                        "kind": "kgdistiller-vault-error",
+                        "code": "vault-command-failed",
+                        "message": str(error),
+                    }
+                ),
+                end="",
+                file=sys.stderr,
+            )
+            return 1
+        print(pretty_json(result), end="")
+        return 1 if result["status"] == "failed" else 0
     repo_root = args.repo_root.resolve()
     try:
         if args.command == "codex":

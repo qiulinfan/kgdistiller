@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-v1.schema.json",
+  "title": "kgdistiller portable Vault manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "label",
+    "description",
+    "concept_root",
+    "field_root",
+    "topic_root",
+    "source_include",
+    "source_exclude"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-vault-v1"},
+    "id": {"$ref": "#/$defs/vault_id"},
+    "label": {"type": "string", "minLength": 1, "maxLength": 256},
+    "description": {"type": "string", "maxLength": 4096},
+    "concept_root": {"$ref": "#/$defs/relative_path"},
+    "field_root": {"$ref": "#/$defs/relative_path"},
+    "topic_root": {"$ref": "#/$defs/relative_path"},
+    "source_include": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/glob"}
+    },
+    "source_exclude": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/glob"}
+    }
+  },
+  "$defs": {
+    "vault_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+    }
+  }
+}

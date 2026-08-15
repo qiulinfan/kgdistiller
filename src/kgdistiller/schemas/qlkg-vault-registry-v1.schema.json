@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-registry-v1.schema.json",
+  "title": "kgdistiller machine-local Vault registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "vaults"],
+  "properties": {
+    "schema": {"const": "qlkg-vault-registry-v1"},
+    "vaults": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path"],
+        "properties": {
+          "id": {"$ref": "#/$defs/vault_id"},
+          "path": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "vault_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    }
+  }
+}

@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-report-v1.schema.json",
+  "title": "kgdistiller Vault operation report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "action", "status", "registry_generation", "result"],
+  "properties": {
+    "schema": {"const": "qlkg-vault-report-v1"},
+    "action": {"enum": ["init", "add", "remove", "list", "locate", "doctor"]},
+    "status": {"enum": ["ok", "failed"]},
+    "registry_generation": {
+      "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+    },
+    "result": {
+      "oneOf": [
+        {"$ref": "#/$defs/vault_result"},
+        {"$ref": "#/$defs/removed_result"},
+        {"$ref": "#/$defs/list_result"},
+        {"$ref": "#/$defs/located_result"},
+        {"$ref": "#/$defs/doctor_result"}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"action": {"enum": ["init", "add"]}}},
+      "then": {
+        "properties": {
+          "status": {"const": "ok"},
+          "registry_generation": {"$ref": "#/$defs/sha256"},
+          "result": {"$ref": "#/$defs/vault_result"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "remove"}}},
+      "then": {
+        "properties": {
+          "status": {"const": "ok"},
+          "registry_generation": {"$ref": "#/$defs/sha256"},
+          "result": {"$ref": "#/$defs/removed_result"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "list"}}},
+      "then": {
+        "properties": {
+          "status": {"const": "ok"},
+          "registry_generation": {"$ref": "#/$defs/sha256"},
+          "result": {"$ref": "#/$defs/list_result"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "locate"}}},
+      "then": {
+        "properties": {
+          "status": {"const": "ok"},
+          "registry_generation": {"$ref": "#/$defs/sha256"},
+          "result": {"$ref": "#/$defs/located_result"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "doctor"}}},
+      "then": {"properties": {"result": {"$ref": "#/$defs/doctor_result"}}}
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "vault_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "path"],
+      "properties": {
+        "id": {"$ref": "#/$defs/vault_id"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 256},
+        "path": {"$ref": "#/$defs/path"}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 128},
+        "message": {"type": "string", "minLength": 1, "maxLength": 8192}
+      }
+    },
+    "vault_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "vault"],
+      "properties": {
+        "kind": {"const": "vault"},
+        "vault": {"$ref": "#/$defs/vault_card"}
+      }
+    },
+    "removed_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"const": "removed-vault"},
+        "id": {"$ref": "#/$defs/vault_id"}
+      }
+    },
+    "list_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "vaults"],
+      "properties": {
+        "kind": {"const": "vault-list"},
+        "vaults": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/vault_card"}
+        }
+      }
+    },
+    "located_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "vault", "file", "relative_path"],
+      "properties": {
+        "kind": {"const": "located-source"},
+        "vault": {"$ref": "#/$defs/vault_card"},
+        "file": {"$ref": "#/$defs/path"},
+        "relative_path": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    },
+    "doctor_registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "exists", "status", "diagnostics"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "exists": {"type": "boolean"},
+        "status": {"enum": ["ok", "error"]},
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/diagnostic"}
+        }
+      }
+    },
+    "doctor_vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "label", "status", "diagnostics"],
+      "properties": {
+        "id": {"$ref": "#/$defs/vault_id"},
+        "path": {"$ref": "#/$defs/path"},
+        "label": {
+          "anyOf": [
+            {"type": "string", "minLength": 1, "maxLength": 256},
+            {"type": "null"}
+          ]
+        },
+        "status": {"enum": ["ok", "error"]},
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/diagnostic"}
+        }
+      }
+    },
+    "doctor_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checked", "healthy", "failed"],
+      "properties": {
+        "checked": {"type": "integer", "minimum": 0, "maximum": 256},
+        "healthy": {"type": "integer", "minimum": 0, "maximum": 256},
+        "failed": {"type": "integer", "minimum": 0, "maximum": 256}
+      }
+    },
+    "doctor_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "selection", "registry", "vaults", "counts"],
+      "properties": {
+        "kind": {"const": "doctor"},
+        "selection": {
+          "anyOf": [{"$ref": "#/$defs/vault_id"}, {"type": "null"}]
+        },
+        "registry": {"$ref": "#/$defs/doctor_registry"},
+        "vaults": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/doctor_vault"}
+        },
+        "counts": {"$ref": "#/$defs/doctor_counts"}
+      }
+    }
+  }
+}

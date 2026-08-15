@@ -28,6 +28,9 @@ CONTRACT_SCHEMAS = {
         "qlkg-static-export-v2",
         "qlkg-static-export-report-v1",
         "qlkg-site-graph-v1",
+        "qlkg-vault-registry-v1",
+        "qlkg-vault-v1",
+        "qlkg-vault-report-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
