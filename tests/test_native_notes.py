@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import unittest
 from pathlib import Path
 
@@ -64,11 +65,37 @@ class NativeNoteTests(unittest.TestCase):
             concept_bytes(newline="\r\n", blank=True),
             authority="Knowledge/Concepts/Measure Space.md",
         )
+        without_final_lf = parse_native_markdown(
+            concept_bytes(newline="\n", blank=False).rstrip(b"\n"),
+            authority="Knowledge/Concepts/Measure Space.md",
+        )
+        without_final_crlf = parse_native_markdown(
+            concept_bytes(newline="\r\n", blank=True).removesuffix(b"\r\n"),
+            authority="Knowledge/Concepts/Measure Space.md",
+        )
         self.assertIsInstance(without_blank, ConceptNote)
-        self.assertEqual((14, 16), (without_blank.h1_line, without_blank.end_line))
-        self.assertEqual((15, 17), (with_blank.h1_line, with_blank.end_line))
+        self.assertEqual((14, 17), (without_blank.h1_line, without_blank.end_line))
+        self.assertEqual((15, 18), (with_blank.h1_line, with_blank.end_line))
+        self.assertEqual(
+            (14, 16), (without_final_lf.h1_line, without_final_lf.end_line)
+        )
+        self.assertEqual(
+            (15, 17), (without_final_crlf.h1_line, without_final_crlf.end_line)
+        )
         self.assertEqual(without_blank.definition_sha256, with_blank.definition_sha256)
         self.assertNotIn("\r", with_blank.normalized_text)
+        for note in (
+            without_blank,
+            with_blank,
+            without_final_lf,
+            without_final_crlf,
+        ):
+            lines = note.normalized_text.split("\n")
+            excerpt = "\n".join(lines[note.h1_line - 1 : note.end_line])
+            self.assertEqual(
+                note.definition_sha256,
+                hashlib.sha256(excerpt.encode("utf-8")).hexdigest(),
+            )
 
     def test_renderer_round_trips_identity_links_display_and_body(self) -> None:
         note = parse_native_markdown(
@@ -192,6 +219,7 @@ class NativeNoteTests(unittest.TestCase):
             "[[Knowledge/Concepts/CON]]",
             "[[Knowledge/Concepts/A\x01B]]",
             "[[Knowledge/Concepts/A\x7fB]]",
+            "[[Knowledge/Concepts/Cafe\u0301]]",
             "[[Knowledge/Concepts/A?B]]",
             "[[C:/Knowledge/Concepts/A]]",
             "[[ Knowledge/Concepts/A]]",
@@ -221,6 +249,24 @@ class NativeNoteTests(unittest.TestCase):
         self.assertIn("#kn[ghost]", note.body)
         self.assertEqual((), note.implies)
 
+    def test_visible_identities_and_authorities_reject_controls_or_non_nfc(self) -> None:
+        controlled_alias = concept_bytes().replace(
+            b'aliases: ["Measure space"]', b'aliases: ["Bad\x7falias"]'
+        )
+        controlled_h1 = concept_bytes().replace(
+            b"# Measure space", b"# Bad\x01label"
+        )
+        for data in (controlled_alias, controlled_h1):
+            with self.assertRaises(NativeNoteError):
+                parse_native_markdown(
+                    data, authority="Knowledge/Concepts/Measure Space.md"
+                )
+        with self.assertRaisesRegex(NativeNoteError, "Unicode NFC"):
+            parse_native_markdown(
+                concept_bytes(),
+                authority="Knowledge/Concepts/Cafe\u0301.md",
+            )
+
     def test_missing_h1_and_oversized_note_fail_closed(self) -> None:
         missing_h1 = concept_bytes().replace(b"# Measure space", b"Measure space")
         with self.assertRaisesRegex(NativeNoteError, "must contain an H1"):
@@ -232,6 +278,56 @@ class NativeNoteTests(unittest.TestCase):
             parse_native_markdown(
                 oversized, authority="Knowledge/Concepts/Measure Space.md"
             )
+
+    def test_h1_ignores_fenced_and_indented_code(self) -> None:
+        data = concept_bytes().replace(
+            b"# Measure space\n\nA measure space is curated.",
+            (
+                b"```markdown\n# Fenced heading\n```\n"
+                b"    # Indented heading\n\n"
+                b"# Measure space\n\nA measure space is curated."
+            ),
+        )
+        note = parse_native_markdown(
+            data, authority="Knowledge/Concepts/Measure Space.md"
+        )
+        self.assertEqual("Measure space", note.label)
+        self.assertIn("A measure space is curated.", note.body)
+
+        only_code = concept_bytes().replace(
+            b"# Measure space\n\nA measure space is curated.",
+            b"~~~\n# Fenced heading\n~~~\n    # Indented heading\n",
+        )
+        with self.assertRaisesRegex(NativeNoteError, "must contain an H1"):
+            parse_native_markdown(
+                only_code, authority="Knowledge/Concepts/Measure Space.md"
+            )
+
+        commented = concept_bytes().replace(
+            b"# Measure space\n\nA measure space is curated.",
+            (
+                b"<!--\n# Comment heading\n-->\n"
+                b"<script>\n# Raw HTML heading\n</script>\n"
+                b"# Measure space\n\nA measure space is curated."
+            ),
+        )
+        parsed = parse_native_markdown(
+            commented, authority="Knowledge/Concepts/Measure Space.md"
+        )
+        self.assertEqual("Measure space", parsed.label)
+
+        block_html = concept_bytes().replace(
+            b"# Measure space\n\nA measure space is curated.",
+            (
+                b"<div>\n# Block heading\n</div>\n\n"
+                b"<![CDATA[\n# CDATA heading\n]]>\n"
+                b"# Measure space\n\nA measure space is curated."
+            ),
+        )
+        parsed_block = parse_native_markdown(
+            block_html, authority="Knowledge/Concepts/Measure Space.md"
+        )
+        self.assertEqual("Measure space", parsed_block.label)
 
     def test_new_modules_parse_as_python_39_and_alias_is_not_pep604_runtime(self) -> None:
         root = Path(__file__).resolve().parents[1]

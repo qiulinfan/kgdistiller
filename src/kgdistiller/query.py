@@ -11,7 +11,9 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import re
+import time
 import unicodedata
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -38,6 +40,8 @@ from .cli import (
     make_agent_snapshot,
 )
 from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
+from .source_archive import SourceArchiveError, vault_generation_guard
+from .vaults import Vault, VaultError, load_vault
 
 
 SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v2"
@@ -108,6 +112,28 @@ def _manifest_payload(graph_dir: Path) -> dict[str, Any]:
 
 def _generation_token(manifest: Mapping[str, Any]) -> str:
     return sha256_json(dict(manifest))
+
+
+def _native_vault_for_graph(graph_dir: Path) -> Vault | None:
+    absolute = Path(os.path.abspath(graph_dir))
+    if absolute.name != "graph" or absolute.parent.name != ".kgdistiller":
+        return None
+    root = absolute.parent.parent
+    manifest = root / ".kgdistiller" / "vault.json"
+    if not os.path.lexists(manifest):
+        raise QueryError(
+            "native Vault manifest is unavailable for the standard graph layout"
+        )
+    try:
+        vault = load_vault(root)
+    except VaultError as error:
+        raise QueryError(
+            f"native Vault manifest is unavailable or invalid: {error.message}"
+        ) from error
+    expected = Path(os.path.abspath(vault.root / ".kgdistiller" / "graph"))
+    if os.path.normcase(str(absolute)) != os.path.normcase(str(expected)):
+        raise QueryError("native graph path does not match its Vault manifest")
+    return vault
 
 
 def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -421,25 +447,103 @@ class GraphView:
         graph_dir = Path(graph_dir)
         if max_attempts < 1 or max_attempts > 10:
             raise QueryError("max_attempts must be between 1 and 10")
+        native_vault = _native_vault_for_graph(graph_dir)
+        if native_vault is not None:
+            from .native_compiler import (
+                NativeCompilerError,
+                _load_live_state_locked,
+                _recover_graph_transaction_locked,
+            )
+
+            last_error: Exception | None = None
+            stale_attempts = 0
+            deadline = time.monotonic() + min(2.0, max_attempts * 0.5)
+            while True:
+                try:
+                    with vault_generation_guard(native_vault):
+                        current_vault = load_vault(
+                            native_vault.root, expected_id=native_vault.id
+                        )
+                        if sha256_json(current_vault.manifest) != sha256_json(
+                            native_vault.manifest
+                        ):
+                            raise QueryError(
+                                "native Vault manifest changed before graph loading"
+                            )
+                        _recover_graph_transaction_locked(current_vault)
+                        state, manifest, _ = _load_live_state_locked(current_vault)
+                        snapshot = make_agent_snapshot(
+                            state, namespace=current_vault.id
+                        )
+                        validate_agent_snapshot(snapshot)
+                        alignment_payload = _load_alignments(alignments)
+                    return cls._from_snapshot(
+                        graph_dir,
+                        snapshot,
+                        alignment_payload,
+                        generation=_generation_token(manifest),
+                        source_hashes=dict(manifest.get("source_hashes") or {}),
+                    )
+                except SourceArchiveError as error:
+                    last_error = error
+                    if error.code != "vault-writer-lock-conflict":
+                        raise QueryError(error.message) from error
+                    if time.monotonic() >= deadline:
+                        break
+                except NativeCompilerError as error:
+                    last_error = error
+                    if error.code != "stale-native-graph":
+                        raise QueryError(error.message) from error
+                    stale_attempts += 1
+                    if stale_attempts >= max_attempts:
+                        break
+                except VaultError as error:
+                    raise QueryError(error.message) from error
+                except (KnowledgeError, AlignmentError, OSError, ValueError) as error:
+                    raise QueryError(str(error)) from error
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.025, remaining))
+            raise QueryError(
+                "native authority graph is busy or changed while loading; retry the query"
+            ) from last_error
+
         last_error: Exception | None = None
-        for _ in range(max_attempts):
-            before = _manifest_payload(graph_dir)
-            token = _generation_token(before)
+        for attempt in range(max_attempts):
+            before: dict[str, Any] | None = None
+            token: str | None = None
             try:
+                before = _manifest_payload(graph_dir)
+                token = _generation_token(before)
                 state = load_state(graph_dir)
                 snapshot = make_agent_snapshot(state)
                 validate_agent_snapshot(snapshot)
                 alignment_payload = _load_alignments(alignments)
             except (KnowledgeError, AlignmentError, OSError, ValueError) as error:
                 last_error = error
-                after = _manifest_payload(graph_dir)
-                if token != _generation_token(after):
+                try:
+                    after = _manifest_payload(graph_dir)
+                except QueryError:
+                    if attempt + 1 < max_attempts:
+                        time.sleep(0.01)
+                        continue
+                    raise QueryError(str(error)) from error
+                if token is None or token != _generation_token(after):
                     continue
                 raise QueryError(str(error)) from error
-            after = _manifest_payload(graph_dir)
+            try:
+                after = _manifest_payload(graph_dir)
+            except QueryError as error:
+                last_error = error
+                if attempt + 1 < max_attempts:
+                    time.sleep(0.01)
+                    continue
+                raise
             if token != _generation_token(after):
                 last_error = QueryError("authority graph generation changed while loading")
                 continue
+            assert before is not None
             return cls._from_snapshot(
                 graph_dir,
                 snapshot,

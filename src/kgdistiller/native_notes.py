@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Union
@@ -25,7 +26,20 @@ MAX_FRONTMATTER_BYTES = 64 * 1024
 MAX_FRONTMATTER_KEYS = 256
 MAX_LIST_ITEMS = 4096
 MAX_YAML_DEPTH = 64
-_H1_RE = re.compile(r"^#[ \t]+(?P<label>.*?)(?:[ \t]+#+)?[ \t]*$")
+_H1_RE = re.compile(r"^ {0,3}#[ \t]+(?P<label>.*?)(?:[ \t]+#+)?[ \t]*$")
+_FENCE_RE = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+_HTML_BLOCK_TAG_RE = re.compile(
+    r"^</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|"
+    r"col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+    r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|"
+    r"link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|"
+    r"section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)"
+    r"(?:[\s/>]|$)",
+    re.IGNORECASE,
+)
+_HTML_COMPLETE_TAG_RE = re.compile(
+    r"^</?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?/?>\s*$"
+)
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 _LINK_SEMANTICS_RE = re.compile(r"[\[\]#^\x00-\x1f\x7f]")
 _WINDOWS_RESERVED = {
@@ -302,7 +316,14 @@ def _required_string(payload: Mapping[str, Any], key: str, authority: str) -> st
         raise NativeNoteError(
             "invalid-frontmatter", f"{key} must be a non-empty string", authority=authority
         )
-    return value.strip()
+    normalized = value.strip()
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise NativeNoteError(
+            "invalid-frontmatter",
+            f"{key} must not contain control characters",
+            authority=authority,
+        )
+    return normalized
 
 
 def _string_list(payload: Mapping[str, Any], key: str, authority: str) -> tuple[str, ...]:
@@ -320,6 +341,12 @@ def _string_list(payload: Mapping[str, Any], key: str, authority: str) -> tuple[
                 authority=authority,
             )
         normalized = item.strip()
+        if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+            raise NativeNoteError(
+                "invalid-frontmatter",
+                f"{key} entries must not contain control characters",
+                authority=authority,
+            )
         if normalized in result:
             raise NativeNoteError(
                 "duplicate-frontmatter-value",
@@ -383,6 +410,12 @@ def parse_note_link(value: str, *, authority: str | None = None) -> NoteLink:
             "Obsidian link suffix must use exact .md case",
             authority=authority,
         )
+    if unicodedata.normalize("NFC", target) != target:
+        raise NativeNoteError(
+            "invalid-note-link",
+            "Obsidian link targets must use Unicode NFC normalization",
+            authority=authority,
+        )
     path = PurePosixPath(target)
     if (
         path.is_absolute()
@@ -421,12 +454,91 @@ def _entry(
     content: str, first_content_line: int, authority: str
 ) -> tuple[str, str, str, int, int, str]:
     lines = content.split("\n")
+    fence_character: str | None = None
+    fence_length = 0
+    html_end: str | None = None
+    html_until_blank = False
     for index, line in enumerate(lines):
+        if fence_character is not None:
+            stripped = line.lstrip(" ")
+            indent = len(line) - len(stripped)
+            candidate = stripped.rstrip(" \t")
+            if (
+                indent <= 3
+                and len(candidate) >= fence_length
+                and set(candidate) == {fence_character}
+            ):
+                fence_character = None
+                fence_length = 0
+            continue
+        if html_end is not None:
+            if html_end in line.casefold():
+                html_end = None
+            continue
+        if html_until_blank:
+            if not line.strip():
+                html_until_blank = False
+            continue
+        stripped_html = line.lstrip(" ")
+        html_indent = len(line) - len(stripped_html)
+        lowered_html = stripped_html.casefold()
+        if html_indent <= 3 and lowered_html.startswith("<!--"):
+            if "-->" not in lowered_html[4:]:
+                html_end = "-->"
+            continue
+        if html_indent <= 3 and lowered_html.startswith("<?"):
+            if "?>" not in lowered_html[2:]:
+                html_end = "?>"
+            continue
+        if html_indent <= 3 and lowered_html.startswith("<![cdata["):
+            if "]]>" not in lowered_html[9:]:
+                html_end = ']]>'
+            continue
+        if (
+            html_indent <= 3
+            and re.match(r"^<![A-Z]", stripped_html)
+        ):
+            if ">" not in stripped_html[2:]:
+                html_end = ">"
+            continue
+        raw_html = next(
+            (
+                tag
+                for tag in ("script", "pre", "style", "textarea")
+                if re.match(rf"<{tag}(?:[\s>]|$)", lowered_html)
+            ),
+            None,
+        )
+        if html_indent <= 3 and raw_html is not None:
+            closing = f"</{raw_html}>"
+            if closing not in lowered_html:
+                html_end = closing
+            continue
+        if html_indent <= 3 and (
+            _HTML_BLOCK_TAG_RE.match(stripped_html)
+            or _HTML_COMPLETE_TAG_RE.fullmatch(stripped_html)
+        ):
+            html_until_blank = True
+            continue
+        fence = _FENCE_RE.fullmatch(line)
+        if fence is not None:
+            marker = fence.group("marker")
+            info = fence.group("info")
+            if marker[0] != "`" or "`" not in info:
+                fence_character = marker[0]
+                fence_length = len(marker)
+                continue
+        if line.startswith("\t") or line.startswith("    "):
+            continue
         match = _H1_RE.fullmatch(line)
         if match is None:
             continue
         label = match.group("label").strip()
-        if not label or len(label) > MAX_NODE_LABEL_LENGTH or "\x00" in label:
+        if (
+            not label
+            or len(label) > MAX_NODE_LABEL_LENGTH
+            or any(ord(character) < 32 or ord(character) == 127 for character in label)
+        ):
             raise NativeNoteError(
                 "invalid-note-label",
                 f"first H1 must contain at most {MAX_NODE_LABEL_LENGTH} characters",
@@ -438,8 +550,7 @@ def _entry(
             body = body[1:]
         body = body.rstrip("\n")
         h1_line = first_content_line + index
-        physical_lines = content.splitlines()
-        end_line = first_content_line + max(index, len(physical_lines) - 1)
+        end_line = first_content_line + max(index, len(lines) - 1)
         digest = hashlib.sha256(definition_text.encode("utf-8")).hexdigest()
         return label, body, definition_text, h1_line, max(h1_line, end_line), digest
     raise NativeNoteError(
@@ -467,6 +578,15 @@ def parse_native_markdown(
 ) -> NativeNote:
     """Parse one bounded UTF-8 native note without inferring its identity."""
 
+    if (
+        unicodedata.normalize("NFC", authority) != authority
+        or any(ord(character) < 32 or ord(character) == 127 for character in authority)
+    ):
+        raise NativeNoteError(
+            "invalid-note-authority",
+            "native-note authority must be control-free Unicode NFC",
+            authority=authority,
+        )
     frontmatter_text, content, raw_frontmatter, first_content_line = _frontmatter_parts(
         data, authority
     )

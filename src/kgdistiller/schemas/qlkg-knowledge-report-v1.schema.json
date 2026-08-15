@@ -23,7 +23,7 @@
     "vaults": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 1,
+      "maxItems": 256,
       "items": {"$ref": "#/$defs/vault_result"}
     }
   },

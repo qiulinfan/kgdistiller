@@ -873,6 +873,35 @@ class QueryTest(unittest.TestCase):
                 with self.assertRaisesRegex(QueryError, "generation changed"):
                     GraphView.load(graph, max_attempts=1)
 
+    def test_manifest_unavailable_gap_retries_but_stable_corruption_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kgdistiller-query-") as raw:
+            graph = write_fixture_graph(Path(raw))
+            manifest = __import__("json").loads(
+                (graph / "manifest.json").read_text(encoding="utf-8")
+            )
+            with patch(
+                "kgdistiller.query._manifest_payload",
+                side_effect=[
+                    QueryError("temporary publish gap"),
+                    manifest,
+                    manifest,
+                    manifest,
+                ],
+            ):
+                view = GraphView.load(graph, max_attempts=2)
+            self.assertEqual(
+                manifest["graph_sha256"], view.snapshot["graph"]["sha256"]
+            )
+
+            nodes = graph / "nodes.jsonl"
+            nodes.write_text("{not-json}\n", encoding="utf-8")
+            with patch(
+                "kgdistiller.query._manifest_payload", return_value=manifest
+            ) as payload:
+                with self.assertRaises(QueryError):
+                    GraphView.load(graph, max_attempts=3)
+            self.assertEqual(2, payload.call_count)
+
 
 if __name__ == "__main__":
     unittest.main()

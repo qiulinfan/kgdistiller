@@ -1845,6 +1845,15 @@ def vault_writer_lock(vault: Vault | Path | str) -> Iterator[None]:
         yield
 
 
+@contextlib.contextmanager
+def vault_generation_guard(vault: Vault | Path | str) -> Iterator[None]:
+    """Exclusively guard one flat Vault graph generation for a bounded read."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    with _vault_writer_lock(selected):
+        yield
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return
@@ -2512,6 +2521,7 @@ __all__ = [
     "replace_vault_relative_regular",
     "source_status",
     "unlink_vault_relative_regular",
+    "vault_generation_guard",
     "vault_staging_directory",
     "vault_writer_lock",
     "verify_evidence_span",

@@ -13,6 +13,7 @@ import os
 import re
 import stat
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from functools import lru_cache
@@ -109,6 +110,9 @@ class ManagedMarkdownFile:
     authority: str
     data: bytes
     raw_sha256: str
+
+
+ManagedMarkdownToken = tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)
@@ -827,23 +831,38 @@ def _discover_managed_markdown(vault: Vault, root: Path) -> tuple[Path, ...]:
     return tuple(sorted(inventory, key=lambda item: item.relative_to(vault.root).as_posix()))
 
 
-def iter_managed_markdown(
-    vault: Vault, root: Path
+def _capture_managed_markdown_once(
+    vault: Vault,
+    roots: tuple[Path, ...],
 ) -> tuple[ManagedMarkdownFile, ...]:
-    """Return stable bytes for one bounded managed Markdown inventory.
-
-    Discovery only establishes candidate Vault-relative names. Every file is
-    then read through the source archive's pinned-ancestor primitive, and the
-    complete inventory is repeated before the snapshot is accepted.
-    """
-
     from .source_archive import read_vault_relative_regular
 
-    discovered = _discover_managed_markdown(vault, root)
+    discovered = tuple(
+        sorted(
+            (
+                path
+                for root in roots
+                for path in _discover_managed_markdown(vault, root)
+            ),
+            key=lambda item: unicodedata.normalize(
+                "NFC", item.relative_to(vault.root).as_posix()
+            ),
+        )
+    )
+    if len(discovered) > MAX_MANAGED_MARKDOWN_FILES:
+        raise VaultError(
+            "managed-root-too-large",
+            f"managed Markdown inventory exceeds {MAX_MANAGED_MARKDOWN_FILES} files",
+        )
     snapshots: list[ManagedMarkdownFile] = []
     total = 0
     for path in discovered:
         authority = path.relative_to(vault.root).as_posix()
+        if unicodedata.normalize("NFC", authority) != authority:
+            raise VaultError(
+                "noncanonical-managed-path",
+                f"managed Markdown paths must use Unicode NFC: {authority}",
+            )
         data = read_vault_relative_regular(
             vault,
             authority,
@@ -864,13 +883,54 @@ def iter_managed_markdown(
                 raw_sha256=hashlib.sha256(data).hexdigest(),
             )
         )
-    repeated = _discover_managed_markdown(vault, root)
-    if discovered != repeated:
-        raise VaultError(
-            "unstable-managed-root",
-            "managed Markdown inventory changed while it was being read",
-        )
     return tuple(snapshots)
+
+
+def managed_markdown_token(
+    snapshots: tuple[ManagedMarkdownFile, ...],
+) -> ManagedMarkdownToken:
+    """Return the normalized, content-bound state token for managed notes."""
+
+    return tuple(
+        sorted(
+            (
+                (unicodedata.normalize("NFC", item.authority), item.raw_sha256)
+                for item in snapshots
+            ),
+            key=lambda item: item[0],
+        )
+    )
+
+
+def _stable_managed_markdown(
+    vault: Vault,
+    roots: tuple[Path, ...],
+) -> tuple[ManagedMarkdownFile, ...]:
+    first = _capture_managed_markdown_once(vault, roots)
+    second = _capture_managed_markdown_once(vault, roots)
+    if managed_markdown_token(first) != managed_markdown_token(second):
+        raise VaultError(
+            "unstable-native-inventory",
+            "managed Markdown paths or contents changed during the full snapshot",
+        )
+    return first
+
+
+def iter_managed_markdown(
+    vault: Vault, root: Path
+) -> tuple[ManagedMarkdownFile, ...]:
+    """Return a twice-collected stable snapshot of one managed root."""
+
+    return _stable_managed_markdown(vault, (root,))
+
+
+def snapshot_managed_markdown(vault: Vault) -> tuple[ManagedMarkdownFile, ...]:
+    """Return one stable content snapshot across all native-note roots."""
+
+    return _stable_managed_markdown(
+        vault,
+        (vault.concept_root, vault.field_root, vault.topic_root),
+    )
 
 
 def _acquire_lock(handle: Any) -> None:
@@ -996,6 +1056,15 @@ def _registry_lock(home: Path) -> Iterator[None]:
             if acquired:
                 _release_lock(handle)
             handle.close()
+
+
+@contextlib.contextmanager
+def vault_registry_lock(home: Path | str | None = None) -> Iterator[None]:
+    """Hold the machine-local registry writer lock without taking a Vault lock."""
+
+    selected = kgdistiller_home(home, create=True)
+    with _registry_lock(selected):
+        yield
 
 
 def _fsync_directory(path: Path) -> None:
