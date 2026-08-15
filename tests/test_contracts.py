@@ -235,6 +235,7 @@ class ContractTest(unittest.TestCase):
                 "qlkg-derivation-v1",
                 "qlkg-source-ledger-v1",
                 "qlkg-source-report-v1",
+                "qlkg-knowledge-report-v1",
             },
             set(CONTRACT_SCHEMAS),
         )

@@ -3139,6 +3139,13 @@ def parse_args() -> argparse.Namespace:
     source_diff.add_argument("file", type=Path)
     source_diff.add_argument("--from", dest="from_version")
     source_diff.add_argument("--to", dest="to_version")
+    knowledge_command = commands.add_parser("knowledge")
+    knowledge_commands = knowledge_command.add_subparsers(
+        dest="knowledge_command", required=True
+    )
+    for name in ("sync", "check"):
+        native_command = knowledge_commands.add_parser(name)
+        native_command.add_argument("--vault")
     init_command = commands.add_parser("init")
     init_command.add_argument("--source-root", type=Path, default=Path("notes"))
     init_command.add_argument("--force", action="store_true")
@@ -3489,6 +3496,40 @@ def main() -> int:
             return 1
         print(pretty_json(result), end="")
         return 0
+    if args.command == "knowledge":
+        from .native_compiler import (
+            NativeCompilerError,
+            check_knowledge,
+            sync_knowledge,
+        )
+        from .native_notes import NativeNoteError
+        from .source_archive import SourceArchiveError
+        from .vaults import VaultError
+
+        try:
+            result = (
+                sync_knowledge(args.vault)
+                if args.knowledge_command == "sync"
+                else check_knowledge(args.vault)
+            )
+        except (NativeCompilerError, NativeNoteError, SourceArchiveError, VaultError) as error:
+            print(pretty_json(error.payload()), end="", file=sys.stderr)
+            return 1
+        except (KnowledgeError, OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+            print(
+                pretty_json(
+                    {
+                        "kind": "kgdistiller-knowledge-error",
+                        "code": "knowledge-command-failed",
+                        "message": str(error),
+                    }
+                ),
+                end="",
+                file=sys.stderr,
+            )
+            return 1
+        print(pretty_json(result), end="")
+        return 1 if result["status"] == "failed" else 0
     repo_root = args.repo_root.resolve()
     try:
         if args.command == "codex":

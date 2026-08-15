@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-knowledge-report-v1.schema.json",
+  "title": "kgdistiller native knowledge graph report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "action",
+    "status",
+    "registry_generation",
+    "selection",
+    "vaults"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-knowledge-report-v1"},
+    "action": {"enum": ["sync", "check"]},
+    "status": {"enum": ["ok", "failed"]},
+    "registry_generation": {"$ref": "#/$defs/sha256"},
+    "selection": {
+      "anyOf": [{"$ref": "#/$defs/vault_id"}, {"type": "null"}]
+    },
+    "vaults": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {"$ref": "#/$defs/vault_result"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"action": {"const": "sync"}}},
+      "then": {"properties": {"status": {"const": "ok"}}}
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "references"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "edges": {"type": "integer", "minimum": 0, "maximum": 500000},
+        "references": {"const": 0}
+      }
+    },
+    "review_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "edges": {"type": "integer", "minimum": 0, "maximum": 500000}
+      }
+    },
+    "vault_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "changed",
+        "graph_sha256",
+        "ledger_generation",
+        "counts",
+        "warnings",
+        "needs_review",
+        "mismatches"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/vault_id"},
+        "status": {"enum": ["current", "drift"]},
+        "changed": {"type": "boolean"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "ledger_generation": {
+          "anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+        },
+        "counts": {"$ref": "#/$defs/counts"},
+        "warnings": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "needs_review": {"$ref": "#/$defs/review_counts"},
+        "mismatches": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

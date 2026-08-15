@@ -7,6 +7,7 @@ portable setting lives in ``.kgdistiller/vault.json`` inside the Vault.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,10 @@ MAX_DESCRIPTION_BYTES = 4096
 MAX_PATH_BYTES = 4096
 MAX_GLOB_BYTES = 512
 MAX_GLOBS = 64
+MAX_MANAGED_MARKDOWN_FILES = 100_000
+MAX_MANAGED_DEPTH = 64
+MAX_MANAGED_MARKDOWN_BYTES = 8 * 1024 * 1024
+MAX_MANAGED_MARKDOWN_TOTAL_BYTES = 512 * 1024 * 1024
 VAULT_ID_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*\Z")
 _WINDOWS_RESERVED = {
     "con",
@@ -94,6 +99,16 @@ class Vault:
 
     def card(self) -> dict[str, str]:
         return {"id": self.id, "label": self.label, "path": str(self.root)}
+
+
+@dataclass(frozen=True)
+class ManagedMarkdownFile:
+    """One stable, pinned-I/O snapshot from a configured managed root."""
+
+    path: Path
+    authority: str
+    data: bytes
+    raw_sha256: str
 
 
 @dataclass(frozen=True)
@@ -738,6 +753,124 @@ def load_vault(path: Path | str, *, expected_id: str | None = None) -> Vault:
         field_root=managed["field_root"],
         topic_root=managed["topic_root"],
     )
+
+
+def _discover_managed_markdown(vault: Vault, root: Path) -> tuple[Path, ...]:
+    """Discover bounded Markdown names without treating discovery as file I/O."""
+
+    selected = next(
+        (
+            candidate
+            for candidate in (vault.concept_root, vault.field_root, vault.topic_root)
+            if _same_path(root, candidate)
+        ),
+        None,
+    )
+    if selected is None:
+        raise VaultError(
+            "unsafe-path",
+            "managed Markdown discovery requires a configured concept, field, or topic root",
+        )
+    inventory: list[Path] = []
+    pending: list[tuple[Path, int]] = [(selected, 0)]
+    while pending:
+        directory, depth = pending.pop()
+        if depth > MAX_MANAGED_DEPTH:
+            raise VaultError(
+                "managed-root-too-deep",
+                f"managed Markdown depth exceeds {MAX_MANAGED_DEPTH}: {directory}",
+            )
+        try:
+            with os.scandir(directory) as scanned:
+                entries = sorted(scanned, key=lambda item: item.name)
+        except OSError as error:
+            raise VaultError(
+                "invalid-vault-layout", f"cannot inspect managed root: {directory}"
+            ) from error
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError as error:
+                raise VaultError(
+                    "invalid-vault-layout", f"cannot inspect managed path: {path}"
+                ) from error
+            if _is_link_or_reparse(path, metadata):
+                raise VaultError(
+                    "unsafe-path",
+                    f"managed root contains a symlink or reparse point: {path}",
+                )
+            if stat.S_ISDIR(metadata.st_mode):
+                pending.append((path, depth + 1))
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise VaultError(
+                    "invalid-vault-layout",
+                    f"managed root contains a non-ordinary file: {path}",
+                )
+            if path.suffix.casefold() != ".md":
+                continue
+            try:
+                resolved = path.resolve(strict=True)
+            except OSError as error:
+                raise VaultError("unsafe-path", f"cannot resolve managed note: {path}") from error
+            if not _same_path(path, resolved) or not _contains_path(
+                vault.root, resolved, allow_equal=False
+            ):
+                raise VaultError("unsafe-path", f"managed note resolves outside the Vault: {path}")
+            inventory.append(path)
+            if len(inventory) > MAX_MANAGED_MARKDOWN_FILES:
+                raise VaultError(
+                    "managed-root-too-large",
+                    f"managed Markdown inventory exceeds {MAX_MANAGED_MARKDOWN_FILES} files",
+                )
+    return tuple(sorted(inventory, key=lambda item: item.relative_to(vault.root).as_posix()))
+
+
+def iter_managed_markdown(
+    vault: Vault, root: Path
+) -> tuple[ManagedMarkdownFile, ...]:
+    """Return stable bytes for one bounded managed Markdown inventory.
+
+    Discovery only establishes candidate Vault-relative names. Every file is
+    then read through the source archive's pinned-ancestor primitive, and the
+    complete inventory is repeated before the snapshot is accepted.
+    """
+
+    from .source_archive import read_vault_relative_regular
+
+    discovered = _discover_managed_markdown(vault, root)
+    snapshots: list[ManagedMarkdownFile] = []
+    total = 0
+    for path in discovered:
+        authority = path.relative_to(vault.root).as_posix()
+        data = read_vault_relative_regular(
+            vault,
+            authority,
+            maximum=MAX_MANAGED_MARKDOWN_BYTES,
+        )
+        total += len(data)
+        if total > MAX_MANAGED_MARKDOWN_TOTAL_BYTES:
+            raise VaultError(
+                "managed-root-too-large",
+                "managed Markdown snapshots exceed "
+                f"{MAX_MANAGED_MARKDOWN_TOTAL_BYTES} total bytes",
+            )
+        snapshots.append(
+            ManagedMarkdownFile(
+                path=path,
+                authority=authority,
+                data=data,
+                raw_sha256=hashlib.sha256(data).hexdigest(),
+            )
+        )
+    repeated = _discover_managed_markdown(vault, root)
+    if discovered != repeated:
+        raise VaultError(
+            "unstable-managed-root",
+            "managed Markdown inventory changed while it was being read",
+        )
+    return tuple(snapshots)
 
 
 def _acquire_lock(handle: Any) -> None:

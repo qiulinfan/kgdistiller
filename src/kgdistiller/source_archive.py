@@ -614,6 +614,26 @@ class SourceLedger:
 
 
 @dataclass(frozen=True)
+class SourceEvidenceView:
+    """Current effective concept and relation evidence from one validated ledger."""
+
+    generation_sha256: str | None
+    concept_ids: frozenset[str]
+    relations: frozenset[tuple[str, str, str]]
+
+    def has_concept(self, concept_id: str) -> bool:
+        return concept_id in self.concept_ids
+
+    def has_relation(self, source: str, relation: str, target: str) -> bool:
+        key = (
+            (min(source, target), relation, max(source, target))
+            if relation == "contrasts-with"
+            else (source, relation, target)
+        )
+        return key in self.relations
+
+
+@dataclass(frozen=True)
 class _ResolvedSource:
     vault: Vault
     path: Path
@@ -801,6 +821,173 @@ def _read_regular(
             return b"".join(chunks)
         finally:
             os.close(descriptor)
+
+
+def read_vault_relative_regular(
+    vault: Vault | Path | str,
+    relative_path: str,
+    *,
+    maximum: int,
+) -> bytes:
+    """Read one bounded Vault-relative ordinary file through pinned ancestors."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < 1:
+        raise SourceArchiveError(
+            "invalid-vault-file-limit", "Vault file limit must be a positive integer"
+        )
+    parts = _portable_relative(relative_path, field="Vault-relative file")
+    return _read_regular(
+        selected.root,
+        parts,
+        maximum=maximum,
+        kind="vault-file",
+        single_link=True,
+    )
+
+
+def replace_vault_relative_regular(
+    vault: Vault | Path | str,
+    relative_path: str,
+    content: bytes,
+    *,
+    maximum: int,
+) -> None:
+    """Atomically replace one Vault-relative file through pinned ancestors."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    if (
+        not isinstance(content, bytes)
+        or not isinstance(maximum, int)
+        or isinstance(maximum, bool)
+        or maximum < 1
+        or len(content) > maximum
+    ):
+        raise SourceArchiveError(
+            "vault-file-too-large", f"Vault file exceeds {maximum} bytes"
+        )
+    parts = _portable_relative(relative_path, field="Vault-relative file")
+    parent_path = _ensure_directory(
+        selected.root,
+        parts[:-1],
+        create=True,
+        field="Vault-relative file parent",
+    )
+    leaf = parts[-1]
+    destination = parent_path / leaf
+    with _PinnedDirectory(parent_path) as parent:
+        existing = parent.lstat_leaf(leaf)
+        if existing is not None and (
+            not stat.S_ISREG(existing.st_mode)
+            or _is_link_like(destination, existing)
+            or existing.st_nlink != 1
+        ):
+            raise SourceArchiveError(
+                "invalid-vault-file", "existing Vault file is not an ordinary single-link file"
+            )
+        descriptor = -1
+        temporary_name = ""
+        for _ in range(32):
+            temporary_name = f".{leaf}-{uuid.uuid4().hex}"
+            try:
+                descriptor = parent.create_file(temporary_name, delete_access=True)
+                break
+            except FileExistsError:
+                continue
+        if descriptor < 0:
+            raise SourceArchiveError(
+                "vault-file-stage-exhausted", "cannot allocate a Vault file stage"
+            )
+        try:
+            offset = 0
+            while offset < len(content):
+                offset += os.write(descriptor, content[offset:])
+            os.fsync(descriptor)
+            parent.replace_leaf(temporary_name, leaf, descriptor)
+        except BaseException:
+            try:
+                parent.unlink_leaf(temporary_name)
+            except (FileNotFoundError, OSError, SourceArchiveError):
+                pass
+            raise
+        finally:
+            os.close(descriptor)
+        installed = parent.lstat_leaf(leaf)
+        if installed is None or not stat.S_ISREG(installed.st_mode) or installed.st_nlink != 1:
+            raise SourceArchiveError(
+                "invalid-vault-file", "installed Vault file is not an ordinary single-link file"
+            )
+        if os.name != "nt":
+            os.fsync(parent.dir_fd)
+
+
+def unlink_vault_relative_regular(
+    vault: Vault | Path | str,
+    relative_path: str,
+) -> None:
+    """Remove one exact ordinary Vault-relative file through pinned ancestors."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    parts = _portable_relative(relative_path, field="Vault-relative file")
+    parent_path = selected.root.joinpath(*parts[:-1])
+    try:
+        pinned = _PinnedDirectory(parent_path)
+    except SourceArchiveError as error:
+        if error.code == "missing-ledger-artifact":
+            return
+        raise
+    with pinned:
+        leaf = parts[-1]
+        metadata = pinned.lstat_leaf(leaf)
+        if metadata is None:
+            return
+        path = parent_path / leaf
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or _is_link_like(path, metadata)
+            or metadata.st_nlink != 1
+        ):
+            raise SourceArchiveError(
+                "invalid-vault-file", "refusing to unlink a non-ordinary Vault file"
+            )
+        pinned.unlink_leaf(leaf)
+        if os.name != "nt":
+            os.fsync(pinned.dir_fd)
+
+
+@contextlib.contextmanager
+def vault_staging_directory(vault: Vault | Path | str) -> Iterator[Path]:
+    """Yield one pinned disposable directory below ``.kgdistiller/build``."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    build = _ensure_directory(
+        selected.root,
+        (".kgdistiller", "build"),
+        create=False,
+        field="Vault build directory",
+    )
+    stage: Path | None = None
+    with _PinnedDirectory(build) as parent:
+        for _ in range(32):
+            name = f".stage-knowledge-{uuid.uuid4().hex}"
+            try:
+                parent.mkdir_leaf(name)
+            except FileExistsError:
+                continue
+            stage = build / name
+            break
+        if stage is None:
+            raise SourceArchiveError(
+                "stage-name-exhausted", "cannot allocate a native graph staging directory"
+            )
+        guard = _PinnedDirectory(stage)
+        try:
+            yield stage
+            guard.verify_current()
+            parent.verify_current()
+        finally:
+            guard.close()
+            _remove_stage(stage, build)
 
 
 def _strict_json(data: bytes, *, kind: str) -> Any:
@@ -1324,6 +1511,35 @@ def load_source_ledger(vault: Vault | Path | str) -> SourceLedger:
     )
 
 
+def current_evidence_view(ledger: SourceLedger) -> SourceEvidenceView:
+    """Project current-document evidence through validated carry chains."""
+
+    _, versions, derivations = _version_maps(ledger)
+    concept_ids: set[str] = set()
+    relations: set[tuple[str, str, str]] = set()
+    for document in ledger.documents:
+        effective = _effective_derivation(
+            str(document["current_version_id"]), derivations, versions
+        )
+        if effective is None or effective["status"] != "committed":
+            continue
+        concept_ids.update(
+            str(record["concept_id"]) for record in effective["concept_evidence"]
+        )
+        for record in effective["relation_evidence"]:
+            source = str(record["source"])
+            relation = str(record["relation"])
+            target = str(record["target"])
+            if relation == "contrasts-with":
+                source, target = sorted((source, target))
+            relations.add((source, relation, target))
+    return SourceEvidenceView(
+        generation_sha256=ledger.generation_sha256,
+        concept_ids=frozenset(concept_ids),
+        relations=frozenset(relations),
+    )
+
+
 def _acquire_lock(handle: Any) -> None:
     handle.seek(0)
     try:
@@ -1618,6 +1834,15 @@ def _write_fsync(path: Path, content: bytes) -> None:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+
+@contextlib.contextmanager
+def vault_writer_lock(vault: Vault | Path | str) -> Iterator[None]:
+    """Serialize one bounded Vault mutation with the established writer lock."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    with _vault_writer_lock(selected):
+        yield
 
 
 def _fsync_directory(path: Path) -> None:
@@ -2275,12 +2500,19 @@ __all__ = [
     "REPORT_SCHEMA",
     "VERSION_SCHEMA",
     "SourceArchiveError",
+    "SourceEvidenceView",
     "SourceLedger",
     "capture_source",
+    "current_evidence_view",
     "diff_source",
     "extract_evidence_excerpt",
     "load_source_ledger",
     "normalize_source_text",
+    "read_vault_relative_regular",
+    "replace_vault_relative_regular",
     "source_status",
+    "unlink_vault_relative_regular",
+    "vault_staging_directory",
+    "vault_writer_lock",
     "verify_evidence_span",
 ]

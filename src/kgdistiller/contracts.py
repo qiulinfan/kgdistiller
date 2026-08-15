@@ -36,6 +36,7 @@ CONTRACT_SCHEMAS = {
         "qlkg-derivation-v1",
         "qlkg-source-ledger-v1",
         "qlkg-source-report-v1",
+        "qlkg-knowledge-report-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
