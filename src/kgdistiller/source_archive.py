@@ -8,14 +8,13 @@ references; graph compilation and ingest mutation belong to later slices.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import difflib
 import hashlib
 import json
 import os
 import re
-import shutil
 import stat
-import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -63,6 +62,499 @@ _WINDOWS_RESERVED = {
     *(f"com{number}" for number in range(1, 10)),
     *(f"lpt{number}" for number in range(1, 10)),
 }
+
+
+def _anchored_test_hook(label: str, parent: Path, leaf: str) -> None:
+    """No-op checkpoint used by deterministic ancestor-swap regressions."""
+
+
+if os.name == "nt":
+    from ctypes import wintypes
+
+    _WIN_INVALID_HANDLE = ctypes.c_void_p(-1).value
+    _WIN_GENERIC_READ = 0x80000000
+    _WIN_GENERIC_WRITE = 0x40000000
+    _WIN_DELETE = 0x00010000
+    _WIN_FILE_LIST_DIRECTORY = 0x00000001
+    _WIN_FILE_READ_ATTRIBUTES = 0x00000080
+    _WIN_SYNCHRONIZE = 0x00100000
+    _WIN_SHARE_READ = 0x00000001
+    _WIN_SHARE_WRITE = 0x00000002
+    _WIN_SHARE_DELETE = 0x00000004
+    _WIN_CREATE_NEW = 1
+    _WIN_OPEN_EXISTING = 3
+    _WIN_OPEN_ALWAYS = 4
+    _WIN_FILE_ATTRIBUTE_DIRECTORY = 0x00000010
+    _WIN_FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+    _WIN_FILE_ATTRIBUTE_NORMAL = 0x00000080
+    _WIN_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+    _WIN_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+    _WIN_FILE_RENAME_INFO = 3
+
+    class _WinAttributeTagInfo(ctypes.Structure):
+        _fields_ = [
+            ("FileAttributes", wintypes.DWORD),
+            ("ReparseTag", wintypes.DWORD),
+        ]
+
+    class _WinRenameInfo(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("RootDirectory", wintypes.HANDLE),
+            ("FileNameLength", wintypes.DWORD),
+            ("FileName", wintypes.WCHAR * 1),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _CreateFileW = _kernel32.CreateFileW
+    _CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    _CreateFileW.restype = wintypes.HANDLE
+    _CloseHandle = _kernel32.CloseHandle
+    _CloseHandle.argtypes = [wintypes.HANDLE]
+    _CloseHandle.restype = wintypes.BOOL
+    _GetFileInformationByHandleEx = _kernel32.GetFileInformationByHandleEx
+    _GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    _GetFileInformationByHandleEx.restype = wintypes.BOOL
+    _GetFinalPathNameByHandleW = _kernel32.GetFinalPathNameByHandleW
+    _GetFinalPathNameByHandleW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    _GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    _SetFileInformationByHandle = _kernel32.SetFileInformationByHandle
+    _SetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    _SetFileInformationByHandle.restype = wintypes.BOOL
+
+
+def _win_error(message: str) -> OSError:
+    error = ctypes.get_last_error()
+    return OSError(error, f"{message}: {ctypes.FormatError(error)}")
+
+
+def _win_handle_path(handle: int) -> Path:
+    size = 32768
+    buffer = ctypes.create_unicode_buffer(size)
+    length = _GetFinalPathNameByHandleW(handle, buffer, size, 0)
+    if length == 0 or length >= size:
+        raise _win_error("cannot resolve pinned handle")
+    value = buffer.value
+    if value.startswith("\\\\?\\UNC\\"):
+        value = "\\\\" + value[8:]
+    elif value.startswith("\\\\?\\"):
+        value = value[4:]
+    return Path(os.path.abspath(value))
+
+
+def _win_attributes(handle: int) -> int:
+    info = _WinAttributeTagInfo()
+    if not _GetFileInformationByHandleEx(
+        handle, 9, ctypes.byref(info), ctypes.sizeof(info)
+    ):
+        raise _win_error("cannot inspect pinned handle")
+    return int(info.FileAttributes)
+
+
+def _win_open_handle(
+    path: Path,
+    *,
+    desired_access: int,
+    share_mode: int,
+    disposition: int,
+    directory: bool,
+) -> int:
+    flags = _WIN_FILE_FLAG_OPEN_REPARSE_POINT
+    if directory:
+        flags |= _WIN_FILE_FLAG_BACKUP_SEMANTICS
+    else:
+        flags |= _WIN_FILE_ATTRIBUTE_NORMAL
+    handle = _CreateFileW(
+        str(path),
+        desired_access,
+        share_mode,
+        None,
+        disposition,
+        flags,
+        None,
+    )
+    if handle == _WIN_INVALID_HANDLE or handle is None:
+        raise _win_error(f"cannot anchor path {path}")
+    return int(handle)
+
+
+def _win_close(handle: int) -> None:
+    if handle not in (0, _WIN_INVALID_HANDLE):
+        _CloseHandle(handle)
+
+
+def _win_rename_handle(handle: int, destination: Path) -> None:
+    encoded = str(destination).encode("utf-16-le")
+    offset = _WinRenameInfo.FileName.offset
+    buffer = ctypes.create_string_buffer(offset + len(encoded) + 2)
+    info = ctypes.cast(buffer, ctypes.POINTER(_WinRenameInfo)).contents
+    info.Flags = 1
+    info.RootDirectory = None
+    info.FileNameLength = len(encoded)
+    ctypes.memmove(ctypes.addressof(buffer) + offset, encoded, len(encoded))
+    if not _SetFileInformationByHandle(
+        handle, _WIN_FILE_RENAME_INFO, buffer, offset + len(encoded)
+    ):
+        raise _win_error("cannot atomically replace anchored file")
+
+
+class _PinnedDirectory:
+    """Retain an ordinary, non-reparse directory chain for leaf operations."""
+
+    def __init__(self, path: Path | str, *, create: bool = False) -> None:
+        absolute = Path(os.path.abspath(os.fspath(path)))
+        if not absolute.is_absolute() or not absolute.anchor:
+            raise SourceArchiveError("unsafe-ledger-path", "anchored path must be absolute")
+        self.path = absolute
+        self._posix_fds: list[int] = []
+        self._posix_links: list[tuple[int, str, int, Path]] = []
+        self._win_handles: list[tuple[int, Path]] = []
+        try:
+            if os.name == "nt":
+                self._open_windows(create=create)
+            else:
+                self._open_posix(create=create)
+            self.verify_current()
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def dir_fd(self) -> int:
+        if os.name == "nt" or not self._posix_fds:
+            raise RuntimeError("directory fd is unavailable")
+        return self._posix_fds[-1]
+
+    @property
+    def win_handle(self) -> int:
+        if os.name != "nt" or not self._win_handles:
+            raise RuntimeError("Windows directory handle is unavailable")
+        return self._win_handles[-1][0]
+
+    def _open_posix(self, *, create: bool) -> None:
+        anchor = Path(self.path.anchor)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        root_fd = os.open(anchor, flags)
+        if not stat.S_ISDIR(os.fstat(root_fd).st_mode):
+            os.close(root_fd)
+            raise SourceArchiveError("unsafe-ledger-path", "filesystem anchor is not a directory")
+        self._posix_fds.append(root_fd)
+        current_path = anchor
+        for part in self.path.relative_to(anchor).parts:
+            parent_fd = self._posix_fds[-1]
+            try:
+                child_fd = os.open(part, flags, dir_fd=parent_fd)
+            except FileNotFoundError:
+                if not create:
+                    raise SourceArchiveError("missing-ledger-artifact", "anchored directory is missing")
+                os.mkdir(part, dir_fd=parent_fd)
+                child_fd = os.open(part, flags, dir_fd=parent_fd)
+            opened = os.fstat(child_fd)
+            current = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(opened.st_mode)
+                or not stat.S_ISDIR(current.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+                or not os.path.samestat(opened, current)
+            ):
+                os.close(child_fd)
+                raise SourceArchiveError("unsafe-ledger-path", "anchored directory changed during open")
+            current_path = current_path / part
+            self._posix_fds.append(child_fd)
+            self._posix_links.append((parent_fd, part, child_fd, current_path))
+
+    def _open_windows(self, *, create: bool) -> None:
+        anchor = Path(self.path.anchor)
+        desired = _WIN_FILE_LIST_DIRECTORY | _WIN_FILE_READ_ATTRIBUTES | _WIN_SYNCHRONIZE
+        share = _WIN_SHARE_READ | _WIN_SHARE_WRITE
+        handle = _win_open_handle(
+            anchor,
+            desired_access=desired,
+            share_mode=share,
+            disposition=_WIN_OPEN_EXISTING,
+            directory=True,
+        )
+        self._win_handles.append((handle, anchor))
+        current = anchor
+        for part in self.path.relative_to(anchor).parts:
+            candidate = current / part
+            try:
+                handle = _win_open_handle(
+                    candidate,
+                    desired_access=desired,
+                    share_mode=share,
+                    disposition=_WIN_OPEN_EXISTING,
+                    directory=True,
+                )
+            except OSError:
+                if not create:
+                    raise SourceArchiveError("missing-ledger-artifact", "anchored directory is missing")
+                try:
+                    os.mkdir(candidate)
+                except FileExistsError:
+                    pass
+                handle = _win_open_handle(
+                    candidate,
+                    desired_access=desired,
+                    share_mode=share,
+                    disposition=_WIN_OPEN_EXISTING,
+                    directory=True,
+                )
+            attributes = _win_attributes(handle)
+            if (
+                not attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY
+                or attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT
+                or not _same_path(_win_handle_path(handle), candidate)
+            ):
+                _win_close(handle)
+                raise SourceArchiveError("unsafe-ledger-path", "anchored directory is reparse or redirected")
+            self._win_handles.append((handle, candidate))
+            current = candidate
+
+    def verify_current(self) -> None:
+        if os.name == "nt":
+            for handle, expected in self._win_handles:
+                attributes = _win_attributes(handle)
+                metadata = _lstat(expected)
+                if (
+                    not attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY
+                    or attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT
+                    or metadata is None
+                    or not stat.S_ISDIR(metadata.st_mode)
+                    or _is_link_like(expected, metadata)
+                    or not _same_path(_win_handle_path(handle), expected)
+                ):
+                    raise SourceArchiveError("unsafe-ledger-path", "pinned directory chain changed")
+            return
+        anchor_fd = self._posix_fds[0]
+        anchor_metadata = os.stat(self.path.anchor, follow_symlinks=False)
+        if not os.path.samestat(os.fstat(anchor_fd), anchor_metadata):
+            raise SourceArchiveError("unsafe-ledger-path", "filesystem anchor changed")
+        for parent_fd, part, child_fd, _ in self._posix_links:
+            try:
+                current = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError as error:
+                raise SourceArchiveError("unsafe-ledger-path", "pinned directory was removed") from error
+            opened = os.fstat(child_fd)
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+                or not os.path.samestat(opened, current)
+            ):
+                raise SourceArchiveError("unsafe-ledger-path", "pinned directory chain changed")
+
+    def checkpoint(self, label: str, leaf: str) -> None:
+        _anchored_test_hook(label, self.path, leaf)
+        self.verify_current()
+
+    def lstat_leaf(self, leaf: str) -> os.stat_result | None:
+        self.checkpoint("before-leaf-stat", leaf)
+        if os.name == "nt":
+            return _lstat(self.path / leaf)
+        try:
+            return os.stat(leaf, dir_fd=self.dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+
+    def open_existing_file(self, leaf: str, *, writable: bool = False) -> int:
+        self.checkpoint("before-leaf-open", leaf)
+        if os.name != "nt":
+            flags = (
+                (os.O_RDWR if writable else os.O_RDONLY)
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            return os.open(leaf, flags, dir_fd=self.dir_fd)
+        desired = (
+            (_WIN_GENERIC_READ | _WIN_GENERIC_WRITE if writable else _WIN_GENERIC_READ)
+            | _WIN_FILE_READ_ATTRIBUTES
+        )
+        share = _WIN_SHARE_READ | _WIN_SHARE_WRITE
+        if not writable:
+            share |= _WIN_SHARE_DELETE
+        handle = _win_open_handle(
+            self.path / leaf,
+            desired_access=desired,
+            share_mode=share,
+            disposition=_WIN_OPEN_EXISTING,
+            directory=False,
+        )
+        try:
+            attributes = _win_attributes(handle)
+            if (
+                attributes & (_WIN_FILE_ATTRIBUTE_DIRECTORY | _WIN_FILE_ATTRIBUTE_REPARSE_POINT)
+                or not _same_path(_win_handle_path(handle), self.path / leaf)
+            ):
+                raise SourceArchiveError("unsafe-ledger-path", "anchored file is reparse or redirected")
+            import msvcrt
+
+            descriptor = msvcrt.open_osfhandle(
+                handle,
+                (os.O_RDWR if writable else os.O_RDONLY) | getattr(os, "O_BINARY", 0),
+            )
+            handle = 0
+            return descriptor
+        finally:
+            _win_close(handle)
+
+    def create_file(self, leaf: str, *, writable: bool = True, delete_access: bool = False) -> int:
+        self.checkpoint("before-leaf-create", leaf)
+        if os.name != "nt":
+            flags = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            return os.open(leaf, flags, 0o600, dir_fd=self.dir_fd)
+        desired = _WIN_GENERIC_WRITE | _WIN_FILE_READ_ATTRIBUTES
+        if delete_access:
+            desired |= _WIN_DELETE
+        handle = _win_open_handle(
+            self.path / leaf,
+            desired_access=desired,
+            share_mode=_WIN_SHARE_READ | _WIN_SHARE_WRITE,
+            disposition=_WIN_CREATE_NEW,
+            directory=False,
+        )
+        try:
+            attributes = _win_attributes(handle)
+            if (
+                attributes & (_WIN_FILE_ATTRIBUTE_DIRECTORY | _WIN_FILE_ATTRIBUTE_REPARSE_POINT)
+                or not _same_path(_win_handle_path(handle), self.path / leaf)
+            ):
+                raise SourceArchiveError("unsafe-ledger-path", "created file is reparse or redirected")
+            import msvcrt
+
+            descriptor = msvcrt.open_osfhandle(
+                handle, os.O_WRONLY | getattr(os, "O_BINARY", 0)
+            )
+            handle = 0
+            return descriptor
+        finally:
+            _win_close(handle)
+
+    def open_lock_file(self, leaf: str) -> int:
+        self.checkpoint("before-leaf-lock-open", leaf)
+        if os.name != "nt":
+            flags = (
+                os.O_RDWR
+                | os.O_CREAT
+                | getattr(os, "O_BINARY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            return os.open(leaf, flags, 0o600, dir_fd=self.dir_fd)
+        handle = _win_open_handle(
+            self.path / leaf,
+            desired_access=(
+                _WIN_GENERIC_READ | _WIN_GENERIC_WRITE | _WIN_FILE_READ_ATTRIBUTES
+            ),
+            share_mode=_WIN_SHARE_READ | _WIN_SHARE_WRITE,
+            disposition=_WIN_OPEN_ALWAYS,
+            directory=False,
+        )
+        try:
+            attributes = _win_attributes(handle)
+            if (
+                attributes & (_WIN_FILE_ATTRIBUTE_DIRECTORY | _WIN_FILE_ATTRIBUTE_REPARSE_POINT)
+                or not _same_path(_win_handle_path(handle), self.path / leaf)
+            ):
+                raise SourceArchiveError("unsafe-ledger-path", "writer lock is reparse or redirected")
+            import msvcrt
+
+            descriptor = msvcrt.open_osfhandle(
+                handle, os.O_RDWR | getattr(os, "O_BINARY", 0)
+            )
+            handle = 0
+            return descriptor
+        finally:
+            _win_close(handle)
+
+    def mkdir_leaf(self, leaf: str) -> None:
+        self.checkpoint("before-leaf-mkdir", leaf)
+        if os.name == "nt":
+            os.mkdir(self.path / leaf)
+        else:
+            os.mkdir(leaf, dir_fd=self.dir_fd)
+
+    def unlink_leaf(self, leaf: str, *, directory: bool = False) -> None:
+        self.checkpoint("before-leaf-unlink", leaf)
+        if os.name == "nt":
+            if directory:
+                os.rmdir(self.path / leaf)
+            else:
+                os.unlink(self.path / leaf)
+        elif directory:
+            os.rmdir(leaf, dir_fd=self.dir_fd)
+        else:
+            os.unlink(leaf, dir_fd=self.dir_fd)
+
+    def replace_leaf(self, source: str, destination: str, source_fd: int) -> None:
+        self.checkpoint("before-leaf-replace", destination)
+        if os.name == "nt":
+            import msvcrt
+
+            handle = msvcrt.get_osfhandle(source_fd)
+            _win_rename_handle(handle, self.path / destination)
+        else:
+            current = os.stat(source, dir_fd=self.dir_fd, follow_symlinks=False)
+            if not os.path.samestat(os.fstat(source_fd), current):
+                raise SourceArchiveError("unsafe-ledger-path", "manifest temporary changed")
+            os.replace(
+                source,
+                destination,
+                src_dir_fd=self.dir_fd,
+                dst_dir_fd=self.dir_fd,
+            )
+
+    def close(self) -> None:
+        for descriptor in reversed(self._posix_fds):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        self._posix_fds.clear()
+        for handle, _ in reversed(self._win_handles):
+            _win_close(handle)
+        self._win_handles.clear()
+
+    def __enter__(self) -> "_PinnedDirectory":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.close()
 VERSION_RE = re.compile(r"^doc:(?P<document>[^:]+):v(?P<sequence>[0-9]{8})$")
 RFC3339_Z_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
@@ -152,6 +644,16 @@ def _lstat(path: Path) -> os.stat_result | None:
         return None
 
 
+def _anchored_lstat(path: Path) -> os.stat_result | None:
+    try:
+        with _PinnedDirectory(path.parent) as parent:
+            return parent.lstat_leaf(path.name)
+    except SourceArchiveError as error:
+        if error.code == "missing-ledger-artifact":
+            return None
+        raise
+
+
 def _is_link_like(path: Path, metadata: os.stat_result | None = None) -> bool:
     metadata = metadata if metadata is not None else _lstat(path)
     return bool(
@@ -214,40 +716,18 @@ def _ensure_directory(
     create: bool,
     field: str,
 ) -> Path:
-    current = root
-    root_metadata = _lstat(root)
-    if (
-        root_metadata is None
-        or not stat.S_ISDIR(root_metadata.st_mode)
-        or _is_link_like(root, root_metadata)
-    ):
-        raise SourceArchiveError("unsafe-ledger-path", f"{field} root is not an ordinary directory")
     for part in parts:
         if part in {"", ".", ".."} or "/" in part or "\\" in part:
             raise SourceArchiveError("unsafe-ledger-path", f"{field} contains an unsafe component")
-        candidate = current / part
-        metadata = _lstat(candidate)
-        if metadata is None and create:
-            try:
-                os.mkdir(candidate)
-            except FileExistsError:
-                pass
-            except OSError as error:
-                raise SourceArchiveError("unsafe-ledger-path", f"cannot create {field}") from error
-            metadata = _lstat(candidate)
-        if metadata is None:
-            raise SourceArchiveError("missing-ledger-artifact", f"missing {field}")
-        if not stat.S_ISDIR(metadata.st_mode) or _is_link_like(candidate, metadata):
-            raise SourceArchiveError("unsafe-ledger-path", f"{field} traverses a link or non-directory")
-        current = candidate
+    selected = root.joinpath(*parts)
     try:
-        resolved = current.resolve(strict=True)
-        root_resolved = root.resolve(strict=True)
+        with _PinnedDirectory(selected, create=create):
+            pass
+    except SourceArchiveError:
+        raise
     except OSError as error:
-        raise SourceArchiveError("unsafe-ledger-path", f"cannot resolve {field}") from error
-    if not _same_path(current, resolved) or not _contains(root_resolved, resolved, allow_equal=not parts):
-        raise SourceArchiveError("unsafe-ledger-path", f"{field} escapes its selected root")
-    return current
+        raise SourceArchiveError("unsafe-ledger-path", f"cannot anchor {field}") from error
+    return selected
 
 
 def _read_regular(
@@ -260,69 +740,67 @@ def _read_regular(
 ) -> bytes:
     if not parts:
         raise SourceArchiveError("unsafe-ledger-path", f"{kind} path is empty")
-    parent = _ensure_directory(root, parts[:-1], create=False, field=f"{kind} parent")
-    path = parent / parts[-1]
-    if not _contains(root, path):
-        raise SourceArchiveError("unsafe-ledger-path", f"{kind} escapes its selected root")
-    metadata = _lstat(path)
-    if metadata is None:
-        raise SourceArchiveError(f"missing-{kind}", f"missing {kind}")
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or _is_link_like(path, metadata)
-        or (single_link and metadata.st_nlink != 1)
-        or metadata.st_size > maximum
-    ):
-        raise SourceArchiveError(f"invalid-{kind}", f"{kind} is not a bounded ordinary file")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    parent_path = root.joinpath(*parts[:-1])
+    leaf = str(parts[-1])
     try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        raise SourceArchiveError(f"invalid-{kind}", f"cannot safely open {kind}") from error
-    try:
-        opened = os.fstat(descriptor)
-        current = _lstat(path)
+        pinned = _PinnedDirectory(parent_path)
+    except (OSError, SourceArchiveError) as error:
+        if isinstance(error, SourceArchiveError):
+            raise
+        raise SourceArchiveError(f"invalid-{kind}", f"cannot anchor {kind}") from error
+    with pinned:
+        metadata = pinned.lstat_leaf(leaf)
+        if metadata is None:
+            raise SourceArchiveError(f"missing-{kind}", f"missing {kind}")
         if (
-            current is None
-            or not stat.S_ISREG(opened.st_mode)
-            or not stat.S_ISREG(current.st_mode)
-            or _is_reparse(opened)
-            or _is_link_like(path, current)
-            or not os.path.samestat(opened, current)
-            or (single_link and (opened.st_nlink != 1 or current.st_nlink != 1))
-            or opened.st_size > maximum
+            not stat.S_ISREG(metadata.st_mode)
+            or _is_link_like(parent_path / leaf, metadata)
+            or (single_link and metadata.st_nlink != 1)
+            or metadata.st_size > maximum
         ):
-            raise SourceArchiveError(f"invalid-{kind}", f"{kind} changed during open")
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, min(64 * 1024, maximum + 1 - total))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > maximum:
-                raise SourceArchiveError(f"{kind}-too-large", f"{kind} exceeds {maximum} bytes")
-        after = os.fstat(descriptor)
-        final = _lstat(path)
-        if (
-            final is None
-            or not os.path.samestat(opened, after)
-            or not os.path.samestat(after, final)
-            or after.st_size != total
-            or after.st_mtime_ns != opened.st_mtime_ns
-            or after.st_ctime_ns != opened.st_ctime_ns
-        ):
-            raise SourceArchiveError(f"unstable-{kind}", f"{kind} changed while being read")
-        return b"".join(chunks)
-    finally:
-        os.close(descriptor)
+            raise SourceArchiveError(f"invalid-{kind}", f"{kind} is not a bounded ordinary file")
+        try:
+            descriptor = pinned.open_existing_file(leaf)
+        except OSError as error:
+            raise SourceArchiveError(f"invalid-{kind}", f"cannot safely open {kind}") from error
+        try:
+            opened = os.fstat(descriptor)
+            current = pinned.lstat_leaf(leaf)
+            if (
+                current is None
+                or not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(current.st_mode)
+                or _is_reparse(opened)
+                or _is_link_like(parent_path / leaf, current)
+                or not os.path.samestat(opened, current)
+                or (single_link and (opened.st_nlink != 1 or current.st_nlink != 1))
+                or opened.st_size > maximum
+            ):
+                raise SourceArchiveError(f"invalid-{kind}", f"{kind} changed during open")
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(descriptor, min(64 * 1024, maximum + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > maximum:
+                    raise SourceArchiveError(f"{kind}-too-large", f"{kind} exceeds {maximum} bytes")
+            after = os.fstat(descriptor)
+            final = pinned.lstat_leaf(leaf)
+            if (
+                final is None
+                or not os.path.samestat(opened, after)
+                or not os.path.samestat(after, final)
+                or after.st_size != total
+                or after.st_mtime_ns != opened.st_mtime_ns
+                or after.st_ctime_ns != opened.st_ctime_ns
+            ):
+                raise SourceArchiveError(f"unstable-{kind}", f"{kind} changed while being read")
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
 
 
 def _strict_json(data: bytes, *, kind: str) -> Any:
@@ -365,63 +843,18 @@ def _format_for_path(path: Path) -> str:
 
 
 def _read_source(path: Path) -> SourceSnapshot:
-    metadata = _lstat(path)
-    if metadata is None:
-        raise SourceArchiveError("source-not-found", "source file no longer exists")
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or _is_link_like(path, metadata)
-        or metadata.st_size > MAX_SOURCE_BYTES
-    ):
-        raise SourceArchiveError("invalid-source", "source must be a bounded ordinary non-reparse file")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
     try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        raise SourceArchiveError("invalid-source", "cannot safely open source") from error
-    try:
-        opened = os.fstat(descriptor)
-        current = _lstat(path)
-        if (
-            current is None
-            or not stat.S_ISREG(opened.st_mode)
-            or not stat.S_ISREG(current.st_mode)
-            or _is_reparse(opened)
-            or _is_link_like(path, current)
-            or not os.path.samestat(opened, current)
-            or opened.st_size > MAX_SOURCE_BYTES
-        ):
-            raise SourceArchiveError("invalid-source", "source changed during open")
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, min(64 * 1024, MAX_SOURCE_BYTES + 1 - total))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > MAX_SOURCE_BYTES:
-                raise SourceArchiveError("source-too-large", f"source exceeds {MAX_SOURCE_BYTES} bytes")
-        after = os.fstat(descriptor)
-        final = _lstat(path)
-        if (
-            final is None
-            or not os.path.samestat(opened, after)
-            or not os.path.samestat(after, final)
-            or after.st_size != total
-            or after.st_mtime_ns != opened.st_mtime_ns
-            or after.st_ctime_ns != opened.st_ctime_ns
-        ):
-            raise SourceArchiveError("stale-live-source", "source changed while being read")
-        raw = b"".join(chunks)
-    finally:
-        os.close(descriptor)
+        raw = _read_regular(
+            path.parent,
+            (path.name,),
+            maximum=MAX_SOURCE_BYTES,
+            kind="source",
+            single_link=False,
+        )
+    except SourceArchiveError as error:
+        if error.code == "missing-source":
+            raise SourceArchiveError("source-not-found", "source file no longer exists") from error
+        raise
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
@@ -463,7 +896,7 @@ def _canonical_jsonl(rows: Sequence[Mapping[str, Any]]) -> bytes:
 
 def _read_manifest(root: Path) -> tuple[dict[str, Any] | None, str | None]:
     path = root / "manifest.json"
-    if _lstat(path) is None:
+    if _anchored_lstat(path) is None:
         return None, None
     data = _read_regular(root, ("manifest.json",), maximum=MAX_MANIFEST_BYTES, kind="source-manifest")
     payload = _strict_json(data, kind="source-manifest")
@@ -518,7 +951,7 @@ def _blob_bytes(blob_roots: Sequence[Path], version: Mapping[str, Any]) -> bytes
         raise SourceArchiveError("invalid-source-ledger", "version blob_path does not match raw digest")
     last_error: SourceArchiveError | None = None
     for root in blob_roots:
-        if _lstat(root.joinpath(*parts)) is None:
+        if _anchored_lstat(root.joinpath(*parts)) is None:
             continue
         try:
             return _read_regular(root, parts, maximum=MAX_SOURCE_BYTES, kind="source-blob")
@@ -849,14 +1282,14 @@ def _load_ledger_once(vault: Vault) -> SourceLedger:
     root = vault.root / ".kgdistiller" / "sources"
     manifest, before = _read_manifest(root)
     if manifest is None:
-        if _lstat(root / "manifest.json") is not None:
+        if _anchored_lstat(root / "manifest.json") is not None:
             raise _GenerationChanged()
         return SourceLedger(root, None, None, (), (), ())
     try:
         ledger = _read_generation(root, manifest, blob_roots=(root,))
     except SourceArchiveError:
         current_path = root / "manifest.json"
-        if _lstat(current_path) is None:
+        if _anchored_lstat(current_path) is None:
             raise _GenerationChanged()
         current_bytes = _read_regular(
             root,
@@ -868,7 +1301,7 @@ def _load_ledger_once(vault: Vault) -> SourceLedger:
             raise _GenerationChanged()
         raise
     path = root / "manifest.json"
-    if _lstat(path) is None:
+    if _anchored_lstat(path) is None:
         raise _GenerationChanged()
     after_bytes = _read_regular(root, ("manifest.json",), maximum=MAX_MANIFEST_BYTES, kind="source-manifest")
     if _sha256_bytes(after_bytes) != before:
@@ -926,79 +1359,61 @@ def _vault_writer_lock(vault: Vault) -> Iterator[None]:
     build = vault.root / ".kgdistiller" / "build"
     _ensure_directory(vault.root, (".kgdistiller", "build"), create=False, field="Vault build directory")
     lock_path = build / "writer.lock"
-    metadata = _lstat(lock_path)
-    if metadata is not None and (
-        not stat.S_ISREG(metadata.st_mode)
-        or _is_link_like(lock_path, metadata)
-        or metadata.st_nlink != 1
-    ):
-        raise SourceArchiveError("invalid-vault-writer-lock", "Vault writer lock is not an ordinary single-link file")
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    descriptor = -1
-    acquired = False
-    handle: Any = None
-    try:
-        try:
-            descriptor = os.open(lock_path, flags, 0o600)
-        except OSError as error:
-            raise SourceArchiveError(
-                "invalid-vault-writer-lock", "cannot safely open Vault writer lock"
-            ) from error
-        opened = os.fstat(descriptor)
-        current = _lstat(lock_path)
-        if (
-            current is None
-            or not stat.S_ISREG(opened.st_mode)
-            or not stat.S_ISREG(current.st_mode)
-            or _is_reparse(opened)
-            or _is_link_like(lock_path, current)
-            or opened.st_ino == 0
-            or current.st_ino == 0
-            or not os.path.samestat(opened, current)
-            or opened.st_nlink != 1
-            or current.st_nlink != 1
+    with _PinnedDirectory(build) as parent:
+        metadata = parent.lstat_leaf("writer.lock")
+        if metadata is not None and (
+            not stat.S_ISREG(metadata.st_mode)
+            or _is_link_like(lock_path, metadata)
+            or metadata.st_nlink != 1
         ):
-            raise SourceArchiveError("invalid-vault-writer-lock", "Vault writer lock changed during open")
-        resolved = lock_path.resolve(strict=True)
-        final = _lstat(lock_path)
-        if (
-            final is None
-            or not os.path.samestat(opened, final)
-            or final.st_ino == 0
-            or final.st_nlink != 1
-            or not _same_path(lock_path, resolved)
-            or not _contains(vault.root, resolved)
-        ):
-            raise SourceArchiveError("invalid-vault-writer-lock", "Vault writer lock escaped its fixed path")
-        handle = os.fdopen(descriptor, "r+b")
+            raise SourceArchiveError("invalid-vault-writer-lock", "Vault writer lock is not an ordinary single-link file")
         descriptor = -1
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"\0")
+        acquired = False
+        handle: Any = None
+        try:
+            try:
+                descriptor = parent.open_lock_file("writer.lock")
+            except OSError as error:
+                raise SourceArchiveError(
+                    "invalid-vault-writer-lock", "cannot safely open Vault writer lock"
+                ) from error
+            opened = os.fstat(descriptor)
+            current = parent.lstat_leaf("writer.lock")
+            if (
+                current is None
+                or not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(current.st_mode)
+                or _is_reparse(opened)
+                or _is_link_like(lock_path, current)
+                or opened.st_ino == 0
+                or current.st_ino == 0
+                or not os.path.samestat(opened, current)
+                or opened.st_nlink != 1
+                or current.st_nlink != 1
+            ):
+                raise SourceArchiveError("invalid-vault-writer-lock", "Vault writer lock changed during open")
+            handle = os.fdopen(descriptor, "r+b")
+            descriptor = -1
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+                os.fsync(handle.fileno())
+            _acquire_lock(handle)
+            acquired = True
+            handle.seek(0)
+            handle.truncate()
+            handle.write(f"pid={os.getpid()}\n".encode("ascii"))
             handle.flush()
             os.fsync(handle.fileno())
-        _acquire_lock(handle)
-        acquired = True
-        handle.seek(0)
-        handle.truncate()
-        handle.write(f"pid={os.getpid()}\n".encode("ascii"))
-        handle.flush()
-        os.fsync(handle.fileno())
-        yield
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        elif handle is not None:
-            if acquired:
-                _release_lock(handle)
-            handle.close()
+            yield
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            elif handle is not None:
+                if acquired:
+                    _release_lock(handle)
+                handle.close()
 
 
 def _resolve_source(file: Path | str, home: Path | str | None) -> _ResolvedSource:
@@ -1194,45 +1609,68 @@ def _build_generation(
 
 
 def _write_fsync(path: Path, content: bytes) -> None:
-    flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        offset = 0
-        while offset < len(content):
-            offset += os.write(descriptor, content[offset:])
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    with _PinnedDirectory(path.parent) as parent:
+        descriptor = parent.create_file(path.name)
+        try:
+            offset = 0
+            while offset < len(content):
+                offset += os.write(descriptor, content[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    with _PinnedDirectory(path) as pinned:
+        os.fsync(pinned.dir_fd)
 
 
 def _remove_stage(stage: Path, sources_root: Path) -> None:
+    def remove_contents(directory: Path) -> None:
+        with _PinnedDirectory(directory) as pinned:
+            if os.name == "nt":
+                names = [entry.name for entry in os.scandir(directory)]
+            else:
+                names = [entry.name for entry in os.scandir(pinned.dir_fd)]
+            for name in names:
+                metadata = pinned.lstat_leaf(name)
+                if metadata is None:
+                    continue
+                child = directory / name
+                if stat.S_ISDIR(metadata.st_mode) and not _is_link_like(child, metadata):
+                    remove_contents(child)
+                    pinned.unlink_leaf(name, directory=True)
+                else:
+                    pinned.unlink_leaf(name, directory=False)
+
     try:
         if (
             stage.parent == sources_root
             and stage.name.startswith(".stage-")
             and _contains(sources_root, stage)
         ):
-            shutil.rmtree(stage)
-    except OSError:
+            remove_contents(stage)
+            with _PinnedDirectory(sources_root) as parent:
+                parent.unlink_leaf(stage.name, directory=True)
+    except (OSError, SourceArchiveError):
         pass
+
+
+def _make_stage_directory(sources_root: Path) -> Path:
+    with _PinnedDirectory(sources_root) as parent:
+        for _ in range(32):
+            name = f".stage-{uuid.uuid4().hex}"
+            try:
+                parent.mkdir_leaf(name)
+            except FileExistsError:
+                continue
+            stage = sources_root / name
+            with _PinnedDirectory(stage):
+                pass
+            return stage
+    raise SourceArchiveError("stage-name-exhausted", "cannot allocate source staging directory")
 
 
 def _stage_generation(
@@ -1241,15 +1679,25 @@ def _stage_generation(
     contents: Mapping[str, bytes],
     snapshot: SourceSnapshot | None,
 ) -> Path:
-    stage = Path(tempfile.mkdtemp(prefix=".stage-", dir=sources_root))
+    stage = _make_stage_directory(sources_root)
     generation_dir = stage / "generations" / manifest["generation_sha256"]
-    generation_dir.mkdir(parents=True)
+    _ensure_directory(
+        stage,
+        ("generations", str(manifest["generation_sha256"])),
+        create=True,
+        field="staged source generation",
+    )
     for name, filename in ARTIFACT_FILENAMES.items():
         _write_fsync(generation_dir / filename, contents[name])
     _fsync_directory(generation_dir)
     if snapshot is not None:
         blob_dir = stage / "blobs" / "sha256" / snapshot.raw_sha256[:2]
-        blob_dir.mkdir(parents=True)
+        _ensure_directory(
+            stage,
+            ("blobs", "sha256", snapshot.raw_sha256[:2]),
+            create=True,
+            field="staged source blob directory",
+        )
         _write_fsync(blob_dir / snapshot.raw_sha256, snapshot.raw)
         _fsync_directory(blob_dir)
     _write_fsync(stage / "manifest.json", canonical_json(manifest).encode("utf-8"))
@@ -1258,50 +1706,43 @@ def _stage_generation(
 
 
 def _install_file_once(staged: Path, destination: Path, *, kind: str) -> None:
-    existing = _lstat(destination)
-    if existing is not None:
-        if not stat.S_ISREG(existing.st_mode) or _is_link_like(destination, existing) or existing.st_nlink != 1:
-            raise SourceArchiveError(f"invalid-{kind}", f"existing immutable {kind} is unsafe")
-        return
-    source_flags = (
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+    content = _read_regular(
+        staged.parent,
+        (staged.name,),
+        maximum=MAX_SOURCE_BYTES,
+        kind=f"staged-{kind}",
     )
-    destination_flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOINHERIT", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    source_descriptor = -1
-    destination_descriptor = -1
-    try:
-        source_descriptor = os.open(staged, source_flags)
-        try:
-            destination_descriptor = os.open(destination, destination_flags, 0o600)
-        except FileExistsError:
+    with _PinnedDirectory(destination.parent) as parent:
+        existing = parent.lstat_leaf(destination.name)
+        if existing is not None:
+            if (
+                not stat.S_ISREG(existing.st_mode)
+                or _is_link_like(destination, existing)
+                or existing.st_nlink != 1
+            ):
+                raise SourceArchiveError(f"invalid-{kind}", f"existing immutable {kind} is unsafe")
             return
-        while True:
-            chunk = os.read(source_descriptor, 64 * 1024)
-            if not chunk:
-                break
+        try:
+            descriptor = parent.create_file(destination.name)
+        except FileExistsError:
+            existing = parent.lstat_leaf(destination.name)
+            if (
+                existing is None
+                or not stat.S_ISREG(existing.st_mode)
+                or _is_link_like(destination, existing)
+                or existing.st_nlink != 1
+            ):
+                raise SourceArchiveError(f"invalid-{kind}", f"existing immutable {kind} is unsafe")
+            return
+        try:
             offset = 0
-            while offset < len(chunk):
-                offset += os.write(destination_descriptor, chunk[offset:])
-        os.fsync(destination_descriptor)
-    except OSError as error:
-        raise SourceArchiveError(f"invalid-{kind}", f"cannot install immutable {kind}") from error
-    finally:
-        if source_descriptor >= 0:
-            os.close(source_descriptor)
-        if destination_descriptor >= 0:
-            os.close(destination_descriptor)
+            while offset < len(content):
+                offset += os.write(descriptor, content[offset:])
+            os.fsync(descriptor)
+        except OSError as error:
+            raise SourceArchiveError(f"invalid-{kind}", f"cannot install immutable {kind}") from error
+        finally:
+            os.close(descriptor)
 
 
 def _install_generation(
@@ -1338,19 +1779,26 @@ def _install_generation(
     )
     generation = str(manifest["generation_sha256"])
     destination = generations / generation
-    metadata = _lstat(destination)
     created = False
-    if metadata is None:
-        try:
-            os.mkdir(destination)
-            created = True
-        except FileExistsError:
+    with _PinnedDirectory(generations) as parent:
+        metadata = parent.lstat_leaf(generation)
+        if metadata is None:
+            try:
+                parent.mkdir_leaf(generation)
+                created = True
+            except FileExistsError:
+                pass
+            except OSError as error:
+                raise SourceArchiveError("invalid-source-generation", "cannot install source generation") from error
+        metadata = parent.lstat_leaf(generation)
+        if (
+            metadata is None
+            or not stat.S_ISDIR(metadata.st_mode)
+            or _is_link_like(destination, metadata)
+        ):
+            raise SourceArchiveError("invalid-source-generation", "immutable generation path is unsafe")
+        with _PinnedDirectory(destination):
             pass
-        except OSError as error:
-            raise SourceArchiveError("invalid-source-generation", "cannot install source generation") from error
-    metadata = _lstat(destination)
-    if metadata is None or not stat.S_ISDIR(metadata.st_mode) or _is_link_like(destination, metadata):
-        raise SourceArchiveError("invalid-source-generation", "immutable generation path is unsafe")
     if not created:
         _read_generation(sources_root, dict(manifest), blob_roots=(sources_root,))
         return
@@ -1363,38 +1811,54 @@ def _install_generation(
 
 
 def _atomic_replace_manifest(sources_root: Path, manifest: Mapping[str, Any]) -> None:
-    existing = _lstat(sources_root / "manifest.json")
-    if existing is not None and (
-        not stat.S_ISREG(existing.st_mode)
-        or _is_link_like(sources_root / "manifest.json", existing)
-        or existing.st_nlink != 1
-    ):
-        raise SourceArchiveError("invalid-source-manifest", "live source manifest is unsafe")
-    descriptor, name = tempfile.mkstemp(prefix=".manifest-", dir=sources_root)
-    temporary = Path(name)
-    try:
-        content = canonical_json(dict(manifest)).encode("utf-8")
-        with os.fdopen(descriptor, "wb") as handle:
-            descriptor = -1
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        current = _lstat(sources_root / "manifest.json")
-        if current is not None and (
-            not stat.S_ISREG(current.st_mode)
-            or _is_link_like(sources_root / "manifest.json", current)
-            or current.st_nlink != 1
+    with _PinnedDirectory(sources_root) as parent:
+        existing = parent.lstat_leaf("manifest.json")
+        if existing is not None and (
+            not stat.S_ISREG(existing.st_mode)
+            or _is_link_like(sources_root / "manifest.json", existing)
+            or existing.st_nlink != 1
         ):
-            raise SourceArchiveError("invalid-source-manifest", "live source manifest changed into an unsafe file")
-        os.replace(temporary, sources_root / "manifest.json")
-        _fsync_directory(sources_root)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+            raise SourceArchiveError("invalid-source-manifest", "live source manifest is unsafe")
+        descriptor = -1
+        temporary_name = ""
+        for _ in range(32):
+            temporary_name = f".manifest-{uuid.uuid4().hex}"
+            try:
+                descriptor = parent.create_file(
+                    temporary_name, delete_access=True
+                )
+                break
+            except FileExistsError:
+                continue
+        if descriptor < 0:
+            raise SourceArchiveError(
+                "manifest-name-exhausted", "cannot allocate manifest temporary"
+            )
+        content = canonical_json(dict(manifest)).encode("utf-8")
         try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+            offset = 0
+            while offset < len(content):
+                offset += os.write(descriptor, content[offset:])
+            os.fsync(descriptor)
+            current = parent.lstat_leaf("manifest.json")
+            if current is not None and (
+                not stat.S_ISREG(current.st_mode)
+                or _is_link_like(sources_root / "manifest.json", current)
+                or current.st_nlink != 1
+            ):
+                raise SourceArchiveError(
+                    "invalid-source-manifest",
+                    "live source manifest changed into an unsafe file",
+                )
+            parent.replace_leaf(temporary_name, "manifest.json", descriptor)
+        finally:
+            os.close(descriptor)
+            try:
+                if parent.lstat_leaf(temporary_name) is not None:
+                    parent.unlink_leaf(temporary_name)
+            except (OSError, SourceArchiveError):
+                pass
+    _fsync_directory(sources_root)
 
 
 def _capture_test_hook(label: str, resolved: _ResolvedSource) -> None:
@@ -1561,7 +2025,7 @@ def capture_source(
             for existing in ledger.documents:
                 current_version = version_by_id[str(existing["current_version_id"])]
                 old_live_path = resolved.vault.root.joinpath(*PurePosixPath(existing["path"]).parts)
-                if current_version["raw_sha256"] == snapshot.raw_sha256 and _lstat(old_live_path) is None:
+                if current_version["raw_sha256"] == snapshot.raw_sha256 and _anchored_lstat(old_live_path) is None:
                     move_candidates.append(existing)
             if len(move_candidates) > 1:
                 raise SourceArchiveError("ambiguous-source-move", "multiple absent documents match the live source bytes")

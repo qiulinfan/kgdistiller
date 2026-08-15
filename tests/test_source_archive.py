@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -159,6 +160,38 @@ class SourceArchiveTests(unittest.TestCase):
         ):
             code = cli.main()
         return code, json.loads(stdout.getvalue()) if stdout.getvalue() else {}, stderr.getvalue()
+
+    def _make_directory_link(self, link: Path, target: Path) -> bool:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+            return True
+        except (OSError, NotImplementedError):
+            pass
+        if os.name != "nt":
+            return False
+        completed = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+            check=False,
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return completed.returncode == 0 and os.path.lexists(link)
+
+    @staticmethod
+    def _remove_directory_link(link: Path) -> None:
+        if link.is_symlink():
+            link.unlink()
+        else:
+            os.rmdir(link)
+
+    def _require_directory_links(self) -> None:
+        target = self.root / "link-probe-target"
+        link = self.root / "link-probe"
+        target.mkdir()
+        if not self._make_directory_link(link, target):
+            self.skipTest("directory symlinks or junctions are unavailable")
+        self._remove_directory_link(link)
+        target.rmdir()
 
     def test_first_capture_writes_canonical_generation_and_portable_report(self) -> None:
         self.source.write_bytes("α\r\nβ\r\n".encode("utf-8"))
@@ -363,10 +396,113 @@ class SourceArchiveTests(unittest.TestCase):
         self.assertEqual(manifest_path.read_bytes(), old_manifest)
         vault_manifest.write_bytes(original_vault_manifest)
 
-        with mock.patch.object(archive.os, "replace", side_effect=OSError("injected publication")):
+        with mock.patch.object(
+            archive._PinnedDirectory,
+            "replace_leaf",
+            side_effect=OSError("injected publication"),
+        ):
             with self.assertRaisesRegex(OSError, "injected publication"):
                 self._capture()
         self.assertEqual(manifest_path.read_bytes(), old_manifest)
+
+    def test_source_parent_swap_after_pin_fails_without_reading_outside(self) -> None:
+        self._require_directory_links()
+        self.source.write_bytes(b"inside\n")
+        self._capture()
+        sources_manifest = self.vault / ".kgdistiller/sources/manifest.json"
+        old_manifest = sources_manifest.read_bytes()
+        outside = self.root / "outside-source-parent"
+        outside.mkdir()
+        outside_source = outside / self.source.name
+        outside_source.write_bytes(b"outside\n")
+        source_parent = self.source.parent
+        backup = source_parent.with_name("notes-pinned-backup")
+        attempted = False
+
+        def swap(label: str, parent: Path, leaf: str) -> None:
+            nonlocal attempted
+            if (
+                attempted
+                or label != "before-leaf-open"
+                or parent != source_parent
+                or leaf != self.source.name
+            ):
+                return
+            attempted = True
+            try:
+                source_parent.rename(backup)
+            except OSError as error:
+                raise SourceArchiveError(
+                    "injected-ancestor-swap", "pinned source parent rejected replacement"
+                ) from error
+            if not self._make_directory_link(source_parent, outside):
+                backup.rename(source_parent)
+                raise SourceArchiveError(
+                    "injected-ancestor-swap", "could not install source-parent test link"
+                )
+
+        try:
+            with mock.patch.object(archive, "_anchored_test_hook", side_effect=swap):
+                with self.assertRaises((SourceArchiveError, OSError)):
+                    source_status(self.source, home=self.home)
+        finally:
+            if os.path.lexists(source_parent) and backup.exists():
+                self._remove_directory_link(source_parent)
+            if backup.exists():
+                backup.rename(source_parent)
+        self.assertTrue(attempted)
+        self.assertEqual(outside_source.read_bytes(), b"outside\n")
+        self.assertEqual(sources_manifest.read_bytes(), old_manifest)
+
+    def test_publication_ancestor_swap_after_pin_keeps_old_manifest_and_outside(self) -> None:
+        self._require_directory_links()
+        self.source.write_bytes(b"before\n")
+        self._capture()
+        sources = self.vault / ".kgdistiller/sources"
+        manifest = sources / "manifest.json"
+        old_manifest = manifest.read_bytes()
+        self.source.write_bytes(b"after\n")
+        outside = self.root / "outside-publication"
+        outside.mkdir()
+        outside_manifest = outside / "manifest.json"
+        outside_manifest.write_bytes(b"outside-sentinel")
+        backup = sources.with_name("sources-pinned-backup")
+        attempted = False
+
+        def swap(label: str, parent: Path, leaf: str) -> None:
+            nonlocal attempted
+            if (
+                attempted
+                or label != "before-leaf-replace"
+                or parent != sources
+                or leaf != "manifest.json"
+            ):
+                return
+            attempted = True
+            try:
+                sources.rename(backup)
+            except OSError as error:
+                raise SourceArchiveError(
+                    "injected-ancestor-swap", "pinned publication parent rejected replacement"
+                ) from error
+            if not self._make_directory_link(sources, outside):
+                backup.rename(sources)
+                raise SourceArchiveError(
+                    "injected-ancestor-swap", "could not install publication-parent test link"
+                )
+
+        try:
+            with mock.patch.object(archive, "_anchored_test_hook", side_effect=swap):
+                with self.assertRaises((SourceArchiveError, OSError)):
+                    self._capture()
+        finally:
+            if os.path.lexists(sources) and backup.exists():
+                self._remove_directory_link(sources)
+            if backup.exists():
+                backup.rename(sources)
+        self.assertTrue(attempted)
+        self.assertEqual(outside_manifest.read_bytes(), b"outside-sentinel")
+        self.assertEqual(manifest.read_bytes(), old_manifest)
 
     def test_diff_is_bounded_and_cli_status_is_read_only_from_arbitrary_cwd(self) -> None:
         self.source.write_bytes(("\n".join(f"old-{index}" for index in range(10050)) + "\n").encode("utf-8"))
