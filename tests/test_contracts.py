@@ -398,6 +398,9 @@ class ContractTest(unittest.TestCase):
                 "qlkg-vault-ingest-report-v1",
                 "qlkg-vault-ingest-error-v1",
                 "qlkg-vault-ingest-journal-v1",
+                "qlkg-recall-request-v1",
+                "qlkg-recall-report-v1",
+                "qlkg-recall-error-v1",
             },
             set(CONTRACT_SCHEMAS),
         )

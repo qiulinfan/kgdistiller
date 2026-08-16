@@ -831,6 +831,11 @@ class SourceLedger:
 
 
 @dataclass(frozen=True)
+class SourceLedgerMetadata(SourceLedger):
+    """A stable ledger whose archived blob and excerpt bytes are deferred."""
+
+
+@dataclass(frozen=True)
 class SourceEvidenceView:
     """Current effective concept and relation evidence from one validated ledger."""
 
@@ -1418,7 +1423,7 @@ def _artifact_rows(
         data = _read_regular(
             generation_dir,
             (filename,),
-            maximum=MAX_ARTIFACT_BYTES,
+            maximum=min(MAX_ARTIFACT_BYTES, int(record["bytes"])),
             kind=f"source-{name}",
         )
         if len(data) != record["bytes"] or _sha256_bytes(data) != record["sha256"]:
@@ -1430,7 +1435,12 @@ def _artifact_rows(
     return parsed["documents"], parsed["versions"], parsed["derivations"]
 
 
-def _blob_bytes(blob_roots: Sequence[Path], version: Mapping[str, Any]) -> bytes:
+def _blob_bytes(
+    blob_roots: Sequence[Path],
+    version: Mapping[str, Any],
+    *,
+    maximum: int = MAX_SOURCE_BYTES,
+) -> bytes:
     parts = _portable_relative(version["blob_path"], field="version blob_path")
     expected = ("blobs", "sha256", version["raw_sha256"][:2], version["raw_sha256"])
     if tuple(parts) != expected:
@@ -1440,7 +1450,7 @@ def _blob_bytes(blob_roots: Sequence[Path], version: Mapping[str, Any]) -> bytes
         if _anchored_lstat(root.joinpath(*parts)) is None:
             continue
         try:
-            return _read_regular(root, parts, maximum=MAX_SOURCE_BYTES, kind="source-blob")
+            return _read_regular(root, parts, maximum=maximum, kind="source-blob")
         except SourceArchiveError as error:
             last_error = error
             break
@@ -1595,6 +1605,7 @@ def _validate_rows(
     derivations: Sequence[dict[str, Any]],
     *,
     blob_roots: Sequence[Path],
+    verify_blobs: bool = True,
 ) -> None:
     if list(documents) != sorted(documents, key=lambda item: item["document_id"]):
         raise SourceArchiveError("noncanonical-source-documents", "document rows are not deterministically sorted")
@@ -1616,6 +1627,7 @@ def _validate_rows(
     version_by_id: dict[str, dict[str, Any]] = {}
     grouped: dict[str, list[dict[str, Any]]] = {key: [] for key in document_by_id}
     blob_cache: dict[str, tuple[bytes, str]] = {}
+    blob_metadata: dict[str, tuple[int, str, str]] = {}
     for version in versions:
         version_id = str(version["version_id"])
         document_id = str(version["document_id"])
@@ -1638,23 +1650,39 @@ def _validate_rows(
         except ValueError as error:
             raise SourceArchiveError("invalid-source-ledger", "capture timestamp is not a real UTC time") from error
         raw_sha = str(version["raw_sha256"])
-        cached = blob_cache.get(raw_sha)
-        if cached is None:
-            raw = _blob_bytes(blob_roots, version)
-            try:
-                text = raw.decode("utf-8", errors="strict")
-            except UnicodeDecodeError as error:
-                raise SourceArchiveError("invalid-source-blob", "source blob is not strict UTF-8") from error
-            normalized = normalize_source_text(text)
-            cached = (raw, _sha256_bytes(normalized.encode("utf-8")))
-            blob_cache[raw_sha] = cached
-        raw, normalized_sha = cached
-        if (
-            len(raw) != version["byte_count"]
-            or _sha256_bytes(raw) != raw_sha
-            or normalized_sha != version["normalized_text_sha256"]
-        ):
-            raise SourceArchiveError("invalid-source-blob", "source blob does not match version metadata")
+        metadata_record = (
+            int(version["byte_count"]),
+            str(version["normalized_text_sha256"]),
+            str(version["blob_path"]),
+        )
+        previous_metadata = blob_metadata.setdefault(raw_sha, metadata_record)
+        if previous_metadata != metadata_record:
+            raise SourceArchiveError(
+                "invalid-source-ledger",
+                "versions sharing a raw digest disagree on immutable blob metadata",
+            )
+        if version["blob_path"] != f"blobs/sha256/{raw_sha[:2]}/{raw_sha}":
+            raise SourceArchiveError(
+                "invalid-source-ledger", "source blob path does not match its raw digest"
+            )
+        if verify_blobs:
+            cached = blob_cache.get(raw_sha)
+            if cached is None:
+                raw = _blob_bytes(blob_roots, version)
+                try:
+                    text = raw.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as error:
+                    raise SourceArchiveError("invalid-source-blob", "source blob is not strict UTF-8") from error
+                normalized = normalize_source_text(text)
+                cached = (raw, _sha256_bytes(normalized.encode("utf-8")))
+                blob_cache[raw_sha] = cached
+            raw, normalized_sha = cached
+            if (
+                len(raw) != version["byte_count"]
+                or _sha256_bytes(raw) != raw_sha
+                or normalized_sha != version["normalized_text_sha256"]
+            ):
+                raise SourceArchiveError("invalid-source-blob", "source blob does not match version metadata")
         version_by_id[version_id] = version
         grouped[document_id].append(version)
 
@@ -1721,11 +1749,57 @@ def _validate_rows(
             raise SourceArchiveError(
                 "invalid-source-ledger", "duplicate relation evidence record"
             )
-        raw = blob_cache[str(version["raw_sha256"])][0]
-        normalized = normalize_source_text(raw.decode("utf-8", errors="strict"))
         for record in (*concept_evidence, *derivation["relation_evidence"]):
             for span in record["spans"]:
-                verify_evidence_span(normalized, span, expected_version_id=version_id)
+                if span.get("version_id") != version_id:
+                    raise SourceArchiveError(
+                        "invalid-source-ledger",
+                        "evidence span is bound to the wrong source version",
+                    )
+                start_line = span.get("start_line")
+                end_line = span.get("end_line")
+                if (
+                    isinstance(start_line, bool)
+                    or not isinstance(start_line, int)
+                    or start_line < 1
+                    or isinstance(end_line, bool)
+                    or not isinstance(end_line, int)
+                    or end_line < start_line
+                ):
+                    raise SourceArchiveError(
+                        "invalid-source-ledger", "evidence span line bounds are invalid"
+                    )
+                has_start = "start_column" in span
+                has_end = "end_column" in span
+                if has_start != has_end:
+                    raise SourceArchiveError(
+                        "invalid-source-ledger",
+                        "evidence span columns must occur together",
+                    )
+                if has_start:
+                    start_column = span["start_column"]
+                    end_column = span["end_column"]
+                    if (
+                        isinstance(start_column, bool)
+                        or not isinstance(start_column, int)
+                        or start_column < 0
+                        or isinstance(end_column, bool)
+                        or not isinstance(end_column, int)
+                        or end_column < 0
+                        or (start_line == end_line and end_column <= start_column)
+                    ):
+                        raise SourceArchiveError(
+                            "invalid-source-ledger",
+                            "evidence span column bounds are invalid",
+                        )
+        if verify_blobs:
+            raw = blob_cache[str(version["raw_sha256"])][0]
+            normalized = normalize_source_text(raw.decode("utf-8", errors="strict"))
+            for record in (*concept_evidence, *derivation["relation_evidence"]):
+                for span in record["spans"]:
+                    verify_evidence_span(
+                        normalized, span, expected_version_id=version_id
+                    )
     derivation_by_version, failed_versions = _index_derivations(derivations)
 
     for version_id, derivation in derivation_by_version.items():
@@ -1763,10 +1837,18 @@ def _read_generation(
     manifest: dict[str, Any],
     *,
     blob_roots: Sequence[Path],
+    verify_blobs: bool = True,
 ) -> SourceLedger:
     documents, versions, derivations = _artifact_rows(root, manifest)
-    _validate_rows(documents, versions, derivations, blob_roots=blob_roots)
-    return SourceLedger(
+    _validate_rows(
+        documents,
+        versions,
+        derivations,
+        blob_roots=blob_roots,
+        verify_blobs=verify_blobs,
+    )
+    ledger_type = SourceLedger if verify_blobs else SourceLedgerMetadata
+    return ledger_type(
         sources_root=root,
         manifest=manifest,
         generation_sha256=manifest["generation_sha256"],
@@ -1776,15 +1858,43 @@ def _read_generation(
     )
 
 
-def _load_ledger_once(vault: Vault) -> SourceLedger:
+def _load_ledger_once(
+    vault: Vault,
+    *,
+    verify_blobs: bool = True,
+    maximum_artifact_bytes: int | None = None,
+    maximum_artifact_rows: Mapping[str, int] | None = None,
+) -> SourceLedger:
     root = vault.root / ".kgdistiller" / "sources"
     manifest, before = _read_manifest(root)
     if manifest is None:
         if _anchored_lstat(root / "manifest.json") is not None:
             raise _GenerationChanged()
-        return SourceLedger(root, None, None, (), (), ())
+        ledger_type = SourceLedger if verify_blobs else SourceLedgerMetadata
+        return ledger_type(root, None, None, (), (), ())
+    declared_bytes = sum(
+        int(record["bytes"]) for record in manifest["artifacts"].values()
+    )
+    if maximum_artifact_bytes is not None and declared_bytes > maximum_artifact_bytes:
+        raise SourceArchiveError(
+            "federation-source-budget-exceeded",
+            "source ledger exceeds the remaining federation metadata budget",
+        )
+    if maximum_artifact_rows is not None:
+        for name in ("documents", "versions", "derivations"):
+            maximum = maximum_artifact_rows.get(name)
+            if maximum is not None and int(manifest["artifacts"][name]["rows"]) > maximum:
+                raise SourceArchiveError(
+                    "federation-source-budget-exceeded",
+                    "source ledger exceeds the remaining federation row budget",
+                )
     try:
-        ledger = _read_generation(root, manifest, blob_roots=(root,))
+        ledger = _read_generation(
+            root,
+            manifest,
+            blob_roots=(root,),
+            verify_blobs=verify_blobs,
+        )
     except SourceArchiveError:
         current_path = root / "manifest.json"
         if _anchored_lstat(current_path) is None:
@@ -1814,6 +1924,62 @@ def load_source_ledger(vault: Vault | Path | str) -> SourceLedger:
     for _ in range(MAX_LEDGER_READ_RETRIES):
         try:
             return _load_ledger_once(selected)
+        except _GenerationChanged:
+            continue
+    raise SourceArchiveError(
+        "stale-source-generation",
+        f"source manifest changed during {MAX_LEDGER_READ_RETRIES} bounded read attempts",
+    )
+
+
+def load_source_ledger_metadata(
+    vault: Vault | Path | str,
+    *,
+    maximum_artifact_bytes: int | None = None,
+    maximum_artifact_rows: Mapping[str, int] | None = None,
+) -> SourceLedgerMetadata:
+    """Load one stable ledger generation without reading archived source blobs.
+
+    Manifest, canonical JSONL, closed rows, references, derivation inheritance,
+    and lifecycle projections remain fully validated. Evidence excerpt bytes are
+    verified later only for final selected context records.
+    """
+
+    if maximum_artifact_bytes is not None and maximum_artifact_bytes < 0:
+        raise SourceArchiveError(
+            "invalid-source-budget", "source metadata budget must not be negative"
+        )
+    if maximum_artifact_rows is not None:
+        for name, maximum in maximum_artifact_rows.items():
+            if name not in {"documents", "versions", "derivations"}:
+                raise SourceArchiveError(
+                    "invalid-source-budget", "source metadata row budget has an unknown artifact"
+                )
+            if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < 0:
+                raise SourceArchiveError(
+                    "invalid-source-budget", "source metadata row budgets must be non-negative integers"
+                )
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    for _ in range(MAX_LEDGER_READ_RETRIES):
+        try:
+            ledger = _load_ledger_once(
+                selected,
+                verify_blobs=False,
+                maximum_artifact_bytes=maximum_artifact_bytes,
+                maximum_artifact_rows=maximum_artifact_rows,
+            )
+            if not isinstance(ledger, SourceLedgerMetadata):
+                # An empty ledger has no deferred bytes, but callers still get
+                # the explicit metadata capability type.
+                return SourceLedgerMetadata(
+                    ledger.sources_root,
+                    ledger.manifest,
+                    ledger.generation_sha256,
+                    ledger.documents,
+                    ledger.versions,
+                    ledger.derivations,
+                )
+            return ledger
         except _GenerationChanged:
             continue
     raise SourceArchiveError(
@@ -2066,11 +2232,33 @@ def _document_for_path(ledger: SourceLedger, path: str) -> dict[str, Any] | None
 
 
 def _version_text(ledger: SourceLedger, version: Mapping[str, Any]) -> str:
-    raw = _blob_bytes((ledger.sources_root,), version)
+    byte_count = int(version["byte_count"])
+    if byte_count < 0 or byte_count > MAX_SOURCE_BYTES:
+        raise SourceArchiveError(
+            "invalid-source-blob", "source blob byte count is outside the supported bound"
+        )
+    raw = _blob_bytes((ledger.sources_root,), version, maximum=byte_count)
+    if len(raw) != version["byte_count"] or _sha256_bytes(raw) != version["raw_sha256"]:
+        raise SourceArchiveError(
+            "invalid-source-blob", "source blob does not match version metadata"
+        )
     try:
-        return normalize_source_text(raw.decode("utf-8", errors="strict"))
+        normalized = normalize_source_text(raw.decode("utf-8", errors="strict"))
     except UnicodeDecodeError as error:
         raise SourceArchiveError("invalid-source-blob", "source blob is not strict UTF-8") from error
+    if _sha256_bytes(normalized.encode("utf-8")) != version["normalized_text_sha256"]:
+        raise SourceArchiveError(
+            "invalid-source-blob", "source blob does not match version metadata"
+        )
+    return normalized
+
+
+def verified_version_text(
+    ledger: SourceLedger, version: Mapping[str, Any]
+) -> str:
+    """Read and fully verify exactly one archived version selected for recall."""
+
+    return _version_text(ledger, version)
 
 
 def _bounded_diff(
@@ -3276,12 +3464,14 @@ __all__ = [
     "SourceArchiveError",
     "SourceEvidenceView",
     "SourceLedger",
+    "SourceLedgerMetadata",
     "PreparedSourceGeneration",
     "capture_source",
     "current_evidence_view",
     "diff_source",
     "extract_evidence_excerpt",
     "load_source_ledger",
+    "load_source_ledger_metadata",
     "load_source_ledger_generation",
     "install_derivation_generation",
     "normalize_source_text",
@@ -3295,4 +3485,5 @@ __all__ = [
     "vault_staging_directory",
     "vault_writer_lock",
     "verify_evidence_span",
+    "verified_version_text",
 ]

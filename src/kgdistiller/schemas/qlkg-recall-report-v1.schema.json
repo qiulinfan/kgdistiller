@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-recall-report-v1.schema.json",
+  "title": "kgdistiller federated recall report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "operation", "status", "generation", "registry_generation", "vaults", "incomplete_vaults", "result"],
+  "properties": {
+    "schema": {"const": "qlkg-recall-report-v1"},
+    "operation": {"enum": ["status", "roots", "children", "resolve", "search", "get", "expand", "context"]},
+    "status": {"enum": ["complete", "partial"]},
+    "generation": {"$ref": "#/$defs/sha256"},
+    "registry_generation": {"$ref": "#/$defs/sha256"},
+    "vaults": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/vault"}},
+    "incomplete_vaults": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/incomplete"}},
+    "result": {"$ref": "#/$defs/result"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "node_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "handle": {"type": "string", "minLength": 3, "maxLength": 321, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "portable_path": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"},
+    "counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["nodes", "edges", "references", "documents"],
+      "properties": {
+        "nodes": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "edges": {"type": "integer", "minimum": 0, "maximum": 500000},
+        "references": {"type": "integer", "minimum": 0, "maximum": 500000},
+        "documents": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    },
+    "source_freshness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["current", "changed", "missing", "unavailable"],
+      "properties": {
+        "current": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "changed": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "missing": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "unavailable": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    },
+    "vault": {
+      "type": "object", "additionalProperties": false,
+      "required": ["vault_id", "label", "health", "generation", "graph_manifest_sha256", "graph_sha256", "source_ledger_generation_sha256", "authority_generation_sha256", "live_source_generation_sha256", "counts", "source_freshness"],
+      "properties": {
+        "vault_id": {"$ref": "#/$defs/vault_id"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 256},
+        "health": {"const": "current"},
+        "generation": {"$ref": "#/$defs/sha256"},
+        "graph_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "source_ledger_generation_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "authority_generation_sha256": {"$ref": "#/$defs/sha256"},
+        "live_source_generation_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "counts": {"$ref": "#/$defs/counts"},
+        "source_freshness": {"$ref": "#/$defs/source_freshness"}
+      }
+    },
+    "incomplete": {
+      "type": "object", "additionalProperties": false,
+      "required": ["vault_id", "code", "message"],
+      "properties": {
+        "vault_id": {"$ref": "#/$defs/vault_id"},
+        "code": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "node": {
+      "type": "object", "additionalProperties": false,
+      "required": ["handle", "vault_id", "node_id", "type", "label", "aliases", "text", "curation_status", "source_status", "authority", "parents", "score", "lane_evidence", "depth"],
+      "properties": {
+        "handle": {"$ref": "#/$defs/handle"},
+        "vault_id": {"$ref": "#/$defs/vault_id"},
+        "node_id": {"$ref": "#/$defs/node_id"},
+        "type": {"enum": ["knowledge", "field", "topic"]},
+        "label": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "aliases": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "text": {"anyOf": [{"type": "string", "maxLength": 1048576}, {"type": "null"}]},
+        "curation_status": {"enum": ["current", "needs-review", "pending", "not-applicable"]},
+        "source_status": {"enum": ["active", "meta", "orphaned", "not-applicable"]},
+        "authority": {"anyOf": [{"$ref": "#/$defs/portable_path"}, {"type": "null"}]},
+        "parents": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "#/$defs/handle"}},
+        "score": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "lane_evidence": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/lane_evidence"}},
+        "depth": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 8}, {"type": "null"}]}
+      }
+    },
+    "path_step": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "relation", "target"],
+      "properties": {
+        "source": {"$ref": "#/$defs/handle"},
+        "relation": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+        "target": {"$ref": "#/$defs/handle"}
+      }
+    },
+    "lane_evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lane", "rank", "score", "reason", "match_kind", "matched_fields", "matched_terms", "scope", "seed", "path"],
+      "properties": {
+        "lane": {"enum": ["identity", "taxonomy", "lexical", "graph"]},
+        "rank": {"type": "integer", "minimum": 1, "maximum": 500},
+        "score": {"type": "number", "minimum": 0},
+        "reason": {"enum": ["exact-id", "exact-label", "reviewed-alias", "scope-member", "token-overlap", "phrase-match", "trusted-seed", "trusted-edge"]},
+        "match_kind": {"anyOf": [{"enum": ["id", "label", "alias"]}, {"type": "null"}]},
+        "matched_fields": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"enum": ["label", "alias", "body"]}},
+        "matched_terms": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        "scope": {"anyOf": [{"$ref": "#/$defs/handle"}, {"type": "null"}]},
+        "seed": {"anyOf": [{"$ref": "#/$defs/handle"}, {"type": "null"}]},
+        "path": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/path_step"}}
+      }
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "relation", "target", "evidence", "curation_status", "depth"],
+      "properties": {
+        "source": {"$ref": "#/$defs/handle"},
+        "relation": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+        "target": {"$ref": "#/$defs/handle"},
+        "evidence": {"anyOf": [{"type": "string", "maxLength": 4096}, {"type": "null"}]},
+        "curation_status": {"enum": ["current", "needs-review", "not-applicable"]},
+        "depth": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 8}, {"type": "null"}]}
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "handle", "source", "relation", "target", "document_id", "version_id", "source_path", "format", "start_line", "end_line", "start_column", "end_column", "excerpt", "excerpt_sha256"],
+      "properties": {
+        "kind": {"enum": ["concept", "relation"]},
+        "handle": {"$ref": "#/$defs/handle"},
+        "source": {"anyOf": [{"$ref": "#/$defs/handle"}, {"type": "null"}]},
+        "relation": {"anyOf": [{"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]}, {"type": "null"}]},
+        "target": {"anyOf": [{"$ref": "#/$defs/handle"}, {"type": "null"}]},
+        "document_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+        "version_id": {"type": "string", "pattern": "^doc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:v[0-9]{8}$"},
+        "source_path": {"$ref": "#/$defs/portable_path"},
+        "format": {"enum": ["markdown", "typst", "latex"]},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "start_column": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "end_column": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "excerpt_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["query", "status", "match_kind", "matches", "overflow"],
+      "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "status": {"enum": ["exact", "alias", "ambiguous", "missing"]},
+        "match_kind": {"anyOf": [{"enum": ["id", "label", "alias", "mixed"]}, {"type": "null"}]},
+        "matches": {"type": "array", "maxItems": 500, "uniqueItems": true, "items": {"$ref": "#/$defs/handle"}},
+        "overflow": {"type": "boolean"}
+      }
+    },
+    "omission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "id", "reason"],
+      "properties": {
+        "kind": {"enum": ["node", "edge", "evidence", "vault"]},
+        "id": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "reason": {"enum": ["limit", "token-budget", "scope", "incomplete-vault", "stale"]}
+      }
+    },
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["query", "resolutions", "nodes", "edges", "evidence", "omissions", "truncated", "estimated_tokens"],
+      "properties": {
+        "query": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 4096}, {"type": "null"}]},
+        "resolutions": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/resolution"}},
+        "nodes": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/node"}},
+        "edges": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/$defs/edge"}},
+        "evidence": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/$defs/evidence"}},
+        "omissions": {"type": "array", "maxItems": 5000, "items": {"$ref": "#/$defs/omission"}},
+        "truncated": {"type": "boolean"},
+        "estimated_tokens": {"type": "integer", "minimum": 0, "maximum": 4194304}
+      }
+    }
+  }
+}

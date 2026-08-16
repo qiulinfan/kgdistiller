@@ -77,6 +77,21 @@ TOOL_DEFINITIONS = [
     _tool("kg_create_proposal", "Create Knowledge Review Proposal", "Create a deterministic review package without writing authority data.", _object_schema({"candidate_snapshot": {"type": "object"}, "target_namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}, "target_authority": {"type": "string", "maxLength": 4096}}, ["candidate_snapshot"])),
 ]
 TOOL_SCHEMAS = {tool["name"]: tool["inputSchema"] for tool in TOOL_DEFINITIONS}
+RECALL_TOOL_DEFINITION = {
+    **_tool(
+        "kg_recall",
+        "Federated Vault Recall",
+        "Execute one closed, coherent, read-only recall request across registered Vaults.",
+        load_contract_schema("qlkg-recall-request-v1"),
+    ),
+    "outputSchema": {
+        "oneOf": [
+            load_contract_schema("qlkg-recall-report-v1"),
+            load_contract_schema("qlkg-recall-error-v1"),
+        ]
+    },
+}
+FEDERATED_TOOL_DEFINITIONS = [*TOOL_DEFINITIONS, RECALL_TOOL_DEFINITION]
 
 
 def _bounded_json_int(value: str) -> int:
@@ -259,6 +274,22 @@ def call_tool(
     return build_context_from_execution(view, execution, plan=plan, token_budget=int(arguments.get("token_budget", 6000)), namespace=execution_namespace)
 
 
+def call_recall_tool(
+    raw_arguments: Any,
+    *,
+    home: Path | str | None = None,
+) -> dict[str, Any]:
+    """Execute the federated MCP adapter without loading a legacy graph view."""
+
+    from .recall import RecallError, execute_recall_request
+
+    if not isinstance(raw_arguments, dict):
+        raise RecallError(
+            "invalid-recall-request", "recall request must be a closed JSON object"
+        )
+    return execute_recall_request(raw_arguments, home=home)
+
+
 def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
     text = canonical_json(value)
     if len(text.encode("utf-8")) > MAX_TOOL_RESPONSE_BYTES:
@@ -271,9 +302,18 @@ def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, 
 class MCPServer:
     """Small stateful MCP dispatcher for newline-delimited stdio transport."""
 
-    def __init__(self, graph_dir: Path, *, alignments: Path | None = None):
-        self.graph_dir = Path(graph_dir)
+    def __init__(
+        self,
+        graph_dir: Path | None,
+        *,
+        alignments: Path | None = None,
+        federated: bool = False,
+        home: Path | str | None = None,
+    ):
+        self.graph_dir = Path(graph_dir) if graph_dir is not None else None
         self.alignments = Path(alignments) if alignments is not None else None
+        self.federated = federated
+        self.home = home
         self.initialized = False
         self.protocol_version = MCP_PROTOCOL_VERSION
 
@@ -296,7 +336,8 @@ class MCPServer:
                 return _protocol_error(request_id, -32602, "Invalid params")
             requested = str(params.get("protocolVersion", ""))
             self.protocol_version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
-            return _result(request_id, {"protocolVersion": self.protocol_version, "capabilities": {"tools": {"listChanged": False}, "experimental": {"queryBackend": "json-memory"}}, "serverInfo": {"name": "kgdistiller", "version": __version__}, "instructions": "Read-only access to a source-backed personal knowledge graph. Resolve identities before assuming equivalence and retain evidence."})
+            backend = "federated-json-memory" if self.federated else "json-memory"
+            return _result(request_id, {"protocolVersion": self.protocol_version, "capabilities": {"tools": {"listChanged": False}, "experimental": {"queryBackend": backend}}, "serverInfo": {"name": "kgdistiller", "version": __version__}, "instructions": "Read-only access to a source-backed personal knowledge graph. Resolve identities before assuming equivalence and retain evidence."})
         if notification:
             return None
         if method == "ping":
@@ -304,13 +345,38 @@ class MCPServer:
         if not self.initialized:
             return _protocol_error(request_id, -32002, "Server not initialized")
         if method == "tools/list":
-            return _result(request_id, {"tools": TOOL_DEFINITIONS})
+            definitions = (
+                ([RECALL_TOOL_DEFINITION] if self.graph_dir is None else FEDERATED_TOOL_DEFINITIONS)
+                if self.federated
+                else TOOL_DEFINITIONS
+            )
+            return _result(request_id, {"tools": definitions})
         if method == "tools/call":
             params = message.get("params") or {}
             if not isinstance(params, dict):
                 return _protocol_error(request_id, -32602, "Invalid params")
             name = str(params.get("name", ""))
+            if self.federated and name == "kg_recall":
+                from .recall import RecallError
+
+                try:
+                    value = call_recall_tool(params.get("arguments"), home=self.home)
+                    return _result(request_id, _tool_result(value))
+                except RecallError as error:
+                    return _result(
+                        request_id, _tool_result(error.payload(), is_error=True)
+                    )
+                except Exception:
+                    failure = RecallError(
+                        "recall-tool-failed",
+                        "federated recall could not produce a closed result",
+                    )
+                    return _result(
+                        request_id, _tool_result(failure.payload(), is_error=True)
+                    )
             try:
+                if self.graph_dir is None:
+                    raise QueryError("legacy graph directory is unavailable")
                 value = call_tool(self.graph_dir, name, params.get("arguments"), alignments=self.alignments)
                 return _result(request_id, _tool_result(value))
             except RetrievalError as error:
@@ -323,15 +389,19 @@ class MCPServer:
 
 
 def serve_stdio(
-    graph_dir: Path,
+    graph_dir: Path | None,
     *,
     alignments: Path | None = None,
+    federated: bool = False,
+    home: Path | str | None = None,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
     source = input_stream or sys.stdin
     destination = output_stream or sys.stdout
-    server = MCPServer(graph_dir, alignments=alignments)
+    server = MCPServer(
+        graph_dir, alignments=alignments, federated=federated, home=home
+    )
     for raw_line, oversized in _bounded_input_lines(source):
         if oversized:
             destination.write(canonical_json(_protocol_error(None, -32700, "Parse error")) + "\n")

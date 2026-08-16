@@ -3139,6 +3139,58 @@ def parse_args() -> argparse.Namespace:
     source_diff.add_argument("file", type=Path)
     source_diff.add_argument("--from", dest="from_version")
     source_diff.add_argument("--to", dest="to_version")
+    recall_command = commands.add_parser("recall")
+    recall_commands = recall_command.add_subparsers(
+        dest="recall_command", required=True
+    )
+
+    def recall_vaults(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--vault", action="append", dest="vault_ids", default=[])
+
+    def recall_limit(command: argparse.ArgumentParser, default: int = 20) -> None:
+        command.add_argument("--limit", type=int, default=default)
+        command.add_argument("--include-stale", action="store_true")
+
+    def recall_graph(command: argparse.ArgumentParser) -> None:
+        command.add_argument(
+            "--direction", choices=("incoming", "outgoing", "both"), default="both"
+        )
+        command.add_argument("--relation", action="append", dest="edge_types", default=[])
+        command.add_argument("--depth", type=int, default=1, dest="max_depth")
+
+    recall_status_command = recall_commands.add_parser("status")
+    recall_vaults(recall_status_command)
+    recall_roots_command = recall_commands.add_parser("roots")
+    recall_vaults(recall_roots_command)
+    recall_limit(recall_roots_command, 20)
+    recall_children_command = recall_commands.add_parser("children")
+    recall_children_command.add_argument("handle")
+    recall_limit(recall_children_command, 20)
+    recall_resolve_command = recall_commands.add_parser("resolve")
+    recall_resolve_command.add_argument("query", nargs="+")
+    recall_vaults(recall_resolve_command)
+    recall_limit(recall_resolve_command, 20)
+    recall_search_command = recall_commands.add_parser("search")
+    recall_search_command.add_argument("query")
+    recall_vaults(recall_search_command)
+    recall_search_command.add_argument("--scope", action="append", dest="scopes", default=[])
+    recall_graph(recall_search_command)
+    recall_limit(recall_search_command, 20)
+    recall_get_command = recall_commands.add_parser("get")
+    recall_get_command.add_argument("handle")
+    recall_get_command.add_argument("--include-stale", action="store_true")
+    recall_expand_command = recall_commands.add_parser("expand")
+    recall_expand_command.add_argument("handle", nargs="+")
+    recall_graph(recall_expand_command)
+    recall_limit(recall_expand_command, 50)
+    recall_context_command = recall_commands.add_parser("context")
+    recall_context_command.add_argument("query", nargs="?")
+    recall_context_command.add_argument("--handle", action="append", dest="handles", default=[])
+    recall_vaults(recall_context_command)
+    recall_context_command.add_argument("--scope", action="append", dest="scopes", default=[])
+    recall_graph(recall_context_command)
+    recall_limit(recall_context_command, 20)
+    recall_context_command.add_argument("--budget", type=int, default=6000, dest="token_budget")
     knowledge_command = commands.add_parser("knowledge")
     knowledge_commands = knowledge_command.add_subparsers(
         dest="knowledge_command", required=True
@@ -3386,7 +3438,8 @@ def parse_args() -> argparse.Namespace:
     codex_doctor = codex_commands.add_parser("doctor")
     codex_doctor.add_argument("--codex-home", type=Path)
     codex_doctor.add_argument("--source-only", action="store_true")
-    commands.add_parser("mcp")
+    mcp_command = commands.add_parser("mcp")
+    mcp_command.add_argument("--federated", action="store_true")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
@@ -3505,6 +3558,62 @@ def main() -> int:
             )
             return 1
         print(pretty_json(result), end="")
+        return 0
+    if args.command == "recall":
+        from .recall import RecallError, execute_recall_request, make_recall_request
+
+        try:
+            operation = str(args.recall_command)
+            controls: dict[str, Any] = {}
+            if operation in {"status", "roots", "resolve", "search", "context"}:
+                controls["vault_ids"] = args.vault_ids
+            if operation == "resolve":
+                controls["queries"] = args.query
+            elif operation in {"search", "context"}:
+                controls["query"] = args.query
+            if operation in {"children", "get"}:
+                controls["handle"] = args.handle
+            elif operation == "expand":
+                controls["handles"] = args.handle
+            elif operation == "context":
+                controls["handles"] = args.handles
+            if operation in {"search", "context"}:
+                controls["scopes"] = args.scopes
+            if operation in {"search", "expand", "context"}:
+                controls.update(
+                    {
+                        "direction": args.direction,
+                        "edge_types": args.edge_types,
+                        "max_depth": args.max_depth,
+                    }
+                )
+            if operation in {"roots", "children", "resolve", "search", "expand", "context"}:
+                controls["limit"] = args.limit
+                controls["include_stale"] = args.include_stale
+            elif operation == "get":
+                controls["include_stale"] = args.include_stale
+            if operation == "context":
+                controls["token_budget"] = args.token_budget
+            result = execute_recall_request(
+                make_recall_request(operation, **controls)
+            )
+        except RecallError as error:
+            print(pretty_json(error.payload()), end="", file=sys.stderr)
+            return 1
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError, RecursionError):
+            failure = RecallError(
+                "recall-command-failed",
+                "recall command could not produce a closed result",
+                operation=str(args.recall_command),
+            )
+            print(pretty_json(failure.payload()), end="", file=sys.stderr)
+            return 1
+        print(pretty_json(result), end="")
+        return 0
+    if args.command == "mcp" and args.federated:
+        from kgdistiller.mcp import serve_stdio
+
+        serve_stdio(None, federated=True)
         return 0
     if args.command == "knowledge":
         if args.knowledge_command == "ingest":

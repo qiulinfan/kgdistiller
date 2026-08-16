@@ -54,6 +54,9 @@ CONTRACT_SCHEMAS = {
         "qlkg-vault-ingest-report-v1",
         "qlkg-vault-ingest-error-v1",
         "qlkg-vault-ingest-journal-v1",
+        "qlkg-recall-request-v1",
+        "qlkg-recall-report-v1",
+        "qlkg-recall-error-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
@@ -255,6 +258,253 @@ def _validate_vault_ingest_paths(payload: dict[str, Any]) -> None:
         _validate_portable_path(value, field=field)
 
 
+def _validate_recall_paths(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-recall-report-v1":
+        return
+    result = payload.get("result") or {}
+    for index, node in enumerate(result.get("nodes") or []):
+        authority = node.get("authority")
+        if authority is not None:
+            _validate_portable_path(authority, field=f"result.nodes.{index}.authority")
+    for index, evidence in enumerate(result.get("evidence") or []):
+        _validate_portable_path(
+            evidence.get("source_path"),
+            field=f"result.evidence.{index}.source_path",
+        )
+
+
+def _validate_recall_request(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-recall-request-v1":
+        return
+    texts = list(payload.get("queries") or [])
+    if payload.get("query") is not None:
+        texts.append(payload["query"])
+    if any(not isinstance(text, str) or not text.strip() for text in texts):
+        raise ContractError("recall query text must contain a non-whitespace character")
+
+
+def _validate_recall_report(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-recall-report-v1":
+        return
+    result = payload.get("result") or {}
+    vault_rows = payload.get("vaults") or []
+    incomplete_rows = payload.get("incomplete_vaults") or []
+    vault_ids = [str(row.get("vault_id")) for row in vault_rows]
+    incomplete_ids = [str(row.get("vault_id")) for row in incomplete_rows]
+    if len(vault_ids) != len(set(vault_ids)) or len(incomplete_ids) != len(set(incomplete_ids)):
+        raise ContractError("recall Vault identities must be unique")
+    if set(vault_ids) & set(incomplete_ids):
+        raise ContractError("recall Vaults cannot be both complete and incomplete")
+    if (payload.get("status") == "partial") != bool(incomplete_rows):
+        raise ContractError("recall status does not match incomplete Vaults")
+    expected_generation = sha256_json(
+        {
+            "registry_generation": payload.get("registry_generation"),
+            "vaults": [
+                {"vault_id": row.get("vault_id"), "generation": row.get("generation")}
+                for row in vault_rows
+            ],
+            "incomplete_vaults": [
+                {"vault_id": row.get("vault_id"), "code": row.get("code")}
+                for row in incomplete_rows
+            ],
+        }
+    )
+    if payload.get("generation") != expected_generation:
+        raise ContractError("recall generation does not match its Vault projection")
+    if result.get("omissions") and not result.get("truncated"):
+        raise ContractError("recall omissions require a truncated result")
+
+    vault_id_set = set(vault_ids)
+    for resolution in result.get("resolutions") or []:
+        status = resolution.get("status")
+        match_kind = resolution.get("match_kind")
+        matches = resolution.get("matches") or []
+        overflow = bool(resolution.get("overflow"))
+        if any(str(match).partition(":")[0] not in vault_id_set for match in matches):
+            raise ContractError("recall resolution references an unavailable Vault")
+        if status == "missing":
+            valid = not matches and match_kind is None and not overflow
+        elif status == "alias":
+            valid = len(matches) == 1 and match_kind == "alias" and not overflow
+        elif status == "exact":
+            valid = (
+                len(matches) == 1
+                and match_kind in {"id", "label"}
+                and not overflow
+            )
+        else:
+            valid = (
+                (len(matches) >= 2 or overflow)
+                and (
+                    match_kind in {"id", "label", "alias", "mixed"}
+                    or (not matches and overflow and match_kind is None)
+                )
+            )
+        if not valid:
+            raise ContractError("recall resolution fields are inconsistent")
+
+    lane_order = {"identity": 0, "taxonomy": 1, "lexical": 2, "graph": 3}
+    ranks: dict[str, set[int]] = {lane: set() for lane in lane_order}
+    ranked_rows: dict[str, list[tuple[str, float, int]]] = {
+        lane: [] for lane in lane_order
+    }
+    for node in result.get("nodes") or []:
+        vault_id = str(node.get("vault_id"))
+        handle = str(node.get("handle"))
+        if handle != f"{vault_id}:{node.get('node_id')}":
+            raise ContractError("recall node handle does not match its Vault and node identity")
+        if vault_id not in vault_id_set:
+            raise ContractError("recall node references an unavailable Vault")
+        if any(str(parent).partition(":")[0] != vault_id for parent in node.get("parents") or []):
+            raise ContractError("recall node parents must remain within one Vault")
+        rows = node.get("lane_evidence") or []
+        lanes = [row.get("lane") for row in rows]
+        if len(lanes) != len(set(lanes)) or lanes != sorted(
+            lanes, key=lambda lane: lane_order.get(str(lane), 99)
+        ):
+            raise ContractError("recall node lanes must be unique and canonically ordered")
+        expected_score = round(sum(float(row.get("score", 0.0)) for row in rows), 12)
+        if rows and abs(float(node.get("score", -1.0)) - expected_score) > 1e-9:
+            raise ContractError("recall node score must equal its lane score sum")
+        if not rows and node.get("score") is not None:
+            raise ContractError("recall node without lanes must have a null score")
+        for row in rows:
+            lane = str(row.get("lane"))
+            rank = int(row.get("rank", 0))
+            if rank in ranks[lane]:
+                raise ContractError("recall lane ranks must be unique in one report")
+            ranks[lane].add(rank)
+            ranked_rows[lane].append((handle, float(row.get("score", 0.0)), rank))
+            reason = row.get("reason")
+            match_kind = row.get("match_kind")
+            fields = row.get("matched_fields") or []
+            terms = row.get("matched_terms") or []
+            scope = row.get("scope")
+            seed = row.get("seed")
+            path = row.get("path") or []
+            if scope is not None and str(scope).partition(":")[0] != vault_id:
+                raise ContractError("recall taxonomy scope crosses a Vault boundary")
+            if seed is not None and str(seed).partition(":")[0] != vault_id:
+                raise ContractError("recall graph seed crosses a Vault boundary")
+            if any(
+                str(step.get(endpoint)).partition(":")[0] != vault_id
+                for step in path
+                for endpoint in ("source", "target")
+            ):
+                raise ContractError("recall lane path crosses a Vault boundary")
+            if lane == "identity":
+                valid = (
+                    (reason, match_kind) in {
+                        ("exact-id", "id"),
+                        ("exact-label", "label"),
+                        ("reviewed-alias", "alias"),
+                    }
+                    and not fields and not terms and scope is None and seed is None and not path
+                )
+            elif lane == "taxonomy":
+                valid = (
+                    reason == "scope-member" and match_kind is None
+                    and not fields and not terms and scope is not None and seed is None
+                    and (
+                        (not path and scope == handle)
+                        or (
+                            bool(path)
+                            and path[0].get("source") == scope
+                            and path[-1].get("target") == handle
+                            and all(step.get("relation") == "contains" for step in path)
+                            and all(
+                                previous.get("target") == following.get("source")
+                                for previous, following in zip(path, path[1:])
+                            )
+                        )
+                    )
+                )
+            elif lane == "lexical":
+                valid = (
+                    reason in {"token-overlap", "phrase-match"}
+                    and match_kind is None and bool(fields) and bool(terms)
+                    and scope is None and seed is None and not path
+                )
+            else:
+                cursor = seed
+                connected = cursor is not None
+                for step in path:
+                    if step.get("source") == cursor:
+                        cursor = step.get("target")
+                    elif step.get("target") == cursor:
+                        cursor = step.get("source")
+                    else:
+                        connected = False
+                        break
+                valid = (
+                    reason in {"trusted-seed", "trusted-edge"}
+                    and match_kind is None and not fields and not terms
+                    and scope is None and seed is not None
+                    and ((reason == "trusted-seed" and not path) or (reason == "trusted-edge" and bool(path)))
+                    and connected
+                    and cursor == handle
+                )
+            if not valid:
+                raise ContractError("recall lane evidence fields are inconsistent")
+
+    for lane, rows in ranked_rows.items():
+        ordered = sorted(rows, key=lambda item: (-item[1], item[0]))
+        if any(actual != expected for expected, (_, _, actual) in enumerate(ordered, 1)):
+            raise ContractError(
+                f"recall {lane} lane ranks must follow deterministic fusion order"
+            )
+
+    for edge in result.get("edges") or []:
+        source_vault = str(edge.get("source")).partition(":")[0]
+        target_vault = str(edge.get("target")).partition(":")[0]
+        if source_vault != target_vault or source_vault not in vault_id_set:
+            raise ContractError("recall edge crosses a Vault boundary")
+
+    for evidence in result.get("evidence") or []:
+        kind = evidence.get("kind")
+        handle = evidence.get("handle")
+        source = evidence.get("source")
+        relation = evidence.get("relation")
+        target = evidence.get("target")
+        if kind == "concept":
+            if source is not None or relation is not None or target is not None:
+                raise ContractError("concept evidence must not contain relation endpoints")
+        elif source is None or relation is None or target is None or handle != source:
+            raise ContractError("relation evidence must bind its source handle and endpoints")
+        handle_vault = str(handle).partition(":")[0]
+        if handle_vault not in vault_id_set:
+            raise ContractError("recall evidence references an unavailable Vault")
+        if source is not None and (
+            str(source).partition(":")[0] != handle_vault
+            or str(target).partition(":")[0] != handle_vault
+        ):
+            raise ContractError("recall evidence crosses a Vault boundary")
+        start_line = int(evidence.get("start_line", 0))
+        end_line = int(evidence.get("end_line", 0))
+        start_column = evidence.get("start_column")
+        end_column = evidence.get("end_column")
+        if end_line < start_line or ((start_column is None) != (end_column is None)):
+            raise ContractError("recall evidence coordinates are inconsistent")
+        if (
+            start_column is not None
+            and start_line == end_line
+            and int(end_column) <= int(start_column)
+        ):
+            raise ContractError("recall evidence columns are reversed")
+        if evidence.get("version_id") is not None and not str(evidence["version_id"]).startswith(
+            f"doc:{evidence.get('document_id')}:"
+        ):
+            raise ContractError("recall evidence version does not match its document")
+        excerpt = str(evidence.get("excerpt", ""))
+        if evidence.get("excerpt_sha256") != hashlib.sha256(excerpt.encode("utf-8")).hexdigest():
+            raise ContractError("recall evidence excerpt digest does not match")
+
+    estimated_bytes = len(canonical_json(result).encode("utf-8"))
+    if int(result.get("estimated_tokens", -1)) != estimated_bytes:
+        raise ContractError("recall estimated_tokens must equal canonical result bytes")
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -272,6 +522,9 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
     _validate_document_record(payload)
     _validate_search_execution(payload)
     _validate_vault_ingest_paths(payload)
+    _validate_recall_request(payload)
+    _validate_recall_paths(payload)
+    _validate_recall_report(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

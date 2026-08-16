@@ -12,12 +12,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.mcp import (  # noqa: E402
+    FEDERATED_TOOL_DEFINITIONS,
     MAX_TOOL_RESPONSE_BYTES,
     MCPServer,
+    RECALL_TOOL_DEFINITION,
     TOOL_DEFINITIONS,
     call_tool,
 )
+from kgdistiller.contracts import canonical_json  # noqa: E402
+from kgdistiller.recall import make_recall_request  # noqa: E402
 from kgdistiller.query import QueryError, query_status  # noqa: E402
+import tests.test_federation as federation_fixture  # noqa: E402
 from tests.test_query import candidate_snapshot_with, fixture_nodes, write_fixture_graph  # noqa: E402
 
 
@@ -180,6 +185,108 @@ class MCPTest(unittest.TestCase):
         self.assertEqual("qlkg-agent-proposal-v2", proposal["schema"])
         for report in (alignment, comparison, proposal):
             self.assertEqual(status["alignment_sha256"], report["alignment_sha256"])
+
+
+class FederatedMCPTest(unittest.TestCase):
+    def setUp(self) -> None:
+        federation_fixture.FederationFixture.setUp(self)
+
+    def tearDown(self) -> None:
+        federation_fixture.FederationFixture.tearDown(self)
+
+    @staticmethod
+    def _initialize(server: MCPServer) -> None:
+        server.handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25"},
+            }
+        )
+        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def test_federated_discovery_is_closed_and_only_advertises_callable_tools(self) -> None:
+        self.assertEqual("kg_recall", RECALL_TOOL_DEFINITION["name"])
+        self.assertIn("outputSchema", RECALL_TOOL_DEFINITION)
+        self.assertEqual(
+            [*TOOL_DEFINITIONS, RECALL_TOOL_DEFINITION],
+            FEDERATED_TOOL_DEFINITIONS,
+        )
+        recall_only = MCPServer(None, federated=True, home=self.home)
+        self._initialize(recall_only)
+        listed = recall_only.handle(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+        )
+        self.assertEqual(
+            ["kg_recall"],
+            [row["name"] for row in listed["result"]["tools"]],
+        )
+
+        combined = MCPServer(
+            self.analysis / ".kgdistiller/graph",
+            federated=True,
+            home=self.home,
+        )
+        self._initialize(combined)
+        combined_list = combined.handle(
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/list"}
+        )
+        self.assertEqual(
+            [row["name"] for row in FEDERATED_TOOL_DEFINITIONS],
+            [row["name"] for row in combined_list["result"]["tools"]],
+        )
+
+    def test_recall_tool_captures_once_without_loading_a_legacy_graph(self) -> None:
+        server = MCPServer(None, federated=True, home=self.home)
+        self._initialize(server)
+        request = make_recall_request("status")
+        import kgdistiller.recall as recall_module
+
+        with patch(
+            "kgdistiller.mcp.load_graph_view",
+            side_effect=AssertionError("legacy graph loaded"),
+        ), patch(
+            "kgdistiller.recall.capture_federation",
+            wraps=recall_module.capture_federation,
+        ) as capture:
+            response = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "kg_recall", "arguments": request},
+                }
+            )
+        self.assertEqual(1, capture.call_count)
+        result = response["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual("qlkg-recall-report-v1", result["structuredContent"]["schema"])
+        self.assertEqual(
+            canonical_json(result["structuredContent"]), result["content"][0]["text"]
+        )
+
+    def test_invalid_recall_arguments_fail_closed_before_capture(self) -> None:
+        server = MCPServer(None, federated=True, home=self.home)
+        self._initialize(server)
+        request = make_recall_request("status")
+        request["unknown"] = True
+        with patch("kgdistiller.recall.capture_federation") as capture:
+            response = server.handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {"name": "kg_recall", "arguments": request},
+                }
+            )
+        capture.assert_not_called()
+        result = response["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual("qlkg-recall-error-v1", result["structuredContent"]["schema"])
+        self.assertEqual(
+            canonical_json(result["structuredContent"]), result["content"][0]["text"]
+        )
 
 
 if __name__ == "__main__":

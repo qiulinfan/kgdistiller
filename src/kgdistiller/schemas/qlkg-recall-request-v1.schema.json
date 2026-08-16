@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-recall-request-v1.schema.json",
+  "title": "kgdistiller federated recall request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "operation", "vault_ids", "queries", "query", "handle",
+    "handles", "scopes", "direction", "edge_types", "max_depth", "limit",
+    "token_budget", "include_stale"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-recall-request-v1"},
+    "operation": {"enum": ["status", "roots", "children", "resolve", "search", "get", "expand", "context"]},
+    "vault_ids": {
+      "type": "array", "maxItems": 256, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/vault_id"}
+    },
+    "queries": {
+      "type": "array", "maxItems": 512,
+      "items": {"$ref": "#/$defs/query_text"}
+    },
+    "query": {"anyOf": [{"$ref": "#/$defs/query_text"}, {"type": "null"}]},
+    "handle": {"anyOf": [{"$ref": "#/$defs/handle"}, {"type": "null"}]},
+    "handles": {
+      "type": "array", "maxItems": 128, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/handle"}
+    },
+    "scopes": {
+      "type": "array", "maxItems": 128, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/handle"}
+    },
+    "direction": {"enum": ["incoming", "outgoing", "both"]},
+    "edge_types": {
+      "type": "array", "maxItems": 16, "uniqueItems": true,
+      "items": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]}
+    },
+    "max_depth": {"type": "integer", "minimum": 0, "maximum": 8},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "token_budget": {"type": "integer", "minimum": 1, "maximum": 200000},
+    "include_stale": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"operation": {"const": "status"}}},
+      "then": {"properties": {"queries": {"maxItems": 0}, "query": {"type": "null"}, "handle": {"type": "null"}, "handles": {"maxItems": 0}, "scopes": {"maxItems": 0}, "direction": {"const": "both"}, "edge_types": {"maxItems": 0}, "max_depth": {"const": 1}, "limit": {"const": 20}, "token_budget": {"const": 6000}, "include_stale": {"const": false}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "roots"}}},
+      "then": {"properties": {"queries": {"maxItems": 0}, "query": {"type": "null"}, "handle": {"type": "null"}, "handles": {"maxItems": 0}, "scopes": {"maxItems": 0}, "direction": {"const": "both"}, "edge_types": {"maxItems": 0}, "max_depth": {"const": 1}, "token_budget": {"const": 6000}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "children"}}},
+      "then": {"properties": {"vault_ids": {"maxItems": 0}, "queries": {"maxItems": 0}, "query": {"type": "null"}, "handle": {"$ref": "#/$defs/handle"}, "handles": {"maxItems": 0}, "scopes": {"maxItems": 0}, "direction": {"const": "both"}, "edge_types": {"maxItems": 0}, "max_depth": {"const": 1}, "token_budget": {"const": 6000}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "resolve"}}},
+      "then": {"properties": {"queries": {"minItems": 1}, "query": {"type": "null"}, "handle": {"type": "null"}, "handles": {"maxItems": 0}, "scopes": {"maxItems": 0}, "direction": {"const": "both"}, "edge_types": {"maxItems": 0}, "max_depth": {"const": 1}, "token_budget": {"const": 6000}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "search"}}},
+      "then": {"properties": {"queries": {"maxItems": 0}, "query": {"type": "string", "minLength": 1}, "handle": {"type": "null"}, "handles": {"maxItems": 0}, "token_budget": {"const": 6000}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "get"}}},
+      "then": {"properties": {"vault_ids": {"maxItems": 0}, "queries": {"maxItems": 0}, "query": {"type": "null"}, "handle": {"$ref": "#/$defs/handle"}, "handles": {"maxItems": 0}, "scopes": {"maxItems": 0}, "direction": {"const": "both"}, "edge_types": {"maxItems": 0}, "max_depth": {"const": 1}, "limit": {"const": 20}, "token_budget": {"const": 6000}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "expand"}}},
+      "then": {"properties": {"vault_ids": {"maxItems": 0}, "queries": {"maxItems": 0}, "query": {"type": "null"}, "handle": {"type": "null"}, "handles": {"minItems": 1}, "scopes": {"maxItems": 0}, "token_budget": {"const": 6000}}}
+    },
+    {
+      "if": {"properties": {"operation": {"const": "context"}}},
+      "then": {
+        "properties": {"queries": {"maxItems": 0}, "handle": {"type": "null"}},
+        "oneOf": [
+          {"properties": {"query": {"type": "string", "minLength": 1}, "handles": {"maxItems": 0}}},
+          {"properties": {"query": {"type": "null"}, "handles": {"minItems": 1}, "scopes": {"maxItems": 0}, "direction": {"const": "both"}, "max_depth": {"const": 1}}}
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "query_text": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S"},
+    "vault_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "node_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "handle": {"type": "string", "minLength": 3, "maxLength": 321, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$"}
+  }
+}

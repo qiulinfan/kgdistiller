@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-recall-error-v1.schema.json",
+  "title": "kgdistiller federated recall error v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "error"],
+  "properties": {
+    "schema": {"const": "qlkg-recall-error-v1"},
+    "error": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "message", "operation", "vault_id", "generation"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "operation": {"anyOf": [{"enum": ["status", "roots", "children", "resolve", "search", "get", "expand", "context"]}, {"type": "null"}]},
+        "vault_id": {"anyOf": [{"$ref": "#/$defs/vault_id"}, {"type": "null"}]},
+        "generation": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    }
+  },
+  "$defs": {
+    "vault_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -1090,31 +1090,111 @@ def _manifest_artifact_names(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
-def _load_live_state_locked(vault: Vault) -> tuple[GraphState, dict[str, Any], str]:
+def _load_live_state_locked(
+    vault: Vault,
+    *,
+    maximum_total_bytes: int | None = None,
+    maximum_counts: Mapping[str, int] | None = None,
+    usage: dict[str, Any] | None = None,
+) -> tuple[GraphState, dict[str, Any], str]:
+    total_limit = (
+        MAX_NATIVE_GRAPH_BYTES
+        if maximum_total_bytes is None
+        else min(MAX_NATIVE_GRAPH_BYTES, maximum_total_bytes)
+    )
+    budget_code = (
+        "native-graph-too-large"
+        if maximum_total_bytes is None
+        else "federation-graph-budget-exceeded"
+    )
+    budget_message = (
+        f"native graph exceeds {MAX_NATIVE_GRAPH_BYTES} bytes"
+        if maximum_total_bytes is None
+        else "native graph exceeds the remaining federation graph budget"
+    )
+    if total_limit <= 0:
+        raise NativeCompilerError(
+            budget_code,
+            budget_message,
+        )
     try:
         before_bytes = read_vault_relative_regular(
             vault,
             ".kgdistiller/graph/manifest.json",
-            maximum=_native_graph_artifact_limit("manifest.json"),
+            maximum=min(
+                _native_graph_artifact_limit("manifest.json"), total_limit
+            ),
         )
         manifest = _strict_json_bytes(before_bytes, kind="native-graph-manifest")
+        if maximum_counts is not None:
+            counts = manifest.get("counts")
+            if not isinstance(counts, dict):
+                raise NativeCompilerError(
+                    "invalid-native-graph-manifest",
+                    "native graph manifest counts are invalid",
+                )
+            for name in ("nodes", "edges", "references"):
+                value = counts.get(name)
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or value < 0
+                ):
+                    raise NativeCompilerError(
+                        "invalid-native-graph-manifest",
+                        "native graph manifest counts are invalid",
+                    )
+                if value > maximum_counts.get(name, value):
+                    raise NativeCompilerError(
+                        "federation-graph-budget-exceeded",
+                        "native graph exceeds the remaining federation count budget",
+                    )
         _native_reader_hook("after-manifest", "manifest.json")
         names = _manifest_artifact_names(manifest)
+        shard_inventory = {
+            str(row["path"]): row
+            for row in ((manifest.get("entry_store") or {}).get("shards") or [])
+        }
         captured: dict[str, bytes] = {"manifest.json": before_bytes}
         total = len(before_bytes)
         for name in names:
             if name == "manifest.json":
                 continue
+            remaining = total_limit - total
+            if remaining <= 0:
+                raise NativeCompilerError(
+                    budget_code,
+                    budget_message,
+                )
+            role_limit = _native_graph_artifact_limit(name)
+            declared = shard_inventory.get(name)
+            if declared is not None:
+                declared_bytes = declared.get("bytes")
+                if (
+                    isinstance(declared_bytes, bool)
+                    or not isinstance(declared_bytes, int)
+                    or declared_bytes < 0
+                ):
+                    raise NativeCompilerError(
+                        "invalid-native-graph-manifest",
+                        "entry shard byte inventory is invalid",
+                    )
+                role_limit = min(role_limit, declared_bytes)
             data = read_vault_relative_regular(
                 vault,
                 f".kgdistiller/graph/{name}",
-                maximum=_native_graph_artifact_limit(name),
+                maximum=min(role_limit, remaining),
             )
-            total += len(data)
-            if total > MAX_NATIVE_GRAPH_BYTES:
+            if declared is not None and len(data) != int(declared["bytes"]):
                 raise NativeCompilerError(
-                    "native-graph-too-large",
-                    f"native graph exceeds {MAX_NATIVE_GRAPH_BYTES} bytes",
+                    "invalid-native-graph-manifest",
+                    "entry shard byte inventory does not match its artifact",
+                )
+            total += len(data)
+            if total > total_limit:
+                raise NativeCompilerError(
+                    budget_code,
+                    budget_message,
                 )
             captured[name] = data
             _native_reader_hook("after-artifact", name)
@@ -1156,6 +1236,18 @@ def _load_live_state_locked(vault: Vault) -> tuple[GraphState, dict[str, Any], s
     if sha256_text(json_text(registry)) != state.manifest.get("registry_sha256"):
         raise NativeCompilerError(
             "invalid-native-graph", "native sources registry hash does not match manifest"
+        )
+    if usage is not None:
+        usage.clear()
+        usage.update(
+            {
+                "bytes": total,
+                "nodes": int(manifest.get("counts", {}).get("nodes", 0)),
+                "edges": int(manifest.get("counts", {}).get("edges", 0)),
+                "references": int(
+                    manifest.get("counts", {}).get("references", 0)
+                ),
+            }
         )
     rebuilt = make_artifacts(
         state,
