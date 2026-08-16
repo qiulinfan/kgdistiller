@@ -19,7 +19,7 @@ import kgdistiller.contracts as contracts_module
 import kgdistiller.cli as cli_module
 from kgdistiller.contracts import ContractError, canonical_json, validate_contract
 from kgdistiller.native_compiler import sync_knowledge
-from kgdistiller.recall import execute_recall_request, make_recall_request
+from kgdistiller.recall import execute_recall_request, make_recall_request, recall_status
 from kgdistiller.source_archive import capture_source, load_source_ledger
 from kgdistiller.vault_ingest import CAPABILITY, REQUEST_SCHEMA, apply_vault_ingest
 from kgdistiller.vault_store import snapshot_vault_store, verify_vault_store
@@ -706,7 +706,12 @@ class VaultStoreTests(unittest.TestCase):
         captured = capture_source(source, home=self.home)
         version_id = captured["result"]["current_version_id"]
         query = self.root / "query.json"
-        query.write_bytes(b'{"schema":"test-query-report"}\n')
+        query.write_bytes(
+            canonical_json(
+                recall_status(home=self.home, vault_ids=("portable",))
+            ).encode("utf-8")
+            + b"\n"
+        )
         registry = load_registry(self.home, validate_vaults=False)
         vault = load_vault(self.vault, expected_id="portable")
         ledger = load_source_ledger(vault)

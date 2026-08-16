@@ -130,7 +130,7 @@ class VaultIngestTests(unittest.TestCase):
         )
         sync_knowledge(home=self.home)
         self.query = self.root / "query.json"
-        self._refresh_query_report()
+        VaultIngestTests._refresh_query_report(self)
 
     def _refresh_query_report(self) -> None:
         self.query.write_bytes(
@@ -152,7 +152,7 @@ class VaultIngestTests(unittest.TestCase):
         refresh_query: bool = True,
     ) -> dict:
         if refresh_query:
-            self._refresh_query_report()
+            VaultIngestTests._refresh_query_report(self)
         registry = load_registry(self.home, validate_vaults=False)
         vault = load_vault(self.vault_root, expected_id="test")
         ledger = load_source_ledger(vault)
