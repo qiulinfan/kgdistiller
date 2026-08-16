@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-frontend-bundle-v1.schema.json",
+  "title": "kgdistiller packaged frontend bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "frontend_version", "api_version", "entry", "index", "files", "bundle_sha256"],
+  "properties": {
+    "schema": {"const": "qlkg-frontend-bundle-v1"},
+    "frontend_version": {"const": 1},
+    "api_version": {"const": 1},
+    "entry": {"$ref": "#/$defs/path"},
+    "index": {"const": "index.html"},
+    "files": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/file"}
+    },
+    "bundle_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "media_type", "bytes", "sha256", "cache_policy"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "media_type": {"enum": ["text/html; charset=utf-8", "text/javascript; charset=utf-8", "text/css; charset=utf-8"]},
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 4194304},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "cache_policy": {"enum": ["no-store", "immutable"]}
+      }
+    }
+  }
+}

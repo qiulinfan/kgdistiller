@@ -1,0 +1,52 @@
+.app-shell { min-height: 100vh; }
+.topbar { position: sticky; inset-block-start: 0; z-index: 20; display: grid; grid-template-columns: auto minmax(12rem, 38rem) auto auto; gap: .8rem; align-items: center; min-height: 64px; padding: .65rem clamp(.8rem, 2vw, 1.5rem); background: color-mix(in srgb, var(--surface) 94%, transparent); border-block-end: 1px solid var(--line); backdrop-filter: blur(14px); }
+.brand { color: var(--ink); font-weight: 800; letter-spacing: -.04em; text-decoration: none; }
+.global-search input { width: 100%; padding: .68rem .85rem; }
+.theme-select { padding: .55rem .7rem; }
+.top-generation { color: var(--muted); font: .75rem var(--mono); }
+.workspace { display: grid; grid-template-columns: 14rem minmax(0, 1fr) 16rem; gap: 1px; min-height: calc(100vh - 64px); background: var(--line); }
+.side-nav, .context-panel, .main-panel { background: var(--bg); }
+.side-nav, .context-panel { padding: 1.25rem; }
+.side-nav { position: sticky; inset-block-start: 64px; align-self: start; min-height: calc(100vh - 64px); }
+.drawer-toggle { display: none; padding: .6rem .75rem; }
+.nav-list { display: grid; gap: .2rem; margin: 0 0 1.5rem; padding: 0; list-style: none; }
+.nav-link { display: block; padding: .65rem .75rem; border-radius: 10px; color: var(--ink); text-decoration: none; }
+.nav-link:hover, .nav-link.active { background: var(--accent-soft); color: var(--accent-strong); }
+.selector-label { display: block; margin-block-end: .4rem; color: var(--muted); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.vault-selector { width: 100%; padding: .6rem; }
+.context-panel { position: sticky; inset-block-start: 64px; align-self: start; min-height: calc(100vh - 64px); }
+.health-row { overflow-wrap: anywhere; }
+.read-only-note { margin-block-start: 2rem; color: var(--muted); font-size: .84rem; line-height: 1.5; }
+.main-panel { min-width: 0; padding: clamp(1rem, 3vw, 3rem); }
+.view { width: min(76rem, 100%); margin-inline: auto; }
+.view-header { margin-block-end: 1.5rem; }
+.eyebrow { margin-block-end: .5rem; color: var(--accent); font-size: .77rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.lede { max-width: 48rem; color: var(--muted); font-size: 1.12rem; line-height: 1.6; }
+.loading, .refreshing { padding: .8rem 1rem; border-radius: 10px; background: var(--accent-soft); color: var(--accent-strong); }
+
+@media (max-width: 1024px) {
+  .workspace { position: relative; grid-template-columns: minmax(0, 1fr); }
+  .side-nav { z-index: 15; min-height: auto; padding-block: .65rem; }
+  .drawer-toggle { display: inline-flex; }
+  .nav-drawer-content { display: none; position: absolute; inset: 100% auto auto 1rem; width: min(20rem, calc(100vw - 2rem)); padding: 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .side-nav[data-open="true"] .nav-drawer-content { display: block; }
+  .main-panel, .context-panel { grid-column: 1; }
+  .context-panel { position: static; min-height: auto; display: flex; gap: 1rem; align-items: center; }
+  .read-only-note { margin: 0 0 0 auto; max-width: 28rem; }
+}
+
+@media (max-width: 700px) {
+  .topbar { position: static; grid-template-columns: 1fr auto; }
+  .global-search { grid-column: 1 / -1; grid-row: 2; }
+  .top-generation { display: none; }
+  .workspace { display: block; }
+  .side-nav { position: static; min-height: auto; padding-block: .65rem; border-block-end: 1px solid var(--line); }
+  .drawer-toggle { display: none; }
+  .nav-drawer-content, .side-nav[data-open="true"] .nav-drawer-content { display: block; position: static; width: auto; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+  .nav-list { display: flex; gap: .25rem; overflow-x: auto; margin-block-end: .6rem; }
+  .nav-link { white-space: nowrap; }
+  .selector-label { position: absolute; width: 1px; height: 1px; clip: rect(0 0 0 0); overflow: hidden; }
+  .main-panel { padding: 1.1rem .85rem 2rem; }
+  .context-panel { display: block; border-block-start: 1px solid var(--line); }
+  .read-only-note { margin: 1rem 0 0; }
+}

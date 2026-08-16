@@ -3099,6 +3099,15 @@ def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    def serve_port(value: str) -> int:
+        try:
+            port = int(value, 10)
+        except ValueError:
+            raise argparse.ArgumentTypeError("port must be an integer from 0 to 65535") from None
+        if not 0 <= port <= 65535:
+            raise argparse.ArgumentTypeError("port must be an integer from 0 to 65535")
+        return port
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--registry", default="knowledge/sources.json")
@@ -3447,9 +3456,19 @@ def parse_args() -> argparse.Namespace:
     mcp_command.add_argument("--federated", action="store_true")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
-    serve_command.add_argument("--port", type=int, default=8765)
+    serve_command.add_argument("--port", type=serve_port, default=8765)
     serve_command.add_argument("--no-open", action="store_true")
-    serve_command.add_argument("--federated", action="store_true")
+    serve_mode = serve_command.add_mutually_exclusive_group()
+    serve_mode.add_argument(
+        "--federated",
+        action="store_true",
+        help="serve the versioned federated workspace (the default)",
+    )
+    serve_mode.add_argument(
+        "--legacy",
+        action="store_true",
+        help="serve the legacy unversioned graph viewer explicitly",
+    )
     args = parser.parse_args()
     if (
         args.command == "agent"
@@ -3633,12 +3652,18 @@ def main() -> int:
 
         serve_stdio(None, federated=True)
         return 0
-    if args.command == "serve" and args.federated:
+    if args.command == "serve" and not args.legacy:
         from .api import ApiError, serve_api
+        from .frontend_assets import FrontendAssetError, PackagedStaticAssetProvider
 
         try:
-            serve_api(host=args.host, port=args.port)
-        except (OSError, UnicodeError, ValueError, ApiError):
+            serve_api(
+                host=args.host,
+                port=args.port,
+                static_assets=PackagedStaticAssetProvider(),
+                open_browser=not args.no_open,
+            )
+        except (OSError, UnicodeError, ValueError, ApiError, FrontendAssetError):
             failure = ApiError(
                 500,
                 "api-server-failed",

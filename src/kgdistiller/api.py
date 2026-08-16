@@ -1590,6 +1590,7 @@ def create_api_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     service: ApiService | None = None,
+    static_assets: StaticAssetProvider | None = None,
 ) -> ThreadingHTTPServer:
     """Create the versioned API server without starting its event loop."""
 
@@ -1601,7 +1602,9 @@ def create_api_server(
     if not loopback:
         raise ValueError("versioned API host must be loopback")
     allowed_hostnames = _allowed_hostnames(host)
-    api_service = service or ApiService(home=home)
+    if service is not None and static_assets is not None:
+        raise ValueError("static assets must be configured on the supplied API service")
+    api_service = service or ApiService(home=home, static_assets=static_assets)
     class BoundedThreadingHTTPServer(ThreadingHTTPServer):
         request_queue_size = MAX_HTTP_LISTEN_BACKLOG
 
@@ -1664,14 +1667,20 @@ def create_api_server(
 
         def _send(self, response: ApiHttpResponse) -> None:
             self.send_response(response.status)
+            present = {key.casefold() for key in response.headers}
             for key, value in response.headers.items():
                 self.send_header(key, value)
             self.send_header("Content-Length", str(len(response.body)))
-            self.send_header("Cache-Control", "no-store")
+            if "cache-control" not in present:
+                self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+            if "content-security-policy" not in present:
+                self.send_header(
+                    "Content-Security-Policy",
+                    "default-src 'none'; frame-ancestors 'none'",
+                )
             self.end_headers()
             if self.command != "HEAD":
                 try:
@@ -1775,13 +1784,90 @@ def create_api_server(
                     )
                 )
                 return
-            response = api_service.dispatch(
-                self.command,
-                self.path,
-                headers=list(self.headers.items()),
-                body=body,
-            )
+            response = self._static_response(body)
+            if response is None:
+                response = api_service.dispatch(
+                    self.command,
+                    self.path,
+                    headers=list(self.headers.items()),
+                    body=body,
+                )
             self._send(response)
+
+        def _static_response(self, body: bytes) -> ApiHttpResponse | None:
+            provider = api_service.static_assets
+            if (
+                provider is None
+                or self.path == "/api"
+                or self.path.startswith("/api/")
+            ):
+                return None
+            if self.command not in {"GET", "HEAD"}:
+                error = ApiError(
+                    405,
+                    "method-not-allowed",
+                    "HTTP method is not allowed",
+                )
+                return ApiHttpResponse(
+                    error.status,
+                    canonical_json(error.payload()).encode("utf-8"),
+                    {"Content-Type": "application/json; charset=utf-8"},
+                )
+            if body:
+                error = ApiError(
+                    400,
+                    "unexpected-request-body",
+                    "static asset requests cannot have a body",
+                )
+                return ApiHttpResponse(
+                    error.status,
+                    canonical_json(error.payload()).encode("utf-8"),
+                    {"Content-Type": "application/json; charset=utf-8"},
+                )
+            validators = self.headers.get_all("If-None-Match", failobj=[])
+            if len(validators) > 1 or (
+                validators
+                and not re.fullmatch(r'"[0-9a-f]{64}"', validators[0])
+            ):
+                error = ApiError(
+                    400,
+                    "invalid-cache-validator",
+                    "cache validator is malformed",
+                )
+                return ApiHttpResponse(
+                    error.status,
+                    canonical_json(error.payload()).encode("utf-8"),
+                    {"Content-Type": "application/json; charset=utf-8"},
+                )
+            asset = provider.resolve(self.path)
+            if asset is None:
+                error = ApiError(
+                    404,
+                    "static-asset-not-found",
+                    "static asset is unavailable",
+                )
+                return ApiHttpResponse(
+                    error.status,
+                    canonical_json(error.payload()).encode("utf-8"),
+                    {"Content-Type": "application/json; charset=utf-8"},
+                )
+            csp = (
+                "default-src 'self'; base-uri 'none'; connect-src 'self'; "
+                "font-src 'self'; form-action 'none'; frame-ancestors 'none'; "
+                "img-src 'self'; manifest-src 'none'; object-src 'none'; "
+                "script-src 'self'; style-src 'self'; worker-src 'none'"
+                if asset.media_type == "text/html; charset=utf-8"
+                else "default-src 'none'; frame-ancestors 'none'"
+            )
+            headers = {
+                "Content-Type": asset.media_type,
+                "ETag": asset.etag,
+                "Cache-Control": asset.cache_control,
+                "Content-Security-Policy": csp,
+            }
+            if validators and validators[0] == asset.etag:
+                return ApiHttpResponse(304, b"", headers)
+            return ApiHttpResponse(200, asset.content, headers)
 
         def _handle(self) -> None:
             self._handle_active()
@@ -1841,11 +1927,28 @@ def serve_api(
     home: Path | str | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
+    static_assets: StaticAssetProvider | None = None,
+    open_browser: bool = False,
 ) -> None:
     """Serve the versioned API until interrupted."""
 
-    server = create_api_server(home=home, host=host, port=port)
+    server = create_api_server(
+        home=home,
+        host=host,
+        port=port,
+        static_assets=static_assets,
+    )
     try:
+        if open_browser:
+            import webbrowser
+
+            displayed_host = "[::1]" if host.strip().strip("[]") == "::1" else host
+            try:
+                webbrowser.open(
+                    f"http://{displayed_host}:{server.server_port}/", new=2
+                )
+            except (OSError, webbrowser.Error):
+                pass
         server.serve_forever()
     finally:
         server.server_close()

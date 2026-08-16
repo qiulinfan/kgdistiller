@@ -19,6 +19,7 @@ DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 MAX_NAMESPACE_LENGTH = 256
 MAX_PORTABLE_PATH_BYTES = 4096
 MAX_VAULT_STORE_BYTES = 8 * 1024 * 1024 * 1024
+MAX_FRONTEND_BUNDLE_BYTES = 16 * 1024 * 1024
 _WINDOWS_RESERVED = {
     "con",
     "prn",
@@ -64,6 +65,7 @@ CONTRACT_SCHEMAS = {
         "qlkg-api-error-v1",
         "qlkg-vault-store-v3",
         "qlkg-vault-store-report-v1",
+        "qlkg-frontend-bundle-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
@@ -76,6 +78,7 @@ SELF_DIGEST_FIELDS = {
     "qlkg-vault-ingest-receipt-v1": "receipt_sha256",
     "qlkg-vault-ingest-journal-v1": "journal_sha256",
     "qlkg-vault-store-v3": "store_sha256",
+    "qlkg-frontend-bundle-v1": "bundle_sha256",
 }
 
 
@@ -1324,6 +1327,52 @@ def _validate_vault_store(payload: dict[str, Any]) -> None:
         raise ContractError("Vault store inventory exceeds its aggregate byte bound")
 
 
+def _validate_frontend_bundle(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-frontend-bundle-v1":
+        return
+    files = list(payload["files"])
+    paths = [str(item["path"]) for item in files]
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        raise ContractError("frontend bundle paths must be uniquely sorted")
+    folded = [
+        tuple(unicodedata.normalize("NFC", part).casefold() for part in PurePosixPath(path).parts)
+        for path in paths
+    ]
+    if len(folded) != len(set(folded)):
+        raise ContractError("frontend bundle paths collide on a portable filesystem")
+    by_path = {str(item["path"]): item for item in files}
+    for index, item in enumerate(files):
+        path = str(item["path"])
+        _validate_portable_path(path, field=f"files.{index}.path")
+        if path == "index.html":
+            if (
+                item["media_type"] != "text/html; charset=utf-8"
+                or item["cache_policy"] != "no-store"
+            ):
+                raise ContractError("frontend index cache and media policy are not canonical")
+        else:
+            if not re.fullmatch(
+                r"assets/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8,}\.(?:js|css)", path
+            ):
+                raise ContractError("frontend asset path is not fingerprinted")
+            expected_media = (
+                "text/javascript; charset=utf-8"
+                if path.endswith(".js")
+                else "text/css; charset=utf-8"
+            )
+            if item["media_type"] != expected_media or item["cache_policy"] != "immutable":
+                raise ContractError("frontend asset cache and media policy are not canonical")
+    if payload["index"] != "index.html" or "index.html" not in by_path:
+        raise ContractError("frontend bundle has no canonical index")
+    entry = str(payload["entry"])
+    if entry not in by_path or not entry.endswith(".js"):
+        raise ContractError("frontend bundle entry is not a packaged JavaScript asset")
+    manifest_bytes = len((canonical_json(payload) + "\n").encode("utf-8"))
+    total_bytes = manifest_bytes + sum(int(item["bytes"]) for item in files)
+    if total_bytes > MAX_FRONTEND_BUNDLE_BYTES:
+        raise ContractError("frontend bundle exceeds its aggregate byte bound")
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -1347,6 +1396,7 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
     _validate_recall_report(payload)
     _validate_api_response(payload)
     _validate_vault_store(payload)
+    _validate_frontend_bundle(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

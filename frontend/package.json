@@ -1,0 +1,26 @@
+{
+  "name": "kgdistiller-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "dev": "npm run generate:validators && vite",
+    "generate:validators": "node scripts/generate-validators.mjs",
+    "typecheck": "npm run generate:validators && tsc --noEmit",
+    "test": "npm run generate:validators && vitest run",
+    "build": "npm run generate:validators && tsc --noEmit && vite build && node scripts/package-bundle.mjs --write",
+    "verify:bundle": "node scripts/package-bundle.mjs --verify",
+    "verify:determinism": "node scripts/verify-determinism.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  }
+}

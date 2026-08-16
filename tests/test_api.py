@@ -738,24 +738,42 @@ class HttpBoundaryTests(unittest.TestCase):
 
 
 class CliIsolationTests(unittest.TestCase):
-    def test_federated_serve_is_explicit_and_legacy_serve_remains_isolated(self) -> None:
+    def test_packaged_serve_is_default_and_legacy_serve_remains_explicit(self) -> None:
         import kgdistiller.cli as cli_module
 
+        provider = mock.sentinel.provider
         with (
-            mock.patch.object(sys, "argv", ["kgdistiller", "serve", "--federated"]),
+            mock.patch.object(
+                sys, "argv", ["kgdistiller", "serve", "--federated", "--no-open"]
+            ),
+            mock.patch(
+                "kgdistiller.frontend_assets.PackagedStaticAssetProvider",
+                return_value=provider,
+            ),
             mock.patch("kgdistiller.api.serve_api") as serve_api,
         ):
             self.assertEqual(0, cli_module.main())
-        serve_api.assert_called_once_with(host="127.0.0.1", port=8765)
+        serve_api.assert_called_once_with(
+            host="127.0.0.1",
+            port=8765,
+            static_assets=provider,
+            open_browser=False,
+        )
 
         with (
-            mock.patch.object(sys, "argv", ["kgdistiller", "serve", "--no-open"]),
+            mock.patch.object(
+                sys, "argv", ["kgdistiller", "serve", "--legacy", "--no-open"]
+            ),
             mock.patch("kgdistiller.web.serve_graph") as serve_graph,
             mock.patch("kgdistiller.api.serve_api") as serve_api,
+            mock.patch(
+                "kgdistiller.frontend_assets.PackagedStaticAssetProvider"
+            ) as provider_constructor,
         ):
             self.assertEqual(0, cli_module.main())
         serve_graph.assert_called_once()
         serve_api.assert_not_called()
+        provider_constructor.assert_not_called()
 
 
 if __name__ == "__main__":

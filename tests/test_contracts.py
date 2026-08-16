@@ -405,6 +405,7 @@ class ContractTest(unittest.TestCase):
                 "qlkg-api-error-v1",
                 "qlkg-vault-store-v3",
                 "qlkg-vault-store-report-v1",
+                "qlkg-frontend-bundle-v1",
             },
             set(CONTRACT_SCHEMAS),
         )

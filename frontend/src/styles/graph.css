@@ -1,0 +1,23 @@
+.graph-section, .graph-host { margin-block: 1.25rem; }
+.graph-svg { display: block; width: 100%; min-height: 22rem; max-height: 70vh; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.graph-edges path { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: .72; }
+.graph-edges path[data-relation="contains"] { stroke: var(--accent); }
+.graph-node { cursor: pointer; }
+.graph-node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.graph-node text { fill: var(--ink); font: 12px var(--font); pointer-events: none; }
+.graph-node.node-field rect { fill: var(--accent-soft); stroke: var(--accent); }
+.graph-node.node-topic rect { fill: var(--surface-soft); }
+.graph-node:focus rect, .graph-node:hover rect { stroke: var(--accent-strong); stroke-width: 3; }
+.graph-list { margin-block-start: 1rem; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.graph-list ul { padding-inline-start: 1.3rem; }
+.graph-list li { margin-block: .35rem; overflow-wrap: anywhere; }
+
+@media (max-width: 700px) {
+  .graph-svg { display: none; }
+  .graph-list { margin-block-start: 0; }
+}
+
+@media (forced-colors: active) {
+  .graph-node rect, .graph-edges path { stroke: CanvasText; }
+  .graph-node text { fill: CanvasText; }
+}
