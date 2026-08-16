@@ -8,6 +8,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -52,6 +53,35 @@ def packaged_root():
 
 
 class PackagedProviderTests(unittest.TestCase):
+    def test_packaged_inventory_is_git_binary_and_provider_valid(self) -> None:
+        repository = Path(__file__).parents[1]
+        manifest = validate_contract(
+            parse_contract_json(packaged_root().joinpath("bundle.json").read_text("utf-8"))
+        )
+        inventory = ["bundle.json", *(record["path"] for record in manifest["files"])]
+        for relative in inventory:
+            with self.subTest(path=relative):
+                repository_relative = f"src/kgdistiller/static/v1/{relative}"
+                checked = subprocess.run(
+                    ["git", "check-attr", "text", "--", repository_relative],
+                    cwd=repository,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, checked.returncode, checked.stderr)
+                self.assertEqual(
+                    f"{repository_relative}: text: unset\n",
+                    checked.stdout.replace("\r\n", "\n"),
+                )
+
+        provider = PackagedStaticAssetProvider()
+        self.assertIsNotNone(provider.resolve("/"))
+        for record in manifest["files"]:
+            if record["path"] == "index.html":
+                continue
+            self.assertIsNotNone(provider.resolve(f"/{record['path']}"))
+
     def test_importlib_provider_is_closed_and_byte_only(self) -> None:
         provider = PackagedStaticAssetProvider()
         index = provider.resolve("/")
