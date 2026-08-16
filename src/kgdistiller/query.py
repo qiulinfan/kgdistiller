@@ -452,7 +452,7 @@ class GraphView:
             from .native_compiler import (
                 NativeCompilerError,
                 _load_live_state_locked,
-                _recover_graph_transaction_locked,
+                _recover_native_transactions_locked,
             )
 
             last_error: Exception | None = None
@@ -470,7 +470,7 @@ class GraphView:
                             raise QueryError(
                                 "native Vault manifest changed before graph loading"
                             )
-                        _recover_graph_transaction_locked(current_vault)
+                        _recover_native_transactions_locked(current_vault)
                         state, manifest, _ = _load_live_state_locked(current_vault)
                         snapshot = make_agent_snapshot(
                             state, namespace=current_vault.id

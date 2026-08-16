@@ -3146,6 +3146,16 @@ def parse_args() -> argparse.Namespace:
     for name in ("sync", "check"):
         native_command = knowledge_commands.add_parser(name)
         native_command.add_argument("--vault")
+    native_ingest = knowledge_commands.add_parser("ingest")
+    native_ingest_commands = native_ingest.add_subparsers(
+        dest="knowledge_ingest_command", required=True
+    )
+    native_ingest_plan = native_ingest_commands.add_parser("plan")
+    native_ingest_plan.add_argument("request", type=Path)
+    native_ingest_plan.add_argument("--output", required=True, type=Path)
+    native_ingest_apply = native_ingest_commands.add_parser("apply")
+    native_ingest_apply.add_argument("request", type=Path)
+    native_ingest_apply.add_argument("--receipt", required=True, type=Path)
     init_command = commands.add_parser("init")
     init_command.add_argument("--source-root", type=Path, default=Path("notes"))
     init_command.add_argument("--force", action="store_true")
@@ -3497,6 +3507,67 @@ def main() -> int:
         print(pretty_json(result), end="")
         return 0
     if args.command == "knowledge":
+        if args.knowledge_command == "ingest":
+            from .contracts import validate_contract
+            from .vault_ingest import (
+                VaultIngestError,
+                apply_vault_ingest_report,
+                plan_vault_ingest_report,
+                preflight_ingest_output,
+                write_ingest_artifact,
+            )
+
+            try:
+                if args.knowledge_ingest_command == "plan":
+                    result, artifact = plan_vault_ingest_report(args.request)
+                    write_ingest_artifact(
+                        args.output, artifact, request=args.request
+                    )
+                else:
+                    result, artifact = apply_vault_ingest_report(
+                        args.request,
+                        receipt_precondition=lambda receipt: preflight_ingest_output(
+                            args.receipt,
+                            receipt,
+                            request=args.request,
+                        ),
+                    )
+                    try:
+                        write_ingest_artifact(
+                            args.receipt, artifact, request=args.request
+                        )
+                    except (
+                        VaultIngestError,
+                        OSError,
+                        UnicodeError,
+                        ValueError,
+                        json.JSONDecodeError,
+                    ) as output_error:
+                        reason = (
+                            output_error.payload()["error"]["code"]
+                            if isinstance(output_error, VaultIngestError)
+                            else "external-receipt-write-failed"
+                        )
+                        result = validate_contract(
+                            {
+                                **result,
+                                "warnings": [
+                                    *result["warnings"],
+                                    f"external-receipt-not-written:{reason}",
+                                ],
+                            }
+                        )
+            except VaultIngestError as error:
+                print(pretty_json(error.payload()), end="", file=sys.stderr)
+                return 1
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+                failure = VaultIngestError(
+                    "ingest-command-failed", str(error), stage="validation"
+                )
+                print(pretty_json(failure.payload()), end="", file=sys.stderr)
+                return 1
+            print(pretty_json(result), end="")
+            return 0
         from .native_compiler import (
             NativeCompilerError,
             check_knowledge,

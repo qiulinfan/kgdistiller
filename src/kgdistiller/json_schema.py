@@ -41,6 +41,36 @@ def _type_matches(value: Any, expected: str) -> bool:
     return False
 
 
+def _json_equality_fingerprint(value: Any) -> tuple[Any, ...]:
+    """Return a hashable fingerprint with JSON Schema equality semantics."""
+
+    if value is None:
+        return ("null",)
+    if isinstance(value, bool):
+        return ("boolean", value)
+    if isinstance(value, (int, float)):
+        # Python's numeric equality and hashes intentionally make 1 and 1.0
+        # equal while the explicit tag keeps booleans distinct from numbers.
+        if isinstance(value, float) and not math.isfinite(value):
+            return ("non-finite-number", repr(value))
+        return ("number", value)
+    if isinstance(value, str):
+        return ("string", value)
+    if isinstance(value, list):
+        return ("array", tuple(_json_equality_fingerprint(item) for item in value))
+    if isinstance(value, dict):
+        return (
+            "object",
+            tuple(
+                (str(key), _json_equality_fingerprint(item))
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            ),
+        )
+    # Contract values originate as JSON, but retaining a tagged fallback keeps
+    # this evaluator deterministic when called directly with an invalid value.
+    return ("invalid", type(value).__qualname__, repr(value))
+
+
 def _resolve_ref(root: dict[str, Any], reference: str) -> dict[str, Any]:
     if not reference.startswith("#/"):
         raise ValueError(f"unsupported non-local JSON Schema reference: {reference}")
@@ -159,13 +189,17 @@ def validate_json_schema(instance: Any, schema: dict[str, Any]) -> list[SchemaVi
                     SchemaViolation(path, f"must contain at most {rule['maxItems']} items")
                 )
             if rule.get("uniqueItems") is True:
+                seen_items: set[tuple[Any, ...]] = set()
                 for index, item in enumerate(value):
-                    if any(item == previous for previous in value[:index]):
+                    fingerprint = _json_equality_fingerprint(item)
+                    if fingerprint in seen_items:
                         errors.append(
                             SchemaViolation(
                                 (*path, index), "must not duplicate an earlier item"
                             )
                         )
+                    else:
+                        seen_items.add(fingerprint)
             item_rule = rule.get("items")
             if isinstance(item_rule, dict):
                 for index, item in enumerate(value):

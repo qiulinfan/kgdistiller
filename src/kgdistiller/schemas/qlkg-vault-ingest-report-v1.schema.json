@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-ingest-report-v1.schema.json",
+  "title": "kgdistiller native Vault ingest command report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "action", "status", "outcome", "vault_id", "registry_generation", "vault_manifest_sha256", "request_sha256", "plan_sha256", "receipt_sha256", "receipt_path", "graph_generation_sha256", "source_ledger_generation_sha256", "note_inventory_sha256", "cleanup_status", "warnings"],
+  "properties": {
+    "schema": {"const": "qlkg-vault-ingest-report-v1"},
+    "action": {"enum": ["plan", "apply"]},
+    "status": {"const": "ok"},
+    "outcome": {"enum": ["planned", "committed", "already-committed"]},
+    "vault_id": {"$ref": "#/$defs/vault_id"},
+    "registry_generation": {"$ref": "#/$defs/sha256"},
+    "vault_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "request_sha256": {"$ref": "#/$defs/sha256"},
+    "plan_sha256": {"$ref": "#/$defs/nullable_sha256"},
+    "receipt_sha256": {"$ref": "#/$defs/nullable_sha256"},
+    "receipt_path": {"anyOf": [{"$ref": "#/$defs/receipt_path"}, {"type": "null"}]},
+    "graph_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "source_ledger_generation_sha256": {"$ref": "#/$defs/nullable_sha256"},
+    "note_inventory_sha256": {"$ref": "#/$defs/sha256"},
+    "cleanup_status": {"enum": ["not-applicable", "complete", "pending"]},
+    "warnings": {"type": "array", "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"action": {"const": "plan"}}, "required": ["action"]},
+      "then": {
+        "properties": {
+          "outcome": {"const": "planned"},
+          "plan_sha256": {"$ref": "#/$defs/sha256"},
+          "receipt_sha256": {"type": "null"},
+          "receipt_path": {"type": "null"},
+          "source_ledger_generation_sha256": {"type": "null"},
+          "cleanup_status": {"const": "not-applicable"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "apply"}}, "required": ["action"]},
+      "then": {
+        "properties": {
+          "outcome": {"enum": ["committed", "already-committed"]},
+          "plan_sha256": {"type": "null"},
+          "receipt_sha256": {"$ref": "#/$defs/sha256"},
+          "receipt_path": {"$ref": "#/$defs/receipt_path"},
+          "cleanup_status": {"enum": ["complete", "pending"]}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nullable_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "vault_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "receipt_path": {"type": "string", "pattern": "^\\.kgdistiller/receipts/sha256/[0-9a-f]{2}/[0-9a-f]{64}\\.json$"}
+  }
+}

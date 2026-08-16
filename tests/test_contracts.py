@@ -211,6 +211,162 @@ def minimal_static_report() -> dict:
     }
 
 
+def minimal_vault_ingest_request() -> dict:
+    digest = "1" * 64
+    return finalize_self_digest(
+        {
+            "schema": "qlkg-vault-ingest-request-v1",
+            "request_id": "contract-test",
+            "request_sha256": "0" * 64,
+            "capabilities": ["vault-aware-transactional-ingest-v1"],
+            "vault_id": "test",
+            "registry_generation": digest,
+            "vault_manifest_sha256": digest,
+            "base": {
+                "source_ledger_generation_sha256": None,
+                "graph_generation_sha256": digest,
+                "note_inventory_sha256": digest,
+            },
+            "query_report": {"path": "query.json", "sha256": digest},
+            "note_patches": [],
+            "derivation_updates": [],
+            "alignment_mutations": [],
+            "review": {
+                "status": "reviewed",
+                "reviewer": "contract-test",
+                "evidence": "reviewed exact request bytes",
+                "provenance": "tests/test_contracts.py",
+            },
+        },
+        "request_sha256",
+    )
+
+
+def minimal_vault_ingest_plan() -> dict:
+    digest = "2" * 64
+    version_id = "doc:12345678-1234-4234-8234-123456789abc:v00000001"
+    return finalize_self_digest(
+        {
+            "schema": "qlkg-vault-ingest-plan-v1",
+            "plan_sha256": "0" * 64,
+            "request_id": "contract-test",
+            "request_sha256": digest,
+            "vault_id": "test",
+            "registry_generation": digest,
+            "vault_manifest_sha256": digest,
+            "before": {
+                "source_ledger_generation_sha256": None,
+                "graph_generation_sha256": digest,
+                "note_inventory_sha256": digest,
+            },
+            "after": {
+                "graph_generation_sha256": digest,
+                "note_inventory_sha256": digest,
+            },
+            "changes": {
+                "note_paths": ["Knowledge/Concepts/Alpha.md"],
+                "derivation_version_ids": [version_id],
+            },
+            "validations": [{"stage": "recompile", "status": "passed"}],
+            "status": "ready",
+        },
+        "plan_sha256",
+    )
+
+
+def minimal_vault_ingest_receipt() -> dict:
+    digest = "3" * 64
+    version_id = "doc:12345678-1234-4234-8234-123456789abc:v00000001"
+    span = {
+        "version_id": version_id,
+        "start_line": 1,
+        "end_line": 1,
+        "excerpt_sha256": digest,
+    }
+    return finalize_self_digest(
+        {
+            "schema": "qlkg-vault-ingest-receipt-v1",
+            "request_id": "contract-test",
+            "request_sha256": digest,
+            "receipt_sha256": "0" * 64,
+            "vault_id": "test",
+            "engine": {
+                "name": "kgdistiller",
+                "version": "0.4.0",
+                "capabilities": ["vault-aware-transactional-ingest-v1"],
+                "graph_schema": "qlkg-v3",
+            },
+            "before": {
+                "registry_generation": digest,
+                "vault_manifest_sha256": digest,
+                "source_ledger_generation_sha256": None,
+                "graph_generation_sha256": digest,
+                "note_inventory_sha256": digest,
+                "query_report_sha256": digest,
+            },
+            "after": {
+                "graph_generation_sha256": digest,
+                "note_inventory_sha256": digest,
+                "derivations": [
+                    {
+                        "version_id": version_id,
+                        "status": "committed",
+                        "candidate_dispositions": [
+                            {"candidate_id": "alpha", "disposition": "reuse"}
+                        ],
+                        "concept_ids": ["alpha"],
+                        "concept_evidence": [
+                            {"concept_id": "alpha", "spans": [span]}
+                        ],
+                        "relation_evidence": [],
+                    }
+                ],
+            },
+            "changes": {
+                "notes": [
+                    {
+                        "path": "Knowledge/Concepts/Alpha.md",
+                        "before_raw_sha256": digest,
+                        "after_raw_sha256": "4" * 64,
+                    }
+                ],
+                "derivation_version_ids": [version_id],
+            },
+            "validations": [{"stage": "recompile", "status": "passed"}],
+            "warnings": [],
+            "status": "committed",
+        },
+        "receipt_sha256",
+    )
+
+
+def minimal_vault_ingest_report(*, action: str) -> dict:
+    digest = "4" * 64
+    plan = action == "plan"
+    return {
+        "schema": "qlkg-vault-ingest-report-v1",
+        "action": action,
+        "status": "ok",
+        "outcome": "planned" if plan else "committed",
+        "vault_id": "test",
+        "registry_generation": digest,
+        "vault_manifest_sha256": digest,
+        "request_sha256": digest,
+        "plan_sha256": digest if plan else None,
+        "receipt_sha256": None if plan else digest,
+        "receipt_path": (
+            None
+            if plan
+            else f".kgdistiller/receipts/sha256/{digest[:2]}/{digest}.json"
+        ),
+        "graph_generation_sha256": digest,
+        "source_ledger_generation_sha256": None if plan else digest,
+        "note_inventory_sha256": digest,
+        "cleanup_status": "not-applicable" if plan else "complete",
+        "warnings": [],
+    }
+
+
 class ContractTest(unittest.TestCase):
     def test_current_contract_catalog_is_packaged(self) -> None:
         self.assertEqual(
@@ -236,6 +392,12 @@ class ContractTest(unittest.TestCase):
                 "qlkg-source-ledger-v1",
                 "qlkg-source-report-v1",
                 "qlkg-knowledge-report-v1",
+                "qlkg-vault-ingest-request-v1",
+                "qlkg-vault-ingest-plan-v1",
+                "qlkg-vault-ingest-receipt-v1",
+                "qlkg-vault-ingest-report-v1",
+                "qlkg-vault-ingest-error-v1",
+                "qlkg-vault-ingest-journal-v1",
             },
             set(CONTRACT_SCHEMAS),
         )
@@ -255,6 +417,11 @@ class ContractTest(unittest.TestCase):
                 minimal_obsidian(),
                 minimal_obsidian_report(),
                 minimal_static_report(),
+                minimal_vault_ingest_request(),
+                minimal_vault_ingest_plan(),
+                minimal_vault_ingest_receipt(),
+                minimal_vault_ingest_report(action="plan"),
+                minimal_vault_ingest_report(action="apply"),
             ]
         )
         for payload in payloads:
@@ -266,6 +433,70 @@ class ContractTest(unittest.TestCase):
             with self.subTest(schema=discriminator):
                 with self.assertRaises(ContractError):
                     validate_contract(fixture(discriminator, "invalid"))
+
+    def test_current_vault_ingest_contracts_reject_nonportable_and_impossible_values(self) -> None:
+        invalid: list[dict] = []
+
+        for index, path in enumerate(
+            (
+                "a//b",
+                "./a",
+                "Knowledge/CON/file.",
+                "con",
+                "a:b",
+                "Knowledge/Concepts/Cafe\u0301.md",
+            )
+        ):
+            request_path = minimal_vault_ingest_request()
+            request_path["query_report"]["path"] = path
+            request_path["request_id"] = f"nonportable-{index}"
+            invalid.append(finalize_self_digest(request_path, "request_sha256"))
+
+            receipt_portable = minimal_vault_ingest_receipt()
+            receipt_portable["changes"]["notes"][0]["path"] = path
+            invalid.append(finalize_self_digest(receipt_portable, "receipt_sha256"))
+
+        plan_path = minimal_vault_ingest_plan()
+        plan_path["changes"]["note_paths"] = ["../Alpha.md"]
+        invalid.append(finalize_self_digest(plan_path, "plan_sha256"))
+        plan_version = minimal_vault_ingest_plan()
+        plan_version["changes"]["derivation_version_ids"] = ["not-a-version"]
+        invalid.append(finalize_self_digest(plan_version, "plan_sha256"))
+
+        receipt_path = minimal_vault_ingest_receipt()
+        receipt_path["changes"]["notes"][0]["path"] = "C:/Alpha.md"
+        invalid.append(finalize_self_digest(receipt_path, "receipt_sha256"))
+        receipt_missing_images = minimal_vault_ingest_receipt()
+        receipt_missing_images["changes"]["notes"][0]["before_raw_sha256"] = None
+        receipt_missing_images["changes"]["notes"][0]["after_raw_sha256"] = None
+        invalid.append(finalize_self_digest(receipt_missing_images, "receipt_sha256"))
+        receipt_version = minimal_vault_ingest_receipt()
+        receipt_version["changes"]["derivation_version_ids"] = ["not-a-version"]
+        invalid.append(finalize_self_digest(receipt_version, "receipt_sha256"))
+        one_column = minimal_vault_ingest_receipt()
+        one_column["after"]["derivations"][0]["concept_evidence"][0]["spans"][0][
+            "start_column"
+        ] = 0
+        invalid.append(finalize_self_digest(one_column, "receipt_sha256"))
+        reviewed_empty = minimal_vault_ingest_receipt()
+        reviewed_empty["after"]["derivations"][0]["status"] = "reviewed-empty"
+        reviewed_empty["after"]["derivations"][0]["concept_ids"] = []
+        invalid.append(finalize_self_digest(reviewed_empty, "receipt_sha256"))
+
+        invalid_report_path = minimal_vault_ingest_report(action="apply")
+        invalid_report_path["receipt_path"] = "receipts/latest.json"
+        invalid.append(invalid_report_path)
+        plan_with_receipt = minimal_vault_ingest_report(action="plan")
+        plan_with_receipt["receipt_sha256"] = "5" * 64
+        invalid.append(plan_with_receipt)
+        apply_as_planned = minimal_vault_ingest_report(action="apply")
+        apply_as_planned["outcome"] = "planned"
+        invalid.append(apply_as_planned)
+
+        for payload in invalid:
+            with self.subTest(schema=payload["schema"], payload=payload):
+                with self.assertRaises(ContractError):
+                    validate_contract(payload)
 
     def test_removed_runtime_contracts_are_explicitly_unsupported(self) -> None:
         for discriminator in (
@@ -389,6 +620,19 @@ class ContractTest(unittest.TestCase):
             with self.subTest(reference=reference):
                 with self.assertRaisesRegex(ValueError, message):
                     validate_json_schema({}, {"$ref": reference})
+
+    def test_json_schema_unique_items_is_linear_and_uses_json_numeric_equality(self) -> None:
+        schema = {"type": "array", "uniqueItems": True}
+        values = list(range(25_000))
+        self.assertEqual([], validate_json_schema(values, schema))
+
+        values[-1] = 1.0
+        violations = validate_json_schema(values, schema)
+        self.assertEqual(1, len(violations))
+        self.assertEqual((24_999,), violations[0].path)
+        self.assertEqual(
+            [], validate_json_schema([True, 1, False, 0], schema)
+        )
 
 
 if __name__ == "__main__":

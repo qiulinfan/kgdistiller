@@ -1067,6 +1067,88 @@ def vault_registry_lock(home: Path | str | None = None) -> Iterator[None]:
         yield
 
 
+@contextlib.contextmanager
+def vault_registry_read_guard(home: Path | str | None = None) -> Iterator[None]:
+    """Acquire the existing registry lock without changing any registry bytes."""
+
+    selected = kgdistiller_home(home)
+    lock_path = selected / "vaults.lock"
+    metadata = _lstat(lock_path)
+    if metadata is None:
+        raise VaultError(
+            "missing-registry-lock",
+            "the existing Vault registry lock is required for a material-free guard",
+        )
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or _is_link_or_reparse(lock_path, metadata)
+        or metadata.st_nlink != 1
+    ):
+        raise VaultError(
+            "invalid-registry-lock",
+            "registry lock must be an ordinary, non-reparse single-link file",
+        )
+    flags = (
+        os.O_RDWR
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOINHERIT", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(lock_path, flags)
+    except OSError as error:
+        raise VaultError(
+            "invalid-registry-lock", "cannot safely open existing registry lock"
+        ) from error
+    acquired = False
+    handle = None
+    try:
+        opened = os.fstat(descriptor)
+        current = _lstat(lock_path)
+        if (
+            current is None
+            or not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or _is_reparse_stat(opened)
+            or _is_link_or_reparse(lock_path, current)
+            or opened.st_ino == 0
+            or current.st_ino == 0
+            or opened.st_nlink != 1
+            or current.st_nlink != 1
+            or opened.st_size < 1
+            or not os.path.samestat(opened, current)
+        ):
+            raise VaultError(
+                "invalid-registry-lock",
+                "existing registry lock changed or is not an ordinary lock file",
+            )
+        resolved = lock_path.resolve(strict=True)
+        final = _lstat(lock_path)
+        if (
+            final is None
+            or not os.path.samestat(opened, final)
+            or not _same_path(lock_path, resolved)
+            or not _contains_path(selected, resolved, allow_equal=False)
+        ):
+            raise VaultError(
+                "invalid-registry-lock",
+                "existing registry lock escaped its selected home",
+            )
+        handle = os.fdopen(descriptor, "r+b")
+        descriptor = -1
+        _acquire_lock(handle)
+        acquired = True
+        yield
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        elif handle is not None:
+            if acquired:
+                _release_lock(handle)
+            handle.close()
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return

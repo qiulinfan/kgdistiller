@@ -121,6 +121,7 @@ VAULT/
 │   │   │   ├── versions.jsonl
 │   │   │   └── derivations.jsonl
 │   │   └── blobs/sha256/aa/FULL_RAW_SHA256
+│   ├── receipts/sha256/aa/FULL_SHA256.json
 │   ├── graph/
 │   │   └── sources.json
 │   └── build/
@@ -150,6 +151,9 @@ VAULT/
 All paths in a portable vault contract are normalized relative paths contained
 by the vault. Symlinks/reparse points may not redirect managed or source paths
 outside the vault.
+
+Receipts are portable clone/store assets and must be retained. The
+`.kgdistiller/build` directory remains disposable transaction workspace.
 
 ## 5. Concept note contract
 
@@ -542,6 +546,25 @@ generation, source version, live source hash, concept-note hashes, and query
 report. Any pre-install failure writes nothing. Any install failure restores all
 targets. Queries see either the complete old generation or complete new
 generation.
+
+Managed parent directories are byte-free scaffolding rather than transaction
+content targets. Apply creates each missing parent with anchored no-clobber
+semantics and durably records actual ownership before publishing a file. Normal
+rollback removes only recorded directories whose stable filesystem identity is
+unchanged and that are still empty. A hard crash
+between a successful directory creation and that ownership record may leave
+only empty scaffolding; recovery conservatively retains it and removes every
+file temporary, journal, receipt, source pointer, graph artifact, and authority
+file from the failed transaction. Later apply may safely reuse the empty
+scaffolding. Recovery never deletes a non-empty, replaced, or third-party-won
+directory.
+
+The minimal F4 contract rejects every non-empty alignment mutation. Its
+canonical portable receipts live at
+`.kgdistiller/receipts/sha256/aa/FULL_SHA256.json`. A receipt is finalized before
+installation so derivation rows can bind its digest; it therefore does not
+contain the post-commit source-ledger generation. The closed success report,
+which is produced after commit, returns that final ledger generation token.
 
 Registry mutation uses its own machine-local lock and never takes a vault writer
 lock while held, preventing cross-scope lock inversion.

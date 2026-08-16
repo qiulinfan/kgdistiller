@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import unicodedata
 from importlib import resources
+from pathlib import PurePosixPath
 from typing import Any
 
 from .json_schema import SchemaViolation, validate_json_schema
@@ -13,6 +15,15 @@ from .json_schema import SchemaViolation, validate_json_schema
 
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 MAX_NAMESPACE_LENGTH = 256
+MAX_PORTABLE_PATH_BYTES = 4096
+_WINDOWS_RESERVED = {
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+}
 CONTRACT_SCHEMAS = {
     name: f"{name}.schema.json"
     for name in (
@@ -37,6 +48,12 @@ CONTRACT_SCHEMAS = {
         "qlkg-source-ledger-v1",
         "qlkg-source-report-v1",
         "qlkg-knowledge-report-v1",
+        "qlkg-vault-ingest-request-v1",
+        "qlkg-vault-ingest-plan-v1",
+        "qlkg-vault-ingest-receipt-v1",
+        "qlkg-vault-ingest-report-v1",
+        "qlkg-vault-ingest-error-v1",
+        "qlkg-vault-ingest-journal-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
@@ -44,6 +61,10 @@ SELF_DIGEST_FIELDS = {
     "qlkg-obsidian-projection-v1": "projection_sha256",
     "qlkg-static-export-v2": "export_sha256",
     "qlkg-site-graph-v1": "graph_sha256",
+    "qlkg-vault-ingest-request-v1": "request_sha256",
+    "qlkg-vault-ingest-plan-v1": "plan_sha256",
+    "qlkg-vault-ingest-receipt-v1": "receipt_sha256",
+    "qlkg-vault-ingest-journal-v1": "journal_sha256",
 }
 
 
@@ -155,6 +176,85 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
     validate_contract(result)
 
 
+def _validate_portable_path(value: Any, *, field: str) -> None:
+    """Enforce the host-neutral path rules shared by persisted F4 contracts."""
+
+    if not isinstance(value, str) or not value:
+        raise ContractError(f"{field} must be a non-empty portable relative path")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise ContractError(f"{field} is not strict UTF-8") from error
+    if (
+        len(encoded) > MAX_PORTABLE_PATH_BYTES
+        or "\0" in value
+        or "\\" in value
+        or unicodedata.normalize("NFC", value) != value
+    ):
+        raise ContractError(f"{field} is not a bounded portable relative path")
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or relative.as_posix() != value
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or (len(value) >= 2 and value[0].isalpha() and value[1] == ":")
+    ):
+        raise ContractError(f"{field} is not a canonical relative path")
+    if any(
+        part.endswith((" ", "."))
+        or any(ord(character) < 32 or ord(character) == 127 for character in part)
+        or any(character in '<>:"|?*' for character in part)
+        or part.split(".", 1)[0].casefold() in _WINDOWS_RESERVED
+        for part in relative.parts
+    ):
+        raise ContractError(f"{field} is not portable across supported hosts")
+
+
+def _validate_vault_ingest_paths(payload: dict[str, Any]) -> None:
+    discriminator = payload.get("schema")
+    paths: list[tuple[Any, str]] = []
+    if discriminator == "qlkg-vault-ingest-request-v1":
+        query_report = payload.get("query_report") or {}
+        paths.append((query_report.get("path"), "query_report.path"))
+        paths.extend(
+            (item.get("path"), f"note_patches.{index}.path")
+            for index, item in enumerate(payload.get("note_patches") or [])
+        )
+    elif discriminator == "qlkg-vault-ingest-plan-v1":
+        changes = payload.get("changes") or {}
+        paths.extend(
+            (path, f"changes.note_paths.{index}")
+            for index, path in enumerate(changes.get("note_paths") or [])
+        )
+    elif discriminator == "qlkg-vault-ingest-receipt-v1":
+        changes = payload.get("changes") or {}
+        paths.extend(
+            (item.get("path"), f"changes.notes.{index}.path")
+            for index, item in enumerate(changes.get("notes") or [])
+        )
+    elif discriminator == "qlkg-vault-ingest-report-v1":
+        receipt_path = payload.get("receipt_path")
+        if receipt_path is not None:
+            paths.append((receipt_path, "receipt_path"))
+    elif discriminator == "qlkg-vault-ingest-journal-v1":
+        paths.extend(
+            (path, f"planned_directories.{index}")
+            for index, path in enumerate(payload.get("planned_directories") or [])
+        )
+        paths.extend(
+            (item.get("path"), f"created_directories.{index}.path")
+            for index, item in enumerate(payload.get("created_directories") or [])
+        )
+        for index, record in enumerate(payload.get("targets") or []):
+            for key in ("path", "backup_path", "staged_path", "temporary_path"):
+                value = record.get(key)
+                if value is not None:
+                    paths.append((value, f"targets.{index}.{key}"))
+    for value, field in paths:
+        _validate_portable_path(value, field=field)
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -171,6 +271,7 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         raise ContractError(_format_violation(errors[0]))
     _validate_document_record(payload)
     _validate_search_execution(payload)
+    _validate_vault_ingest_paths(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

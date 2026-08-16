@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-ingest-request-v1.schema.json",
+  "title": "kgdistiller native Vault ingest request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "request_id", "request_sha256", "capabilities", "vault_id", "registry_generation", "vault_manifest_sha256", "base", "query_report", "note_patches", "derivation_updates", "alignment_mutations", "review"],
+  "properties": {
+    "schema": {"const": "qlkg-vault-ingest-request-v1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "request_sha256": {"$ref": "#/$defs/sha256"},
+    "capabilities": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+    "vault_id": {"$ref": "#/$defs/vault_id"},
+    "registry_generation": {"$ref": "#/$defs/sha256"},
+    "vault_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "base": {"$ref": "#/$defs/base"},
+    "query_report": {"$ref": "#/$defs/artifact"},
+    "note_patches": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/note_patch"}},
+    "derivation_updates": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/derivation_update"}},
+    "alignment_mutations": {"type": "array", "maxItems": 0},
+    "review": {"$ref": "#/$defs/review"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "portable_path": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000-\\u001f\\u007f]+$"},
+    "nullable_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "base": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_ledger_generation_sha256", "graph_generation_sha256", "note_inventory_sha256"],
+      "properties": {
+        "source_ledger_generation_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "graph_generation_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "note_inventory_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": {"path": {"$ref": "#/$defs/portable_path"}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "note_patch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "operation", "expected_raw_sha256", "content", "content_sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/portable_path"},
+        "operation": {"enum": ["write", "delete"]},
+        "expected_raw_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "content": {"anyOf": [{"type": "string", "maxLength": 8388608}, {"type": "null"}]},
+        "content_sha256": {"$ref": "#/$defs/nullable_sha256"}
+      },
+      "allOf": [
+        {"if": {"properties": {"operation": {"const": "write"}}}, "then": {"properties": {"content": {"type": "string"}, "content_sha256": {"$ref": "#/$defs/sha256"}}}},
+        {"if": {"properties": {"operation": {"const": "delete"}}}, "then": {"properties": {"content": {"type": "null"}, "content_sha256": {"type": "null"}, "expected_raw_sha256": {"$ref": "#/$defs/sha256"}}}}
+      ]
+    },
+    "version_id": {"type": "string", "pattern": "^doc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:v[0-9]{8}$"},
+    "concept_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "span": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version_id", "start_line", "end_line", "excerpt_sha256"],
+      "properties": {
+        "version_id": {"$ref": "#/$defs/version_id"}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1},
+        "start_column": {"type": "integer", "minimum": 0}, "end_column": {"type": "integer", "minimum": 0}, "excerpt_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "allOf": [
+        {"if": {"required": ["start_column"]}, "then": {"required": ["end_column"]}},
+        {"if": {"required": ["end_column"]}, "then": {"required": ["start_column"]}}
+      ]
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false, "required": ["candidate_id", "disposition"],
+      "properties": {"candidate_id": {"type": "string", "minLength": 1, "maxLength": 256}, "disposition": {"enum": ["reuse", "add", "update", "reject", "defer"]}}
+    },
+    "concept_evidence": {
+      "type": "object", "additionalProperties": false, "required": ["concept_id", "spans"],
+      "properties": {"concept_id": {"$ref": "#/$defs/concept_id"}, "spans": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/span"}}}
+    },
+    "relation_evidence": {
+      "type": "object", "additionalProperties": false, "required": ["source", "relation", "target", "spans"],
+      "properties": {
+        "source": {"$ref": "#/$defs/concept_id"}, "relation": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]}, "target": {"$ref": "#/$defs/concept_id"},
+        "spans": {"type": "array", "minItems": 1, "maxItems": 10000, "items": {"$ref": "#/$defs/span"}}
+      }
+    },
+    "derivation_update": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version_id", "status", "candidate_dispositions", "concept_ids", "concept_evidence", "relation_evidence"],
+      "properties": {
+        "version_id": {"$ref": "#/$defs/version_id"}, "status": {"enum": ["committed", "reviewed-empty"]},
+        "candidate_dispositions": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/candidate"}},
+        "concept_ids": {"type": "array", "maxItems": 100000, "uniqueItems": true, "items": {"$ref": "#/$defs/concept_id"}},
+        "concept_evidence": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/concept_evidence"}},
+        "relation_evidence": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/relation_evidence"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "committed"}}}, "then": {"properties": {"concept_ids": {"minItems": 1}}}},
+        {"if": {"properties": {"status": {"const": "reviewed-empty"}}}, "then": {"properties": {"candidate_dispositions": {"maxItems": 0}, "concept_ids": {"maxItems": 0}, "concept_evidence": {"maxItems": 0}, "relation_evidence": {"maxItems": 0}}}}
+      ]
+    },
+    "review": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reviewer", "evidence", "provenance"],
+      "properties": {"status": {"const": "reviewed"}, "reviewer": {"type": "string", "minLength": 1, "maxLength": 256}, "evidence": {"type": "string", "minLength": 1, "maxLength": 16384}, "provenance": {"type": "string", "minLength": 1, "maxLength": 4096}}
+    }
+  }
+}

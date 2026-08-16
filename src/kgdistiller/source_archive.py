@@ -15,6 +15,7 @@ import json
 import os
 import re
 import stat
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ DERIVATION_STATUS_ORDER = {
     "failed": 5,
 }
 FORMAT_SUFFIXES = {".md": "markdown", ".typ": "typst", ".tex": "latex"}
+SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _WINDOWS_RESERVED = {
     "con",
     "prn",
@@ -206,12 +208,14 @@ def _win_close(handle: int) -> None:
         _CloseHandle(handle)
 
 
-def _win_rename_handle(handle: int, destination: Path) -> None:
+def _win_rename_handle(
+    handle: int, destination: Path, *, replace_if_exists: bool = True
+) -> None:
     encoded = str(destination).encode("utf-16-le")
     offset = _WinRenameInfo.FileName.offset
     buffer = ctypes.create_string_buffer(offset + len(encoded) + 2)
     info = ctypes.cast(buffer, ctypes.POINTER(_WinRenameInfo)).contents
-    info.Flags = 1
+    info.Flags = 1 if replace_if_exists else 0
     info.RootDirectory = None
     info.FileNameLength = len(encoded)
     ctypes.memmove(ctypes.addressof(buffer) + offset, encoded, len(encoded))
@@ -426,11 +430,18 @@ class _PinnedDirectory:
         finally:
             _win_close(handle)
 
-    def create_file(self, leaf: str, *, writable: bool = True, delete_access: bool = False) -> int:
+    def create_file(
+        self,
+        leaf: str,
+        *,
+        writable: bool = True,
+        delete_access: bool = False,
+        readable: bool = False,
+    ) -> int:
         self.checkpoint("before-leaf-create", leaf)
         if os.name != "nt":
             flags = (
-                os.O_WRONLY
+                (os.O_RDWR if readable else os.O_WRONLY)
                 | os.O_CREAT
                 | os.O_EXCL
                 | getattr(os, "O_BINARY", 0)
@@ -439,6 +450,8 @@ class _PinnedDirectory:
             )
             return os.open(leaf, flags, 0o600, dir_fd=self.dir_fd)
         desired = _WIN_GENERIC_WRITE | _WIN_FILE_READ_ATTRIBUTES
+        if readable:
+            desired |= _WIN_GENERIC_READ
         if delete_access:
             desired |= _WIN_DELETE
         handle = _win_open_handle(
@@ -458,7 +471,9 @@ class _PinnedDirectory:
             import msvcrt
 
             descriptor = msvcrt.open_osfhandle(
-                handle, os.O_WRONLY | getattr(os, "O_BINARY", 0)
+                handle,
+                (os.O_RDWR if readable else os.O_WRONLY)
+                | getattr(os, "O_BINARY", 0),
             )
             handle = 0
             return descriptor
@@ -509,8 +524,16 @@ class _PinnedDirectory:
         else:
             os.mkdir(leaf, dir_fd=self.dir_fd)
 
-    def unlink_leaf(self, leaf: str, *, directory: bool = False) -> None:
+    def unlink_leaf(
+        self,
+        leaf: str,
+        *,
+        directory: bool = False,
+        before_unlink: Callable[["_PinnedDirectory", str], None] | None = None,
+    ) -> None:
         self.checkpoint("before-leaf-unlink", leaf)
+        if before_unlink is not None:
+            before_unlink(self, leaf)
         if os.name == "nt":
             if directory:
                 os.rmdir(self.path / leaf)
@@ -521,8 +544,43 @@ class _PinnedDirectory:
         else:
             os.unlink(leaf, dir_fd=self.dir_fd)
 
-    def replace_leaf(self, source: str, destination: str, source_fd: int) -> None:
+    def cleanup_owned_leaf_raw(
+        self, leaf: str, expected: os.stat_result
+    ) -> bool:
+        """Remove only an exact caller-owned inode through the retained handle.
+
+        This intentionally avoids ``checkpoint``/lexical ancestor validation:
+        it is the failure cleanup used after such validation itself detected an
+        ancestor move.  Identity equality remains mandatory.
+        """
+
+        if os.name == "nt":
+            current = _lstat(self.path / leaf)
+            if current is None or not os.path.samestat(expected, current):
+                return False
+            os.unlink(self.path / leaf)
+            return True
+        try:
+            current = os.stat(leaf, dir_fd=self.dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if not os.path.samestat(expected, current):
+            return False
+        os.unlink(leaf, dir_fd=self.dir_fd)
+        os.fsync(self.dir_fd)
+        return True
+
+    def replace_leaf(
+        self,
+        source: str,
+        destination: str,
+        source_fd: int,
+        *,
+        before_replace: Callable[["_PinnedDirectory", str], None] | None = None,
+    ) -> None:
         self.checkpoint("before-leaf-replace", destination)
+        if before_replace is not None:
+            before_replace(self, destination)
         if os.name == "nt":
             import msvcrt
 
@@ -538,6 +596,165 @@ class _PinnedDirectory:
                 src_dir_fd=self.dir_fd,
                 dst_dir_fd=self.dir_fd,
             )
+
+    def install_leaf_noreplace(
+        self,
+        source: str,
+        destination: str,
+        source_fd: int,
+        *,
+        expected_content: bytes,
+        before_install: Callable[[], None] | None = None,
+        after_install: Callable[[], None] | None = None,
+    ) -> None:
+        """Atomically install one fsynced sibling without replacing a leaf.
+
+        POSIX uses a same-directory hard-link CAS and removes the temporary
+        name only after the installed inode and pinned directory are verified.
+        Windows uses handle-relative rename semantics with replace disabled.
+        """
+
+        self.checkpoint("before-leaf-replace", destination)
+        if before_install is not None:
+            before_install()
+        source_metadata = os.fstat(source_fd)
+        if (
+            not stat.S_ISREG(source_metadata.st_mode)
+            or source_metadata.st_nlink != 1
+            or source_metadata.st_size != len(expected_content)
+        ):
+            raise SourceArchiveError(
+                "unsafe-ledger-path", "install temporary metadata is invalid"
+            )
+
+        def verify_content() -> None:
+            os.lseek(source_fd, 0, os.SEEK_SET)
+            chunks: list[bytes] = []
+            remaining = len(expected_content) + 1
+            while remaining:
+                chunk = os.read(source_fd, min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            if b"".join(chunks) != expected_content or os.read(source_fd, 1):
+                raise SourceArchiveError(
+                    "unsafe-ledger-path", "installed leaf content changed"
+                )
+
+        verify_content()
+        if os.name == "nt":
+            import msvcrt
+
+            handle = msvcrt.get_osfhandle(source_fd)
+            installed = False
+            try:
+                try:
+                    _win_rename_handle(
+                        handle, self.path / destination, replace_if_exists=False
+                    )
+                except OSError as error:
+                    if _lstat(self.path / destination) is not None:
+                        raise FileExistsError(
+                            getattr(error, "winerror", None)
+                            or getattr(error, "errno", None)
+                            or 183,
+                            "destination already exists",
+                            os.fspath(self.path / destination),
+                        ) from error
+                    raise
+                installed = True
+                if after_install is not None:
+                    after_install()
+                current = _lstat(self.path / destination)
+                if (
+                    current is None
+                    or not os.path.samestat(source_metadata, current)
+                    or current.st_nlink != 1
+                ):
+                    raise SourceArchiveError(
+                        "unsafe-ledger-path",
+                        "installed leaf differs from its temporary",
+                    )
+                verify_content()
+                self.verify_current()
+            except BaseException:
+                if installed:
+                    restored = False
+                    try:
+                        current = _lstat(self.path / destination)
+                        if current is not None and os.path.samestat(
+                            source_metadata, current
+                        ):
+                            _win_rename_handle(
+                                handle,
+                                self.path / source,
+                                replace_if_exists=False,
+                            )
+                            restored = True
+                    except (OSError, SourceArchiveError):
+                        pass
+                    if not restored:
+                        try:
+                            self.cleanup_owned_leaf_raw(
+                                destination, source_metadata
+                            )
+                        except (OSError, SourceArchiveError):
+                            pass
+                raise
+            return
+        source_metadata = os.stat(
+            source, dir_fd=self.dir_fd, follow_symlinks=False
+        )
+        if not os.path.samestat(os.fstat(source_fd), source_metadata):
+            raise SourceArchiveError(
+                "unsafe-ledger-path", "install temporary changed"
+            )
+        destination_installed = False
+        try:
+            os.link(
+                source,
+                destination,
+                src_dir_fd=self.dir_fd,
+                dst_dir_fd=self.dir_fd,
+                follow_symlinks=False,
+            )
+            destination_installed = True
+            installed = os.stat(
+                destination, dir_fd=self.dir_fd, follow_symlinks=False
+            )
+            if not os.path.samestat(source_metadata, installed):
+                raise SourceArchiveError(
+                    "unsafe-ledger-path", "installed leaf differs from its temporary"
+                )
+            self.verify_current()
+            os.fsync(self.dir_fd)
+            self.checkpoint("after-leaf-noreplace-link", destination)
+            os.unlink(source, dir_fd=self.dir_fd)
+            os.fsync(self.dir_fd)
+            if after_install is not None:
+                after_install()
+            final = os.stat(
+                destination, dir_fd=self.dir_fd, follow_symlinks=False
+            )
+            if (
+                not os.path.samestat(source_metadata, final)
+                or final.st_nlink != 1
+            ):
+                raise SourceArchiveError(
+                    "unsafe-ledger-path", "installed leaf changed after no-clobber install"
+                )
+            verify_content()
+            self.verify_current()
+            os.fsync(self.dir_fd)
+            destination_installed = False
+        except BaseException:
+            if destination_installed:
+                try:
+                    self.cleanup_owned_leaf_raw(destination, source_metadata)
+                except (FileNotFoundError, OSError):
+                    pass
+            raise
 
     def close(self) -> None:
         for descriptor in reversed(self._posix_fds):
@@ -634,6 +851,16 @@ class SourceEvidenceView:
 
 
 @dataclass(frozen=True)
+class PreparedSourceGeneration:
+    """Validated immutable source-ledger bytes awaiting staged publication."""
+
+    before_generation_sha256: str | None
+    manifest: dict[str, Any]
+    contents: dict[str, bytes]
+    ledger: SourceLedger
+
+
+@dataclass(frozen=True)
 class _ResolvedSource:
     vault: Vault
     path: Path
@@ -706,7 +933,12 @@ def _portable_relative(value: Any, *, field: str) -> tuple[str, ...]:
         size = len(value.encode("utf-8"))
     except UnicodeEncodeError as error:
         raise SourceArchiveError("unsafe-ledger-path", f"{field} is not valid UTF-8") from error
-    if size > MAX_PATH_BYTES or "\0" in value or "\\" in value:
+    if (
+        size > MAX_PATH_BYTES
+        or "\0" in value
+        or "\\" in value
+        or unicodedata.normalize("NFC", value) != value
+    ):
         raise SourceArchiveError("unsafe-ledger-path", f"{field} is not a bounded portable path")
     relative = PurePosixPath(value)
     if (
@@ -852,8 +1084,19 @@ def replace_vault_relative_regular(
     content: bytes,
     *,
     maximum: int,
+    temporary_leaf: str | None = None,
+    after_fsync: Callable[[], None] | None = None,
+    after_replace: Callable[[], None] | None = None,
+    before_replace: Callable[[_PinnedDirectory, str], None] | None = None,
+    no_replace: bool = False,
+    create_parent: bool = True,
 ) -> None:
-    """Atomically replace one Vault-relative file through pinned ancestors."""
+    """Atomically replace one Vault-relative file through pinned ancestors.
+
+    ``temporary_leaf`` is an optional exact sibling name for callers whose
+    recovery contract journals that intermediate identity.  Existing callers
+    retain the random, eagerly cleaned temporary-file behavior.
+    """
 
     selected = vault if isinstance(vault, Vault) else load_vault(vault)
     if (
@@ -870,11 +1113,20 @@ def replace_vault_relative_regular(
     parent_path = _ensure_directory(
         selected.root,
         parts[:-1],
-        create=True,
+        create=create_parent,
         field="Vault-relative file parent",
     )
     leaf = parts[-1]
     destination = parent_path / leaf
+    if temporary_leaf is not None:
+        temporary_parts = _portable_relative(
+            temporary_leaf, field="Vault temporary file"
+        )
+        if len(temporary_parts) != 1 or temporary_parts[0] == leaf:
+            raise SourceArchiveError(
+                "invalid-vault-file-stage",
+                "Vault temporary file must be one distinct sibling leaf",
+            )
     with _PinnedDirectory(parent_path) as parent:
         existing = parent.lstat_leaf(leaf)
         if existing is not None and (
@@ -886,11 +1138,17 @@ def replace_vault_relative_regular(
                 "invalid-vault-file", "existing Vault file is not an ordinary single-link file"
             )
         descriptor = -1
-        temporary_name = ""
-        for _ in range(32):
-            temporary_name = f".{leaf}-{uuid.uuid4().hex}"
+        temporary_name = temporary_leaf or ""
+        attempts = 1 if temporary_leaf is not None else 32
+        for _ in range(attempts):
+            if temporary_leaf is None:
+                temporary_name = f".{leaf}-{uuid.uuid4().hex}"
             try:
-                descriptor = parent.create_file(temporary_name, delete_access=True)
+                descriptor = parent.create_file(
+                    temporary_name,
+                    delete_access=True,
+                    readable=no_replace,
+                )
                 break
             except FileExistsError:
                 continue
@@ -898,20 +1156,56 @@ def replace_vault_relative_regular(
             raise SourceArchiveError(
                 "vault-file-stage-exhausted", "cannot allocate a Vault file stage"
             )
+        owned_temporary: os.stat_result | None = None
         try:
             offset = 0
             while offset < len(content):
                 offset += os.write(descriptor, content[offset:])
             os.fsync(descriptor)
-            parent.replace_leaf(temporary_name, leaf, descriptor)
+            owned_temporary = os.fstat(descriptor)
+            parent.checkpoint("after-vault-file-temp-fsync", temporary_name)
+            if after_fsync is not None:
+                after_fsync()
+            if no_replace:
+                parent.install_leaf_noreplace(
+                    temporary_name,
+                    leaf,
+                    descriptor,
+                    expected_content=content,
+                    before_install=(
+                        None
+                        if before_replace is None
+                        else lambda: before_replace(parent, leaf)
+                    ),
+                )
+            else:
+                parent.replace_leaf(
+                    temporary_name,
+                    leaf,
+                    descriptor,
+                    before_replace=before_replace,
+                )
+            if after_replace is not None:
+                after_replace()
         except BaseException:
-            try:
-                parent.unlink_leaf(temporary_name)
-            except (FileNotFoundError, OSError, SourceArchiveError):
-                pass
+            if owned_temporary is None:
+                try:
+                    owned_temporary = os.fstat(descriptor)
+                except OSError:
+                    pass
+            os.close(descriptor)
+            descriptor = -1
+            if owned_temporary is not None:
+                try:
+                    parent.cleanup_owned_leaf_raw(
+                        temporary_name, owned_temporary
+                    )
+                except (FileNotFoundError, OSError, SourceArchiveError):
+                    pass
             raise
         finally:
-            os.close(descriptor)
+            if descriptor >= 0:
+                os.close(descriptor)
         installed = parent.lstat_leaf(leaf)
         if installed is None or not stat.S_ISREG(installed.st_mode) or installed.st_nlink != 1:
             raise SourceArchiveError(
@@ -924,6 +1218,8 @@ def replace_vault_relative_regular(
 def unlink_vault_relative_regular(
     vault: Vault | Path | str,
     relative_path: str,
+    *,
+    before_unlink: Callable[[_PinnedDirectory, str], None] | None = None,
 ) -> None:
     """Remove one exact ordinary Vault-relative file through pinned ancestors."""
 
@@ -940,6 +1236,9 @@ def unlink_vault_relative_regular(
         leaf = parts[-1]
         metadata = pinned.lstat_leaf(leaf)
         if metadata is None:
+            if before_unlink is not None:
+                pinned.checkpoint("before-leaf-unlink", leaf)
+                before_unlink(pinned, leaf)
             return
         path = parent_path / leaf
         if (
@@ -950,7 +1249,7 @@ def unlink_vault_relative_regular(
             raise SourceArchiveError(
                 "invalid-vault-file", "refusing to unlink a non-ordinary Vault file"
             )
-        pinned.unlink_leaf(leaf)
+        pinned.unlink_leaf(leaf, before_unlink=before_unlink)
         if os.name != "nt":
             os.fsync(pinned.dir_fd)
 
@@ -1410,6 +1709,18 @@ def _validate_rows(
             raise SourceArchiveError("invalid-source-ledger", "committed concepts must each have evidence")
         if any(item not in concept_ids for item in evidence_ids):
             raise SourceArchiveError("invalid-source-ledger", "concept evidence references an unlisted concept")
+        relation_keys: list[tuple[str, str, str]] = []
+        for item in derivation["relation_evidence"]:
+            source = str(item["source"])
+            relation = str(item["relation"])
+            target = str(item["target"])
+            if relation == "contrasts-with":
+                source, target = sorted((source, target))
+            relation_keys.append((source, relation, target))
+        if len(relation_keys) != len(set(relation_keys)):
+            raise SourceArchiveError(
+                "invalid-source-ledger", "duplicate relation evidence record"
+            )
         raw = blob_cache[str(version["raw_sha256"])][0]
         normalized = normalize_source_text(raw.decode("utf-8", errors="strict"))
         for record in (*concept_evidence, *derivation["relation_evidence"]):
@@ -1508,6 +1819,79 @@ def load_source_ledger(vault: Vault | Path | str) -> SourceLedger:
     raise SourceArchiveError(
         "stale-source-generation",
         f"source manifest changed during {MAX_LEDGER_READ_RETRIES} bounded read attempts",
+    )
+
+
+def load_source_ledger_generation(
+    vault: Vault | Path | str, generation_sha256: str
+) -> SourceLedger:
+    """Hydrate one immutable source generation without consulting the live pointer."""
+
+    if not isinstance(generation_sha256, str) or not SHA256_RE.fullmatch(
+        generation_sha256
+    ):
+        raise SourceArchiveError(
+            "invalid-source-generation", "source generation must be lowercase SHA-256"
+        )
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    root = selected.root / ".kgdistiller" / "sources"
+    generation_dir = _ensure_directory(
+        root,
+        ("generations", generation_sha256),
+        create=False,
+        field="source generation",
+    )
+    schemas = {
+        "documents": DOCUMENT_SCHEMA,
+        "versions": VERSION_SCHEMA,
+        "derivations": DERIVATION_SCHEMA,
+    }
+    rows: dict[str, list[dict[str, Any]]] = {}
+    artifacts: dict[str, dict[str, Any]] = {}
+    for name in ("documents", "versions", "derivations"):
+        filename = ARTIFACT_FILENAMES[name]
+        data = _read_regular(
+            generation_dir,
+            (filename,),
+            maximum=MAX_ARTIFACT_BYTES,
+            kind=f"source-{name}",
+        )
+        parsed = _parse_jsonl(data, schema=schemas[name], kind=f"source-{name}")
+        rows[name] = parsed
+        artifacts[name] = {
+            "path": filename,
+            "bytes": len(data),
+            "rows": len(parsed),
+            "sha256": _sha256_bytes(data),
+        }
+    if sha256_json(artifacts) != generation_sha256:
+        raise SourceArchiveError(
+            "invalid-source-generation",
+            "immutable source generation digest does not match its artifacts",
+        )
+    manifest = _contract(
+        {
+            "schema": LEDGER_SCHEMA,
+            "generation_sha256": generation_sha256,
+            "generation_path": f"generations/{generation_sha256}",
+            "artifacts": artifacts,
+        },
+        LEDGER_SCHEMA,
+        kind="source-manifest",
+    )
+    _validate_rows(
+        rows["documents"],
+        rows["versions"],
+        rows["derivations"],
+        blob_roots=(root,),
+    )
+    return SourceLedger(
+        sources_root=root,
+        manifest=manifest,
+        generation_sha256=generation_sha256,
+        documents=tuple(rows["documents"]),
+        versions=tuple(rows["versions"]),
+        derivations=tuple(rows["derivations"]),
     )
 
 
@@ -1824,6 +2208,170 @@ def _build_generation(
     return manifest, contents
 
 
+def prepare_derivation_generation(
+    ledger: SourceLedger,
+    updates: Sequence[Mapping[str, Any]],
+    *,
+    graph_generation_sha256: str,
+    ingest_receipt_sha256: str,
+) -> PreparedSourceGeneration:
+    """Purely prepare a fully validated derivation-only ledger generation."""
+
+    if not SHA256_RE.fullmatch(graph_generation_sha256) or not SHA256_RE.fullmatch(
+        ingest_receipt_sha256
+    ):
+        raise SourceArchiveError(
+            "invalid-derivation-update", "graph and receipt bindings must be lowercase SHA-256"
+        )
+    documents = [dict(item) for item in ledger.documents]
+    versions = [dict(item) for item in ledger.versions]
+    derivations = [dict(item) for item in ledger.derivations]
+    version_by_id = {str(item["version_id"]): item for item in versions}
+    current_by_version = {
+        str(item["current_version_id"]): str(item["document_id"]) for item in documents
+    }
+    seen: set[str] = set()
+    new_rows: list[dict[str, Any]] = []
+    allowed = {
+        "version_id",
+        "status",
+        "candidate_dispositions",
+        "concept_ids",
+        "concept_evidence",
+        "relation_evidence",
+    }
+    for raw in updates:
+        if set(raw) != allowed:
+            raise SourceArchiveError(
+                "invalid-derivation-update",
+                "derivation update has unsupported or missing fields",
+            )
+        version_id = str(raw["version_id"])
+        if version_id not in current_by_version or version_id in seen:
+            raise SourceArchiveError(
+                "invalid-derivation-update",
+                "each derivation update must target one distinct current source version",
+            )
+        seen.add(version_id)
+        status = str(raw["status"])
+        if status not in {"committed", "reviewed-empty"}:
+            raise SourceArchiveError(
+                "invalid-derivation-update",
+                "F4 derivation updates must be committed or reviewed-empty",
+            )
+        row = {
+            "schema": DERIVATION_SCHEMA,
+            "version_id": version_id,
+            "graph_generation_sha256": graph_generation_sha256,
+            "candidate_dispositions": list(raw["candidate_dispositions"]),
+            "concept_ids": list(raw["concept_ids"]),
+            "concept_evidence": list(raw["concept_evidence"]),
+            "relation_evidence": list(raw["relation_evidence"]),
+            "status": status,
+            "inherited_from_version_id": None,
+            "ingest_receipt_sha256": ingest_receipt_sha256,
+        }
+        _contract(row, DERIVATION_SCHEMA, kind="source-derivation")
+        new_rows.append(row)
+
+    replaced: list[dict[str, Any]] = []
+    for row in derivations:
+        if row["version_id"] in seen and row["status"] in EFFECTIVE_DERIVATION_STATUSES:
+            superseded = dict(row)
+            superseded["status"] = "superseded"
+            superseded["inherited_from_version_id"] = None
+            superseded["ingest_receipt_sha256"] = None
+            replaced.append(superseded)
+        else:
+            replaced.append(row)
+    derivations = [*replaced, *new_rows]
+
+    effective, failed = _index_derivations(derivations)
+    for index, document in enumerate(documents):
+        document_id = str(document["document_id"])
+        if str(document["current_version_id"]) not in seen:
+            continue
+        updated = dict(document)
+        updated["status"] = _derived_status(
+            document_id,
+            str(document["current_version_id"]),
+            version_by_id,
+            effective,
+            failed,
+        )
+        documents[index] = updated
+    manifest, contents = _build_generation(documents, versions, derivations)
+    ordered_documents = sorted(documents, key=lambda item: item["document_id"])
+    ordered_versions = sorted(versions, key=lambda item: (item["document_id"], item["sequence"]))
+    order = {
+        item["version_id"]: (item["document_id"], item["sequence"])
+        for item in ordered_versions
+    }
+    ordered_derivations = sorted(
+        derivations,
+        key=lambda item: (
+            *order[item["version_id"]],
+            DERIVATION_STATUS_ORDER[item["status"]],
+            canonical_json(item),
+        ),
+    )
+    _validate_rows(
+        ordered_documents,
+        ordered_versions,
+        ordered_derivations,
+        blob_roots=(ledger.sources_root,),
+    )
+    candidate = SourceLedger(
+        sources_root=ledger.sources_root,
+        manifest=manifest,
+        generation_sha256=str(manifest["generation_sha256"]),
+        documents=tuple(ordered_documents),
+        versions=tuple(ordered_versions),
+        derivations=tuple(ordered_derivations),
+    )
+    return PreparedSourceGeneration(
+        before_generation_sha256=ledger.generation_sha256,
+        manifest=manifest,
+        contents=contents,
+        ledger=candidate,
+    )
+
+
+def stage_derivation_generation(vault: Vault, prepared: PreparedSourceGeneration) -> Path:
+    """Stage and hydrate a prepared derivation-only source generation."""
+
+    sources_root = vault.root / ".kgdistiller" / "sources"
+    if prepared.ledger.sources_root != sources_root:
+        raise SourceArchiveError(
+            "invalid-source-generation", "prepared generation belongs to another Vault"
+        )
+    stage = _stage_generation(sources_root, prepared.manifest, prepared.contents, None)
+    try:
+        candidate = _read_generation(
+            stage,
+            _read_manifest(stage)[0] or {},
+            blob_roots=(sources_root,),
+        )
+        if candidate.generation_sha256 != prepared.ledger.generation_sha256:
+            raise SourceArchiveError(
+                "invalid-source-generation", "staged derivation generation changed"
+            )
+        return stage
+    except BaseException:
+        _remove_stage(stage, sources_root)
+        raise
+
+
+def install_derivation_generation(
+    vault: Vault, prepared: PreparedSourceGeneration, stage: Path
+) -> None:
+    """Install immutable generation files without moving the live manifest."""
+
+    _install_generation(
+        vault.root / ".kgdistiller" / "sources", stage, prepared.manifest, None
+    )
+
+
 def _write_fsync(path: Path, content: bytes) -> None:
     with _PinnedDirectory(path.parent) as parent:
         descriptor = parent.create_file(path.name)
@@ -1852,6 +2400,22 @@ def vault_generation_guard(vault: Vault | Path | str) -> Iterator[None]:
     selected = vault if isinstance(vault, Vault) else load_vault(vault)
     with _vault_writer_lock(selected):
         yield
+
+
+def _recover_native_transactions_locked(vault: Vault) -> None:
+    """Recover F3/F4 journals while the caller owns the Vault writer lock."""
+
+    # Native compilation imports this module, so the recovery seam must remain
+    # lazy to avoid a module initialization cycle.
+    from .native_compiler import (
+        NativeCompilerError,
+        _recover_native_transactions_locked as recover,
+    )
+
+    try:
+        recover(vault)
+    except NativeCompilerError as error:
+        raise SourceArchiveError(error.code, error.message) from error
 
 
 def _fsync_directory(path: Path) -> None:
@@ -1939,44 +2503,225 @@ def _stage_generation(
     return stage
 
 
+def _read_pinned_immutable_leaf(
+    parent: _PinnedDirectory,
+    path: Path,
+    *,
+    maximum: int,
+    link_counts: frozenset[int],
+    kind: str,
+) -> tuple[os.stat_result | None, bytes | None]:
+    def safe(metadata: os.stat_result) -> bool:
+        return (
+            stat.S_ISREG(metadata.st_mode)
+            and metadata.st_nlink in link_counts
+            and metadata.st_size <= maximum
+            and not _is_link_like(path, metadata)
+        )
+
+    def stable(first: os.stat_result, second: os.stat_result) -> bool:
+        return (
+            os.path.samestat(first, second)
+            and first.st_mode == second.st_mode
+            and first.st_nlink == second.st_nlink
+            and first.st_size == second.st_size
+            and first.st_mtime_ns == second.st_mtime_ns
+            and first.st_ctime_ns == second.st_ctime_ns
+        )
+
+    initial = parent.lstat_leaf(path.name)
+    if initial is None:
+        return None, None
+    if not safe(initial):
+        raise SourceArchiveError(
+            f"invalid-{kind}", f"existing immutable {kind} is unsafe"
+        )
+    descriptor = parent.open_existing_file(path.name)
+    try:
+        opened = os.fstat(descriptor)
+        current = parent.lstat_leaf(path.name)
+        if current is None or not safe(opened) or not safe(current) or not stable(
+            initial, opened
+        ) or not stable(opened, current):
+            raise SourceArchiveError(
+                f"invalid-{kind}", f"existing immutable {kind} changed while opening"
+            )
+        chunks: list[bytes] = []
+        remaining = maximum + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        final = parent.lstat_leaf(path.name)
+        if (
+            len(content) > maximum
+            or final is None
+            or not safe(after)
+            or not safe(final)
+            or not stable(opened, after)
+            or not stable(after, final)
+            or after.st_size != len(content)
+        ):
+            raise SourceArchiveError(
+                f"invalid-{kind}", f"existing immutable {kind} changed while reading"
+            )
+        return final, content
+    finally:
+        os.close(descriptor)
+
+
 def _install_file_once(staged: Path, destination: Path, *, kind: str) -> None:
+    """Crash-idempotently install one immutable leaf from a staged image."""
+
     content = _read_regular(
         staged.parent,
         (staged.name,),
         maximum=MAX_SOURCE_BYTES,
         kind=f"staged-{kind}",
     )
+    digest = _sha256_bytes(content)
+    temporary_name = f".{destination.name}-{digest[:16]}.install"
     with _PinnedDirectory(destination.parent) as parent:
-        existing = parent.lstat_leaf(destination.name)
-        if existing is not None:
-            if (
-                not stat.S_ISREG(existing.st_mode)
-                or _is_link_like(destination, existing)
-                or existing.st_nlink != 1
-            ):
-                raise SourceArchiveError(f"invalid-{kind}", f"existing immutable {kind} is unsafe")
-            return
-        try:
-            descriptor = parent.create_file(destination.name)
-        except FileExistsError:
+        temporary, temporary_content = _read_pinned_immutable_leaf(
+            parent,
+            destination.parent / temporary_name,
+            maximum=MAX_SOURCE_BYTES,
+            link_counts=frozenset({1, 2}),
+            kind=f"{kind}-temporary",
+        )
+        if temporary is not None:
+            assert temporary_content is not None
             existing = parent.lstat_leaf(destination.name)
-            if (
-                existing is None
-                or not stat.S_ISREG(existing.st_mode)
-                or _is_link_like(destination, existing)
-                or existing.st_nlink != 1
+            linked = bool(
+                temporary.st_nlink == 2
+                and existing is not None
+                and stat.S_ISREG(existing.st_mode)
+                and existing.st_nlink == 2
+                and not _is_link_like(destination, existing)
+                and os.path.samestat(temporary, existing)
+            )
+            if linked:
+                if temporary_content != content:
+                    raise SourceArchiveError(
+                        f"invalid-{kind}",
+                        f"linked immutable {kind} temporary has different bytes",
+                    )
+            elif temporary.st_nlink != 1 or not content.startswith(
+                temporary_content
             ):
-                raise SourceArchiveError(f"invalid-{kind}", f"existing immutable {kind} is unsafe")
+                raise SourceArchiveError(
+                    f"invalid-{kind}",
+                    f"immutable {kind} temporary is not an exact staged prefix",
+                )
+            if not parent.cleanup_owned_leaf_raw(temporary_name, temporary):
+                raise SourceArchiveError(
+                    f"invalid-{kind}",
+                    f"immutable {kind} temporary changed before cleanup",
+                )
+            if parent.lstat_leaf(temporary_name) is not None:
+                raise SourceArchiveError(
+                    f"invalid-{kind}",
+                    f"immutable {kind} temporary remained after cleanup",
+                )
+
+        existing, installed_content = _read_pinned_immutable_leaf(
+            parent,
+            destination,
+            maximum=MAX_SOURCE_BYTES,
+            link_counts=frozenset({1}),
+            kind=kind,
+        )
+        if existing is not None:
+            if installed_content != content:
+                raise SourceArchiveError(
+                    f"invalid-{kind}", f"existing immutable {kind} has different bytes"
+                )
             return
+
+        descriptor = parent.create_file(
+            temporary_name, delete_access=True, readable=True
+        )
+        written: os.stat_result | None = None
         try:
             offset = 0
             while offset < len(content):
-                offset += os.write(descriptor, content[offset:])
+                offset += os.write(
+                    descriptor, content[offset : offset + 64 * 1024]
+                )
+                _anchored_test_hook(
+                    "during-immutable-source-temp-write",
+                    destination.parent,
+                    destination.name,
+                )
             os.fsync(descriptor)
-        except OSError as error:
-            raise SourceArchiveError(f"invalid-{kind}", f"cannot install immutable {kind}") from error
+            written = os.fstat(descriptor)
+            _anchored_test_hook(
+                "after-immutable-source-temp-fsync",
+                destination.parent,
+                destination.name,
+            )
+            try:
+                parent.install_leaf_noreplace(
+                    temporary_name,
+                    destination.name,
+                    descriptor,
+                    expected_content=content,
+                )
+            except FileExistsError:
+                current, current_content = _read_pinned_immutable_leaf(
+                    parent,
+                    destination,
+                    maximum=MAX_SOURCE_BYTES,
+                    link_counts=frozenset({1}),
+                    kind=kind,
+                )
+                if current is None or current_content != content:
+                    raise SourceArchiveError(
+                        f"invalid-{kind}",
+                        f"existing immutable {kind} has different bytes",
+                    )
+                os.close(descriptor)
+                descriptor = -1
+                if not parent.cleanup_owned_leaf_raw(temporary_name, written):
+                    raise SourceArchiveError(
+                        f"invalid-{kind}",
+                        f"immutable {kind} temporary changed before cleanup",
+                    )
+        except BaseException:
+            if written is None and descriptor >= 0:
+                try:
+                    written = os.fstat(descriptor)
+                except OSError:
+                    pass
+            if descriptor >= 0:
+                os.close(descriptor)
+                descriptor = -1
+            if written is not None:
+                try:
+                    parent.cleanup_owned_leaf_raw(temporary_name, written)
+                except (OSError, SourceArchiveError):
+                    pass
+            raise
         finally:
-            os.close(descriptor)
+            if descriptor >= 0:
+                os.close(descriptor)
+        installed, installed_content = _read_pinned_immutable_leaf(
+            parent,
+            destination,
+            maximum=MAX_SOURCE_BYTES,
+            link_counts=frozenset({1}),
+            kind=kind,
+        )
+        if installed is None or installed_content != content:
+            raise SourceArchiveError(
+                f"invalid-{kind}", f"installed immutable {kind} has different bytes"
+            )
+        if os.name != "nt":
+            os.fsync(parent.dir_fd)
 
 
 def _install_generation(
@@ -2013,13 +2758,11 @@ def _install_generation(
     )
     generation = str(manifest["generation_sha256"])
     destination = generations / generation
-    created = False
     with _PinnedDirectory(generations) as parent:
         metadata = parent.lstat_leaf(generation)
         if metadata is None:
             try:
                 parent.mkdir_leaf(generation)
-                created = True
             except FileExistsError:
                 pass
             except OSError as error:
@@ -2033,12 +2776,12 @@ def _install_generation(
             raise SourceArchiveError("invalid-source-generation", "immutable generation path is unsafe")
         with _PinnedDirectory(destination):
             pass
-    if not created:
-        _read_generation(sources_root, dict(manifest), blob_roots=(sources_root,))
-        return
     staged_generation = stage / "generations" / generation
     for filename in ARTIFACT_FILENAMES.values():
         _install_file_once(staged_generation / filename, destination / filename, kind="source-artifact")
+        _anchored_test_hook(
+            "after-source-artifact-install", destination, filename
+        )
     _fsync_directory(destination)
     _fsync_directory(generations)
     _read_generation(sources_root, dict(manifest), blob_roots=(sources_root,))
@@ -2202,6 +2945,7 @@ def capture_source(
 
     resolved = _resolve_source(file, home)
     with _vault_writer_lock(resolved.vault):
+        _recover_native_transactions_locked(resolved.vault)
         _recheck_resolution(resolved, home)
         ledger = load_source_ledger(resolved.vault)
         snapshot = _read_source(resolved.path)
@@ -2405,14 +3149,7 @@ def capture_source(
         )
 
 
-def source_status(
-    file: Path | str,
-    *,
-    home: Path | str | None = None,
-) -> dict[str, Any]:
-    """Report live-versus-current source freshness without taking a writer lock."""
-
-    resolved = _resolve_source(file, home)
+def _source_status_locked(resolved: _ResolvedSource) -> dict[str, Any]:
     ledger = load_source_ledger(resolved.vault)
     snapshot = _read_source(resolved.path)
     document = _document_for_path(ledger, resolved.relative_path)
@@ -2458,16 +3195,26 @@ def source_status(
     return _report("status", resolved, ledger.generation_sha256, result)
 
 
-def diff_source(
+def source_status(
     file: Path | str,
+    *,
+    home: Path | str | None = None,
+) -> dict[str, Any]:
+    """Recover, then report one consistent live-versus-ledger snapshot."""
+
+    resolved = _resolve_source(file, home)
+    with _vault_writer_lock(resolved.vault):
+        _recover_native_transactions_locked(resolved.vault)
+        _recheck_resolution(resolved, home)
+        return _source_status_locked(resolved)
+
+
+def _diff_source_locked(
+    resolved: _ResolvedSource,
     *,
     from_version: str | None = None,
     to_version: str | None = None,
-    home: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Return a bounded three-context-line diff between archived versions."""
-
-    resolved = _resolve_source(file, home)
     ledger = load_source_ledger(resolved.vault)
     document = _document_for_path(ledger, resolved.relative_path)
     if document is None:
@@ -2502,6 +3249,24 @@ def diff_source(
     return _report("diff", resolved, ledger.generation_sha256, result)
 
 
+def diff_source(
+    file: Path | str,
+    *,
+    from_version: str | None = None,
+    to_version: str | None = None,
+    home: Path | str | None = None,
+) -> dict[str, Any]:
+    """Recover, then return a bounded diff from one consistent ledger."""
+
+    resolved = _resolve_source(file, home)
+    with _vault_writer_lock(resolved.vault):
+        _recover_native_transactions_locked(resolved.vault)
+        _recheck_resolution(resolved, home)
+        return _diff_source_locked(
+            resolved, from_version=from_version, to_version=to_version
+        )
+
+
 __all__ = [
     "DERIVATION_SCHEMA",
     "DOCUMENT_SCHEMA",
@@ -2511,15 +3276,20 @@ __all__ = [
     "SourceArchiveError",
     "SourceEvidenceView",
     "SourceLedger",
+    "PreparedSourceGeneration",
     "capture_source",
     "current_evidence_view",
     "diff_source",
     "extract_evidence_excerpt",
     "load_source_ledger",
+    "load_source_ledger_generation",
+    "install_derivation_generation",
     "normalize_source_text",
+    "prepare_derivation_generation",
     "read_vault_relative_regular",
     "replace_vault_relative_regular",
     "source_status",
+    "stage_derivation_generation",
     "unlink_vault_relative_regular",
     "vault_generation_guard",
     "vault_staging_directory",

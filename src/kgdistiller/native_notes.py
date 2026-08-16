@@ -14,7 +14,7 @@ from typing import Any, Mapping, Union
 import yaml
 from yaml.constructor import ConstructorError
 from yaml.events import AliasEvent
-from yaml.nodes import MappingNode
+from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
 from .cli import ID_RE, MAX_NODE_LABEL_LENGTH
 
@@ -206,6 +206,232 @@ class TaxonomyNote:
 NativeNote = Union[ConceptNote, TaxonomyNote]
 
 
+def _frontmatter_layout(
+    data: bytes, authority: str
+) -> tuple[bytes, bytes, bytes, dict[str, tuple[int, int]]]:
+    """Return raw frontmatter and exact top-level key/value token spans."""
+
+    _frontmatter_parts(data, authority)
+    lines = data.splitlines(keepends=True)
+    closing = next(
+        index
+        for index, line in enumerate(lines[1:], start=1)
+        if _line_content(line) == b"---"
+    )
+    raw = b"".join(lines[1:closing])
+    try:
+        text = raw.decode("utf-8", errors="strict")
+        node = yaml.compose(text, Loader=_KgdSafeLoader)
+    except (UnicodeDecodeError, yaml.YAMLError, RecursionError) as error:
+        raise NativeNoteError(
+            "invalid-frontmatter",
+            f"invalid native-note YAML: {error}",
+            authority=authority,
+        ) from error
+    if not isinstance(node, MappingNode):
+        raise NativeNoteError(
+            "invalid-frontmatter",
+            "native-note frontmatter must be a mapping",
+            authority=authority,
+        )
+    raw_lines = raw.splitlines(keepends=True)
+    line_offsets = [0]
+    for line in raw_lines:
+        line_offsets.append(line_offsets[-1] + len(line))
+
+    def byte_offset(mark: Any) -> int:
+        if mark.line < 0 or mark.line >= len(raw_lines):
+            if mark.line == len(raw_lines) and mark.column == 0:
+                return len(raw)
+            raise NativeNoteError(
+                "invalid-frontmatter",
+                "native-note YAML token coordinates are inconsistent",
+                authority=authority,
+            )
+        line = _line_content(raw_lines[mark.line])
+        try:
+            decoded = line.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise NativeNoteError(
+                "invalid-note-utf8", "native note must be strict UTF-8", authority=authority
+            ) from error
+        if mark.column < 0 or mark.column > len(decoded):
+            raise NativeNoteError(
+                "invalid-frontmatter",
+                "native-note YAML token coordinates are inconsistent",
+                authority=authority,
+            )
+        return line_offsets[mark.line] + len(decoded[: mark.column].encode("utf-8"))
+
+    entries: dict[str, tuple[int, int]] = {}
+    for key_node, value_node in node.value:
+        if not isinstance(key_node, ScalarNode) or not isinstance(key_node.value, str):
+            raise NativeNoteError(
+                "invalid-frontmatter",
+                "frontmatter keys must be strings",
+                authority=authority,
+            )
+        end_mark = value_node.end_mark
+        if (
+            isinstance(value_node, SequenceNode)
+            and not value_node.flow_style
+            and value_node.value
+        ):
+            # PyYAML extends a block collection's end mark across following
+            # comments/blank trivia. The final scalar token is the narrow
+            # replaceable value boundary; all later bytes remain user-owned.
+            end_mark = value_node.value[-1].end_mark
+        start = byte_offset(value_node.start_mark)
+        end = byte_offset(end_mark)
+        if end_mark.column == 0 and end_mark.line > value_node.start_mark.line:
+            while end > start and raw[end - 1 : end] in {b"\r", b"\n"}:
+                end -= 1
+        # An implicit YAML null (``user_optional:``) has a legitimate
+        # zero-width scalar value.  It is useful only for unowned user
+        # properties here: owned fields are rejected by the typed note parser
+        # before merge.  Retaining the empty presence span lets the surrounding
+        # key, comment, and newline remain byte-exact.
+        if not 0 <= start <= end <= len(raw):
+            raise NativeNoteError(
+                "invalid-frontmatter",
+                "native-note YAML token offsets are inconsistent",
+                authority=authority,
+            )
+        entries[key_node.value] = (start, end)
+    prefix = lines[0]
+    suffix = b"".join(lines[closing:])
+    return prefix, raw, suffix, entries
+
+
+def _owned_semantics(note: NativeNote) -> dict[str, Any]:
+    if isinstance(note, ConceptNote):
+        return {
+            "kgd_schema": CONCEPT_SCHEMA,
+            "kgd_id": note.id,
+            "aliases": list(note.aliases),
+            "tags": list(note.tags),
+            "kgd_fields": [item.render() for item in note.fields],
+            "kgd_topics": [item.render() for item in note.topics],
+            "kgd_prerequisites": [item.render() for item in note.prerequisites],
+            "kgd_implies": [item.render() for item in note.implies],
+            "kgd_generalizes": [item.render() for item in note.generalizes],
+            "kgd_contrasts_with": [item.render() for item in note.contrasts_with],
+            "kgd_derived_from": [item.render() for item in note.derived_from],
+        }
+    return {
+        "kgd_schema": TAXONOMY_SCHEMA,
+        "kgd_id": note.id,
+        "kgd_kind": note.kind,
+        "aliases": list(note.aliases),
+        "kgd_parents": [item.render() for item in note.parents],
+    }
+
+
+def merge_native_note_bytes(existing: bytes, desired: bytes, *, authority: str) -> bytes:
+    """Apply kgdistiller-owned note fields while preserving user YAML bytes.
+
+    Existing non-``kgd_*`` properties are carried as their exact UTF-8 byte
+    blocks, including comments, quoting and line endings.  A request may omit
+    them, but may not add or alter them through the transactional API.
+    """
+
+    current = parse_native_markdown(existing, authority=authority)
+    proposed = parse_native_markdown(desired, authority=authority)
+    if type(current) is not type(proposed) or current.id != proposed.id:
+        raise NativeNoteError(
+            "immutable-note-identity",
+            "transactional edits may not change a native note's schema or kgd_id",
+            authority=authority,
+        )
+    owned = _CONCEPT_KEYS if isinstance(current, ConceptNote) else _TAXONOMY_KEYS
+    current_semantics = _owned_semantics(current)
+    proposed_semantics = _owned_semantics(proposed)
+    prefix, current_raw, current_suffix, current_entries = _frontmatter_layout(
+        existing, authority
+    )
+    _, desired_raw, desired_suffix, desired_entries = _frontmatter_layout(
+        desired, authority
+    )
+    if not owned.issubset(desired_entries):
+        missing = ", ".join(sorted(owned - set(desired_entries)))
+        raise NativeNoteError(
+            "incomplete-owned-frontmatter",
+            f"transactional desired notes must explicitly contain every owned property: {missing}",
+            authority=authority,
+        )
+    current_user = {key for key in current_entries if key not in owned}
+    desired_user = {key for key in desired_entries if key not in owned}
+    for key in desired_user:
+        if key not in current_user or current.frontmatter.get(key) != proposed.frontmatter.get(key):
+            raise NativeNoteError(
+                "user-frontmatter-mutation",
+                f"transactional edits may not add or alter user property {key!r}",
+                authority=authority,
+            )
+    frontmatter = current_raw
+    replacements: list[tuple[int, int, bytes]] = []
+    for key, (start, end) in current_entries.items():
+        if key not in owned:
+            continue
+        proposed_value = proposed_semantics[key]
+        if current_semantics[key] == proposed_value:
+            continue
+        replacement = json.dumps(
+            proposed_value, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        replacements.append((start, end, replacement))
+    for start, end, replacement in sorted(replacements, reverse=True):
+        frontmatter = frontmatter[:start] + replacement + frontmatter[end:]
+    missing_blocks = [
+        f"{key}: ".encode("utf-8")
+        + json.dumps(
+            proposed_semantics[key],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        for key in sorted(owned - set(current_entries))
+    ]
+    if missing_blocks:
+        newline = b"\r\n" if b"\r\n" in current_raw else b"\n"
+        if frontmatter and not frontmatter.endswith((b"\n", b"\r")):
+            frontmatter += newline
+        frontmatter += newline.join(missing_blocks) + newline
+    desired_lines = desired_suffix.splitlines(keepends=True)
+    current_lines = current_suffix.splitlines(keepends=True)
+    if not desired_lines or not current_lines:
+        raise NativeNoteError(
+            "invalid-frontmatter", "native note frontmatter is incomplete", authority=authority
+        )
+    desired_body = b"".join(desired_lines[1:])
+    if b"\r\n" in existing:
+        desired_body = (
+            desired_body.decode("utf-8", errors="strict")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("\n", "\r\n")
+            .encode("utf-8")
+        )
+    merged = prefix + frontmatter + current_lines[0] + desired_body
+    parse_native_markdown(merged, authority=authority)
+    return merged
+
+
+def validate_complete_native_note_bytes(data: bytes, *, authority: str) -> NativeNote:
+    """Validate the complete owned-field contract used by F4 note writes."""
+
+    note = parse_native_markdown(data, authority=authority)
+    owned = _CONCEPT_KEYS if isinstance(note, ConceptNote) else _TAXONOMY_KEYS
+    _, _, _, entries = _frontmatter_layout(data, authority)
+    if not owned.issubset(entries):
+        missing = ", ".join(sorted(owned - set(entries)))
+        raise NativeNoteError(
+            "incomplete-owned-frontmatter",
+            f"transactional desired notes must explicitly contain every owned property: {missing}",
+            authority=authority,
+        )
+    return note
+
+
 def _line_content(line: bytes) -> bytes:
     if line.endswith(b"\r\n"):
         return line[:-2]
@@ -220,7 +446,10 @@ def _frontmatter_parts(data: bytes, authority: str) -> tuple[str, str, bytes, in
             "note-too-large", f"native note exceeds {MAX_NOTE_BYTES} bytes", authority=authority
         )
     raw_lines = data.splitlines(keepends=True)
-    if not raw_lines or _line_content(raw_lines[0]) != b"---":
+    if not raw_lines or _line_content(raw_lines[0]) not in {
+        b"---",
+        b"\xef\xbb\xbf---",
+    }:
         raise NativeNoteError(
             "missing-frontmatter",
             "native note must begin with YAML frontmatter",
@@ -741,6 +970,8 @@ __all__ = [
     "TaxonomyNote",
     "parse_native_markdown",
     "parse_note_link",
+    "merge_native_note_bytes",
+    "validate_complete_native_note_bytes",
     "render_concept_note",
     "render_taxonomy_note",
 ]

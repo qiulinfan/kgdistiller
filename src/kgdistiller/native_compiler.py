@@ -50,6 +50,7 @@ from .source_archive import (
 from .vaults import (
     MAX_ID_BYTES,
     VAULT_ID_RE,
+    ManagedMarkdownFile,
     ManagedMarkdownToken,
     Vault,
     VaultError,
@@ -64,6 +65,7 @@ from .vaults import (
 REPORT_SCHEMA = "qlkg-knowledge-report-v1"
 MAX_GRAPH_ARTIFACTS = 100_032
 MAX_NATIVE_ARTIFACT_BYTES = 512 * 1024 * 1024
+MAX_NATIVE_MANIFEST_BYTES = 64 * 1024 * 1024
 MAX_NATIVE_GRAPH_BYTES = 2 * 1024 * 1024 * 1024
 MAX_NATIVE_EDGES = 500_000
 MAX_NATIVE_NOTES = 100_000
@@ -75,6 +77,17 @@ _STAGE_NAME_RE = re.compile(r"\.stage-knowledge-[0-9a-f]{32}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _MISSING_MANIFEST_SHA256 = hashlib.sha256(b"").hexdigest()
 _EMPTY_LEDGER_SHA256 = sha256_json({"schema": "kgdistiller-empty-source-ledger-v1"})
+
+
+def _native_graph_artifact_limit(name: str) -> int:
+    """Return the authoritative bound for one portable graph artifact."""
+
+    relative = _graph_relative(name).as_posix()
+    if relative == "manifest.json":
+        return MAX_NATIVE_MANIFEST_BYTES
+    if relative.startswith("entries/"):
+        return ENTRY_SHARD_LIMIT
+    return MAX_NATIVE_ARTIFACT_BYTES
 
 
 class NativeCompilerError(RuntimeError):
@@ -132,6 +145,13 @@ def _without_markdown_suffix(authority: str) -> str:
 def _native_inventory(
     vault: Vault,
 ) -> tuple[tuple[NativeNote, ...], ManagedMarkdownToken]:
+    return _inventory_from_snapshots(vault, snapshot_managed_markdown(vault))
+
+
+def _inventory_from_snapshots(
+    vault: Vault,
+    snapshots: tuple[ManagedMarkdownFile, ...],
+) -> tuple[tuple[NativeNote, ...], ManagedMarkdownToken]:
     notes: list[NativeNote] = []
     ids: dict[str, str] = {}
     paths: dict[str, str] = {}
@@ -141,13 +161,20 @@ def _native_inventory(
         vault.field_root: "field",
         vault.topic_root: "topic",
     }
-    snapshots = snapshot_managed_markdown(vault)
     for snapshot in snapshots:
         expected = next(
-            kind
-            for root, kind in roots.items()
-            if root == snapshot.path or root in snapshot.path.parents
+            (
+                kind
+                for root, kind in roots.items()
+                if root == snapshot.path or root in snapshot.path.parents
+            ),
+            None,
         )
+        if expected is None:
+            raise NativeCompilerError(
+                "wrong-native-root",
+                f"native note is outside the configured managed roots: {snapshot.authority}",
+            )
         path_without_suffix = _without_markdown_suffix(snapshot.authority)
         folded = _path_key(path_without_suffix)
         collision = paths.get(folded)
@@ -530,15 +557,18 @@ def _source_registry(
     }
 
 
-def compile_vault(vault: Vault | Path | str) -> NativeCompilation:
-    """Compile one fully validated Vault without installing derived artifacts."""
+def compile_native_snapshot(
+    vault: Vault,
+    snapshots: tuple[ManagedMarkdownFile, ...],
+    evidence: SourceEvidenceView,
+    *,
+    ledger_generation: str | None,
+) -> NativeCompilation:
+    """Purely compile an already captured note/evidence snapshot."""
 
-    selected = vault if isinstance(vault, Vault) else load_vault(vault)
-    notes, authority_token = _native_inventory(selected)
-    ledger = load_source_ledger(selected)
-    evidence = current_evidence_view(ledger)
+    notes, authority_token = _inventory_from_snapshots(vault, snapshots)
     state, resolver = _build_graph(notes, evidence)
-    source_registry = _source_registry(selected, notes, resolver)
+    source_registry = _source_registry(vault, notes, resolver)
     source_registry_text = pretty_json(source_registry)
     registry_sha256 = sha256_text(json_text(source_registry))
     source_hashes = {
@@ -568,15 +598,80 @@ def compile_vault(vault: Vault | Path | str) -> NativeCompilation:
         )
     state.manifest = json.loads(artifacts["manifest.json"])
     return NativeCompilation(
-        vault=selected,
+        vault=vault,
         notes=notes,
         authority_token=authority_token,
-        ledger_generation=ledger.generation_sha256,
+        ledger_generation=ledger_generation,
         source_registry=source_registry,
         source_registry_text=source_registry_text,
         state=state,
         artifacts=artifacts,
         diagnostics=diagnostics,
+    )
+
+
+def compile_vault_overlay(
+    vault: Vault | Path | str,
+    overlay: Mapping[str, bytes | None],
+    evidence: SourceEvidenceView,
+    *,
+    ledger_generation: str | None,
+    snapshots: tuple[ManagedMarkdownFile, ...] | None = None,
+) -> NativeCompilation:
+    """Compile a staged note overlay without reading or writing live graph files."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    base = snapshot_managed_markdown(selected) if snapshots is None else snapshots
+    by_path = {item.authority: item for item in base}
+    if len(overlay) > MAX_NATIVE_NOTES:
+        raise NativeCompilerError(
+            "native-inventory-too-large", "native note overlay exceeds the file bound"
+        )
+    for authority, data in sorted(overlay.items()):
+        relative = _graph_relative(authority)
+        if not authority.endswith(".md"):
+            raise NativeCompilerError(
+                "noncanonical-native-path",
+                f"managed native-note paths must use the lowercase .md suffix: {authority}",
+            )
+        path = selected.root.joinpath(*relative.parts)
+        if data is None:
+            if authority not in by_path:
+                raise NativeCompilerError(
+                    "missing-native-note", f"cannot delete missing native note: {authority}"
+                )
+            del by_path[authority]
+            continue
+        if not isinstance(data, bytes) or len(data) > MAX_NATIVE_NOTE_BYTES:
+            raise NativeCompilerError(
+                "native-inventory-too-large", f"native note is too large: {authority}"
+            )
+        by_path[authority] = ManagedMarkdownFile(
+            path=path,
+            authority=authority,
+            data=data,
+            raw_sha256=_sha256_bytes(data),
+        )
+    ordered = tuple(by_path[key] for key in sorted(by_path))
+    return compile_native_snapshot(
+        selected,
+        ordered,
+        evidence,
+        ledger_generation=ledger_generation,
+    )
+
+
+def compile_vault(vault: Vault | Path | str) -> NativeCompilation:
+    """Compile one fully validated Vault without installing derived artifacts."""
+
+    selected = vault if isinstance(vault, Vault) else load_vault(vault)
+    snapshots = snapshot_managed_markdown(selected)
+    ledger = load_source_ledger(selected)
+    return compile_native_snapshot(
+        selected,
+        snapshots,
+        current_evidence_view(ledger),
+        ledger_generation=ledger.generation_sha256,
     )
 
 
@@ -733,6 +828,53 @@ def _stage_and_validate(compilation: NativeCompilation) -> None:
         _validate_stage_layout(compilation, stage, expected)
 
 
+def validate_native_compilation(compilation: NativeCompilation) -> None:
+    """Validate deterministic graph artifacts entirely in memory."""
+
+    expected = _expected_bytes(compilation)
+    if len(expected) > MAX_GRAPH_ARTIFACTS or sum(map(len, expected.values())) > MAX_NATIVE_GRAPH_BYTES:
+        raise NativeCompilerError(
+            "native-graph-too-large", "compiled native graph exceeds in-memory validation bounds"
+        )
+    for name, data in expected.items():
+        limit = _native_graph_artifact_limit(name)
+        if len(data) > limit:
+            raise NativeCompilerError(
+                "native-artifact-too-large",
+                f"compiled native artifact exceeds its publication bound: {name}",
+            )
+    diagnostics = validate_state(compilation.state)
+    if diagnostics != compilation.diagnostics or diagnostics["errors"]:
+        raise NativeCompilerError(
+            "invalid-native-graph", "compiled native graph diagnostics are inconsistent"
+        )
+    registry_text = pretty_json(compilation.source_registry)
+    if registry_text != compilation.source_registry_text:
+        raise NativeCompilerError(
+            "invalid-native-sources", "compiled native source registry is not canonical"
+        )
+    registry_sha256 = sha256_text(json_text(compilation.source_registry))
+    source_hashes = dict(compilation.state.manifest.get("source_hashes") or {})
+    rebuilt = make_artifacts(
+        compilation.state,
+        source_hashes,
+        registry_sha256=registry_sha256,
+    )
+    if rebuilt != compilation.artifacts:
+        raise NativeCompilerError(
+            "native-compilation-mismatch",
+            "in-memory native graph does not reproduce its canonical artifacts",
+        )
+    for name, content in compilation.artifacts.items():
+        _graph_relative(name)
+        try:
+            content.encode("utf-8", errors="strict")
+        except UnicodeError as error:
+            raise NativeCompilerError(
+                "invalid-native-artifact", f"native artifact is not strict UTF-8: {name}"
+            ) from error
+
+
 def _allocate_build_stage(vault: Vault) -> Path:
     build = vault.root / ".kgdistiller" / "build"
     with _PinnedDirectory(build) as parent:
@@ -761,7 +903,7 @@ def _write_vault_stage(
             compilation.vault,
             f"{stage_relative}/{_graph_relative(name).as_posix()}",
             content,
-            maximum=MAX_NATIVE_ARTIFACT_BYTES,
+            maximum=_native_graph_artifact_limit(name),
         )
 
 
@@ -882,7 +1024,7 @@ def _capture_live_graph_once(vault: Vault) -> dict[str, bytes]:
         data = read_vault_relative_regular(
             vault,
             f".kgdistiller/graph/{name}",
-            maximum=MAX_NATIVE_ARTIFACT_BYTES,
+            maximum=_native_graph_artifact_limit(name),
         )
         total += len(data)
         if total > MAX_NATIVE_GRAPH_BYTES:
@@ -953,7 +1095,7 @@ def _load_live_state_locked(vault: Vault) -> tuple[GraphState, dict[str, Any], s
         before_bytes = read_vault_relative_regular(
             vault,
             ".kgdistiller/graph/manifest.json",
-            maximum=64 * 1024 * 1024,
+            maximum=_native_graph_artifact_limit("manifest.json"),
         )
         manifest = _strict_json_bytes(before_bytes, kind="native-graph-manifest")
         _native_reader_hook("after-manifest", "manifest.json")
@@ -966,11 +1108,7 @@ def _load_live_state_locked(vault: Vault) -> tuple[GraphState, dict[str, Any], s
             data = read_vault_relative_regular(
                 vault,
                 f".kgdistiller/graph/{name}",
-                maximum=(
-                    ENTRY_SHARD_LIMIT
-                    if name.startswith("entries/")
-                    else MAX_NATIVE_ARTIFACT_BYTES
-                ),
+                maximum=_native_graph_artifact_limit(name),
             )
             total += len(data)
             if total > MAX_NATIVE_GRAPH_BYTES:
@@ -984,7 +1122,7 @@ def _load_live_state_locked(vault: Vault) -> tuple[GraphState, dict[str, Any], s
         after_bytes = read_vault_relative_regular(
             vault,
             ".kgdistiller/graph/manifest.json",
-            maximum=64 * 1024 * 1024,
+            maximum=_native_graph_artifact_limit("manifest.json"),
         )
     except SourceArchiveError as error:
         raise NativeCompilerError(
@@ -1089,7 +1227,7 @@ def _records_map(records: Any, *, field: str) -> dict[str, tuple[int, str]]:
             or isinstance(size, bool)
             or not isinstance(size, int)
             or size < 0
-            or size > MAX_NATIVE_ARTIFACT_BYTES
+            or size > _native_graph_artifact_limit(path)
             or not isinstance(digest, str)
             or not _SHA256_RE.fullmatch(digest)
         ):
@@ -1230,7 +1368,7 @@ def _write_backup(vault: Vault, backup: Path, files: Mapping[str, bytes]) -> Non
             vault,
             f"{backup_relative}/{_graph_relative(name).as_posix()}",
             data,
-            maximum=MAX_NATIVE_ARTIFACT_BYTES,
+            maximum=_native_graph_artifact_limit(name),
         )
 
 
@@ -1266,7 +1404,7 @@ def _write_live_file(vault: Vault, name: str, data: bytes) -> None:
         vault,
         f".kgdistiller/graph/{_graph_relative(name).as_posix()}",
         data,
-        maximum=MAX_NATIVE_ARTIFACT_BYTES,
+        maximum=_native_graph_artifact_limit(name),
     )
 
 
@@ -1417,6 +1555,20 @@ def _recover_graph_transaction_locked(vault: Vault) -> None:
             "committed native graph cannot be verified",
         )
     _cleanup_transaction(vault, payload)
+
+
+def _recover_native_transactions_locked(vault: Vault) -> None:
+    """Recover F3 then F4 while the caller holds the one Vault writer guard."""
+
+    _recover_graph_transaction_locked(vault)
+    # Lazy import avoids the native_compiler -> vault_ingest -> native_compiler
+    # module cycle while keeping the recovery order in one callable seam.
+    from .vault_ingest import VaultIngestError, _recover_locked
+
+    try:
+        _recover_locked(vault)
+    except VaultIngestError as error:
+        raise NativeCompilerError(error.code, error.message) from error
 
 
 def _authority_token_sha256(token: ManagedMarkdownToken) -> str:
@@ -1664,6 +1816,23 @@ def _native_generation_guard(
     raise last_error
 
 
+def _recover_before_compile(
+    expected_generation: str,
+    vault: Vault,
+    *,
+    home: Path | str | None,
+) -> Vault:
+    """Recover pending native transactions before reading authority inputs."""
+
+    with _native_generation_guard(vault):
+        _recover_native_transactions_locked(vault)
+        with vault_registry_lock(home):
+            current = _assert_selection_current(
+                expected_generation, vault, home=home
+            )
+            return current
+
+
 def sync_knowledge(
     vault_id: str | None = None,
     *,
@@ -1674,6 +1843,7 @@ def sync_knowledge(
     generation, vaults = _select_vaults(vault_id, home=home)
     results: list[dict[str, Any]] = []
     for vault in vaults:
+        vault = _recover_before_compile(generation, vault, home=home)
         compilation = compile_vault(vault)
         stage = _prepare_vault_stage(compilation)
         try:
@@ -1682,7 +1852,7 @@ def sync_knowledge(
                     current = _assert_selection_current(
                         generation, compilation.vault, home=home
                     )
-                    _recover_graph_transaction_locked(current)
+                    _recover_native_transactions_locked(current)
                 _assert_authority_current(compilation)
                 mismatches = _installed_mismatches(compilation)
                 if mismatches:
@@ -1747,6 +1917,7 @@ def check_knowledge(
     generation, vaults = _select_vaults(vault_id, home=home)
     results: list[dict[str, Any]] = []
     for vault in vaults:
+        vault = _recover_before_compile(generation, vault, home=home)
         compilation = compile_vault(vault)
         _stage_and_validate(compilation)
         with _native_generation_guard(compilation.vault):
@@ -1754,7 +1925,7 @@ def check_knowledge(
                 current = _assert_selection_current(
                     generation, compilation.vault, home=home
                 )
-                _recover_graph_transaction_locked(current)
+                _recover_native_transactions_locked(current)
             _assert_authority_current(compilation)
             mismatches = _installed_mismatches(compilation)
             _assert_selection_current(generation, compilation.vault, home=home)
@@ -1782,6 +1953,9 @@ __all__ = [
     "NativeCompilation",
     "NativeCompilerError",
     "check_knowledge",
+    "compile_native_snapshot",
     "compile_vault",
+    "compile_vault_overlay",
     "sync_knowledge",
+    "validate_native_compilation",
 ]
