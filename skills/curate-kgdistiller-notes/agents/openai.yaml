@@ -1,4 +1,4 @@
 interface:
   display_name: "Curate kgdistiller Notes"
-  short_description: "Turn registered notes into reviewed graph updates"
-  default_prompt: "Use $curate-kgdistiller-notes to extract and review knowledge from these registered notes, then hand one bounded update to kgdistiller."
+  short_description: "Prepare reviewed native Vault knowledge updates"
+  default_prompt: "Use $curate-kgdistiller-notes to capture these registered sources, resolve qualified identities, and prepare one reviewed native Vault ingest handoff."

@@ -1,59 +1,60 @@
-# Transaction contract
+# Native Vault transaction contract
 
-## Authority and identity
+## Request
 
-An identity is created only by a reviewed native definition marker in a
-registered Markdown, Typst, or LaTeX authority. Headings, ordering, syntax
-wrappers, abbreviations, lexical similarity, translation, and graph proximity
-are not identity evidence. Reviewed authored-name changes use the identity
-registry; reviewed cross-namespace mappings use the alignment registry and
-remain fingerprint-bound.
+Accept only `qlkg-vault-ingest-request-v1` for the native workflow. Its
+canonical self-digest binds:
 
-Every semantic edge is direct, typed, and supported by concrete source
-evidence. Candidate and personal namespaces remain separate. Conflicting or
-uncertain identities block their own operation.
+- one Vault ID, machine registry generation, and Vault manifest digest;
+- source-ledger, graph, and note-inventory preconditions;
+- a canonical federated recall report path and digest;
+- bounded exact native note writes/deletes with expected raw digests;
+- committed or reviewed-empty derivations tied to captured source versions;
+- canonical concept/relation evidence spans and candidate dispositions;
+- empty `alignment_mutations` in this release;
+- explicit reviewer identity, evidence, and provenance.
 
-## One stale-safe transaction
+Authority and native note patch paths are portable Vault-relative paths. The
+query-report artifact path is portable and relative to the request artifact
+root; its selected source and evidence must still belong to the target Vault.
+All identifiers and arrays use the closed schema order/uniqueness rules.
+Changing any byte of the logical request requires a new `request_sha256`.
 
-A `qlkg-ingest-request-v2` binds candidate/query inputs, target graph/snapshot/
-alignment digests, source digests, complete native patches, marker/ref
-expectations, reviewed mappings, and one bounded `qlkg-agent-delta-v3`.
-Run `kgdistiller ingest plan` first and inspect the staged result. Apply the
-content-addressed request only after review.
+## Plan
 
-Authority SHA-256 values use UTF-8 text with CRLF/CR normalized to LF. The
-writer holds one bounded lock, revalidates all preconditions, atomically
-installs native authorities, registries, generated Typst registry, and the
-deterministic `qlkg-v3` graph, then returns a canonical
-`qlkg-ingest-receipt-v2`.
+`knowledge ingest plan` stages and validates the complete transaction without
+publishing live bytes. Review the returned `qlkg-vault-ingest-report-v1` and
+the canonical plan artifact. Planning does not reserve the base generation and
+does not authorize apply; a later change must make apply fail stale.
 
-Reject superseded request, delta, registry, and graph discriminators. Ingest is
-not a migration boundary: use the deployment workflow to establish a Git
-rollback point, explicitly update reviewed registry discriminators, and rebuild
-the v3 graph from native authorities before preparing a transaction.
+## Apply
 
-Accept success only when `status` is `committed` and after-digests match a fresh
-generation-checked `agent status`. Reusing the exact request is idempotent;
-changing it requires a new canonical digest and review.
+Apply obtains the Vault writer guard, re-resolves the registered root, and
+revalidates every bound generation and content image. It installs native notes,
+source derivation rows, one deterministic `qlkg-v3` graph generation, and a
+canonical receipt as one client-visible transaction. Readers observe the
+complete old or complete new generation.
 
-Do not compose `apply`, `sync`, or `reconcile` as a substitute, and do not edit
-graph JSON/JSONL, entry shards, identities, or alignments directly. There is no
-secondary database, embedding, provider, profile, or materialization boundary.
-If rollback is degraded or fails, stop writers, preserve the journal/backups,
-and recover from them or a known-good Git revision.
+Any pre-install rejection changes no live authority, ledger, or graph byte. A
+recoverable install failure restores owned files and retains only conservative
+empty scaffolding. A degraded journal or uncertain third state fails closed and
+requires explicit diagnosis; never remove evidence manually.
 
-## Downstream state and handoff
+## Receipt and idempotency
 
-If a `qlkg-store-v2` manifest already exists, refresh with `store snapshot` and
-confirm with `store verify`. A store snapshot contains only authorities,
-registries, deterministic graph artifacts, and canonical document inventory.
+The canonical `qlkg-vault-ingest-receipt-v1` is stored under
+`.kgdistiller/receipts/sha256/aa/FULL_SHA256.json`. Its path key is its receipt
+self-digest; its file bytes also have an independently verified raw digest in a
+portable Vault store.
 
-Static-site and Obsidian exports are separate downstream actions. The project
-root may be an editor vault whose registered Markdown files remain authority;
-only the managed Obsidian subtree or external browsing-only vault/projection is
-lossy and must not be scanned or ingested back.
+Reapplying the same canonical request may return `already-committed` with the
+same receipt. Reusing a request ID for different content is a conflict. Accept
+only a receipt whose request, Vault, before/after generations, changed notes,
+derivation summaries, and validation stages match the closed apply report.
 
-Return request/plan paths and digests, precondition digests, reviewed findings,
-canonical receipt, post-commit checks, store state, and blocked operations. A
-committed ingest receipt does not authorize Git actions, remote publication,
-network exposure, or export adoption.
+## Separate outcomes
+
+The transaction does not commit Git, push a remote, refresh
+`.kgdistiller/store.json`, create an external snapshot, publish a legacy static
+bundle, or generate a legacy Obsidian projection. Require separate explicit
+authority for each.

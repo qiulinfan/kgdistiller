@@ -1,4 +1,4 @@
 interface:
   display_name: "Distill Paper Knowledge"
-  short_description: "Build an isolated source-grounded paper graph"
-  default_prompt: "Use $distill-paper-knowledge to turn this validated paper Markdown package into an isolated federated graph without changing my knowledge base."
+  short_description: "Build and align an isolated paper candidate graph"
+  default_prompt: "Use $distill-paper-knowledge to distill this validated paper package into an isolated source-grounded candidate graph and align it conservatively across registered Vaults."

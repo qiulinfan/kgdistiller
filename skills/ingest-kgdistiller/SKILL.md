@@ -1,100 +1,84 @@
 ---
 name: ingest-kgdistiller
-description: Apply a reviewed, source-backed knowledge update through kgdistiller's transactional ingest API and return a canonical receipt. Use after query-kgdistiller or another extractor has decided identities, native Markdown, Typst, or LaTeX authority markers, refs, entries, aliases, direct semantic edges, and optional mappings, or for explicitly authorized paper imports and reviewed cross-namespace alignment persistence.
+description: Apply a reviewed source-backed knowledge update through kgdistiller's native Vault transaction boundary, requiring a canonical plan, stale-safe apply, and durable verified receipt.
 ---
 
-# Ingest into kgdistiller
+# Ingest kgdistiller
 
-Be the only Skill that mutates the personal knowledge base. Execute reviewed
-decisions; do not rediscover concepts or compose low-level writers as a
-substitute for the transaction API.
-
-## Align language
-
-Match user-facing explanations, prompts, and handoffs to the user's language
-unless the user requests another language. Keep commands, identifiers, schema
-keys and action codes, and raw errors unchanged.
-
-## Load the write contract
+Use this Skill for the only high-level native knowledge mutation. Accept a
+fully reviewed `qlkg-vault-ingest-request-v1`; do not discover concepts or
+resolve ambiguous identities during apply.
 
 Read [references/transaction-contract.md](references/transaction-contract.md)
-completely before the first write. Use the public
-`kgdistiller --repo-root PROJECT` CLI.
+before planning.
 
-Start with `agent status`. Require `qlkg-query-status-v1`, the
-`json-memory`/`read-only-query-v3` capabilities, `qlkg-ingest-request-v2`, and
-exact target graph, snapshot, and alignment digests from `$query-kgdistiller`.
-The ingest request separately declares `transactional-ingest-v1`; return to
-query when any precondition is stale.
+## Workflow
 
-## Require a reviewed handoff
+1. Confirm that the request is closed, canonical, self-digested, and explicitly
+   reviewed. It must bind one registered `vault_id`, registry generation, Vault
+   manifest, source-ledger/graph/note bases, canonical federated recall report,
+   exact native note patches, derivation updates, and empty alignment mutations.
 
-Require one bounded request containing:
+2. Recheck read-only identity decisions with `$query-kgdistiller` only when the
+   handoff is stale or incomplete. Do not alter the request silently. Return it
+   to curation/review for a new canonical digest.
 
-- one decision per candidate: reuse, add, update, reject, or defer;
-- exact registered authority paths, normalized expected source hashes, native
-  patch contents, and complete post-patch marker/ref state;
-- content-addressed candidate snapshot and query report paths;
-- one reviewed `qlkg-agent-delta-v3`;
-- optional reviewed alignment decisions with evidence/justification;
-- review evidence and source provenance.
-
-Reject unresolved `uncertain` or `conflict` candidates as writes. Never create
-new identities from them. Preserve unrelated prose and user-authored markers.
-Paper snapshots remain read-only unless the user explicitly authorizes exact
-selected entries or mappings for import.
-
-Compute authority hashes over UTF-8 text with universal-newline normalization
-(CRLF/CR to LF), not raw checkout bytes. This boundary matches sync, ingest,
-store, check, and export.
-
-## Plan, review, then apply
-
-1. Build canonical `qlkg-ingest-request-v2` content in `plan` mode and compute
-   `request_sha256` over canonical JSON excluding that field.
-2. Run:
+3. Plan without changing live Vault bytes:
 
    ```sh
-   kgdistiller --repo-root PROJECT ingest plan REQUEST.json --output PLAN.json
+   kgdistiller knowledge ingest plan REQUEST.json --output PLAN.json
    ```
 
-3. Review predicted authority, node, edge, ref, alignment, and digest changes.
-   Planning must leave all live bytes unchanged.
-4. Change only `mode` to `apply`, recompute `request_sha256`, then run:
+   Review the closed plan, request digest, Vault ID, base/current generations,
+   note changes, derivation coverage, graph result, and validation stages. A
+   plan is not a commit receipt.
+
+4. Apply the exact same canonical request only after explicit approval:
 
    ```sh
-   kgdistiller --repo-root PROJECT ingest apply REQUEST.json \
-     --receipt RECEIPT.json
+   kgdistiller knowledge ingest apply REQUEST.json --receipt RECEIPT.json
    ```
 
-5. Accept only `qlkg-ingest-receipt-v2` with `status: committed`, a valid
-   canonical digest, and after-digests matching fresh `agent status`.
-6. If `knowledge/store.json` exists, refresh and verify it:
+   Do not rewrite the request between plan and apply. Apply rechecks the
+   machine registry, Vault root/manifest, source ledger and live source,
+   concept notes, recall report, and graph generation under the Vault writer
+   guard.
+
+5. Accept success only from a closed `qlkg-vault-ingest-report-v1` whose
+   outcome is `committed` or `already-committed`, and whose referenced durable
+   `qlkg-vault-ingest-receipt-v1` is canonical, self-digested, content-addressed,
+   and bound to the request/Vault. Treat `cleanup_status: pending` as committed
+   with a recovery warning, not as a clean transaction.
+
+6. Run the native integrity check after a committed result:
 
    ```sh
-   kgdistiller --repo-root PROJECT store snapshot
-   kgdistiller --repo-root PROJECT store verify
+   kgdistiller knowledge check --vault VAULT_ID
    ```
 
-   This records the JSON-only `qlkg-store-v2` generation. If no store exists,
-   report `local-only`; do not silently initialize Git, commit, or push.
-7. Create a static-site or lossy Obsidian projection only when explicitly in
-   scope. Neither export is authority, and the managed Obsidian subtree or an
-   external browsing-only vault/projection must never be rescanned or ingested.
+   Refresh a portable store only when the user asks for a snapshot; delegate
+   that separate boundary to `$deploy-kgdistiller`.
 
-The engine owns locking, optimistic concurrency, staging, scan, delta apply,
-sync, curation, global validation, atomic JSON-generation installation, crash
-recovery, and idempotency. There is no database/index/vector rebuild. A failed
-transaction must return its stable error and preserve the before-digests.
+## Boundaries
 
-## Return the receipt
+- Do not author missing review, infer identity, weaken a stale precondition, or
+  repair a request during apply.
+- Do not edit concept notes, ledgers, graph files, receipts, journals, or
+  `.kgdistiller/store.json` directly.
+- Do not delete a pending journal, stage, backup, or receipt to hide an error.
+- A plan, source capture, graph compile, Git commit, store snapshot, static
+  export, and remote push are distinct outcomes.
+- Use legacy `kgdistiller ingest` with `qlkg-ingest-request-v2` only when the
+  user explicitly selects a legacy marker project. Never submit that contract
+  to `knowledge ingest` or relabel it as native v1.
+- Match user-facing explanations, prompts, and handoffs to the user's language
+  unless the user requests another language. Keep commands, identifiers,
+  schema keys, action codes, and raw errors unchanged.
 
-Return receipt path plus request/engine/schema/capability versions; before/after
-graph, alignment, and authority hashes; changed nodes, refs, edges, alignments,
-and source patches; validations, warnings, and unapplied decisions; and store
-generation/document count when refreshed.
+## Handoff
 
-Report Git state only as `local-only`, `committed locally`, or `remote
-confirmed`, using the latter states only after the explicitly authorized action
-succeeds. Report requested export receipts separately. Do not include authority
-bodies, paper text, credentials, or unbounded evidence.
+Report the request and plan digests, Vault and registry generation, plan result,
+apply outcome, receipt digest and portable receipt path, before/after graph,
+source-ledger and note-inventory generations, changed note paths and source
+versions, validation stages, cleanup status, and warnings. State exactly which
+operation committed and which requested deployment actions remain undone.

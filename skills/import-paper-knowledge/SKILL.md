@@ -1,57 +1,87 @@
 ---
 name: import-paper-knowledge
-description: Import an explicitly selected subset of new or partial concepts from a validated federated paper graph into a registered kgdistiller research authority, preserving full paper provenance and using query-kgdistiller plus ingest-kgdistiller for stale-safe reviewed mutation. Use only when the user explicitly authorizes paper knowledge import and identifies candidate IDs and the target authority.
+description: Import an explicitly selected subset of a validated paper candidate graph into one registered native Vault through source capture, qualified recall, reviewed note changes, and stale-safe ingest.
 ---
 
-# Import selected paper knowledge
+# Import paper knowledge
 
-This is the authorization boundary between read-only paper federation and a
-personal knowledge project. Never interpret a request to read, summarize,
-distill, compare, or trace a paper as permission to import it.
+Prepare a native Vault import only after the user selects exact paper
+candidates and one target Vault. Keep acquisition, distillation, alignment,
+review, and transaction apply as separate decisions.
 
-## Require an exact reviewed handoff
+Read [references/import-contract.md](references/import-contract.md) before
+preparing the request.
 
-Read [references/import-contract.md](references/import-contract.md). Require:
+## Workflow
 
-- a validated paper package and deterministic federated snapshot;
-- the alignment response and exact personal graph, snapshot, and alignment
-  digests it used;
-- user-selected `new` or `partial` candidate IDs;
-- a registered Markdown, Typst, or LaTeX research authority destination;
-- title, authors, version, DOI/arXiv/URL when available, and precise paper
-  locations for every selected claim;
-- an explicit decision for every conflict or uncertain candidate.
+1. Require the validated paper package, isolated candidate graph, source
+   coverage, explicit selected candidate IDs, selected target Vault, and an
+   approved source-evidence file inside that Vault. Do not guess the target from
+   the current directory or import an unselected candidate.
 
-If the destination is not registered, propose a bounded source entry with
-`knowledge_origin: research` and stop for review before changing the registry or
-creating the authority. Do not select candidates on the user's behalf.
+2. Resolve and capture the evidence path:
 
-## Revalidate identity and author the research authority
+   ```sh
+   kgdistiller vault locate PAPER_SOURCE
+   kgdistiller source status PAPER_SOURCE
+   kgdistiller source capture PAPER_SOURCE
+   kgdistiller source diff PAPER_SOURCE
+   ```
 
-Run `$query-kgdistiller` again against the selected candidates. Reject stale
-target digests. A formerly new candidate may now be known; use a native ref
-instead of creating a duplicate identity.
+   Require the resolved owner to equal the chosen target Vault. Capture does
+   not approve the paper's concepts.
 
-Write refs for known concepts. For selected partial concepts, author only the
-missing material. For selected new concepts, write one native authority marker
-and a source-grounded entry. Add only direct relations supported by precise
-paper evidence. Do not copy the full paper, figures, screenshots, or long table
-contents into the authority.
+3. Revalidate every selected identity through `$query-kgdistiller` against the
+   current federation. Preserve qualified `vault_id:node_id` reuse/update
+   targets. Any new ambiguity, missing Vault, generation change, or stale
+   curation returns the selection for review.
 
-Unselected candidates remain outside the personal graph. Conflict and uncertain
-candidates block their own import and never become new identities by default.
+4. Map exact paper evidence to the captured source-version lines/columns and
+   `excerpt_sha256`. Do not cite the isolated candidate artifact as a substitute
+   for captured source evidence.
 
-## Plan and apply one transaction
+5. Draft bounded native concept/taxonomy note patches in the selected Vault.
+   Reuse stable native IDs where identity is established. Express only reviewed
+   direct typed relations, preserve multi-parent taxonomy, and keep source
+   evidence in the ledger rather than copying unbounded paper text into notes.
 
-Build the reviewed source patch, post-patch marker/ref state, candidate and query
-digests, and `qlkg-agent-delta-v3`. Hand them to `$ingest-kgdistiller`. Review
-the plan before apply and accept only a canonical committed receipt whose
-after-digests match `agent status`.
+6. Build one reviewed `qlkg-vault-ingest-request-v1` with the current registry,
+   Vault, source-ledger, graph, note-inventory, and federated recall bindings;
+   exact note patches; selected candidate dispositions; committed or
+   reviewed-empty derivations; evidence spans; empty alignment mutations; and
+   explicit review provenance.
 
-Optionally produce a static host export after scoped and global checks pass. Git
-commit, remote push, public visibility, and host adoption are separate actions
-requiring their own authorization.
+7. Show the final selected candidates, qualified reuse targets, new/updated
+   notes, derivations, relations, and exclusions. Only after explicit apply
+   authorization, invoke `$ingest-kgdistiller` to plan, review, and apply the
+   request.
 
-Return selected and skipped IDs, source provenance coverage, target authority,
-query digests, transaction receipt, optional export receipt, and every blocked
-decision.
+8. On success, report the durable receipt and re-run bounded recall for the
+   imported qualified handles. Delegate any portable snapshot to
+   `$deploy-kgdistiller` as a separate action.
+
+## Boundaries
+
+- Never mutate the paper package or candidate graph to make it resemble a
+  native Vault generation.
+- Never infer a reuse target from lexical/graph similarity, paper order,
+  citation, or matching prose.
+- Never create evidence spans against an uncaptured or different source
+  version.
+- Never import unresolved, deferred, or unselected candidates.
+- Do not directly edit ledger JSON or write derivation rows, native notes,
+  graph files, or receipts outside the native transaction. The public
+  append-only `source capture` boundary is explicitly permitted for the exact
+  selected evidence path.
+- Legacy marker imports are an explicit isolated workflow and use
+  `qlkg-ingest-request-v2`; never mix or relabel them as native v1.
+- Match user-facing explanations, prompts, and handoffs to the user's language
+  unless the user requests another language. Keep commands, identifiers,
+  schema keys, action codes, and raw errors unchanged.
+
+## Handoff
+
+Return paper/candidate digests, selected and excluded candidate IDs, target
+Vault and generations, captured document/version, current federated token,
+qualified reuse/update handles, native note paths, evidence/derivation coverage,
+request/plan/receipt digests, apply outcome, and remaining deferred decisions.

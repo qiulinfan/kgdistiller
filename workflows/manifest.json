@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-workflows-v1",
   "product": "kgdistiller",
-  "version": 2,
+  "version": 3,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -46,7 +46,7 @@
   "workflows": [
     {
       "id": "curate-notes",
-      "description": "Extract a bounded registered note set, resolve identities, and apply one reviewed transaction.",
+      "description": "Locate and capture registered sources, resolve Vault-qualified identities, and apply one reviewed native Vault transaction.",
       "steps": [
         {"id": "extract", "skill": "curate-kgdistiller-notes", "agent": "note-curator", "mode": "author"},
         {"id": "resolve", "skill": "query-kgdistiller", "agent": "query-reviewer", "mode": "read-only"},
@@ -55,7 +55,7 @@
     },
     {
       "id": "federate-paper",
-      "description": "Acquire a paper, build an isolated candidate graph, and align it without importing personal knowledge.",
+      "description": "Acquire a paper, build an isolated candidate graph, and align it through federated recall without importing personal knowledge.",
       "steps": [
         {"id": "acquire", "skill": "extract-paper-markdown", "agent": "paper-distiller", "mode": "author"},
         {"id": "distill", "skill": "distill-paper-knowledge", "agent": "paper-distiller", "mode": "author"},
@@ -64,7 +64,7 @@
     },
     {
       "id": "import-paper",
-      "description": "Import only explicitly selected paper candidates into a registered research authority.",
+      "description": "Capture evidence and import only an explicitly selected paper subset into one registered native Vault.",
       "steps": [
         {"id": "select", "skill": "import-paper-knowledge", "agent": "paper-distiller", "mode": "author"},
         {"id": "revalidate", "skill": "query-kgdistiller", "agent": "query-reviewer", "mode": "read-only"},
@@ -79,8 +79,17 @@
       ]
     },
     {
+      "id": "manage-vaults",
+      "description": "Initialize, register, diagnose, clone, move, verify, or serve native Vaults while keeping registry, Git, and network authority separate.",
+      "steps": [
+        {"id": "inspect", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"},
+        {"id": "manage", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "transaction"},
+        {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"}
+      ]
+    },
+    {
       "id": "portable-store",
-      "description": "Create or verify a JSON-only portable generation that is immediately queryable without materialization.",
+      "description": "Create or verify a qlkg-vault-store-v3 portable native Vault generation that is immediately queryable after verify and add.",
       "steps": [
         {"id": "snapshot", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "transaction"},
         {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"}
@@ -88,7 +97,7 @@
     },
     {
       "id": "publish-static",
-      "description": "Verify a portable store and create a privacy-filtered, independently verifiable static site bundle.",
+      "description": "Legacy-only: verify a qlkg-store-v2 marker project and create a privacy-filtered independently verifiable static bundle.",
       "steps": [
         {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"},
         {"id": "export", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "export"}
@@ -96,7 +105,7 @@
     },
     {
       "id": "export-obsidian",
-      "description": "Create a lossy downstream Obsidian projection that is never registered or rescanned as authority.",
+      "description": "Legacy-only: create a lossy downstream Obsidian projection that is never registered, rescanned, or mixed with native Vault authority.",
       "steps": [
         {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"},
         {"id": "export", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "export"}

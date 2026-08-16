@@ -39,18 +39,43 @@ packages = ["src/kgdistiller"]
 "workflows" = "kgdistiller/product/workflows"
 ".codex/agents" = "kgdistiller/product/.codex/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
+"docs/deployment.md" = "kgdistiller/product/docs/deployment.md"
+"docs/obsidian.md" = "kgdistiller/product/docs/obsidian.md"
+"docs/transactional-ingest.md" = "kgdistiller/product/docs/transactional-ingest.md"
+"docs/graph-contract.md" = "kgdistiller/product/docs/graph-contract.md"
+"docs/release.md" = "kgdistiller/product/docs/release.md"
+"docs/performance.md" = "kgdistiller/product/docs/performance.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
 
-[tool.hatch.build]
+[tool.hatch.build.targets.sdist]
 include = [
+  "README.md",
+  "LICENSE",
+  "pyproject.toml",
   "src/kgdistiller/**/*.py",
   "src/kgdistiller/schemas/*.json",
   "src/kgdistiller/static/**/*",
   "skills/**",
   "workflows/**",
   ".codex/agents/*.toml",
-  "docs/product-workflows.md",
+  "docs/*.md",
+  "frontend/.gitignore",
+  "frontend/index.html",
+  "frontend/package-lock.json",
+  "frontend/package.json",
+  "frontend/tsconfig.json",
+  "frontend/vite.config.mjs",
+  "frontend/vitest.config.mjs",
+  "frontend/scripts/**",
+  "frontend/src/**",
+  "frontend/tests/**",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",
+  "scripts/smoke_multivault.py",
+]
+exclude = [
+  "frontend/node_modules/**",
+  "frontend/dist/**",
+  "frontend/**/*.map",
 ]

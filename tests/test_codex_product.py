@@ -4,8 +4,10 @@ import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -69,10 +71,152 @@ class CodexProductTests(unittest.TestCase):
         self.assertEqual(8, len(manifest["skills"]))
         self.assertEqual(4, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
-        self.assertEqual(7, len(manifest["workflows"]))
+        self.assertEqual(3, manifest["version"])
+        self.assertEqual(8, len(manifest["workflows"]))
+        self.assertEqual(
+            {
+                "curate-notes",
+                "export-obsidian",
+                "federate-paper",
+                "import-paper",
+                "manage-vaults",
+                "portable-store",
+                "publish-static",
+                "trace-lineage",
+            },
+            {item["id"] for item in manifest["workflows"]},
+        )
         result = doctor_product(source_only=True, source_root=REPO_ROOT)
         self.assertEqual("ok", result["status"])
         self.assertEqual("not-checked", result["installation"])
+
+    def test_native_skill_metadata_workflows_and_packaging_are_current(self) -> None:
+        native_skills = (
+            "curate-kgdistiller-notes",
+            "deploy-kgdistiller",
+            "distill-paper-knowledge",
+            "import-paper-knowledge",
+            "ingest-kgdistiller",
+            "query-kgdistiller",
+        )
+        for name in native_skills:
+            with self.subTest(skill=name):
+                skill = (REPO_ROOT / "skills" / name / "SKILL.md").read_text(
+                    encoding="utf-8"
+                )
+                self.assertTrue(skill.startswith("---\n"))
+                frontmatter = skill.split("---\n", 2)[1]
+                self.assertEqual(
+                    {"name", "description"},
+                    {
+                        line.split(":", 1)[0]
+                        for line in frontmatter.splitlines()
+                        if line.strip()
+                    },
+                )
+                self.assertIn(
+                    "Match user-facing explanations, prompts, and handoffs",
+                    skill,
+                )
+                metadata = (
+                    REPO_ROOT / "skills" / name / "agents" / "openai.yaml"
+                ).read_text(encoding="utf-8")
+                self.assertIn(f'default_prompt: "Use ${name} ', metadata)
+
+        manifest = json.loads(
+            (REPO_ROOT / "workflows" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        by_id = {item["id"]: item for item in manifest["workflows"]}
+        self.assertIn("qlkg-vault-store-v3", by_id["portable-store"]["description"])
+        self.assertTrue(by_id["publish-static"]["description"].startswith("Legacy-only:"))
+        self.assertTrue(by_id["export-obsidian"]["description"].startswith("Legacy-only:"))
+
+        for name in (
+            "product-workflows.md",
+            "deployment.md",
+            "obsidian.md",
+            "transactional-ingest.md",
+            "graph-contract.md",
+            "release.md",
+            "performance.md",
+        ):
+            self.assertTrue((REPO_ROOT / "docs" / name).is_file(), name)
+
+
+    def test_wheel_and_sdist_have_distinct_closed_product_inventories(self) -> None:
+        with real_temporary_directory(
+            prefix="kgdistiller-product-archives-"
+        ) as temporary:
+            output = Path(temporary)
+            completed = subprocess.run(
+                ["uv", "build", "--out-dir", os.fspath(output)],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            wheels = list(output.glob("*.whl"))
+            sdists = list(output.glob("*.tar.gz"))
+            self.assertEqual(1, len(wheels))
+            self.assertEqual(1, len(sdists))
+
+            with zipfile.ZipFile(wheels[0]) as archive:
+                wheel_files = set(archive.namelist())
+            self.assertIn("kgdistiller/static/v1/bundle.json", wheel_files)
+            self.assertIn(
+                "kgdistiller/product/skills/query-kgdistiller/SKILL.md",
+                wheel_files,
+            )
+            self.assertIn(
+                "kgdistiller/product/workflows/manifest.json", wheel_files
+            )
+            self.assertIn(
+                "kgdistiller/product/.codex/agents/query-reviewer.toml",
+                wheel_files,
+            )
+            self.assertIn(
+                "kgdistiller/product/docs/obsidian.md", wheel_files
+            )
+            self.assertFalse(
+                any(name.startswith("kgdistiller/product/frontend/") for name in wheel_files)
+            )
+            self.assertFalse(
+                any(name.endswith("scripts/smoke_multivault.py") for name in wheel_files)
+            )
+
+            with tarfile.open(sdists[0], mode="r:gz") as archive:
+                sdist_files = {item.name for item in archive.getmembers() if item.isfile()}
+            roots = {name.split("/", 1)[0] for name in sdist_files if "/" in name}
+            self.assertEqual(1, len(roots))
+            prefix = next(iter(roots)) + "/"
+            relative = {
+                name[len(prefix) :]
+                for name in sdist_files
+                if name.startswith(prefix)
+            }
+            for expected in (
+                "frontend/package-lock.json",
+                "frontend/scripts/package-bundle.mjs",
+                "frontend/src/main.ts",
+                "frontend/tests/client.test.ts",
+                "scripts/smoke_multivault.py",
+                "src/kgdistiller/static/v1/bundle.json",
+                "skills/query-kgdistiller/SKILL.md",
+                "workflows/manifest.json",
+                "docs/obsidian.md",
+            ):
+                self.assertIn(expected, relative)
+            self.assertFalse(
+                any(
+                    name.startswith("frontend/node_modules/")
+                    or name.startswith("frontend/dist/")
+                    or name.endswith(".map")
+                    for name in relative
+                )
+            )
 
     def test_posix_linker_is_lf_only_and_git_attributes_enforce_it(self) -> None:
         linker = REPO_ROOT / "scripts" / "link-codex-product.sh"

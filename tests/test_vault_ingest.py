@@ -26,6 +26,7 @@ from kgdistiller.contracts import (
 from kgdistiller.native_compiler import check_knowledge, sync_knowledge
 from kgdistiller.native_notes import NativeNoteError, merge_native_note_bytes, parse_native_markdown
 from kgdistiller.query import GraphView
+from kgdistiller.recall import recall_status
 from kgdistiller.source_archive import (
     SourceArchiveError,
     capture_source,
@@ -129,7 +130,15 @@ class VaultIngestTests(unittest.TestCase):
         )
         sync_knowledge(home=self.home)
         self.query = self.root / "query.json"
-        self.query.write_bytes(b'{"schema":"test-query-report"}\n')
+        self._refresh_query_report()
+
+    def _refresh_query_report(self) -> None:
+        self.query.write_bytes(
+            canonical_json(
+                recall_status(home=self.home, vault_ids=("test",))
+            ).encode("utf-8")
+            + b"\n"
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -140,7 +149,10 @@ class VaultIngestTests(unittest.TestCase):
         *,
         updates: list[dict] | None = None,
         request_id: str = "request-1",
+        refresh_query: bool = True,
     ) -> dict:
+        if refresh_query:
+            self._refresh_query_report()
         registry = load_registry(self.home, validate_vaults=False)
         vault = load_vault(self.vault_root, expected_id="test")
         ledger = load_source_ledger(vault)
@@ -181,6 +193,32 @@ class VaultIngestTests(unittest.TestCase):
                 },
             },
             "request_sha256",
+        )
+
+    def _query_payload(self) -> dict:
+        return json.loads(self.query.read_text(encoding="utf-8"))
+
+    def _write_query_payload(self, payload: dict) -> None:
+        validate_contract(payload)
+        self.query.write_bytes(canonical_json(payload).encode("utf-8") + b"\n")
+
+    @staticmethod
+    def _set_report_generation(payload: dict) -> None:
+        payload["generation"] = sha256_json(
+            {
+                "registry_generation": payload["registry_generation"],
+                "vaults": [
+                    {
+                        "vault_id": item["vault_id"],
+                        "generation": item["generation"],
+                    }
+                    for item in payload["vaults"]
+                ],
+                "incomplete_vaults": [
+                    {"vault_id": item["vault_id"], "code": item["code"]}
+                    for item in payload["incomplete_vaults"]
+                ],
+            }
         )
 
     def _write_patch(self, content: str, *, path: str = "Knowledge/Concepts/Alpha.md") -> dict:
@@ -294,6 +332,153 @@ class VaultIngestTests(unittest.TestCase):
         )
         self.assertEqual(91, result.returncode, result.stderr)
         return result
+
+    def test_query_report_must_be_a_closed_recall_report(self) -> None:
+        self.query.write_bytes(b'{"schema":"test-query-report"}\n')
+        request = self._request(
+            [
+                self._write_patch(
+                    _concept_note("alpha", "Alpha", "Invalid query report body.")
+                )
+            ],
+            request_id="invalid-query-report",
+            refresh_query=False,
+        )
+        before = self._tree()
+        with self.assertRaises(VaultIngestError) as rejected:
+            plan_vault_ingest(
+                self._request_file(request, name="invalid-query-request.json"),
+                home=self.home,
+            )
+        self.assertEqual("invalid-query-report", rejected.exception.code)
+        self.assertEqual("request", rejected.exception.stage)
+        self.assertNotIn(
+            os.fspath(self.root),
+            canonical_json(rejected.exception.payload()),
+        )
+        self.assertEqual(before, self._tree())
+
+    def test_query_report_binds_registry_vault_manifest_and_base_generation(
+        self,
+    ) -> None:
+        baseline = self._query_payload()
+        vault_manifest_sha256 = sha256_json(
+            load_vault(self.vault_root, expected_id="test").manifest
+        )
+
+        def set_card_generation(report: dict, manifest_sha256: str) -> None:
+            card = report["vaults"][0]
+            card["generation"] = sha256_json(
+                {
+                    "vault_manifest_sha256": manifest_sha256,
+                    "graph_manifest_sha256": card["graph_manifest_sha256"],
+                    "graph_sha256": card["graph_sha256"],
+                    "source_ledger_generation_sha256": card[
+                        "source_ledger_generation_sha256"
+                    ],
+                    "authority_generation_sha256": card[
+                        "authority_generation_sha256"
+                    ],
+                }
+            )
+            self._set_report_generation(report)
+
+        def wrong_registry(report: dict) -> None:
+            report["registry_generation"] = "0" * 64
+            self._set_report_generation(report)
+
+        def wrong_graph(report: dict) -> None:
+            report["vaults"][0]["graph_sha256"] = "1" * 64
+            set_card_generation(report, vault_manifest_sha256)
+
+        def wrong_source(report: dict) -> None:
+            report["vaults"][0]["source_ledger_generation_sha256"] = "2" * 64
+            set_card_generation(report, vault_manifest_sha256)
+
+        def wrong_authority(report: dict) -> None:
+            report["vaults"][0]["authority_generation_sha256"] = "3" * 64
+            set_card_generation(report, vault_manifest_sha256)
+
+        def wrong_manifest(report: dict) -> None:
+            set_card_generation(report, "4" * 64)
+
+        def incomplete_target(report: dict) -> None:
+            report["vaults"] = []
+            report["incomplete_vaults"] = [
+                {
+                    "vault_id": "test",
+                    "code": "invalid-native-graph",
+                    "message": "registered Vault could not provide a coherent recall generation",
+                }
+            ]
+            report["status"] = "partial"
+            self._set_report_generation(report)
+
+        for name, mutate in (
+            ("registry", wrong_registry),
+            ("graph", wrong_graph),
+            ("source", wrong_source),
+            ("authority", wrong_authority),
+            ("vault-manifest", wrong_manifest),
+            ("incomplete-target", incomplete_target),
+        ):
+            with self.subTest(binding=name):
+                report = json.loads(canonical_json(baseline))
+                mutate(report)
+                self._write_query_payload(report)
+                request = self._request(
+                    [
+                        self._write_patch(
+                            _concept_note("alpha", "Alpha", f"Stale {name} body.")
+                        )
+                    ],
+                    request_id=f"stale-query-{name}",
+                    refresh_query=False,
+                )
+                with self.assertRaises(VaultIngestError) as rejected:
+                    plan_vault_ingest(
+                        self._request_file(
+                            request, name=f"stale-query-{name}.json"
+                        ),
+                        home=self.home,
+                    )
+                self.assertEqual("stale-query-report", rejected.exception.code)
+                self.assertEqual("request", rejected.exception.stage)
+                self.assertNotIn(
+                    os.fspath(self.root),
+                    canonical_json(rejected.exception.payload()),
+                )
+
+    def test_query_report_allows_the_exact_first_graph_bootstrap_state(self) -> None:
+        report = self._query_payload()
+        report["vaults"] = []
+        report["incomplete_vaults"] = [
+            {
+                "vault_id": "test",
+                "code": "invalid-native-graph",
+                "message": "registered Vault could not provide a coherent recall generation",
+            }
+        ]
+        report["status"] = "partial"
+        self._set_report_generation(report)
+        self._write_query_payload(report)
+        request = self._request(
+            [
+                self._write_patch(
+                    _concept_note("alpha", "Alpha", "Bootstrap query report body.")
+                )
+            ],
+            request_id="bootstrap-query-report",
+            refresh_query=False,
+        )
+        request["base"]["graph_generation_sha256"] = None
+        request = finalize_self_digest(request, "request_sha256")
+        validate_contract(request)
+        checked, digest = vault_ingest_module._query_report(
+            vault_ingest_module._RequestInput(request, self.root, None, None)
+        )
+        self.assertEqual("qlkg-recall-report-v1", checked["schema"])
+        self.assertEqual(request["query_report"]["sha256"], digest)
 
     def test_same_request_plans_applies_and_retries_portable_receipt(self) -> None:
         before = self.note.read_bytes()
@@ -2851,6 +3036,7 @@ class VaultIngestTests(unittest.TestCase):
                 )
             ],
             request_id="deep-query",
+            refresh_query=False,
         )
         query_request_path = self._request_file(
             query_request, name="deep-query-request.json"

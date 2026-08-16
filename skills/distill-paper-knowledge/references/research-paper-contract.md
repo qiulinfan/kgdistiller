@@ -1,54 +1,42 @@
-# Federated paper graph contract
+# Research-paper distillation contract
 
-## Required input
+## Accepted package
 
-Consume one complete `qlpaper-markdown-v1` package. Require resolved source and
-object markers, declared attachments, source hashes, page or stable HTML-anchor
-coverage, and no unresolved region that changes a central claim. Outside sources
-may disambiguate terminology but cannot silently become evidence for a paper
-claim.
-
-## Candidate selection
-
-Represent established concepts and named direct prerequisites, paper-specific
-mechanisms and objectives, validity-changing assumptions, interpretation-critical
-metrics, central results, negative results, and material limitations. Each node
-must have a stable paper-local ID, searchable label, aliases, role, importance,
-precise source locations, and short evidence.
-
-Allowed `properties.paper_role` values are `foundation`, `concept`, `method`,
-`assumption`, `metric`, `result`, and `boundary`. Before alignment, do not add
-general teaching prose or a personal identity bridge.
+Require a validated Markdown package with stable paper identity, canonical
+source link or DOI when available, complete acquired text, preserved equations
+and references, and traceable local locations. Record acquisition limitations;
+do not fill missing claims from memory.
 
 ## Candidate graph
 
-Use a non-`personal` namespace derived from the source digest. Represent every
-candidate as a knowledge node. Use only source-supported
-`prerequisite-for`, `implies`, `derived-from`, `generalizes`,
-`contrasts-with`, and optional hierarchy `contains`. Include evidence for every
-semantic relation and read direction literally. Mere co-occurrence, section
-order, and outside background knowledge are not edges.
+Use an isolated paper namespace and stable candidate IDs. Every candidate node
+must be independently useful and cite exact package evidence. Every relation
+must use a supported typed predicate and direct evidence. Preserve uncertainty
+and disagreement rather than flattening them into facts.
 
-## Status-sensitive payload
+The authored `qlkg-candidate-graph-v2` and its deterministic validated snapshot
+are bounded, canonical, self-contained review artifacts. Neither is
+`.kgdistiller/graph`, a native concept-note inventory, a source ledger, or a
+portable Vault store.
 
-After one whole-snapshot alignment:
+## Federated alignment
 
-- known nodes contain paper role and provenance, not copied personal entries;
-- partial nodes contain only the gap needed for this paper;
-- new nodes contain a paper-grounded explanation, assumptions, mechanism or
-  result, direct prerequisites, likely confusion, and locations;
-- conflict and uncertain nodes preserve alternatives and remain unbridged.
+Align through one coherent federated recall view. Retain the federation token,
+per-Vault graph/source generations, complete/incomplete Vault set, exact query
+batch, and all omissions. Personal results always use qualified handles.
 
-An exact bridge is navigation evidence between namespaces. It is not a semantic
-paper edge and never merges node identity.
+Only exact canonical or collision-free reviewed aliases can establish reuse.
+Taxonomy, lexical, graph, acronym, language, citation, and topological evidence
+may nominate candidates but cannot decide identity.
 
-## Human-readable graph
+## Import boundary
 
-Write `paper-graph.md` with source coverage, the argument chain, candidate index,
-paper edges, bridges, prerequisite-ordered learning stages, status-sensitive
-explanations, and a coverage audit mapping every central result and limitation to
-at least one node and source location.
+The distillation handoff contains no note patch and no transaction authority.
+Import requires an explicitly selected candidate subset, one registered target
+Vault, current source capture/evidence mapping where applicable, fresh recall,
+reviewed native note/derivation changes, and a separate
+`qlkg-vault-ingest-request-v1` plan/apply flow.
 
-Completion requires valid candidate/snapshot digests, coverage of the main
-argument and limitations, visible unresolved identities, and unchanged personal
-graph/snapshot/alignment digests.
+Stop when the paper package is incomplete, the candidate graph is invalid, a
+target identity is ambiguous, the federation is too incomplete for the stated
+decision, or the user has not selected a target Vault/subset.

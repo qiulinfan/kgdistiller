@@ -1,79 +1,66 @@
-# Registered-note curation contract
+# Native Vault curation contract
 
-Use this contract for Markdown, Typst, and LaTeX authorities registered in a
-kgdistiller project.
+## Inputs
 
-Require a current `qlkg-v3` graph and prepare only `qlkg-agent-delta-v3`.
-Superseded core registries and graphs belong to the explicit deployment/rebuild
-workflow, not curation.
+Require one or more user-selected `.md`, `.typ`, or `.tex` source paths. Resolve
+each path through `kgdistiller vault locate`; do not accept a guessed Vault or
+repository root. Authority and patch paths in one ingest request must belong to
+its selected Vault. The query-report artifact path is instead portable and
+relative to the request artifact root; its source/evidence ownership must still
+resolve to the selected Vault.
 
-## Authority and identity
+For every source, retain the canonical `document_id`, captured `version_id`,
+normalized content digest, predecessor version when present, and bounded diff.
+A captured version is immutable evidence. A capture alone is never a reviewed
+derivation.
 
-Treat one complete source file as the normal curation unit. Read its statements,
-proofs, explanations, examples, and comparisons. Preserve user-authored markers
-unless they conflict with an established identity or bundle independently
-reusable concepts.
+## Identity decisions
 
-One authority marker denotes one concept. Split a bundled title only when each
-part remains independently teachable, searchable, and reusable. Keep genuine
-translations, aliases, abbreviations, and equivalent notation on one node. An
-existing identity defined elsewhere must appear as a native ref, never as a
-second authority.
+Resolve a complete bounded candidate batch through federated `recall`. Use
+Vault-qualified handles in all internal and user-facing decisions. Record one
+of these dispositions for every candidate:
 
-Unmarked prose may become a candidate only when it actually defines or teaches
-a stable reusable concept. A heading, theorem wrapper, repeated phrase, source
-order, or retrieval score is never sufficient evidence.
+- `reuse`: exact or reviewed-alias identity was established;
+- `add`: a reviewed new identity will be authored;
+- `update`: reviewed evidence changes an existing identity;
+- `reject`: the candidate is not knowledge to retain;
+- `defer`: identity or evidence remains unresolved.
 
-## Entries
+Ambiguous recall results may only be rejected or deferred. Lexical, taxonomy,
+graph, translation, acronym, or layout similarity never upgrades ambiguity to
+identity.
 
-For every active authority marker in the selected scope, write one to three
-compact sentences that let a reader recognize the concept without loading the
-whole source. Preserve essential hypotheses, distinctions, notation, units, and
-the source's dominant language. Synthesize rather than copy a long span. Do not
-add external facts to an authority entry.
+## Native note proposal
 
-Use `properties.entry_origin: agent-extracted` for a new agent-authored entry.
-Keep longer dossiers outside node properties; the engine stores reviewed entry
-bodies in authority-scoped shards.
+Propose canonical Markdown only under the Vault manifest's concept, field, and
+topic roots. Preserve the existing stable concept ID when updating. Express
+taxonomy and semantic relations with the native closed frontmatter contract;
+do not create implicit identities from headings or prose. Keep relation
+evidence direct and source-grounded.
 
-## References
+Every committed concept or relation in a derivation must cite at least one
+span from the same captured source version. Bind line and optional column
+coordinates to the exact excerpt digest. A `reviewed-empty` derivation contains
+no candidates, concepts, or relation evidence.
 
-Add a file-level native ref when the file materially uses a direct prerequisite
-whose canonical authority is another registered file. Put it at the first
-meaningful use. Do not add refs for transitive ancestors, passing mentions, or
-unrepresented generic vocabulary. A ref creates provenance and a backlink; it
-does not create a semantic edge.
+## Request handoff
 
-## Relations
+The handoff targets `qlkg-vault-ingest-request-v1` and includes:
 
-Use the narrowest direct source-supported relation:
+- `vault_id`, registry generation, and Vault manifest digest;
+- source-ledger generation, graph generation, and note inventory bases;
+- one canonical federated recall report artifact and digest;
+- exact write/delete note patches with before and after byte digests;
+- source-version derivation updates and canonical evidence spans;
+- empty `alignment_mutations` for this release;
+- explicit reviewed status, reviewer, evidence, and provenance.
 
-- `prerequisite-for`: understanding the target directly requires the source;
-- `implies`: the source assertion logically entails the target;
-- `generalizes`: the source strictly extends the target;
-- `derived-from`: the source construction or assertion is obtained from the
-  target;
-- `contrasts-with`: the source explicitly distinguishes the endpoints;
-- `contains`: configured field/topic classification only.
+The request is bounded and self-digested. Planning and applying the request are
+separate responsibilities of `$ingest-kgdistiller`.
 
-Read every edge literally as `source relation target`. Record concrete evidence.
-Do not store transitive closure, chronology, topical proximity, keyword
-co-occurrence, or similarity. Keep `contains` and `prerequisite-for` acyclic.
+## Stable stop conditions
 
-## Handoff
-
-The extraction handoff contains:
-
-1. exact registered authority paths and expected source hashes;
-2. one `matched`, `ambiguous`, or `unmatched` identity decision from
-   `qlkg-graph-comparison-v2` for every candidate;
-3. the target graph, snapshot, and alignment digests;
-4. the reviewed source patch and complete marker/ref state;
-5. one independently reviewed `qlkg-agent-delta-v3` with entries and
-   evidence-backed direct edges; `qlkg-agent-proposal-v2` is only a review
-   package and may have `delta_ready: false`;
-6. unresolved decisions, which block automated apply.
-
-Use `$query-kgdistiller` for identity and retrieval and
-`$ingest-kgdistiller` for mutation. Never edit generated graph artifacts or
-other derived runtime state to make a validation gate pass.
+Stop without a handoff when Vault ownership is missing or ambiguous, capture or
+diff is invalid, generations cannot be kept coherent, an authority path is
+unsafe, evidence does not support a proposed note/relation, recall ambiguity
+would affect a write, or user review is incomplete.

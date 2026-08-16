@@ -77,6 +77,7 @@ from .vaults import (
 
 
 REQUEST_SCHEMA = "qlkg-vault-ingest-request-v1"
+RECALL_REPORT_SCHEMA = "qlkg-recall-report-v1"
 PLAN_SCHEMA = "qlkg-vault-ingest-plan-v1"
 RECEIPT_SCHEMA = "qlkg-vault-ingest-receipt-v1"
 REPORT_SCHEMA = "qlkg-vault-ingest-report-v1"
@@ -363,14 +364,82 @@ def _query_report(input_value: _RequestInput) -> tuple[dict[str, Any], str]:
         )
     except SourceArchiveError as error:
         raise VaultIngestError(
-            "invalid-query-report", error.message, stage="request"
+            "invalid-query-report",
+            "query report is not a safe bounded regular file",
+            stage="request",
         ) from error
     digest = _sha256(data)
     if digest != reference["sha256"]:
         raise VaultIngestError(
             "stale-query-report", "query report bytes do not match the request", stage="request"
         )
-    return _strict_json(data, kind="query-report"), digest
+    report = _strict_json(data, kind="query-report")
+    try:
+        report = validate_contract(report)
+    except (ContractError, RecursionError) as error:
+        raise VaultIngestError(
+            "invalid-query-report",
+            "query report does not satisfy the closed qlkg-recall-report-v1 contract",
+            stage="request",
+        ) from error
+    if report.get("schema") != RECALL_REPORT_SCHEMA:
+        raise VaultIngestError(
+            "invalid-query-report",
+            "query report does not satisfy the closed qlkg-recall-report-v1 contract",
+            stage="request",
+        )
+    request = input_value.request
+    vault_id = str(request["vault_id"])
+    vault_rows = [
+        item for item in report["vaults"] if item.get("vault_id") == vault_id
+    ]
+    incomplete_rows = [
+        item
+        for item in report["incomplete_vaults"]
+        if item.get("vault_id") == vault_id
+    ]
+    base = request["base"]
+    applicable = report["registry_generation"] == request["registry_generation"]
+    if base["graph_generation_sha256"] is None:
+        applicable = (
+            applicable
+            and not vault_rows
+            and len(incomplete_rows) == 1
+            and incomplete_rows[0]["code"]
+            in {"invalid-native-graph", "stale-native-graph"}
+        )
+    else:
+        applicable = applicable and len(vault_rows) == 1 and not incomplete_rows
+    if applicable and vault_rows:
+        card = vault_rows[0]
+        expected_vault_generation = sha256_json(
+            {
+                "vault_manifest_sha256": request["vault_manifest_sha256"],
+                "graph_manifest_sha256": card["graph_manifest_sha256"],
+                "graph_sha256": card["graph_sha256"],
+                "source_ledger_generation_sha256": card[
+                    "source_ledger_generation_sha256"
+                ],
+                "authority_generation_sha256": card[
+                    "authority_generation_sha256"
+                ],
+            }
+        )
+        applicable = (
+            card["graph_sha256"] == base["graph_generation_sha256"]
+            and card["source_ledger_generation_sha256"]
+            == base["source_ledger_generation_sha256"]
+            and card["authority_generation_sha256"]
+            == base["note_inventory_sha256"]
+            and card["generation"] == expected_vault_generation
+        )
+    if not applicable:
+        raise VaultIngestError(
+            "stale-query-report",
+            "query report does not bind the request's target Vault generation",
+            stage="request",
+        )
+    return report, digest
 
 
 def _registered_vault(

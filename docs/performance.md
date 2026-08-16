@@ -1,57 +1,97 @@
-# Performance protocol
+# Performance and resource protocol
 
-kgdistiller 0.4 performs deterministic identity, lexical, and graph queries
-against an in-memory `GraphView` loaded from one validated JSON generation. It
-does not use SQLite, embeddings, vector scans, or an approximate-nearest-
-neighbor service.
+kgdistiller uses validated JSON generations, deterministic in-memory indexes,
+and bounded source/blob reads. It has no SQLite, embedding model, vector scan,
+approximate-nearest-neighbor service, CDN, or remote API dependency.
 
-No repository measurement is a universal service-level objective. Results
-depend on graph size and shape, entry text, source count, storage, Python,
-memory, operating system, and query mix.
+No repository measurement is a universal service-level objective. Report
+machine, Python/Node versions, operating system/filesystem, Vault/graph/ledger
+shape, configured limits, cold/warm state, and exact generation tokens with
+every result.
 
-## What to measure
+## Workload inventory
 
-Use disposable synthetic authority fixtures only. For each run record:
+Use disposable synthetic Vaults only. Record:
 
-- kgdistiller version and commit, Python/OS/architecture, CPU, and memory;
-- authority, node, edge, reference, alias, and entry counts;
-- full and no-op sync wall time and peak resident memory;
-- cold `GraphView` load time and warm operation time separately;
-- p50, p95, and maximum latency for batch resolve, lexical search, bounded
-  expansion, PPR, and context construction;
-- configured limits, graph depth, edge filters, result limit, and context
-  budget;
-- graph manifest and snapshot digests before and after every read-only run.
+- registered, healthy, missing, and incomplete Vault counts;
+- native note, field/topic, graph node/edge/reference/alias/entry counts;
+- source document/version/derivation/blob and durable receipt counts/bytes;
+- full/no-op native compile and `knowledge check` wall time/peak memory;
+- cold Vault graph hydration and warm per-generation index construction;
+- federated status/roots/children/resolve/search/get/expand/context latency;
+- source capture/status/diff and predecessor-chain depth;
+- native ingest plan/apply/idempotency/stale/fault/recovery latency;
+- in-place and external store snapshot/verify/clone latency and bytes;
+- `/api/v1` request latency, snapshot single-flight contention, cache weight,
+  304 rate, and active-handler saturation;
+- frontend boot, route transition, list/SVG layout, and bundle bytes.
 
-Read-only evidence is valid only when graph artifacts remain byte-identical and
-each result reports one consistent snapshot/graph generation. Benchmark a
-concurrent reader during transactional apply and require observations to bind
-entirely to either the old or the new generation.
+Always distinguish capture/compile time from query time and cold index creation
+from reuse of the same generation.
 
 ## Required workload classes
 
 Cover at least:
 
-1. exact canonical-name and reviewed-alias resolution, including ambiguous
-   scoped aliases and cross-language Unicode normalization;
-2. lexical queries over labels, reviewed aliases, node text, and curated entry
-   fields;
-3. bounded BFS/hybrid graph expansion and PPR with explicit seeds and edge
-   types;
-4. context packing at multiple budgets;
-5. ingest plan/apply, stale-precondition rejection, fault injection, rollback,
-   recovery, and concurrent readers;
-6. `store snapshot`, `store verify`, cold clone verification, and immediate
-   query without a materialization step;
-7. native frontend and MCP smoke tests over the same generation.
+1. two healthy Vaults plus one explicitly missing Vault;
+2. exact canonical/reviewed-alias resolution, ambiguity, Unicode/RTL, and equal
+   local IDs in different Vaults;
+3. multi-parent taxonomy roots/children and scoped lexical/graph retrieval;
+4. bounded 1/2-hop expansion and context packing with omissions;
+5. source first capture, unchanged capture, newline-only carry-forward,
+   semantic change, predecessor diff, and long derivation chain rejection;
+6. native plan/apply, concurrent old/new readers, idempotency, stale bases,
+   lock conflict, fault injection, rollback, and recovery;
+7. store in-place refresh, external copy, cold pure verify, clone/add/query, and
+   all durable receipt/reference integrity;
+8. API generation 428/409 recovery, ETag/304, aborted/late response rejection,
+   source history/diff/excerpt caps, and handler overload 503;
+9. deterministic frontend graph/list fallback, partial/truncation UI, and two
+   clean production builds with identical bytes.
 
-Report measurements as machine-specific baselines. When a target is missed,
-record the finding and workload instead of silently relaxing it. A future index
-or retrieval architecture requires a separate explicit design and contract; it
-must not be inferred from benchmark pressure.
+## Coherence evidence
 
-Context `estimated_tokens` is a provider-neutral safety bound: the canonical
-JSON UTF-8 byte count after its own estimate reaches a serialization fixed
-point. It deliberately overestimates many provider tokenizers, especially for
-ASCII, while avoiding the severe undercount that a Latin-oriented characters/
-four heuristic creates for Chinese, Japanese, and Korean text.
+Read-only evidence is valid only when each result binds one federation and
+per-Vault generation and no controlled byte changes during the request. A
+concurrent ingest benchmark must observe entirely the old or entirely the new
+note/ledger/graph generation.
+
+The service retains one ready federation snapshot; stale-index reuse is keyed
+to the exact target Vault generation and conservatively weight-bounded. Capture
+failure clears ready/derived state rather than serving an old snapshot. Count
+temporary construction memory and parsed-object overhead, not only serialized
+key bytes.
+
+## Resource boundaries
+
+Patch production limits downward in unit fixtures to exercise boundaries
+without allocating maximum data. Test:
+
+- file/path/depth/count/byte caps before unbounded sorting or materialization;
+- source text/diff/excerpt input and output caps before expensive diff work;
+- recall candidate, lane, evidence, omission, expansion, and context budgets;
+- portable store normalized and actual raw aggregate bytes, including
+  `store.json`, receipts, paths, files, and directories;
+- API response bytes, cache weight/eviction, stale-index temporary/retained
+  memory, request single-flight timeout, and fixed active handler slots;
+- frontend response cache aggregate weight, taxonomy/neighborhood node/edge
+  caps, client omissions, and Unicode-safe label truncation.
+
+A bounded output does not by itself prove bounded computation. Measure scan,
+sort, diff, parse, and temporary collection peaks.
+
+## Token estimate
+
+Recall context `estimated_tokens` is a provider-neutral safety bound: canonical
+JSON UTF-8 bytes are recomputed until the estimate reaches its serialization
+fixed point. It intentionally overestimates many tokenizers while avoiding the
+severe undercount of Latin-oriented character heuristics for CJK text.
+
+## Reporting
+
+For each run report command, fixture seed/generator, limits, counts/bytes,
+p50/p95/max where repeated, peak resident memory, generation/store/bundle
+digests before and after, skips, and platform limitations. When a target is
+missed, preserve the result and workload instead of relaxing a correctness or
+resource contract. Any future index, storage engine, vector lane, or distributed
+service requires a separate explicit design and immutable contract.

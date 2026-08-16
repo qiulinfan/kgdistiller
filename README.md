@@ -1,43 +1,17 @@
 # kgdistiller
 
-`kgdistiller` compiles registered Markdown, Typst, and LaTeX authorities into a
-deterministic, source-backed `qlkg-v3` JSON graph. The authority remains in its
-native source format; graph files, browser views, search results, static sites,
-and Obsidian notes are derived products.
+`kgdistiller` is a local-first, multi-Vault knowledge workspace for source-backed
+research. A native Vault keeps ordinary Markdown concept, field, and topic notes
+as authority; immutable source versions and derivation evidence explain where
+knowledge came from; deterministic `qlkg-v3` JSON remains the derived graph.
 
-Version 0.4 is a breaking JSON-only release. It has no SQLite, vector,
-embedding-provider, machine-profile, or materialization runtime. Read-only
-queries load one generation-checked in-memory `GraphView` from the committed
-graph artifacts.
+The product has no database, vector store, embedding provider, CDN, analytics,
+or required external/remote network service. Federated recall loads validated
+generations from registered Vaults and returns stable `vault_id:node_id`
+handles. The installed browser is a self-contained, unauthenticated loopback
+HTTP workspace.
 
-Version 0.4 accepts only `qlkg-v3`, `qlkg-sources-v3`,
-`qlkg-identities-v2`, and `qlkg-agent-delta-v3` at the persisted core
-boundary. It does not migrate or retain 0.3 core artifacts. Before upgrading,
-commit the native authorities and reviewed registries as a Git rollback point.
-Export any 0.3 Agent-curated entries or semantic edges that must survive for
-later human review. Then explicitly move/delete the old generated
-`knowledge/graph/`, review and update the source/optional identity registry
-discriminators, and run an unscoped `sync` to rebuild the graph from the native
-Markdown, Typst, and LaTeX authorities. Re-review and re-author any metadata
-that must be recreated under the v3 delta contract; otherwise the rebuild
-intentionally discards it.
-
-## Authority markers
-
-Each global knowledge name has at most one active definition marker.
-
-| Format | Definition | Reference |
-| --- | --- | --- |
-| Typst | `#kn[Measure space]` | `#ref[Measure space]` |
-| Markdown | `--[[Measure space]]--` | `[[Measure space]]` |
-| LaTeX | `\kn{Measure space}` | `\knref{Measure space}` |
-
-Markdown display aliases use `[[Measure space|spaces]]`. Headings, document
-order, examples, equations, and unmarked prose never create identities.
-Reviewed canonical names and aliases live in `knowledge/identities.json`;
-reviewed cross-namespace mappings live in `knowledge/alignments.json`.
-
-## Install and initialize
+## Install
 
 ```sh
 git clone https://github.com/qiulinfan/kgdistiller.git
@@ -52,198 +26,178 @@ Or install the command:
 uv tool install git+https://github.com/qiulinfan/kgdistiller.git
 ```
 
-Initialize a knowledge project, review its bounded source registry, then build
-and validate the first generation:
+Markdown is the native knowledge-note format. Markdown, Typst, and LaTeX can
+all be captured as immutable source evidence.
+
+## Create and register Vaults
+
+Initialize a new Vault and inspect the machine-local registry:
 
 ```sh
-cd your-notes-repository
-kgdistiller init --source-root notes
-kgdistiller sync
-kgdistiller check
+kgdistiller vault init /path/to/analysis-vault \
+  --id analysis --label "Analysis"
+kgdistiller vault list
+kgdistiller vault doctor analysis
 ```
 
-Typst is required only when Typst-authored labels must be rendered. Markdown
-and LaTeX scanning use the Python standard library.
-
-## Deterministic graph and queries
-
-The committed graph under `knowledge/graph/` contains the `qlkg-v3` manifest,
-nodes, edges, references, diagnostics, and bounded entry shards. A file path is
-provenance, never identity. Source hashes use UTF-8 text with CRLF/CR normalized
-to LF, so checkout newline conversion alone does not create a new generation.
-The manifest also binds the canonical source registry and optional reviewed
-identity registry; changing ownership, subject/origin metadata, names, or
-aliases requires a new sync before a store or downstream export can be current.
-
-Use the public query surface rather than reading graph shards directly:
+Register an existing local native Vault without changing its portable ID:
 
 ```sh
-kgdistiller agent status
-kgdistiller agent resolve "Measure space" "Sigma algebra"
-kgdistiller agent search "measure space" --limit 20
-kgdistiller agent get measure-space
-kgdistiller agent expand measure-space --depth 2
-kgdistiller agent context "measure space" --budget 6000
+kgdistiller vault add /path/to/existing-vault
+kgdistiller vault doctor VAULT_ID
+kgdistiller knowledge check --vault VAULT_ID
 ```
 
-Every independent CLI or MCP request loads and validates one immutable-in-
-practice `GraphView`. The loader checks the graph manifest before and after
-hydration and retries or fails if the generation changes, so a request never
-mixes old and new graph files.
+`vault add` validates its `vault.json`; a newly initialized/local Vault need not
+have `store.json` yet. A copied portable snapshot instead follows the stricter
+`vault verify PATH` then `vault add PATH` clone flow below.
 
-Cross-language retrieval is deterministic. Exact names and collision-free
-reviewed global aliases may establish identity. Scoped aliases, Unicode
-NFKC/casefolded lexical matching, and typed graph traversal only retrieve or
-rank bounded candidates; similar text, acronyms, and graph proximity never
-establish identity.
-
-Planned search accepts `qlkg-retrieval-plan-v2`:
+The registry is a locator, not portable knowledge. `.kgdistiller/vault.json`
+defines Vault identity and authority roots. A source path resolves without a
+repository-root argument:
 
 ```sh
-kgdistiller agent search --plan knowledge/build/query.plan.json
-kgdistiller agent context --plan knowledge/build/query.plan.json --budget 6000
+kgdistiller vault locate /path/to/analysis-vault/Sources/chapter.typ
 ```
 
-The plan has only `identity_queries`, `lexical_queries`, and a bounded graph
-lane. A `semantic_queries` field is rejected. Results use
-`qlkg-search-result-v3` inside `qlkg-search-execution-v2` and bind to the exact
-snapshot and graph digests used by the request.
+Resolution fails closed when a path is missing, unregistered, excluded,
+overlapping, or escapes through a link.
 
-## MCP and local browser
+## Capture source evidence
 
-Start the JSON-RPC MCP server with:
+Capture a registered Markdown, Typst, or LaTeX file before curating from it:
 
 ```sh
-kgdistiller mcp
+kgdistiller source status /path/to/analysis-vault/Sources/chapter.typ
+kgdistiller source capture /path/to/analysis-vault/Sources/chapter.typ
+kgdistiller source diff /path/to/analysis-vault/Sources/chapter.typ
 ```
 
-Its read-only tools are `kg_status`, `kg_resolve_concepts`, `kg_search`,
-`kg_get_node`, `kg_expand`, `kg_ppr`, `kg_build_context`, `kg_align_graph`,
-`kg_compare_graph`, and `kg_create_proposal`. MCP accepts bounded inputs and
-does not mutate authorities, registries, or graph artifacts.
+Capture stores a content-addressed raw blob plus canonical document, version,
+and derivation ledgers. Newline-only checkout changes carry forward reviewed
+derivations; semantic changes become stale until reviewed. Capture alone never
+creates or approves a concept.
 
-The native browser is packaged with kgdistiller and requires no external web
-application or content delivery network:
+## Query one federation
+
+Use the public recall surface instead of opening graph shards:
+
+```sh
+kgdistiller recall status
+kgdistiller recall roots --vault analysis
+kgdistiller recall resolve "Measure space" "Sigma algebra"
+kgdistiller recall search "measurable structure" \
+  --vault analysis --scope analysis:measure-theory
+kgdistiller recall get analysis:measure-space
+kgdistiller recall expand analysis:measure-space --depth 2
+kgdistiller recall context --handle analysis:measure-space --budget 6000
+```
+
+Exact names and collision-free reviewed aliases may establish identity.
+Taxonomy, lexical, and graph lanes retrieve and rank candidates but never
+invent identity. Reports preserve incomplete Vaults, ambiguity, lane reasons,
+evidence, omissions, and generation tokens.
+
+## Review and ingest knowledge
+
+Native concept and taxonomy notes are ordinary Markdown. Agents locate and
+capture selected source files, inspect predecessor diffs, resolve qualified
+identities, and prepare one reviewed `qlkg-vault-ingest-request-v1`.
+
+```sh
+kgdistiller knowledge ingest plan request.json --output plan.json
+kgdistiller knowledge ingest apply request.json --receipt receipt.json
+kgdistiller knowledge check --vault analysis
+```
+
+Plan changes no live bytes. Apply rechecks the registry, Vault, source ledger,
+live source, notes, recall report, and graph generation, then atomically installs
+native notes, derivation rows, a deterministic graph generation, and a durable
+content-addressed receipt. See
+[docs/transactional-ingest.md](docs/transactional-ingest.md).
+
+## Open the workspace
 
 ```sh
 kgdistiller serve
 ```
 
-It binds to <http://127.0.0.1:8765/> by default. Treat an explicitly selected
-non-loopback host as a separate security decision; the server is not an
-authenticated multi-user service. Source excerpts are accepted only for the
-snapshot currently loaded by the page and for authority text whose hash still
-matches that snapshot; after a sync or edit, reload the page rather than mixing
-generations.
+Bare `serve` starts the packaged multi-Vault workspace and `/api/v1` on
+<http://127.0.0.1:8765/> by default. It works from any current directory and
+loads no CDN resource. It is a loopback personal service, not an authenticated
+multi-user server. The explicit `kgdistiller serve --legacy` mode is isolated
+for the old single-project graph browser.
 
-## Reviewed transactional ingest
+## Portable Vault store
 
-Agents first resolve identities through the read-only query surface, then pass
-one reviewed `qlkg-ingest-request-v2` to the only high-level write boundary:
+Refresh an in-place `qlkg-vault-store-v3` pointer or create a no-clobber copy:
 
 ```sh
-kgdistiller ingest plan request.json --output plan.json
-kgdistiller ingest apply request.json --receipt receipt.json
+kgdistiller vault snapshot analysis
+kgdistiller vault snapshot analysis --output /path/to/analysis-copy
+kgdistiller vault verify /path/to/analysis-copy
 ```
 
-Plan runs in staging. Apply rechecks graph, alignment, source, candidate, and
-query-report digests under the single-writer lock; installs the authority,
-registries, and deterministic graph generation atomically; and returns a
-canonical `qlkg-ingest-receipt-v2`. See
-[docs/transactional-ingest.md](docs/transactional-ingest.md).
+The store binds native notes, the current source ledger/generation, referenced
+raw blobs, every durable receipt, the exact derived graph, and fixed scaffolds.
+It excludes machine registry state, Git/Obsidian settings, build journals and
+caches, old source generations, unreferenced blobs, and the legacy store.
 
-## Portable JSON store
-
-`qlkg-store-v2` is the portable backup boundary. It contains registered
-authorities, registries, deterministic graph artifacts, and the canonical
-document inventory—no database or model-derived vectors.
+Clone or copy, verify, then add:
 
 ```sh
-kgdistiller check
-kgdistiller store snapshot
-kgdistiller store verify
+kgdistiller vault verify /path/to/cloned-vault
+kgdistiller vault add /path/to/cloned-vault
+kgdistiller recall status --vault analysis
 ```
 
-To create a separate self-contained copy:
+Moving a registered Vault is explicit: snapshot and verify the old rollback
+copy, perform the user-controlled copy or move, run `vault verify NEW_PATH`,
+then remove the old registry entry, add the new root, and run `vault doctor`
+and `recall status`. The registry transition is not an atomic filesystem move. See
+[docs/deployment.md](docs/deployment.md).
 
-```sh
-kgdistiller --repo-root /absolute/path/to/notes store snapshot \
-  --output /absolute/path/to/private-store
-kgdistiller --repo-root /absolute/path/to/private-store store verify
-kgdistiller --repo-root /absolute/path/to/private-store agent status
-```
+## Obsidian
 
-A verified clone is immediately queryable; there is no materialization step.
-Use private Git for backup only with explicit authorization. Track authorities,
-`knowledge/sources.json`, optional identity/alignment registries,
-`knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
-Keep `knowledge/build/`, plans, receipts, transaction journals, and credentials
-untracked.
+Open a native Vault itself in Obsidian. Concept, field, and topic notes remain
+ordinary visible Markdown authority; Obsidian settings are unmanaged. The
+native graph keeps typed relations and multi-parent taxonomy, while Obsidian's
+built-in graph shows links without relation types. See
+[docs/obsidian.md](docs/obsidian.md).
 
-## Downstream exports
+`export obsidian` remains a lossy downstream projection only for explicitly
+selected legacy marker projects or external browsing copies. Never register or
+ingest that projection.
 
-Create an independently verifiable static site bundle with `export site`; its
-standalone verifier is the adoption boundary for another repository:
+## Legacy migration
 
-```sh
-kgdistiller export site --output knowledge/export/site \
-  --product-commit FULL_PRODUCT_COMMIT \
-  --source-repository https://example.invalid/owner/knowledge
-python knowledge/export/site/verify_export.py knowledge/export/site
-```
+The old single-project marker pipeline (`--[[...]]--`, `#kn[...]`, `\kn{...}`),
+`qlkg-ingest-request-v2`, `qlkg-store-v2`, static export, and Obsidian projection
+keep their existing meanings behind explicit legacy commands. They are not
+native Vault inputs and are never relabeled.
 
-For editor-plus-browser use, open the knowledge repository itself as the
-Obsidian vault and keep the projection at its ignored default location:
-
-```sh
-kgdistiller export obsidian --replace
-```
-
-The repository root is the editor vault, and its registered Markdown files
-remain non-lossy native authorities. The managed
-`qlkg-obsidian-projection-v1` subtree under `knowledge/build/obsidian/` is a
-deliberately lossy, disposable view. Its source proxies link to registered
-Markdown authorities elsewhere in the same vault. An output outside the
-repository is a browsing-only vault/projection and uses `file:` links back to
-authority files. The managed subtree is never authority, must not be registered
-in `sources.json`, and must never be scanned or ingested back into kgdistiller.
-For a registered Markdown definition, a portable, collision-free exact
-Wikilink target becomes the projection filename; Typst and LaTeX definitions
-use their canonical label. This lets native Markdown `[[Label]]` references and
-`--[[Label]]--` definitions navigate without a plugin, including when semantic
-label cleanup differs from the literal Markdown target. Unsafe, overlong,
-Windows-reserved, or Unicode/case-colliding targets use a deterministic `_kgd-`
-hash filename instead; generated relation and source-proxy links still work,
-but raw authority markers for those targets require a future plugin. The
-exporter fails closed when a planned raw target collides with a registered
-Markdown authority basename. Other unregistered same-basename notes also make
-Obsidian resolution ambiguous and are outside the exporter inventory. Identity
-aliases remain metadata and display labels—raw `[[Alias]]` navigation is not a
-supported no-plugin contract.
-The exporter fails if registered authority or identity/config state is newer
-than the graph; sync first, then rebuild. Do not edit projection notes as a
-round-trip source.
+For adoption, first commit a Git rollback point and export any irreplaceable
+curation with the old release. Prefer a new sibling native Vault, especially on
+case-insensitive filesystems where `knowledge/` and `Knowledge/` collide. Copy
+only user-approved source evidence into it, capture those sources, generate
+reviewable native note candidates from the legacy active nodes, resolve every
+identity through federated recall, and require a reviewed native transaction.
+Then run `knowledge check`, `vault snapshot`, and `vault verify`. Re-distillation
+is preferable when no irreplaceable legacy metadata exists.
 
 ## Product Skills and development
 
-Install the shipped Codex Skills, agent presets, and workflow manifest with:
+Install the eight shipped Skills, four agent presets, and workflow manifest:
 
 ```sh
 kgdistiller codex link
 kgdistiller codex doctor
 ```
 
-The supported workflow order is documented in
-[docs/product-workflows.md](docs/product-workflows.md). Development changes
-must pass:
-
-```sh
-uv run python -m unittest discover -s tests -v
-uv build --out-dir build/release/0.4.0
-uv run python scripts/check_distribution.py --dist-root build/release/0.4.0
-```
-
-See [docs/graph-contract.md](docs/graph-contract.md),
-[docs/deployment.md](docs/deployment.md), and
-[docs/release.md](docs/release.md) for the data, deployment, and compatibility
-contracts.
+The native and isolated legacy workflow boundaries are documented in
+[docs/product-workflows.md](docs/product-workflows.md). Data, deployment,
+release, and measurement contracts are in
+[docs/graph-contract.md](docs/graph-contract.md),
+[docs/deployment.md](docs/deployment.md),
+[docs/release.md](docs/release.md), and
+[docs/performance.md](docs/performance.md).

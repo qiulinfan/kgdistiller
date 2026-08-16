@@ -1,4 +1,4 @@
 interface:
   display_name: "Query kgdistiller"
-  short_description: "Query and align an external-brain knowledge graph"
-  default_prompt: "Use $query-kgdistiller to resolve these concepts against the external-brain graph without modifying it."
+  short_description: "Run bounded source-backed federated Vault recall"
+  default_prompt: "Use $query-kgdistiller to resolve and retrieve this request across registered Vaults with qualified handles and explicit generation, ambiguity, and omission reporting."

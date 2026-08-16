@@ -1,128 +1,93 @@
 ---
 name: query-kgdistiller
-description: Query a kgdistiller external-brain graph without reading or mutating its graph files. Use when an Agent must batch-resolve canonical names and aliases, run deterministic lexical or graph retrieval, retrieve a bounded source-backed neighborhood, align a candidate note or paper graph, classify candidate identity as matched, ambiguous, or unmatched, or connect an isolated graph to a personal graph before authoring.
+description: Query registered kgdistiller Vaults through bounded federated recall, preserve Vault-qualified identity and ambiguity, and return source-backed results without reading graph files or mutating knowledge.
 ---
 
 # Query kgdistiller
 
-Treat kgdistiller as an opaque, read-only external brain. Return a bounded,
-evidence-backed result; never load the complete personal graph into model
-context.
+Use only the public federated recall surface. Treat each report as a bounded,
+generation-bound view and never infer identity from similarity.
 
-## Align language
+## Workflow
 
-Match user-facing explanations, prompts, and handoffs to the user's language
-unless the user requests another language. Keep commands, identifiers, schema
-keys and action codes, and raw errors unchanged.
+1. Capture federation health before selecting a query path:
 
-## Keep the boundary read-only
+   ```sh
+   kgdistiller recall status
+   ```
 
-- Never open `knowledge/graph/*.jsonl` or entry shards.
-- Never edit an authority, identity/alignment registry, or graph artifact.
-- Never run `apply`, `sync`, `reconcile`, `ingest`, or another writer.
-- Never promote lexical, acronym, translation, or topology similarity into
-  identity.
-- Preserve candidate and personal namespaces. A bridge is not a merge.
+   Report missing or incomplete Vaults. Do not silently treat a partial
+   federation as complete. Narrow with repeated `--vault VAULT_ID` only when
+   the user or task supplies a valid scope.
 
-Use the read-only MCP tools when available. Otherwise use
-`kgdistiller --repo-root PROJECT agent ...` and consume its JSON output. The
-public query layer loads one generation-checked in-memory `GraphView`; do not
-reimplement graph loading or indexing in the Skill.
+2. Explore the taxonomy DAG when the query needs a frontier:
 
-Start with `kg_status` or:
+   ```sh
+   kgdistiller recall roots --vault VAULT_ID
+   kgdistiller recall children VAULT_ID:NODE_ID
+   ```
 
-```sh
-kgdistiller --repo-root PROJECT agent status
-```
+   Preserve multiple parents. A display tree is not an identity hierarchy.
 
-Require `qlkg-query-status-v1`, `qlkg-agent-snapshot-v2`, `qlkg-v3`,
-`qlkg-alignments-v2`, and the `json-memory`/`read-only-query-v3` capabilities.
-Record `snapshot_sha256`, `graph_sha256`, and `alignment_sha256` so a later
-transactional writer can reject a stale decision.
+3. Batch exact names and aliases before lexical retrieval:
 
-## Plan deterministic retrieval
+   ```sh
+   kgdistiller recall resolve "NAME ONE" "NAME TWO"
+   ```
 
-For retrieval beyond exact batch resolution, create one bounded
-`qlkg-retrieval-plan-v2`:
+   Keep `missing`, `exact`, `alias`, and `ambiguous` outcomes distinct. Only an
+   exact canonical name or collision-free reviewed alias may establish
+   identity. Never collapse the same node ID from different Vaults.
 
-- put canonical names and explicit aliases in `identity_queries`;
-- put concise discriminating terms, including source-language forms, in
-  `lexical_queries`;
-- add `graph.seed_ids` only after identity is established;
-- bound query counts, result limit, edge types, graph depth, direction, node
-  types, stale/orphaned inclusion, and strategy.
+4. Search within selected Vaults/frontiers and retain every visible lane reason:
 
-There is no semantic/vector lane. Never add `semantic_queries`; v2 rejects it.
-Execute once with `kg_search`, `kg_build_context`, or:
+   ```sh
+   kgdistiller recall search "QUESTION" \
+     --vault VAULT_ID --scope VAULT_ID:TOPIC_ID --limit 20
+   ```
 
-```sh
-kgdistiller --repo-root PROJECT agent search --plan RETRIEVAL_PLAN.json
-```
+   Identity, taxonomy, lexical, and graph lanes retrieve or rank candidates.
+   They do not create a mapping or semantic edge. Preserve omissions and
+   truncation.
 
-Require `qlkg-search-execution-v2` with a validated
-`qlkg-search-result-v3`. Preserve each lane's status and stable reason. Exact
-identity evidence takes precedence over score fusion; lexical and graph signals
-only rank review candidates.
+5. Fetch detail or expand only bounded qualified handles:
 
-## Accept one bounded handoff
+   ```sh
+   kgdistiller recall get VAULT_ID:NODE_ID
+   kgdistiller recall expand VAULT_ID:NODE_ID --depth 2 --limit 50
+   kgdistiller recall context "QUESTION" --vault VAULT_ID --budget 6000
+   kgdistiller recall context --handle VAULT_ID:NODE_ID --budget 6000
+   ```
 
-Accept either a batch of candidate names with source-local aliases and concise
-evidence, or one valid `qlkg-agent-snapshot-v2` in an isolated namespace such
-as `paper:<digest>`. Prefer an ignored local artifact path over pasted graph
-content. Reject a candidate snapshot in the `personal` namespace.
+   The context forms are alternatives: pass either a query or selected handles,
+   never both. Use context only for the final bounded selection. Preserve
+   evidence spans, source-version identity, relation endpoints, and generation
+   tokens.
 
-Resolve the whole batch with `kg_resolve_concepts` or:
+6. Before handing a result to a mutating workflow, ensure all reports refer to
+   the intended current Vault/federation generations. Re-run the bounded query
+   when a stale token or changed Vault invalidates the decision.
 
-```sh
-kgdistiller --repo-root PROJECT agent resolve "Concept A" "Concept B"
-```
+## Boundaries
 
-Use bounded `kg_search`, `kg_get_node`, `kg_expand`, or `kg_build_context` only
-for unmatched or ambiguous cases. Require `qlkg-context-bundle-v2` from context
-packing. Do not issue a broad context query for every obvious exact match.
+- Remain read-only. Do not capture sources, patch notes, modify registries,
+  compile graphs, ingest requests, create stores, or publish exports.
+- Never open `.kgdistiller/graph` or legacy `knowledge/graph` shards directly.
+- Do not infer identity from headings, directory layout, document order,
+  co-occurrence, translation, acronyms, lexical score, or topology.
+- Do not hide missing Vaults, stale curation, ambiguous aliases, omissions, or
+  truncated results.
+- Use legacy `agent`/single-project query commands only when the user explicitly
+  requests the isolated legacy workflow. Do not mix their handles or digests
+  with native federated reports.
+- Match user-facing explanations, prompts, and handoffs to the user's language
+  unless the user requests another language. Keep commands, identifiers,
+  schema keys, action codes, and raw errors unchanged.
 
-Identity-authoritative evidence is limited to a machine ID, canonical label,
-collision-free reviewed global alias, or fresh reviewed exact mapping. A fresh
-reviewed `different-from` or rejected `exact-match` decision suppresses every
-non-reviewed probe for that target; ignore a negative mapping whose candidate
-or target fingerprint is stale. Candidate aliases, scoped abbreviations, and
-translated lexical forms may retrieve a sense but cannot alone establish
-identity. Failed exact lookup is not enough to call a candidate unmatched while
-plausible senses remain; multiple plausible senses stay ambiguous.
+## Handoff
 
-## Compare an isolated graph
-
-```sh
-kgdistiller --repo-root PROJECT agent align CANDIDATE \
-  --output knowledge/build/reviews/NAME.alignment.json
-kgdistiller --repo-root PROJECT agent compare CANDIDATE
-```
-
-Alignment is evidence, not a write request. Do not reconcile mappings here.
-Require `qlkg-alignment-report-v2`, preserve its `alignment_sha256`, fresh
-`rejected_target_ids`, and registry evidence, then require
-`qlkg-graph-comparison-v2`. Interpret node statuses conservatively:
-
-- `matched`: return the exact personal handle and bridge; caller may use a ref;
-- `ambiguous`: return ranked candidates and non-authoritative reasons for review;
-- `unmatched`: retain the source-backed candidate without a personal identity.
-
-Comparison v2 reports only those node states and `present`/`missing` candidate
-edges. It does not diagnose partial entries, missing roles, or conflicting
-claims. Never invent those conclusions from retrieval evidence.
-
-If requested, `qlkg-agent-proposal-v2` is a deterministic review package bound
-to the comparison and alignment digests. Its `delta_ready` may be false; do not
-treat its operations or empty `delta_preview` as an actionable write delta.
-
-## Return a compact handoff
-
-Return target graph/snapshot/alignment digests and one record per candidate:
-namespace and ID/name, status, established personal handle, mapping predicate
-and authoritative evidence, bounded provenance, retrieval reasons, rejected
-targets, and caller action (`ref`, `author-new`, or `review`).
-
-For papers, keep matched concepts only as paper-local roles and bridge endpoints;
-never copy personal entries into the paper artifact. Report operations used,
-result counts, ambiguity, omitted context, and target digests. Make no
-repository changes.
+Return the operation, federation generation, per-Vault graph/source generations,
+selected Vaults/scopes, Vault-qualified handles, resolution outcomes, lane
+reasons, evidence locations, omissions, and truncation. Explain whether the
+result is complete enough for its intended use; never describe a candidate as
+an established identity without exact or reviewed-alias evidence.

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Ingest into kgdistiller"
-  short_description: "Commit reviewed knowledge as one transaction"
-  default_prompt: "Use $ingest-kgdistiller to plan and transactionally apply this reviewed knowledge update, then return its canonical receipt."
+  display_name: "Ingest kgdistiller"
+  short_description: "Plan and apply reviewed native Vault transactions"
+  default_prompt: "Use $ingest-kgdistiller to validate, plan, review, and apply this canonical qlkg-vault-ingest-request-v1, then verify its durable receipt."

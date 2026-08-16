@@ -1,70 +1,83 @@
 ---
 name: distill-paper-knowledge
-description: Turn a validated qlpaper Markdown package into a source-grounded candidate graph, deterministic isolated snapshot, personal-graph alignment, and human-readable federated paper graph without mutating either the paper package or the target knowledge project. Use after extract-paper-markdown for paper concept extraction, claim and assumption mapping, gap analysis, and default read-only paper federation.
+description: Turn a validated research-paper Markdown package into an isolated source-grounded candidate graph, align candidates through federated Vault recall, and produce a review handoff without mutating personal knowledge.
 ---
 
 # Distill paper knowledge
 
-Produce an isolated paper graph. This Skill owns semantic graph extraction, not
-PDF recovery and not personal knowledge ingestion.
+Build an isolated paper graph and conservative alignment report. Reading,
+summarizing, or aligning a paper never authorizes import.
 
-## Validate the handoff
+Read
+[references/research-paper-contract.md](references/research-paper-contract.md)
+before distillation.
 
-Require a complete `qlpaper-markdown-v1` package with `paper.md`, `source.json`,
-all declared attachments, and the canonical PDF when declared. Run the validator
-from `$extract-paper-markdown`. Stop if unresolved core text or an object summary
-blocks a central claim.
+## Workflow
 
-Read [references/research-paper-contract.md](references/research-paper-contract.md)
-before selecting candidates. Treat the paper Markdown and attachments as
-immutable source evidence.
+1. Accept only a complete, validated, source-traceable paper package from
+   `$extract-paper-markdown` or an equivalent reviewed acquisition. Stop when
+   identity, canonical text, equations, references, or source locations are
+   incomplete.
 
-## Recover the argument and build candidates
+2. Author a bounded `qlkg-candidate-graph-v2` candidate inventory in the paper
+   namespace. Keep paper
+   concepts, claims, definitions, methods, results, limitations, and relations
+   tied to exact package headings/lines and source provenance. Do not infer
+   identity from section order or keyword co-occurrence.
 
-Read the complete package in this order:
+3. Build and validate an isolated candidate graph:
 
-`problem -> setup and assumptions -> mechanism -> results -> evidence -> limitations`
+   ```sh
+   kgdistiller candidate build paper.candidate.json --output paper.snapshot.json
+   kgdistiller candidate validate paper.snapshot.json
+   ```
 
-Select independently searchable concepts plus paper-specific assumptions,
-methods, metrics, results, and boundaries required to recover that chain. Record
-page, section, equation, theorem, figure, or table locations. Exclude passing
-terms, authors, headings, bibliography-only names, and local symbols.
+   Retain both the candidate graph and deterministic snapshot as review
+   artifacts, never as a native Vault generation.
 
-Write `knowledge/paper.candidate.json` as
-`qlkg-candidate-graph-v2` in an isolated namespace such as
-`paper:<source-digest-prefix>`. Build and validate the snapshot with the engine:
+4. Ask `$query-kgdistiller` for one bounded federated snapshot and batch all
+   candidate canonical names/aliases through `recall resolve`. Use taxonomy,
+   lexical, and graph lanes only to retrieve further candidates. Preserve
+   `vault_id:node_id` handles and all ambiguous/missing outcomes.
 
-```sh
-kgdistiller candidate build PAPER_PACKAGE/knowledge/paper.candidate.json \
-  --output PAPER_PACKAGE/knowledge/paper.snapshot.json
-kgdistiller candidate validate PAPER_PACKAGE/knowledge/paper.snapshot.json
-```
+5. Classify each paper candidate for review:
 
-Do not hand-write snapshot digests.
+   - `reuse`: exact or reviewed-alias identity in a selected Vault;
+   - `add`: source supports a distinct candidate for possible import;
+   - `update`: source may enrich an existing qualified identity;
+   - `reject`: not suitable for personal knowledge;
+   - `defer`: identity, evidence, or scope remains unresolved.
 
-## Align once, then explain by status
+   A lexical or graph neighbor is never automatically `reuse`.
 
-Pass the complete snapshot to `$query-kgdistiller` in one bounded call. Require
-one status per node and retain the target graph, snapshot, and alignment digests.
+6. Compare candidate relations against selected qualified endpoints. Record
+   whether the paper directly supports each typed relation; do not convert
+   document order, citation, co-occurrence, or transitive reachability into an
+   edge.
 
-- `known`: keep only the paper-local role, locations, and exact bridge;
-- `partial`: explain only the missing condition, claim, relation, or role;
-- `new`: write a complete source-grounded paper dossier;
-- `conflict`: retain both claims and provenance without a bridge;
-- `uncertain`: retain candidate senses and needed review evidence.
+7. Return the isolated candidate graph plus alignment/review handoff. If the
+   user later selects candidates and one target Vault, hand them to
+   `$import-paper-knowledge`; do not create note patches here.
 
-Write the candidate, snapshot, alignment response, and `paper-graph.md` below
-`PAPER_PACKAGE/knowledge/` unless another output root is requested. Keep paper
-semantic edges separate from cross-namespace bridges.
+## Boundaries
 
-## Preserve default isolation
+- Do not register a Vault, capture a personal source, write native notes,
+  modify a graph, or call ingest.
+- Keep paper candidate IDs and personal Vault-qualified handles in separate
+  namespaces.
+- Do not read raw Vault graph shards; use federated recall.
+- Do not import an entire paper by default. Selection and target-Vault choice
+  require explicit user review.
+- Legacy paper alignment artifacts may be inspected only when explicitly
+  selected; do not relabel them as a native recall report or ingest request.
+- Match user-facing explanations, prompts, and handoffs to the user's language
+  unless the user requests another language. Keep commands, identifiers,
+  schema keys, action codes, and raw errors unchanged.
 
-Record the personal graph, snapshot, and alignment digests before and after the
-workflow and require them to remain unchanged. Never invoke
-`$ingest-kgdistiller`, edit personal markers, register a research authority, or
-turn a similarity into identity. Import is a separate, explicitly authorized
-`$import-paper-knowledge` workflow.
+## Handoff
 
-Return package provenance, validation evidence, candidate and snapshot digests,
-alignment target digests, node/edge/bridge counts, learning order, status-aware
-explanations, and unresolved records.
+Return paper/package identity and digest, candidate-graph and snapshot
+schemas/digests/counts, source coverage, federated and per-Vault generations,
+qualified matches, candidate dispositions, relation findings,
+ambiguity/omissions, and the exact subset awaiting user selection. State that
+no personal Vault was mutated.

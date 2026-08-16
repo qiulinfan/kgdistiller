@@ -1,35 +1,45 @@
-# Selected paper import contract
+# Native paper import contract
 
-## Authorization record
+## Selection
 
-Record the exact candidate IDs selected by the user, the federated snapshot
-digest, the alignment target digests, and the registered authority destination.
-An instruction to process all `new` candidates is valid only when stated
-explicitly; absence of a selection imports nothing.
+Require an explicit selected subset from one validated isolated paper candidate
+graph. Each candidate carries exact paper-package evidence and one reviewed
+disposition. The user selects one registered native target Vault and authorizes
+the source-evidence file that will be captured there.
 
-## Provenance minimum
+Do not treat paper distillation or federated alignment as import authority.
 
-Each imported entry or edge must point to the research authority and retain the
-paper title, authors, selected version, stable identifier or URL, and at least one
-section/page/equation/theorem/figure/table location. Preserve claim scope,
-assumptions, negative results, and material uncertainty. A bibliography entry or
-paper-level URL alone is insufficient provenance for a specific claim.
+## Evidence and identity
 
-## Identity rules
+Capture the target evidence file and bind every committed concept/relation span
+to that exact immutable source version. Re-run federated recall immediately
+before preparing the request. Only exact or reviewed-alias results may reuse a
+qualified target; ambiguity blocks its write path.
 
-- known: write a ref only;
-- partial: reuse the personal identity and author only the reviewed gap;
-- new: add a marker only after exact and alias resolution remains empty and no
-  plausible unresolved sense exists;
-- conflict or uncertain: do not import until reviewed;
-- similarity, acronym ranking, or graph proximity: retrieval evidence only.
+Candidate IDs remain paper-local. Native concept IDs remain Vault-local. Store
+qualified handles only in review/query artifacts; native note relations use
+the selected Vault's stable node IDs under its closed note contract.
 
-## Transaction handoff
+## Native proposal
 
-Require expected authority hashes, full post-patch marker/ref state, candidate
-and query artifact digests, a reviewed delta, and review evidence. The plan must
-predict only the selected candidates. The committed receipt must show matching
-after-digests and leave unselected nodes absent.
+The import proposal contains bounded exact native note writes/deletes and
+source derivation updates. Preserve ordinary Markdown authority, stable IDs,
+typed direct relations, multi-parent taxonomy, and concise source-grounded note
+bodies. Do not copy a whole paper, reference list, or unbounded excerpt into a
+concept note.
 
-Keep the paper package immutable. Keep the research authority separate from
-generated paper artifacts and generated static exports.
+Build a canonical `qlkg-vault-ingest-request-v1` with fresh registry/Vault/base
+generations, a canonical recall report, selected dispositions, evidence spans,
+and reviewed provenance. `alignment_mutations` remains empty in this release.
+
+## Commit and aftermath
+
+`$ingest-kgdistiller` plans and applies the exact reviewed request. Accept only
+its canonical committed/already-committed report and durable content-addressed
+receipt. Query imported qualified handles after commit. Snapshot, Git commit,
+remote push, and publication require separate explicit authority.
+
+Stop when the paper package/candidate graph is invalid, source ownership does
+not match the target Vault, capture/diff is incoherent, a selected identity is
+ambiguous, evidence cannot be mapped exactly, the request is stale, or review
+does not cover every selected candidate.

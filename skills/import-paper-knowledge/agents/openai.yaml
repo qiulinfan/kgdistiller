@@ -1,4 +1,4 @@
 interface:
   display_name: "Import Paper Knowledge"
-  short_description: "Import selected paper concepts with full provenance"
-  default_prompt: "Use $import-paper-knowledge to import only these explicitly selected paper candidates into the reviewed research authority."
+  short_description: "Import selected paper knowledge into one native Vault"
+  default_prompt: "Use $import-paper-knowledge to revalidate this selected paper subset, capture its evidence, and prepare a reviewed native Vault ingest transaction."

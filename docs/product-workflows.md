@@ -1,86 +1,141 @@
 # kgdistiller product workflows
 
-kgdistiller owns the deterministic engine, native frontend, CLI/read-only MCP
-server, JSON Schemas, product Skills, Codex agent presets, and
-`workflows/manifest.json`. A knowledge project owns its Markdown, Typst, and
-LaTeX authorities, reviewed registries, `qlkg-v3` graph, optional
-`qlkg-store-v2` snapshot, and explicitly adopted downstream exports.
+kgdistiller ships eight product Skills, four Codex agent presets, and
+`workflows/manifest.json` version 3. The native workflow treats ordinary
+Markdown concept/taxonomy notes as authority, captured Markdown/Typst/LaTeX as
+immutable evidence, `qlkg-v3` as derived graph, and qualified federated recall
+as the identity boundary.
 
-The manifest is the portable asset/workflow inventory. Install and validate it
-from a source checkout or package with:
+Install or validate the product assets from any current directory:
 
 ```sh
 kgdistiller codex link
 kgdistiller codex doctor
 ```
 
-The portable entry is
-`$CODEX_HOME/workflow-products/kgdistiller/workflows/manifest.json`; resolve
-`workflow_guide` relative to that canonical product root. The linker manages
-only manifest-declared kgdistiller assets and namespaced state. It must not
-replace global `AGENTS.md`, `config.toml`, unrelated Skills, or unrelated agent
-presets. Explicit copy mode is a snapshot and must be refreshed after product
-changes; live link modes reflect source changes.
+The portable manifest is
+`$CODEX_HOME/workflow-products/kgdistiller/workflows/manifest.json`. Resolve its
+`workflow_guide` relative to that canonical product root. The linker owns only
+manifest-declared kgdistiller assets and namespaced state; it never replaces
+global `AGENTS.md`, `config.toml`, unrelated Skills, or unrelated presets.
 
-## Workflow boundaries
+## Native handoff chain
 
-### Curate registered notes
+The default knowledge path is:
 
-Use `$curate-kgdistiller-notes` to extract one bounded authority set,
-`$query-kgdistiller` to resolve the full candidate batch through the
-generation-checked read-only `GraphView`, and `$ingest-kgdistiller` to plan and
-apply one reviewed transaction. Identity ambiguity blocks its own write path.
-Query comparison v2 represents identity only as `matched`,
-`ambiguous`, or `unmatched`; ambiguity blocks the write path, while content
-conflicts or enrichment of matched identities require a separate source-backed
-review rather than inference from comparison output.
+1. resolve selected source paths with `vault locate`;
+2. inspect, capture, and diff immutable source versions;
+3. run federated recall and keep `vault_id:node_id` handles;
+4. prepare a reviewed `qlkg-vault-ingest-request-v1`;
+5. plan and apply through the native transaction boundary;
+6. run `knowledge check`;
+7. snapshot/verify `qlkg-vault-store-v3` when requested;
+8. use bare `kgdistiller serve` for the packaged multi-Vault workspace.
 
-### Federate and selectively import a paper
+Each handoff carries the generations and digests needed by the next stage. Do
+not turn “captured”, “resolved”, “planned”, “committed”, “snapshotted”,
+“verified”, “registered”, “Git-committed”, or “served” into one generic success.
 
-Use `$extract-paper-markdown` for a complete traceable package and
-`$distill-paper-knowledge` for an isolated candidate graph. Align it through
-`$query-kgdistiller` without importing. Only when the user selects exact
-candidates and a registered native research authority should
-`$import-paper-knowledge` produce a handoff for revalidation and
-`$ingest-kgdistiller`.
+## Eight workflows
 
-Reading, summarizing, distilling, aligning, or tracing a paper never authorizes
-personal-graph mutation.
+### `curate-notes`
 
-### Back up or restore a portable store
+`$curate-kgdistiller-notes` locates/captures selected evidence and prepares
+native note/derivation changes. `$query-kgdistiller` resolves the full bounded
+candidate batch through one coherent federated view. `$ingest-kgdistiller`
+plans and applies only the reviewed canonical request. Ambiguity blocks its own
+write path; removed evidence never deletes knowledge automatically.
 
-Use `$deploy-kgdistiller` to run `check`, `agent status`, `store snapshot`, and
-`store verify`. A `qlkg-store-v2` clone is JSON-only and immediately queryable;
-there is no profile, provider, database, or materialization step. Git
-initialization, commit, remote configuration, and push remain explicit separate
-actions.
+### `federate-paper`
 
-### Publish a static bundle
+`$extract-paper-markdown` acquires a complete source-traceable package.
+`$distill-paper-knowledge` authors an isolated `qlkg-candidate-graph-v2` and
+validated snapshot. `$query-kgdistiller` aligns candidates to qualified Vault
+handles without importing. Reading, distilling, tracing, or aligning never
+authorizes personal mutation.
 
-Use `$deploy-kgdistiller` after source/store checks. `export site` requires the
-clean tracked instance inputs and exact producer/source provenance. Run the
-bundled `verify_export.py`; a consumer adopts those verified bytes and receipt,
-not the kgdistiller checkout.
+### `import-paper`
 
-### Export Obsidian
+`$import-paper-knowledge` accepts only an explicitly selected paper subset, one
+target Vault, and captured evidence. It revalidates qualified identities and
+prepares native note/derivation changes. Public `source capture` is the separate
+append-only evidence action; `$ingest-kgdistiller` remains the only phase that
+mutates native knowledge notes, derivations, and graph state.
 
-Use `$deploy-kgdistiller` and open the knowledge-project root as the editor
-vault. Registered Markdown files there remain non-lossy native authorities.
-Create the managed `qlkg-obsidian-projection-v1` subtree as a lossy downstream
-view; never register that subtree in `sources.json`, rescan it, feed it to
-candidate/ingest, or treat projected-note edits as round-trip authority. An
-external output is a browsing-only vault/projection. Rebuild either projection
-with `--replace` from the native authority graph.
+### `trace-lineage`
 
-### Serve the native frontend
+`$trace-concept-lineage` produces source-backed dossiers and a prerequisite
+reading route. It does not imply import into a Vault.
 
-`kgdistiller serve` uses self-contained packaged assets and binds to
-`127.0.0.1` by default. Network exposure is outside the normal local workflow
-and requires a separate explicit security decision.
+### `manage-vaults`
 
-## Handoffs
+`$deploy-kgdistiller` initializes/registers Vaults, locates paths, runs doctor,
+verifies clones, performs explicit remove/add move repair, and starts the
+loopback workspace. Registry state, portable identity, filesystem move, Git,
+and network exposure remain distinct authorities.
 
-Read-only handoffs carry graph, snapshot, and alignment digests. Transaction
-handoffs add canonical request/plan/receipt digests. Store, Git, site export,
-Obsidian export, and network publication each have distinct status and
-authority; do not collapse them into a generic “deployed” result.
+### `portable-store`
+
+`$deploy-kgdistiller` snapshots or verifies `qlkg-vault-store-v3`. An external
+clone becomes queryable through `vault verify NEW` followed by `vault add NEW`;
+there is no materialization step. Snapshotting never implies Git or remote
+synchronization.
+
+### `publish-static` (legacy only)
+
+This workflow retains the old `qlkg-store-v2` marker-project and
+`qlkg-static-export-v2` meanings. It is not a native Vault publish command.
+Verify the legacy source/store and standalone export receipt without mixing its
+bytes or handles into native recall.
+
+```sh
+kgdistiller --repo-root PROJECT check
+kgdistiller --repo-root PROJECT store snapshot
+kgdistiller --repo-root PROJECT store verify
+kgdistiller --repo-root PROJECT export site --output SITE \
+  --product-commit FULL_PRODUCT_COMMIT \
+  --source-repository https://example.invalid/owner/knowledge
+python SITE/verify_export.py SITE
+```
+
+### `export-obsidian` (legacy only)
+
+This workflow produces the lossy `qlkg-obsidian-projection-v1` for an explicitly
+selected legacy marker project or external browsing copy. Never register,
+rescan, ingest, or edit the projection as authority. Native Vaults instead open
+their ordinary Markdown notes directly in Obsidian.
+
+```sh
+kgdistiller --repo-root PROJECT check
+kgdistiller --repo-root PROJECT store verify
+kgdistiller --repo-root PROJECT export obsidian --replace
+```
+
+## Agent ownership
+
+- `note-curator` captures selected source evidence and prepares a native v1
+  request handoff, but never applies it.
+- `paper-distiller` keeps paper acquisition/candidates separate and prepares
+  imports only after exact selection.
+- `query-reviewer` is read-only, preserves federation health/ambiguity, and
+  returns qualified handles plus generation evidence.
+- `transaction-reviewer` reviews native plan/apply, receipts, Vault lifecycle,
+  and store/serve boundaries; legacy v2 operations require explicit isolation.
+
+All Skills and agents match user-facing explanations, prompts, and handoffs to
+the user's language unless another language is requested. Commands,
+identifiers, schema/action keys, and raw errors remain unchanged.
+
+## Recovery and migration handoffs
+
+Before legacy adoption, record a Git rollback point and export irreplaceable
+legacy curation with the old release. Prefer a sibling native Vault, copy only
+approved source evidence, capture it, generate reviewable concept-note
+candidates, re-resolve identities, and apply a reviewed native transaction.
+Never relabel legacy graph, store, projection, delta, or receipt bytes.
+
+For a moved native Vault, snapshot and verify the old/root rollback copy,
+perform the user-controlled copy or move, run `vault verify NEW_PATH`, then
+`vault remove ID`, `vault add NEW_PATH`, `vault doctor ID`, and `recall status
+--vault ID`. Report the temporary registry outage and keep rollback evidence
+until the new root verifies.

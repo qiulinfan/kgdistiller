@@ -1,108 +1,103 @@
 ---
 name: curate-kgdistiller-notes
-description: Extract and review source-grounded knowledge from registered Markdown, Typst, or LaTeX notes, resolve existing identities through query-kgdistiller, preserve native authority and reference markers, and hand one bounded update to ingest-kgdistiller. Use for raw-note ingestion, changed-note curation, missing entries or direct relations, marker cleanup, and note-to-static-export workflows in any kgdistiller knowledge project.
+description: Extract and review source-grounded knowledge from registered Markdown, Typst, or LaTeX files, resolve identities through federated recall, and prepare one bounded native Vault ingest handoff without applying it.
 ---
 
 # Curate kgdistiller notes
 
-Turn authored notes into a reviewed update. Treat source prose as authority,
-kgdistiller as the deterministic transaction boundary, and generated graphs as
-opaque derived data.
-
-Match user-facing explanations, prompts, and handoffs to the user's language
-unless the user requests another language. Keep commands, identifiers,
-structured keys and action codes, and raw errors unchanged.
-
-## Establish the bounded source scope
-
-Start with:
-
-```sh
-kgdistiller --repo-root PROJECT agent status
-kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY
-```
-
-Require status to report a `qlkg-v3` graph before curation. If the project still
-uses a superseded core discriminator, stop and hand it to
-`$deploy-kgdistiller` for the explicit Git-backed registry update and rebuild;
-never migrate or relabel the old graph inside a curation transaction.
-
-Require each input to match exactly one pattern in `knowledge/sources.json`.
-Use the smallest coherent registered file set, including both paths of a known
-rename. If a document is unregistered, propose the source ID, root, format glob,
-field classification, and destination; obtain review before moving it or
-expanding a glob.
+Prepare a reviewed, source-backed native Vault update. Use `source capture` as
+the one authorized append to the source archive before reasoning about the
+evidence, preserve explicit identity, and leave native knowledge-note,
+derivation, and graph mutation to `$ingest-kgdistiller`.
 
 Read [references/curation-contract.md](references/curation-contract.md) before
-extracting. Never infer graph identity from headings, order, syntax wrappers,
-keywords, embeddings, or co-occurrence.
+building a handoff.
 
-## Extract before explaining
+## Workflow
 
-Read each selected authority completely. Preserve existing native markers:
+1. Resolve every supplied source path with:
 
-- Markdown: `--[[Concept]]--` and `[[Concept]]`;
-- Typst: `#kn[Concept]` and `#ref[Concept]`;
-- LaTeX: `\kn{Concept}` and `\knref{Concept}`.
+   ```sh
+   kgdistiller vault locate SOURCE
+   ```
 
-Build one bounded candidate batch containing names, aliases, source locations,
-short evidence, and direct source-supported relations. Do not write entries or
-choose identity from similarity yet.
+   Require exactly one registered Vault owner. Do not ask for a repository
+   root when the registry resolves it. Stop for an unregistered, missing,
+   overlapping, excluded, or escaped path.
 
-Pass the whole batch to `$query-kgdistiller`. Require
-`qlkg-graph-comparison-v2` with one `matched`, `ambiguous`, or `unmatched`
-identity decision per candidate and retain the target graph, snapshot, and
-alignment digests. Stop on ambiguous identities. Comparison v2 does not assess
-partial entries or semantic claim conflicts; do not infer either from ranked
-retrieval evidence.
+2. Inspect the current archive state, capture the source, and inspect the
+   predecessor diff:
 
-## Prepare one reviewed update
+   ```sh
+   kgdistiller source status SOURCE
+   kgdistiller source capture SOURCE
+   kgdistiller source diff SOURCE
+   ```
 
-Use matched identities as refs. Add an authority marker only for a reviewed
-unmatched identity. Any enrichment of a matched identity needs a separate,
-source-grounded human review because comparison v2 does not identify a missing
-portion. Write a compact source-grounded entry for every active authority in
-the selected scope and add only direct semantic edges with concrete evidence.
+   Capture archives immutable source evidence; it does not approve concepts or
+   relations. Bind every candidate and evidence span to the captured
+   `version_id`, lines or columns, and `excerpt_sha256`.
 
-Treat `qlkg-agent-proposal-v2` only as a digest-bound review package. Its
-`delta_ready` may be false, so build and review the required
-`qlkg-agent-delta-v3` independently from native source evidence; never apply a
-proposal operation or empty `delta_preview` as a write delta.
+3. Start identity work from a healthy federated snapshot:
 
-Prepare the source patch, complete post-patch marker/ref state, and one
-`qlkg-agent-delta-v3`. Do not open or edit graph JSONL, entry shards, or
-alignment files directly. Hand the reviewed artifacts and query digests to
-`$ingest-kgdistiller`; accept completion only from a committed canonical
-receipt whose after-digests match a fresh status call.
+   ```sh
+   kgdistiller recall status --vault VAULT_ID
+   kgdistiller recall roots --vault VAULT_ID
+   kgdistiller recall resolve "NAME ONE" "NAME TWO" --vault VAULT_ID
+   ```
 
-Run the scoped deterministic gates:
+   Keep `vault_id:node_id` handles intact. Batch all plausible names and
+   aliases. Exact or reviewed-alias resolution may establish reuse; lexical,
+   taxonomy, graph, translation, acronym, heading, and document-order signals
+   only retrieve candidates. Preserve every ambiguous or missing result.
 
-```sh
-kgdistiller --repo-root PROJECT curate-check --file RELATIVE_AUTHORITY
-kgdistiller --repo-root PROJECT check
-```
+4. Use scoped retrieval only after selecting the relevant field/topic
+   frontier. Fetch full evidence only for the final bounded set:
 
-If the caller needs host-consumable data, create a separate static export only
-after these gates pass:
+   ```sh
+   kgdistiller recall search "QUESTION" --vault VAULT_ID --scope VAULT_ID:NODE_ID
+   kgdistiller recall context "QUESTION" --vault VAULT_ID --scope VAULT_ID:NODE_ID
+   kgdistiller recall context --handle VAULT_ID:NODE_ID
+   ```
 
-```sh
-kgdistiller --repo-root PROJECT export site --output EXPORT_DIR \
-  --product-commit FULL_PRODUCT_COMMIT \
-  --source-repository SOURCE_REPOSITORY
-```
+   The two context forms are alternatives: use either a query (optionally
+   scoped) or selected handles, never both in one request.
 
-If `EXPORT_DIR` is an already verified adopted bundle, add `--replace` to
-build and verify its successor before an atomic, rollback-safe directory swap.
-Never delete the prior bundle as a preparation step.
+5. Draft ordinary native Markdown concept, field, or topic note changes under
+   the Vault's configured authority roots. Preserve multi-parent taxonomy and
+   typed relations. Never insert legacy `--[[...]]--`, `#kn[...]`, or
+   `\kn{...}` markers into native Vault evidence files.
 
-The export receipt is derived data. It does not authorize Git operations or
-replace the authored notes.
+6. Produce one bounded handoff for `qlkg-vault-ingest-request-v1`. Include the
+   Vault and registry generation, Vault manifest digest, source-ledger and
+   graph bases, note inventory digest, canonical recall report, exact note
+   patches, candidate dispositions, source-version derivations, evidence
+   spans, and explicit reviewer evidence. Do not apply it.
 
-## Deliver
+7. Hand the reviewed request to `$ingest-kgdistiller`. Report deferred,
+   rejected, ambiguous, stale, and missing identities separately from proposed
+   writes.
 
-Return the registered source scope, query digests, reviewed identities, source
-and delta paths, committed ingest receipt, validation results, and optional
-static-export receipt. Report deferred ambiguity and separately reviewed
-content conflicts explicitly.
-Do not claim publication, remote synchronization, or retrieval readiness unless
-the corresponding verified receipt proves it.
+## Boundaries
+
+- Work only on paths selected by the user or parent workflow.
+- Do not directly edit live source, source blobs, ledger JSON, concept notes,
+  graph files, registry state, or a portable store. The public `source capture`
+  command is the only source-archive append authorized by this workflow.
+- Do not read `.kgdistiller/graph` shards; use `recall` results.
+- Do not turn a source capture, diff, similarity score, or graph path into a
+  semantic approval.
+- Treat removed source text as review pressure, not deletion authority.
+- Use the legacy marker/project workflow only when the user explicitly selects
+  it. Never mix legacy marker authority with native concept-note authority in
+  one generation.
+- Match user-facing explanations, prompts, and handoffs to the user's language
+  unless the user requests another language. Keep commands, identifiers,
+  schema keys, action codes, and raw errors unchanged.
+
+## Handoff
+
+Return the Vault ID, captured document/version, source-ledger and graph
+generations, recall-report digest, qualified reuse handles, proposed note paths,
+derivation/evidence coverage, unresolved decisions, and the canonical request
+path and digest. State explicitly that no knowledge transaction was applied.

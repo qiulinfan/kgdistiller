@@ -1,140 +1,187 @@
-# Local-first deployment and recovery
+# Native Vault deployment and recovery
 
-The knowledge project is the deployment and backup unit. It owns registered
-Markdown, Typst, and LaTeX authorities, reviewed registries, the deterministic
-`qlkg-v3` graph, and the `qlkg-store-v2` manifest. The kgdistiller product
-checkout owns only engine code, schemas, native frontend assets, Skills, and
-workflow definitions.
+A native Vault is the portable knowledge unit. The machine registry locates it
+but is never part of its portable store. The product checkout owns engine code,
+schemas, packaged frontend assets, Skills, agents, and workflows—not personal
+knowledge.
 
-## Portable layout
+## Layout
 
 ```text
-personal-knowledge-store/
-├── notes/                         # native authorities
-└── knowledge/
-    ├── sources.json               # qlkg-sources-v3
-    ├── identities.json            # optional reviewed renames/aliases
-    ├── alignments.json             # reviewed cross-namespace mappings
-    ├── graph/                      # deterministic qlkg-v3 generation
-    ├── documents.jsonl            # canonical authority inventory
-    ├── store.json                 # qlkg-store-v2
-    └── build/                      # ignored plans, receipts, journals, previews
+vault-root/
+├── Knowledge/
+│   ├── Concepts/                 # ordinary Markdown authority
+│   ├── Fields/                   # taxonomy authority
+│   └── Topics/                   # taxonomy authority
+└── .kgdistiller/
+    ├── vault.json                # qlkg-vault-v1 portable identity
+    ├── sources/
+    │   ├── manifest.json         # current qlkg-source-ledger-v1 pointer
+    │   ├── generations/<sha>/    # documents/versions/derivations JSONL
+    │   └── blobs/sha256/...      # immutable captured raw evidence
+    ├── receipts/sha256/...       # durable native ingest receipts
+    ├── graph/                    # exact derived qlkg-v3 generation
+    ├── store.json                # qlkg-vault-store-v3 pointer
+    └── build/                    # local locks/journals/stages/caches
 ```
 
-There is no database, vector bundle, model provider, local profile, or
-materialized query index. A verified checkout is directly queryable through a
-generation-checked in-memory `GraphView`.
+Authority roots are configurable in `vault.json`; the default names above are
+illustrative. They remain portable, pairwise non-overlapping under Unicode
+NFC/casefold comparison, and outside `.git`, `.obsidian`, and `.kgdistiller`.
 
-Version 0.4 does not read or migrate a `qlkg-v2` graph,
-`qlkg-sources-v2`, or `qlkg-identities-v1`. Before upgrading an authority
-repository, commit the native authorities and reviewed registries as a Git
-rollback point. While still running 0.3, export any Agent-curated entries and
-semantic edges that must survive for later human review. With 0.4 installed,
-explicitly move the old generated `knowledge/graph/` outside the project or
-delete that exact directory after confirming the rollback commit. Review and
-change the source registry discriminator to `qlkg-sources-v3` and the optional
-identity registry discriminator to `qlkg-identities-v2`, then run an unscoped
-`sync` to rebuild `qlkg-v3` artifacts from the native authorities. Re-review
-any old `qlkg-agent-delta-v2` content before issuing it as
-`qlkg-agent-delta-v3`. The rebuild restores marker-derived nodes and references
-only; it intentionally drops 0.3 Agent-curated entries and semantic edges that
-are not re-authored after the rebuild.
-
-## Create or refresh a store
-
-Refresh in place when the notes repository is the desired private backup unit:
+## Initialize or register
 
 ```sh
-kgdistiller --repo-root PROJECT check
-kgdistiller --repo-root PROJECT agent status
-kgdistiller --repo-root PROJECT store snapshot
-kgdistiller --repo-root PROJECT store verify
+kgdistiller vault init VAULT_PATH --id VAULT_ID --label "LABEL"
+kgdistiller vault list
+kgdistiller vault doctor VAULT_ID
 ```
 
-Create a separate self-contained snapshot when authorities live elsewhere:
+Register an existing local native Vault without changing its portable ID:
 
 ```sh
-kgdistiller --repo-root PROJECT store snapshot --output STORE
-kgdistiller --repo-root STORE store verify
+kgdistiller vault add VAULT_PATH
+kgdistiller vault doctor VAULT_ID
+kgdistiller knowledge check --vault VAULT_ID
 ```
 
-`STORE` must not be nested in `PROJECT`. Snapshot copies only registered,
-already-ingested authorities and the exact registries, graph generation, and
-document inventory that describe them. Snapshot and verify never contact a
-network service.
+`vault init` creates a new layout. `vault add` preserves the existing portable
+ID and validates `vault.json`; a local/new Vault need not have `store.json`
+yet. A copied portable snapshot uses the stricter verify-then-add flow under
+Clone and restore. Neither command configures Git, remotes, credentials,
+Obsidian, or network access.
 
-`store verify` validates the manifest schema and digest, safe managed paths,
-canonical inventory, all authority hashes, registries, entry shards, graph and
-snapshot digests, and the combined store generation. It recomputes the document
-inventory from the copied authorities, source registry, and graph rather than
-trusting inventory rows in isolation. Source roots must resolve inside the
-project, including when a registered glob currently matches no files.
-Neither `qlkg-store-v1` nor a store carrying a `qlkg-v2` core graph is a 0.4
-compatibility input. If an old store is the only surviving copy, use the earlier
-release to restore its native authorities and reviewed registries, commit that
-recovery point, then follow the explicit discriminator-update and rebuild
-procedure above.
+Resolve selected files through the registry:
 
-Graph artifact size/digest records use LF-normalized UTF-8 text, matching the
-graph loader and authority hash boundary. A Git checkout that materializes CRLF
-therefore remains verifiable, while every non-newline content change still
-fails closed.
+```sh
+kgdistiller vault locate /absolute/path/to/source.tex
+```
+
+The native surface has no current-directory or repository-root fallback.
+
+## Integrity and portable snapshots
+
+Check native notes, ledger evidence, and derived graph before snapshotting:
+
+```sh
+kgdistiller knowledge check --vault VAULT_ID
+kgdistiller vault doctor VAULT_ID
+kgdistiller vault snapshot VAULT_ID
+```
+
+The in-place snapshot publishes `.kgdistiller/store.json` last and may create
+only missing fixed scaffolds without overwriting different bytes. It does not
+rewrite authority, ledger, receipts, or graph.
+
+Create a separate no-clobber snapshot and verify without registry dependency:
+
+```sh
+kgdistiller vault snapshot VAULT_ID --output SNAPSHOT_PATH
+kgdistiller vault verify SNAPSHOT_PATH
+```
+
+`qlkg-vault-store-v3` binds:
+
+- the Vault manifest and normalized native-note inventory;
+- the current source manifest and exactly its document/version/derivation rows;
+- every raw blob referenced by any version;
+- every canonical durable ingest receipt, including historical receipts;
+- the complete manifest-declared `qlkg-v3` graph and source hashes;
+- required portable scaffolds and one self/content-generation digest.
+
+It excludes machine registry state, `.git`, `.obsidian`, internal build state,
+old source generations, unreferenced blobs, live locators, and legacy
+`knowledge/store.json`. Verification is pure read-only, performs two stable
+captures, validates official ledger/receipt/graph semantics, and recompiles
+native notes byte-exactly.
+
+## Clone and restore
+
+Use the filesystem or Git transport selected by the user, then:
+
+```sh
+kgdistiller vault verify NEW_PATH
+kgdistiller vault add NEW_PATH
+kgdistiller recall status --vault VAULT_ID
+kgdistiller recall get VAULT_ID:KNOWN_NODE
+```
+
+Verification precedes registration. A clone is immediately queryable; there is
+no profile, provider, database, or materialization step. If the same Vault ID
+is already registered at another root, do not replace it automatically. The
+user must choose which copy is authoritative.
+
+Do not run `knowledge sync` to conceal a verification error. Restore known-good
+bytes or repair the owning Vault through a reviewed transaction, then produce a
+complete new store generation.
+
+## Move and registry repair
+
+Moving content and changing the machine registry are separate operations:
+
+```sh
+kgdistiller vault snapshot VAULT_ID
+kgdistiller vault verify OLD_PATH
+# user performs the copy/move and confirms NEW_PATH
+kgdistiller vault verify NEW_PATH
+kgdistiller vault remove VAULT_ID
+kgdistiller vault add NEW_PATH
+kgdistiller vault doctor VAULT_ID
+```
+
+The remove/add interval is an explicit non-atomic registry outage. Preserve the
+verified old copy until the new root is registered and queried. If add fails,
+restore the old registration rather than inventing a new ID or editing the
+registry JSON.
 
 ## Git synchronization
 
-Initialize a private Git repository, commit, add a remote, or push only when
-the user explicitly authorizes that action. Track:
+Initialize, commit, add a remote, or push only with explicit user authority.
+Git should track native authority, portable metadata/current generations,
+referenced blobs, durable receipts, graph artifacts, and `store.json`. Exclude
+machine registry state, `.obsidian`, build locks/journals/stages/caches, and
+credentials. Store verification proves local content integrity, not Git or
+remote state.
 
-- every registered authority and required authored asset;
-- `knowledge/sources.json`;
-- optional `knowledge/identities.json` and `knowledge/alignments.json`;
-- `knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
-
-Ignore `knowledge/build/`, transaction staging and journals, plans, receipts,
-credentials, query logs, and generated exports unless an export is deliberately
-adopted by a consumer. Verification proves local integrity, not that a commit
-or remote synchronization happened.
-
-After clone or pull:
+## Local workspace
 
 ```sh
-kgdistiller --repo-root STORE store verify
-kgdistiller --repo-root STORE agent status
-kgdistiller --repo-root STORE agent resolve "KNOWN NAME"
+kgdistiller serve
 ```
 
-Do not run `sync` to hide a verification failure. Restore a known-good revision
-or repair the native authority on its owning machine, then create and transfer
-one complete new store generation.
+Bare `serve` starts the packaged frontend and versioned federated API from any
+working directory, binds loopback by default, and uses no remote asset. It is
+not an authenticated public service. Do not bind a public/LAN address.
 
-Git metadata is ignored by `store verify`, but an external snapshot operation
-will never replace a store root that contains `.git`; that would discard
-repository history. Refresh a cloned store in place, or write a new snapshot to
-a separate empty path and adopt it through Git review.
+`kgdistiller serve --legacy` is a different, explicit single-project server.
+Its graph/source endpoints and static bytes are isolated from `/api/v1` and the
+packaged native workspace.
 
-## Local services and exports
+## Legacy adoption
 
-`kgdistiller serve` uses the frontend assets packaged with the installed
-product and binds to `127.0.0.1` by default. It is not an authenticated public
-service. `kgdistiller mcp` exposes only bounded read-only graph operations.
+Never copy or relabel `knowledge/graph`, `knowledge/store.json`, a static
+export, Obsidian projection, or Agent delta into `.kgdistiller`.
 
-`export site` produces a privacy-filtered `qlkg-static-export-v2` bundle with a
-dependency-free verifier. Producer release, authority generation, export, and
-consumer adoption are separate provenance events. Verify the bundle before a
-consumer commits its exact files.
+1. Commit native legacy authorities/registries as a rollback point.
+2. With the old release, export any irreplaceable curated entries and semantic
+   edges for human review.
+3. Prefer a new sibling Vault. This avoids `knowledge`/`Knowledge` collisions
+   on Windows and other case-insensitive filesystems.
+4. Copy only user-approved source evidence into the native Vault, then run
+   `vault locate`, `source capture`, and `source diff`.
+5. Generate reviewable native concept/taxonomy note candidates from the legacy
+   active nodes; re-resolve every identity with qualified federated recall.
+6. Require a reviewed `qlkg-vault-ingest-request-v1` plan/apply.
+7. Run `knowledge check`, `vault snapshot`, and `vault verify`.
 
-`export obsidian` produces a `qlkg-obsidian-projection-v1` downstream view.
-Open the knowledge repository root as the editor vault; its registered Markdown
-files remain non-lossy native authorities. Only the managed default subtree is
-a lossy projection. An external output is a browsing-only vault/projection and
-links back with `file:` URLs. Never register projected output as a source,
-rescan it, or use edits in it to update the graph. Replace the projection from
-the native authorities instead.
+If no irreplaceable legacy curation exists, re-distillation is safer than a
+compatibility layer. Legacy marker commands and `qlkg-store-v2` remain usable
+only in their explicit isolated workflow.
 
-## Deployment receipt
+## Recovery record
 
-Record the absolute project/store root, installed kgdistiller version and exact
-product commit when known, store schema and generation digests, document count,
-Git commit/remote state only when actually confirmed, and any static-export
-receipt. Never include full authority content, credentials, or unbounded source
-excerpts.
+Record confirmed Vault ID/label/root, registry generation, Vault/store/graph and
+source-ledger digests, verification result, exact copy/move steps, temporary
+registry outage, Git state only when observed, and unresolved cleanup warnings.
+Never include credentials, unbounded source text, or absolute paths inside a
+portable manifest.
