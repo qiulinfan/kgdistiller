@@ -401,6 +401,8 @@ class ContractTest(unittest.TestCase):
                 "qlkg-recall-request-v1",
                 "qlkg-recall-report-v1",
                 "qlkg-recall-error-v1",
+                "qlkg-api-response-v1",
+                "qlkg-api-error-v1",
                 "qlkg-vault-store-v3",
                 "qlkg-vault-store-report-v1",
             },

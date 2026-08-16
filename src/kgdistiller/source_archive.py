@@ -38,6 +38,8 @@ MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_ARTIFACT_ROWS = 1_000_000
 MAX_DIFF_BYTES = 1024 * 1024
 MAX_DIFF_LINES = 10_000
+MAX_DIFF_INPUT_BYTES = 4 * 1024 * 1024
+MAX_DIFF_INPUT_LINES = 100_000
 MAX_LEDGER_READ_RETRIES = 3
 MAX_PATH_BYTES = 4096
 ARTIFACT_FILENAMES = {
@@ -2441,6 +2443,115 @@ def _bounded_diff(
     }
 
 
+def verified_version_diff(
+    ledger: SourceLedger,
+    *,
+    document_id: str,
+    from_version_id: str | None = None,
+    to_version_id: str | None = None,
+) -> dict[str, Any]:
+    """Diff at most two verified blobs from one already captured ledger generation."""
+
+    document: Mapping[str, Any] | None = None
+    for row in ledger.documents:
+        if str(row["document_id"]) == document_id:
+            document = row
+            break
+    if document is None:
+        raise SourceArchiveError(
+            "unknown-source-document", "source document is unavailable in this generation"
+        )
+    target_id = to_version_id or str(document["current_version_id"])
+    target: Mapping[str, Any] | None = None
+    explicit_predecessor: Mapping[str, Any] | None = None
+    previous_for_document: Mapping[str, Any] | None = None
+    default_predecessor: Mapping[str, Any] | None = None
+    for row in ledger.versions:
+        if str(row["document_id"]) != document_id:
+            continue
+        version_id = str(row["version_id"])
+        if version_id == target_id:
+            target = row
+            default_predecessor = previous_for_document
+        if from_version_id is not None and version_id == from_version_id:
+            explicit_predecessor = row
+        previous_for_document = row
+    if target is None or str(target["document_id"]) != document_id:
+        raise SourceArchiveError(
+            "invalid-source-version", "target version does not belong to this document"
+        )
+    predecessor_id = (
+        from_version_id
+        if from_version_id is not None
+        else target.get("predecessor_version_id")
+    )
+    predecessor: Mapping[str, Any] | None = None
+    if predecessor_id is not None:
+        predecessor = (
+            explicit_predecessor
+            if from_version_id is not None
+            else default_predecessor
+        )
+        if predecessor is None or str(predecessor["document_id"]) != document_id:
+            raise SourceArchiveError(
+                "invalid-source-version",
+                "predecessor version does not belong to this document",
+            )
+        if str(predecessor["version_id"]) != str(predecessor_id):
+            raise SourceArchiveError(
+                "invalid-source-version",
+                "predecessor version does not belong to this document",
+            )
+
+    input_rows = [target] if predecessor is None or predecessor is target else [predecessor, target]
+    if sum(int(row["byte_count"]) for row in input_rows) > MAX_DIFF_INPUT_BYTES:
+        raise SourceArchiveError(
+            "source-diff-too-large", "source versions exceed the supported diff input bound"
+        )
+
+    if predecessor is target:
+        before = verified_version_text(ledger, target)
+        after = before
+    else:
+        before = "" if predecessor is None else verified_version_text(ledger, predecessor)
+        after = verified_version_text(ledger, target)
+
+    def line_count(value: str) -> int:
+        if not value:
+            return 0
+        separators = "\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+        count = sum(1 for character in value if character in separators)
+        return count if value[-1] in separators else count + 1
+
+    if (
+        len(before.encode("utf-8")) + len(after.encode("utf-8"))
+        > MAX_DIFF_INPUT_BYTES
+        or line_count(before) + line_count(after) > MAX_DIFF_INPUT_LINES
+    ):
+        raise SourceArchiveError(
+            "source-diff-too-large", "source versions exceed the supported diff input bound"
+        )
+    diff = _bounded_diff(
+        before,
+        after,
+        from_version_id=(str(predecessor_id) if predecessor_id is not None else None),
+        to_version_id=target_id,
+    )
+    empty_sha256 = _sha256_bytes(b"")
+    return {
+        "document_id": document_id,
+        "path": str(document["path"]),
+        "format": str(target["format"]),
+        "semantic_changed": str(target["normalized_text_sha256"])
+        != (
+            str(predecessor["normalized_text_sha256"])
+            if predecessor is not None
+            else empty_sha256
+        ),
+        **diff,
+    }
+
+
 def _effective_concepts(
     version_id: str | None,
     versions: Mapping[str, Mapping[str, Any]],
@@ -3612,5 +3723,6 @@ __all__ = [
     "vault_staging_directory",
     "vault_writer_lock",
     "verify_evidence_span",
+    "verified_version_diff",
     "verified_version_text",
 ]

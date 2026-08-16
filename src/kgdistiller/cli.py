@@ -3449,6 +3449,7 @@ def parse_args() -> argparse.Namespace:
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
     serve_command.add_argument("--no-open", action="store_true")
+    serve_command.add_argument("--federated", action="store_true")
     args = parser.parse_args()
     if (
         args.command == "agent"
@@ -3631,6 +3632,21 @@ def main() -> int:
         from kgdistiller.mcp import serve_stdio
 
         serve_stdio(None, federated=True)
+        return 0
+    if args.command == "serve" and args.federated:
+        from .api import ApiError, serve_api
+
+        try:
+            serve_api(host=args.host, port=args.port)
+        except (OSError, UnicodeError, ValueError, ApiError):
+            failure = ApiError(
+                500,
+                "api-server-failed",
+                "versioned API server could not start",
+                retryable=False,
+            )
+            print(pretty_json(failure.payload()), end="", file=sys.stderr)
+            return 1
         return 0
     if args.command == "knowledge":
         if args.knowledge_command == "ingest":
