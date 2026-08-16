@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import unicodedata
 from importlib import resources
 from pathlib import PurePosixPath
@@ -16,6 +17,7 @@ from .json_schema import SchemaViolation, validate_json_schema
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 MAX_NAMESPACE_LENGTH = 256
 MAX_PORTABLE_PATH_BYTES = 4096
+MAX_VAULT_STORE_BYTES = 8 * 1024 * 1024 * 1024
 _WINDOWS_RESERVED = {
     "con",
     "prn",
@@ -57,6 +59,8 @@ CONTRACT_SCHEMAS = {
         "qlkg-recall-request-v1",
         "qlkg-recall-report-v1",
         "qlkg-recall-error-v1",
+        "qlkg-vault-store-v3",
+        "qlkg-vault-store-report-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
@@ -68,6 +72,7 @@ SELF_DIGEST_FIELDS = {
     "qlkg-vault-ingest-plan-v1": "plan_sha256",
     "qlkg-vault-ingest-receipt-v1": "receipt_sha256",
     "qlkg-vault-ingest-journal-v1": "journal_sha256",
+    "qlkg-vault-store-v3": "store_sha256",
 }
 
 
@@ -256,6 +261,82 @@ def _validate_vault_ingest_paths(payload: dict[str, Any]) -> None:
                     paths.append((value, f"targets.{index}.{key}"))
     for value, field in paths:
         _validate_portable_path(value, field=field)
+
+
+def _validate_vault_ingest_receipt(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-vault-ingest-receipt-v1":
+        return
+
+    summaries = payload["after"]["derivations"]
+    summary_ids = [str(item["version_id"]) for item in summaries]
+    if summary_ids != sorted(summary_ids) or len(summary_ids) != len(set(summary_ids)):
+        raise ContractError("receipt derivation summaries are not canonical")
+    if summary_ids != list(payload["changes"]["derivation_version_ids"]):
+        raise ContractError("receipt derivation summary IDs do not match its changes")
+
+    def require_sorted_unique(
+        values: list[dict[str, Any]],
+        keys: tuple[str, ...],
+        *,
+        identity_keys: tuple[str, ...],
+        field: str,
+    ) -> None:
+        ordered = sorted(
+            values,
+            key=lambda item: tuple(str(item[key]) for key in keys)
+            + (canonical_json(item),),
+        )
+        identities = [tuple(str(item[key]) for key in identity_keys) for item in values]
+        if values != ordered or len(identities) != len(set(identities)):
+            raise ContractError(f"receipt {field} records are not canonical")
+
+    for summary in summaries:
+        candidates = summary["candidate_dispositions"]
+        require_sorted_unique(
+            candidates,
+            ("candidate_id", "disposition"),
+            identity_keys=("candidate_id",),
+            field="candidate disposition",
+        )
+        concept_ids = list(summary["concept_ids"])
+        if concept_ids != sorted(concept_ids) or len(concept_ids) != len(set(concept_ids)):
+            raise ContractError("receipt concept IDs are not canonical")
+        concept_evidence = summary["concept_evidence"]
+        require_sorted_unique(
+            concept_evidence,
+            ("concept_id",),
+            identity_keys=("concept_id",),
+            field="concept evidence",
+        )
+        evidence_ids = [str(item["concept_id"]) for item in concept_evidence]
+        if set(evidence_ids) != set(concept_ids):
+            raise ContractError("receipt concept evidence does not match its concept IDs")
+
+        relation_evidence = summary["relation_evidence"]
+        relation_identities: list[tuple[str, str, str]] = []
+        for item in relation_evidence:
+            source = str(item["source"])
+            relation = str(item["relation"])
+            target = str(item["target"])
+            if relation == "contrasts-with":
+                canonical_source, canonical_target = sorted((source, target))
+                if (source, target) != (canonical_source, canonical_target):
+                    raise ContractError("receipt relation evidence is not canonical")
+            relation_identities.append((source, relation, target))
+        ordered_relations = sorted(
+            relation_evidence,
+            key=lambda item: (
+                str(item["source"]),
+                str(item["relation"]),
+                str(item["target"]),
+                canonical_json(item),
+            ),
+        )
+        if (
+            relation_evidence != ordered_relations
+            or len(relation_identities) != len(set(relation_identities))
+        ):
+            raise ContractError("receipt relation evidence records are not canonical")
 
 
 def _validate_recall_paths(payload: dict[str, Any]) -> None:
@@ -505,6 +586,247 @@ def _validate_recall_report(payload: dict[str, Any]) -> None:
         raise ContractError("recall estimated_tokens must equal canonical result bytes")
 
 
+def _validate_vault_store(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "qlkg-vault-store-v3":
+        return
+
+    def records(value: Any, field: str) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            raise ContractError(f"{field} must be an array")
+        result = [dict(item) for item in value]
+        paths = [str(item.get("path", "")) for item in result]
+        if paths != sorted(paths) or len(paths) != len(set(paths)):
+            raise ContractError(f"{field} must be uniquely sorted by path")
+        for index, path in enumerate(paths):
+            _validate_portable_path(path, field=f"{field}.{index}.path")
+        return result
+
+    def validate_authority_path(path: str, *, field: str) -> None:
+        _validate_portable_path(path, field=field)
+        forbidden = {".git", ".obsidian", ".kgdistiller"}
+        if any(part.casefold() in forbidden for part in PurePosixPath(path).parts):
+            raise ContractError(
+                "Vault store authority paths must not enter excluded local-state directories"
+            )
+
+    vault = payload["vault"]
+    vault_manifest = dict(vault["manifest"])
+    _validate_portable_path(vault_manifest["path"], field="vault.manifest.path")
+    if vault_manifest["path"] != ".kgdistiller/vault.json":
+        raise ContractError("Vault store manifest record is not canonical")
+
+    authority = payload["authority"]
+    roots = [dict(item) for item in authority["roots"]]
+    expected_kinds = ["concept", "field", "topic"]
+    if [item["kind"] for item in roots] != expected_kinds:
+        raise ContractError("Vault store authority roots must use canonical kind order")
+    root_paths: dict[str, str] = {}
+    for item in roots:
+        path = str(item["path"])
+        validate_authority_path(
+            path, field=f"authority.roots.{item['kind']}.path"
+        )
+        root_paths[str(item["kind"])] = path
+    if len(set(root_paths.values())) != 3:
+        raise ContractError("Vault store authority roots must be distinct")
+    folded_roots = [
+        tuple(
+            unicodedata.normalize("NFC", part).casefold()
+            for part in PurePosixPath(path).parts
+        )
+        for path in root_paths.values()
+    ]
+    for index, left in enumerate(folded_roots):
+        for right in folded_roots[index + 1 :]:
+            common = min(len(left), len(right))
+            if left[:common] == right[:common]:
+                raise ContractError(
+                    "Vault store authority roots overlap on a portable filesystem"
+                )
+    authority_artifacts = records(authority["artifacts"], "authority.artifacts")
+    root_by_kind = {item["kind"]: item["path"] for item in roots}
+    for item in authority_artifacts:
+        validate_authority_path(
+            str(item["path"]), field="authority.artifacts.path"
+        )
+        root = str(root_by_kind[item["kind"]])
+        if not str(item["path"]).startswith(root + "/") or not str(item["path"]).endswith(
+            ".md"
+        ):
+            raise ContractError("authority artifact is outside its managed Markdown root")
+    authority_projection = [
+        {
+            "path": item["path"],
+            "kind": item["kind"],
+            "normalized_bytes": item["normalized_bytes"],
+            "normalized_sha256": item["normalized_sha256"],
+        }
+        for item in authority_artifacts
+    ]
+    if authority["generation_sha256"] != sha256_json(authority_projection):
+        raise ContractError("authority generation does not match normalized inventory")
+
+    source = payload["source"]
+    source_artifacts = records(source["artifacts"], "source.artifacts")
+    source_blobs = records(source["blobs"], "source.blobs")
+    source_manifest = source["manifest"]
+    source_records: list[dict[str, Any]] = []
+    if source_manifest is not None:
+        source_manifest = dict(source_manifest)
+        _validate_portable_path(source_manifest["path"], field="source.manifest.path")
+        if source_manifest["path"] != ".kgdistiller/sources/manifest.json":
+            raise ContractError("source manifest path is not canonical")
+        generation = str(source["generation_sha256"])
+        expected_source_paths = [
+            f".kgdistiller/sources/generations/{generation}/{name}.jsonl"
+            for name in ("derivations", "documents", "versions")
+        ]
+        if [item["path"] for item in source_artifacts] != sorted(expected_source_paths):
+            raise ContractError("source artifact paths do not match the current generation")
+        source_records.append(source_manifest)
+    for item in source_blobs:
+        digest = str(item["sha256"])
+        if item["path"] != f".kgdistiller/sources/blobs/sha256/{digest[:2]}/{digest}":
+            raise ContractError("source blob path does not match its digest")
+    source_records.extend(source_artifacts)
+    source_records.extend(source_blobs)
+    source_records.sort(key=lambda item: item["path"])
+    if source["inventory_sha256"] != sha256_json(source_records):
+        raise ContractError("source inventory digest does not match its records")
+
+    graph = payload["graph"]
+    graph_artifacts = records(graph["artifacts"], "graph.artifacts")
+    graph_paths = {str(item["path"]): item for item in graph_artifacts}
+    required_graph = {
+        ".kgdistiller/graph/manifest.json",
+        ".kgdistiller/graph/sources.json",
+        ".kgdistiller/graph/nodes.jsonl",
+        ".kgdistiller/graph/edges.jsonl",
+        ".kgdistiller/graph/references.jsonl",
+        ".kgdistiller/graph/diagnostics.json",
+    }
+    if not required_graph.issubset(graph_paths) or any(
+        path not in required_graph
+        and re.fullmatch(
+            r"\.kgdistiller/graph/entries/(?:by-source|meta)/.+\.jsonl", path
+        )
+        is None
+        for path in graph_paths
+    ):
+        raise ContractError("graph inventory is not a complete native graph")
+    if graph["manifest_sha256"] != graph_paths[".kgdistiller/graph/manifest.json"]["sha256"]:
+        raise ContractError("graph manifest digest does not match its artifact")
+    if graph["inventory_sha256"] != sha256_json(graph_artifacts):
+        raise ContractError("graph inventory digest does not match its records")
+
+    receipts = payload["receipts"]
+    receipt_artifacts = records(receipts["artifacts"], "receipts.artifacts")
+    for item in receipt_artifacts:
+        digest = str(item["receipt_sha256"])
+        if item["path"] != f".kgdistiller/receipts/sha256/{digest[:2]}/{digest}.json":
+            raise ContractError("receipt path does not match its content digest")
+    if receipts["count"] != len(receipt_artifacts):
+        raise ContractError("receipt count does not match its inventory")
+    if receipts["inventory_sha256"] != sha256_json(receipt_artifacts):
+        raise ContractError("receipt inventory digest does not match its records")
+
+    scaffolds = records(payload["scaffolds"], "scaffolds")
+    scaffold_paths = {str(item["path"]) for item in scaffolds}
+    required_scaffolds = {
+        ".kgdistiller/.gitattributes",
+        ".kgdistiller/build/.gitignore",
+    }
+    allowed_scaffolds = required_scaffolds | {
+        f"{root}/.gitkeep" for root in root_paths.values()
+    } | {".kgdistiller/sources/.gitkeep"}
+    empty_root_gitkeeps = {
+        f"{root}/.gitkeep"
+        for root in root_paths.values()
+        if not any(str(item["path"]).startswith(root + "/") for item in authority_artifacts)
+    }
+    source_gitkeep = ".kgdistiller/sources/.gitkeep"
+    required_conditional = empty_root_gitkeeps | (
+        {source_gitkeep} if source["manifest"] is None else set()
+    )
+    forbidden_conditional = (
+        {source_gitkeep} if source["manifest"] is not None else set()
+    )
+    if (
+        not (required_scaffolds | required_conditional).issubset(scaffold_paths)
+        or not scaffold_paths.issubset(
+        allowed_scaffolds
+        )
+        or bool(scaffold_paths & forbidden_conditional)
+        or any(
+            f"{root}/.gitkeep" in scaffold_paths
+            for root in root_paths.values()
+            if any(str(item["path"]).startswith(root + "/") for item in authority_artifacts)
+        )
+    ):
+        raise ContractError("Vault store scaffold inventory is not canonical")
+    fixed_scaffold_bytes = {
+        ".kgdistiller/.gitattributes": (
+            b"* text=auto eol=lf\nsources/blobs/** -text\n"
+        ),
+        ".kgdistiller/build/.gitignore": b"*\n!.gitignore\n",
+    }
+    for item in scaffolds:
+        path = str(item["path"])
+        expected = fixed_scaffold_bytes.get(path, b"")
+        if (
+            int(item["bytes"]) != len(expected)
+            or item["sha256"] != hashlib.sha256(expected).hexdigest()
+        ):
+            raise ContractError("Vault store scaffold content record is not canonical")
+
+    all_records: list[Mapping[str, Any]] = [vault_manifest]
+    all_records.extend(authority_artifacts)
+    all_records.extend(source_records)
+    all_records.extend(graph_artifacts)
+    all_records.extend(receipt_artifacts)
+    all_records.extend(scaffolds)
+    record_paths = [str(item["path"]) for item in all_records]
+    if len(record_paths) != len(set(record_paths)):
+        raise ContractError("Vault store artifact paths overlap")
+    folded: dict[str, str] = {}
+    folded_parts: list[tuple[tuple[str, ...], str]] = []
+    for path in record_paths + [".kgdistiller/store.json"]:
+        key = unicodedata.normalize("NFC", path).casefold()
+        previous = folded.setdefault(key, path)
+        if previous != path:
+            raise ContractError("Vault store paths collide on a portable filesystem")
+        folded_parts.append((tuple(part.casefold() for part in PurePosixPath(path).parts), path))
+    folded_parts.sort()
+    for index, (parts, _) in enumerate(folded_parts[:-1]):
+        next_parts = folded_parts[index + 1][0]
+        if len(parts) < len(next_parts) and next_parts[: len(parts)] == parts:
+            raise ContractError("Vault store file paths have an ancestor collision")
+    expected_managed = sorted(record_paths + [".kgdistiller/store.json"])
+    if payload["managed_paths"] != expected_managed:
+        raise ContractError("managed_paths does not exactly match the portable inventory")
+
+    content_projection = {
+        "vault_manifest_sha256": vault["manifest_sha256"],
+        "authority_generation_sha256": authority["generation_sha256"],
+        "source_inventory_sha256": source["inventory_sha256"],
+        "graph_inventory_sha256": graph["inventory_sha256"],
+        "receipt_inventory_sha256": receipts["inventory_sha256"],
+        "scaffold_inventory_sha256": sha256_json(scaffolds),
+    }
+    if payload["content_generation_sha256"] != sha256_json(content_projection):
+        raise ContractError("content generation does not match the portable inventory")
+    total_bytes = len(canonical_json(payload).encode("utf-8")) + sum(
+        int(
+            item["normalized_bytes"]
+            if "normalized_bytes" in item
+            else item["bytes"]
+        )
+        for item in all_records
+    )
+    if total_bytes > MAX_VAULT_STORE_BYTES:
+        raise ContractError("Vault store inventory exceeds its aggregate byte bound")
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -522,9 +844,11 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
     _validate_document_record(payload)
     _validate_search_execution(payload)
     _validate_vault_ingest_paths(payload)
+    _validate_vault_ingest_receipt(payload)
     _validate_recall_request(payload)
     _validate_recall_paths(payload)
     _validate_recall_report(payload)
+    _validate_vault_store(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

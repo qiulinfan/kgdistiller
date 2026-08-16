@@ -401,6 +401,8 @@ class ContractTest(unittest.TestCase):
                 "qlkg-recall-request-v1",
                 "qlkg-recall-report-v1",
                 "qlkg-recall-error-v1",
+                "qlkg-vault-store-v3",
+                "qlkg-vault-store-report-v1",
             },
             set(CONTRACT_SCHEMAS),
         )
@@ -476,6 +478,14 @@ class ContractTest(unittest.TestCase):
         receipt_version = minimal_vault_ingest_receipt()
         receipt_version["changes"]["derivation_version_ids"] = ["not-a-version"]
         invalid.append(finalize_self_digest(receipt_version, "receipt_sha256"))
+        duplicate_summary = minimal_vault_ingest_receipt()
+        duplicate_summary["after"]["derivations"].append(
+            copy.deepcopy(duplicate_summary["after"]["derivations"][0])
+        )
+        invalid.append(finalize_self_digest(duplicate_summary, "receipt_sha256"))
+        mismatched_summary = minimal_vault_ingest_receipt()
+        mismatched_summary["changes"]["derivation_version_ids"] = []
+        invalid.append(finalize_self_digest(mismatched_summary, "receipt_sha256"))
         one_column = minimal_vault_ingest_receipt()
         one_column["after"]["derivations"][0]["concept_evidence"][0]["spans"][0][
             "start_column"

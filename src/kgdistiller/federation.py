@@ -515,10 +515,24 @@ def _semantic_graph_matches_evidence(
             current_concepts.add(node_id)
     if current_concepts != set(evidence.concept_ids):
         return False
+    evidence_contains = {
+        item for item in evidence.relations if item[1] == "contains"
+    }
+    evidence_semantic = {
+        item for item in evidence.relations if item[1] != "contains"
+    }
+    graph_contains: set[tuple[str, str, str]] = set()
     current_relations: set[tuple[str, str, str]] = set()
     for edge in view.edges:
         relation = str(edge.get("relation", ""))
         if relation == "contains":
+            graph_contains.add(
+                (
+                    str(edge.get("source", "")),
+                    relation,
+                    str(edge.get("target", "")),
+                )
+            )
             continue
         expected = (
             "current"
@@ -537,7 +551,23 @@ def _semantic_graph_matches_evidence(
             if relation == "contrasts-with":
                 source, target = sorted((source, target))
             current_relations.add((source, relation, target))
-    return current_relations == set(evidence.relations)
+    if current_relations != evidence_semantic:
+        return False
+    allowed_contains_types = {
+        ("field", "topic"),
+        ("field", "knowledge"),
+        ("topic", "knowledge"),
+    }
+    for source, relation, target in evidence_contains:
+        if (source, relation, target) not in graph_contains:
+            return False
+        source_node = view.nodes.get(source)
+        target_node = view.nodes.get(target)
+        if source_node is None or target_node is None or (
+            str(source_node.get("type", "")), str(target_node.get("type", ""))
+        ) not in allowed_contains_types:
+            return False
+    return True
 
 
 def _capture_one(

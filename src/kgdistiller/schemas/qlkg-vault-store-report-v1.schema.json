@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-store-report-v1.schema.json",
+  "title": "kgdistiller portable native Vault store operation report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "action", "status", "artifact_schema", "layout", "vault_id",
+    "store_sha256", "content_generation_sha256", "source_generation_sha256",
+    "graph_sha256", "counts"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-vault-store-report-v1"},
+    "action": {"enum": ["snapshot", "verify"]},
+    "status": {"const": "verified"},
+    "artifact_schema": {"const": "qlkg-vault-store-v3"},
+    "layout": {"enum": ["in-place", "snapshot-copy"]},
+    "vault_id": {"$ref": "#/$defs/vault_id"},
+    "store_sha256": {"$ref": "#/$defs/sha256"},
+    "content_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "source_generation_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "counts": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "authority", "documents", "versions", "derivations", "blobs",
+        "graph_artifacts", "receipts"
+      ],
+      "properties": {
+        "authority": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "documents": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "versions": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "derivations": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "blobs": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "graph_artifacts": {"type": "integer", "minimum": 6, "maximum": 100032},
+        "receipts": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"source_generation_sha256": {"type": "null"}}},
+      "then": {
+        "properties": {
+          "counts": {
+            "properties": {
+              "documents": {"const": 0},
+              "versions": {"const": 0},
+              "derivations": {"const": 0},
+              "blobs": {"const": 0}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {
+      "type": "string", "minLength": 1, "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    }
+  }
+}

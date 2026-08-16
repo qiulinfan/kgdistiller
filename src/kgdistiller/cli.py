@@ -3127,6 +3127,11 @@ def parse_args() -> argparse.Namespace:
     vault_locate.add_argument("file", type=Path)
     vault_doctor = vault_commands.add_parser("doctor")
     vault_doctor.add_argument("id", nargs="?")
+    vault_snapshot = vault_commands.add_parser("snapshot")
+    vault_snapshot.add_argument("id")
+    vault_snapshot.add_argument("--output", type=Path)
+    vault_verify = vault_commands.add_parser("verify")
+    vault_verify.add_argument("target", type=Path)
     source_command = commands.add_parser("source")
     source_commands = source_command.add_subparsers(
         dest="source_command", required=True
@@ -3477,6 +3482,11 @@ def main() -> int:
     configure_console_streams()
     args = parse_args()
     if args.command == "vault":
+        from .vault_store import (
+            VaultStoreError,
+            snapshot_vault_store,
+            verify_vault_store,
+        )
         from .vaults import (
             VaultError,
             add_vault,
@@ -3502,8 +3512,15 @@ def main() -> int:
                 result = list_vaults()
             elif args.vault_command == "locate":
                 result = locate_file(args.file)
+            elif args.vault_command == "snapshot":
+                result = snapshot_vault_store(args.id, output=args.output)
+            elif args.vault_command == "verify":
+                result = verify_vault_store(args.target)
             else:
                 result = doctor_vaults(args.id)
+        except VaultStoreError as error:
+            print(pretty_json(error.payload()), end="", file=sys.stderr)
+            return 1
         except VaultError as error:
             print(pretty_json(error.payload()), end="", file=sys.stderr)
             return 1

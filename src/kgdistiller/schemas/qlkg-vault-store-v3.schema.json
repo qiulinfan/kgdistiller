@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/qlkg-vault-store-v3.schema.json",
+  "title": "kgdistiller portable native Vault store v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "generator", "layout", "vault", "authority", "source",
+    "graph", "receipts", "scaffolds", "managed_paths",
+    "content_generation_sha256", "store_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "qlkg-vault-store-v3"},
+    "generator": {"const": "kgdistiller"},
+    "layout": {"enum": ["in-place", "snapshot-copy"]},
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "manifest", "manifest_sha256"],
+      "properties": {
+        "id": {"$ref": "#/$defs/vault_id"},
+        "manifest": {"$ref": "#/$defs/file"},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roots", "artifacts", "generation_sha256"],
+      "properties": {
+        "roots": {
+          "type": "array", "minItems": 3, "maxItems": 3,
+          "items": {"$ref": "#/$defs/root"}
+        },
+        "artifacts": {
+          "type": "array", "maxItems": 100000,
+          "items": {"$ref": "#/$defs/authority_file"}
+        },
+        "generation_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "generation_sha256", "artifacts", "blobs", "inventory_sha256"],
+      "properties": {
+        "manifest": {"anyOf": [{"$ref": "#/$defs/file"}, {"type": "null"}]},
+        "generation_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "artifacts": {
+          "type": "array", "maxItems": 3,
+          "items": {"$ref": "#/$defs/file"}
+        },
+        "blobs": {
+          "type": "array", "maxItems": 1000000,
+          "items": {"$ref": "#/$defs/file"}
+        },
+        "inventory_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"manifest": {"type": "null"}}},
+          "then": {
+            "properties": {
+              "generation_sha256": {"type": "null"},
+              "artifacts": {"maxItems": 0},
+              "blobs": {"maxItems": 0}
+            }
+          },
+          "else": {
+            "properties": {
+              "generation_sha256": {"$ref": "#/$defs/sha256"},
+              "artifacts": {"minItems": 3, "maxItems": 3}
+            }
+          }
+        }
+      ]
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifacts", "manifest_sha256", "graph_sha256", "registry_sha256",
+        "source_hashes_sha256", "inventory_sha256"
+      ],
+      "properties": {
+        "artifacts": {
+          "type": "array", "minItems": 6, "maxItems": 100032,
+          "items": {"$ref": "#/$defs/file"}
+        },
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "registry_sha256": {"$ref": "#/$defs/sha256"},
+        "source_hashes_sha256": {"$ref": "#/$defs/sha256"},
+        "inventory_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "artifacts", "inventory_sha256"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "artifacts": {
+          "type": "array", "maxItems": 100000,
+          "items": {"$ref": "#/$defs/receipt_file"}
+        },
+        "inventory_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "scaffolds": {
+      "type": "array", "minItems": 2, "maxItems": 6,
+      "items": {"$ref": "#/$defs/file"}
+    },
+    "managed_paths": {
+      "type": "array", "minItems": 9, "maxItems": 1300050,
+      "items": {"$ref": "#/$defs/path"}
+    },
+    "content_generation_sha256": {"$ref": "#/$defs/sha256"},
+    "store_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "vault_id": {
+      "type": "string", "minLength": 1, "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 2147483648},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "authority_file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "kind", "normalized_bytes", "normalized_sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "kind": {"enum": ["concept", "field", "topic"]},
+        "normalized_bytes": {"type": "integer", "minimum": 1, "maximum": 8388608},
+        "normalized_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "receipt_file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "bytes", "sha256", "receipt_sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 8388608},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "receipt_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "root": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": {"enum": ["concept", "field", "topic"]},
+        "path": {"$ref": "#/$defs/path"}
+      }
+    }
+  }
+}

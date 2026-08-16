@@ -236,6 +236,8 @@ class _PinnedDirectory:
         self._posix_fds: list[int] = []
         self._posix_links: list[tuple[int, str, int, Path]] = []
         self._win_handles: list[tuple[int, Path]] = []
+        self._retained_parent: _PinnedDirectory | None = None
+        self._retained_leaf: str | None = None
         try:
             if os.name == "nt":
                 self._open_windows(create=create)
@@ -257,6 +259,85 @@ class _PinnedDirectory:
         if os.name != "nt" or not self._win_handles:
             raise RuntimeError("Windows directory handle is unavailable")
         return self._win_handles[-1][0]
+
+    def open_child(self, leaf: str, *, create: bool = False) -> "_PinnedDirectory":
+        """Open one directory leaf relative to this retained directory.
+
+        The returned guard remains anchored to this guard instead of reopening
+        the absolute lexical path.  Callers must keep the parent guard alive
+        until the child is closed.
+        """
+
+        if not leaf or leaf in {".", ".."} or "/" in leaf or "\\" in leaf:
+            raise SourceArchiveError(
+                "unsafe-ledger-path", "retained child must be one ordinary path component"
+            )
+        child = object.__new__(_PinnedDirectory)
+        child.path = self.path / leaf
+        child._posix_fds = []
+        child._posix_links = []
+        child._win_handles = []
+        child._retained_parent = self
+        child._retained_leaf = leaf
+        try:
+            self.verify_current()
+            if os.name == "nt":
+                desired = (
+                    _WIN_FILE_LIST_DIRECTORY
+                    | _WIN_FILE_READ_ATTRIBUTES
+                    | _WIN_SYNCHRONIZE
+                )
+                share = _WIN_SHARE_READ | _WIN_SHARE_WRITE
+                try:
+                    handle = _win_open_handle(
+                        child.path,
+                        desired_access=desired,
+                        share_mode=share,
+                        disposition=_WIN_OPEN_EXISTING,
+                        directory=True,
+                    )
+                except OSError as error:
+                    if not create:
+                        raise SourceArchiveError(
+                            "missing-ledger-artifact", "retained child directory is missing"
+                        ) from error
+                    if _lstat(child.path) is not None:
+                        raise SourceArchiveError(
+                            "unsafe-ledger-path",
+                            "retained child directory could not be opened safely",
+                        ) from error
+                    self.mkdir_leaf(leaf)
+                    handle = _win_open_handle(
+                        child.path,
+                        desired_access=desired,
+                        share_mode=share,
+                        disposition=_WIN_OPEN_EXISTING,
+                        directory=True,
+                    )
+                child._win_handles.append((handle, child.path))
+            else:
+                flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_CLOEXEC", 0)
+                )
+                try:
+                    descriptor = os.open(leaf, flags, dir_fd=self.dir_fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise SourceArchiveError(
+                            "missing-ledger-artifact", "retained child directory is missing"
+                        )
+                    self.mkdir_leaf(leaf)
+                    os.fsync(self.dir_fd)
+                    descriptor = os.open(leaf, flags, dir_fd=self.dir_fd)
+                child._posix_fds.append(descriptor)
+            child.verify_current()
+            return child
+        except BaseException:
+            child.close()
+            raise
 
     def _open_posix(self, *, create: bool) -> None:
         anchor = Path(self.path.anchor)
@@ -344,6 +425,44 @@ class _PinnedDirectory:
             current = candidate
 
     def verify_current(self) -> None:
+        if self._retained_parent is not None and self._retained_leaf is not None:
+            self._retained_parent.verify_current()
+            if os.name == "nt":
+                handle = self.win_handle
+                attributes = _win_attributes(handle)
+                metadata = _lstat(self.path)
+                if (
+                    not attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY
+                    or attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT
+                    or metadata is None
+                    or not stat.S_ISDIR(metadata.st_mode)
+                    or _is_link_like(self.path, metadata)
+                    or not _same_path(_win_handle_path(handle), self.path)
+                ):
+                    raise SourceArchiveError(
+                        "unsafe-ledger-path", "retained child directory changed"
+                    )
+                return
+            try:
+                current = os.stat(
+                    self._retained_leaf,
+                    dir_fd=self._retained_parent.dir_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError as error:
+                raise SourceArchiveError(
+                    "unsafe-ledger-path", "retained child directory was removed"
+                ) from error
+            opened = os.fstat(self.dir_fd)
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+                or not os.path.samestat(opened, current)
+            ):
+                raise SourceArchiveError(
+                    "unsafe-ledger-path", "retained child directory changed"
+                )
+            return
         if os.name == "nt":
             for handle, expected in self._win_handles:
                 attributes = _win_attributes(handle)
@@ -388,7 +507,13 @@ class _PinnedDirectory:
         except FileNotFoundError:
             return None
 
-    def open_existing_file(self, leaf: str, *, writable: bool = False) -> int:
+    def open_existing_file(
+        self,
+        leaf: str,
+        *,
+        writable: bool = False,
+        delete_access: bool = False,
+    ) -> int:
         self.checkpoint("before-leaf-open", leaf)
         if os.name != "nt":
             flags = (
@@ -402,8 +527,10 @@ class _PinnedDirectory:
             (_WIN_GENERIC_READ | _WIN_GENERIC_WRITE if writable else _WIN_GENERIC_READ)
             | _WIN_FILE_READ_ATTRIBUTES
         )
+        if delete_access:
+            desired |= _WIN_DELETE
         share = _WIN_SHARE_READ | _WIN_SHARE_WRITE
-        if not writable:
+        if not writable and not delete_access:
             share |= _WIN_SHARE_DELETE
         handle = _win_open_handle(
             self.path / leaf,
