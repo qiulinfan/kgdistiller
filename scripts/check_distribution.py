@@ -81,8 +81,17 @@ def check_wheel(path: Path, expected: set[str]) -> None:
         if len(entry_points) != 1:
             raise RuntimeError("wheel has no unique entry_points.txt")
         entry_text = archive.read(entry_points[0]).decode("utf-8")
-        if "kgdistiller = kgdistiller.cli:main" not in entry_text:
-            raise RuntimeError("wheel is missing the kgdistiller console entry point")
+        expected_entries = {
+            "kgdistiller = kgdistiller.cli:main",
+            "kgd = kgdistiller.cli:main",
+        }
+        missing_entries = sorted(
+            entry for entry in expected_entries if entry not in entry_text
+        )
+        if missing_entries:
+            raise RuntimeError(
+                f"wheel is missing console entry points: {missing_entries}"
+            )
 
 
 def check_sdist(path: Path, expected: set[str], product_sources: set[str]) -> None:

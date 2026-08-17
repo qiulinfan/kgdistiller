@@ -8,6 +8,8 @@ import stat
 import tempfile
 from pathlib import Path
 
+from .vault_registry import ensure_vault_manifest
+
 
 _BUILD_IGNORE_RULES = {
     b"build",
@@ -103,6 +105,7 @@ def initialize_project(
         raise FileExistsError(f"project registry already exists: {registry}")
     resolved_source = source_root if source_root.is_absolute() else project_root / source_root
     resolved_source.mkdir(parents=True, exist_ok=True)
+    ensure_vault_manifest(project_root)
     try:
         configured_root = resolved_source.resolve().relative_to(project_root.resolve()).as_posix()
     except ValueError as error:

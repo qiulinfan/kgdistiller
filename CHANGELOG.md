@@ -5,6 +5,11 @@ incompatible data-contract changes require a new schema version.
 
 ## 0.4.0 — unreleased
 
+- Add a cross-platform installed `kgdistiller`/`kgd` command with a strict
+  machine-local vault registry at `~/.kgdistiller/vaults.json`. Commands can
+  select a registered vault by name or stable UUID from any working directory,
+  while portable identity lives in tracked `knowledge/vault.json` and is bound
+  into `qlkg-store-v2` snapshots.
 - Make Markdown, Typst, and LaTeX the only authorities and retain the
   deterministic `qlkg-v3` JSON graph as the derived machine contract.
 - Replace the 0.3 core discriminators with `qlkg-v3`, `qlkg-sources-v3`,

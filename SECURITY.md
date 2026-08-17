@@ -26,6 +26,13 @@ registered Markdown files there remain native authority. Only the managed
 Obsidian subtree (or an external browsing-only output) is lossy and may omit
 source evidence or format semantics.
 
+The user-level vault registry is a machine-local locator, not authority. It
+contains absolute local paths and therefore may disclose directory names; do
+not commit, publish, or copy `~/.kgdistiller/vaults.json` as part of a portable
+store. The portable `knowledge/vault.json` contains only a schema discriminator
+and random vault UUID. Registry resolution verifies that this UUID matches
+before a command uses a registered path.
+
 Authority repositories may contain private data. Do not attach authorities,
 private graph snapshots, transaction journals, receipts, portable stores,
 static exports, Obsidian projections, or Codex configuration to a public issue.

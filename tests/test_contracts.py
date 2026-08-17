@@ -48,6 +48,7 @@ def minimal_store() -> dict:
             "generator": "kgdistiller",
             "layout": "in-place",
             "paths": {
+                "vault": "knowledge/vault.json",
                 "registry": "knowledge/sources.json",
                 "identities": None,
                 "alignments": "knowledge/alignments.json",
@@ -70,6 +71,8 @@ def minimal_store() -> dict:
                 {"path": "knowledge/graph/references.jsonl", "bytes": 0, "sha256": digest},
                 {"path": "knowledge/graph/diagnostics.json", "bytes": 1, "sha256": digest},
             ],
+            "vault_id": "00000000-0000-4000-8000-000000000000",
+            "vault_sha256": digest,
             "registry_sha256": digest,
             "identity_sha256": None,
             "alignment_sha256": digest,

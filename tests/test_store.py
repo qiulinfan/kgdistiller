@@ -86,6 +86,7 @@ class JsonStoreTest(unittest.TestCase):
         self.assertEqual("json-memory", verified["query_backend"])
         self.assertEqual(created["store_generation_sha256"], verified["store_generation_sha256"])
         self.assertTrue((self.output / "notes/concepts.md").is_file())
+        self.assertTrue((self.output / "knowledge/vault.json").is_file())
         self.assertTrue((self.output / "knowledge/graph/manifest.json").is_file())
         self.assertTrue((self.output / "knowledge/documents.jsonl").is_file())
         self.assertFalse(any(self.output.rglob("*.sqlite")))
@@ -96,6 +97,11 @@ class JsonStoreTest(unittest.TestCase):
         graph_manifest = json.loads(
             (self.output / "knowledge/graph/manifest.json").read_text(encoding="utf-8")
         )
+        vault_manifest = json.loads(
+            (self.output / "knowledge/vault.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(store_manifest["vault_id"], vault_manifest["vault_id"])
+        self.assertEqual("knowledge/vault.json", store_manifest["paths"]["vault"])
         self.assertEqual(store_manifest["registry_sha256"], graph_manifest["registry_sha256"])
         self.assertEqual(store_manifest["identity_sha256"], graph_manifest["identity_sha256"])
 
@@ -127,6 +133,31 @@ class JsonStoreTest(unittest.TestCase):
         with self.assertRaisesRegex(StoreError, "authority digest mismatch"):
             verify_store(self.output)
 
+    def test_verify_rejects_tampered_vault_identity(self) -> None:
+        self.snapshot()
+        vault_path = self.output / "knowledge/vault.json"
+        vault = json.loads(vault_path.read_text(encoding="utf-8"))
+        vault["vault_id"] = "00000000-0000-4000-8000-000000000000"
+        vault_path.write_text(json.dumps(vault), encoding="utf-8")
+
+        with self.assertRaisesRegex(StoreError, "vault identity does not match"):
+            verify_store(self.output)
+
+    def test_verify_rejects_noncanonical_vault_identity_path(self) -> None:
+        self.snapshot()
+        manifest_path = self.output / "knowledge/store.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["paths"]["vault"] = "knowledge/./vault.json"
+        manifest.pop("store_sha256")
+        manifest["store_sha256"] = sha256_json(manifest)
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StoreError, "identity path is not canonical"):
+            verify_store(self.output)
+
     def test_verify_recomputes_document_inventory_semantics(self) -> None:
         self.snapshot()
         documents_path = self.output / "knowledge/documents.jsonl"
@@ -147,6 +178,8 @@ class JsonStoreTest(unittest.TestCase):
         manifest["documents"]["source_snapshot_sha256"] = sha256_json(documents)
         manifest["store_generation_sha256"] = sha256_json(
             {
+                "vault_id": manifest["vault_id"],
+                "vault_sha256": manifest["vault_sha256"],
                 "registry_sha256": manifest["registry_sha256"],
                 "identity_sha256": manifest["identity_sha256"],
                 "alignment_sha256": manifest["alignment_sha256"],
@@ -191,6 +224,7 @@ class JsonStoreTest(unittest.TestCase):
             (self.output / "knowledge/store.json").read_text(encoding="utf-8")
         )
         portable_text_paths = [
+            "knowledge/vault.json",
             "knowledge/sources.json",
             "knowledge/identities.json",
             *(artifact["path"] for artifact in manifest["graph_artifacts"]),

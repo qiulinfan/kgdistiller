@@ -50,7 +50,13 @@ Or install the command:
 
 ```sh
 uv tool install git+https://github.com/qiulinfan/kgdistiller.git
+uv tool update-shell
+kgdistiller --help
 ```
+
+`uv tool install` creates the `kgdistiller` and `kgd` console commands on
+Windows, macOS, and Linux. Restart the shell after `uv tool update-shell` if
+the command was not already on `PATH`.
 
 Initialize a knowledge project, review its bounded source registry, then build
 and validate the first generation:
@@ -61,6 +67,34 @@ kgdistiller init --source-root notes
 kgdistiller sync
 kgdistiller check
 ```
+
+Initialization creates `knowledge/vault.json`, the stable UUID identity that
+travels with the repository. Register the repository once to run the global
+command from any working directory:
+
+```sh
+kgdistiller vault register /absolute/path/to/your-notes-repository --name research
+kgdistiller vault list
+kgdistiller --vault research agent status
+```
+
+The first registered vault becomes the default, so `kgdistiller agent status`
+also works outside that repository. Use `kgdistiller vault default NAME` to
+change it, `kgdistiller vault default --clear` to require explicit selection,
+and `kgdistiller vault doctor` to validate all registered paths and identities.
+`KGDISTILLER_VAULT=NAME` is the environment equivalent of `--vault`.
+
+The machine-local locator is `~/.kgdistiller/vaults.json` (under the Windows
+user profile on Windows). Override its directory with the absolute
+`KGDISTILLER_HOME` path when isolation is needed. This registry contains local
+names and absolute paths only; it is not knowledge authority and should not be
+committed or copied with a vault. After moving a vault, register its new path
+again; pass `--replace` only when the old registered path still exists.
+
+Target resolution is deterministic: explicit `--repo-root`, then
+`--vault`/`KGDISTILLER_VAULT`, then the nearest local knowledge project, then a
+registered ancestor, then the configured default. `init` deliberately ignores
+the default so a new working directory can be initialized safely.
 
 Typst is required only when Typst-authored labels must be rendered. Markdown
 and LaTeX scanning use the Python standard library.
@@ -175,7 +209,8 @@ kgdistiller --repo-root /absolute/path/to/private-store agent status
 
 A verified clone is immediately queryable; there is no materialization step.
 Use private Git for backup only with explicit authorization. Track authorities,
-`knowledge/sources.json`, optional identity/alignment registries,
+`knowledge/vault.json`, `knowledge/sources.json`, optional identity/alignment
+registries,
 `knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
 Keep `knowledge/build/`, plans, receipts, transaction journals, and credentials
 untracked.

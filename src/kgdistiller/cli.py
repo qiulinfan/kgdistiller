@@ -3100,7 +3100,21 @@ def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument(
+        "--repo-root",
+        type=Path,
+        help="use an explicit vault path without consulting the user registry",
+    )
+    target.add_argument(
+        "--vault",
+        help="select a registered vault by machine-local name or stable ID",
+    )
+    parser.add_argument(
+        "--kgdistiller-home",
+        type=Path,
+        help="override the user-level registry directory (or use KGDISTILLER_HOME)",
+    )
     parser.add_argument("--registry", default="knowledge/sources.json")
     parser.add_argument("--graph", default="knowledge/graph")
     parser.add_argument("--identities", default="knowledge/identities.json")
@@ -3110,6 +3124,44 @@ def parse_args() -> argparse.Namespace:
         default="knowledge/build/knowledge-registry.typ",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    vault_command = commands.add_parser(
+        "vault",
+        help="manage machine-local vault registrations",
+        description="Manage machine-local vault names, paths, and the default target.",
+    )
+    vault_commands = vault_command.add_subparsers(
+        dest="vault_command", required=True
+    )
+    vault_register = vault_commands.add_parser(
+        "register", help="register or relocate a vault"
+    )
+    vault_register.add_argument("path", type=Path)
+    vault_register.add_argument("--name")
+    vault_register.add_argument(
+        "--replace",
+        action="store_true",
+        help="relocate an existing vault identity even when its old path still exists",
+    )
+    vault_commands.add_parser("list", help="list registered vaults")
+    vault_show = vault_commands.add_parser("show", help="show one registered vault")
+    vault_show.add_argument("selector")
+    vault_default = vault_commands.add_parser(
+        "default", help="set or clear the default vault"
+    )
+    vault_default.add_argument("selector", nargs="?")
+    vault_default.add_argument(
+        "--clear",
+        action="store_true",
+        help="clear the default vault",
+    )
+    vault_unregister = vault_commands.add_parser(
+        "unregister", help="remove a machine-local registration"
+    )
+    vault_unregister.add_argument("selector")
+    vault_doctor = vault_commands.add_parser(
+        "doctor", help="validate registered paths and portable identities"
+    )
+    vault_doctor.add_argument("selector", nargs="?")
     init_command = commands.add_parser("init")
     init_command.add_argument("--source-root", type=Path, default=Path("notes"))
     init_command.add_argument("--force", action="store_true")
@@ -3346,6 +3398,14 @@ def parse_args() -> argparse.Namespace:
     serve_command.add_argument("--port", type=int, default=8765)
     serve_command.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
+    if args.command == "vault" and (args.repo_root is not None or args.vault is not None):
+        parser.error("vault registry commands cannot be combined with --repo-root or --vault")
+    if (
+        args.command == "vault"
+        and args.vault_command == "default"
+        and ((args.selector is None) == (not args.clear))
+    ):
+        parser.error("vault default requires one selector or --clear")
     if (
         args.command == "agent"
         and args.agent_command in {"search", "context"}
@@ -3377,8 +3437,39 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     configure_console_streams()
     args = parse_args()
-    repo_root = args.repo_root.resolve()
     try:
+        if args.command == "vault":
+            from kgdistiller.vault_registry import (
+                doctor_vaults,
+                list_vaults,
+                register_vault,
+                set_default_vault,
+                show_vault,
+                unregister_vault,
+            )
+
+            if args.vault_command == "register":
+                result = register_vault(
+                    args.path,
+                    name=args.name,
+                    home=args.kgdistiller_home,
+                    replace=args.replace,
+                )
+            elif args.vault_command == "list":
+                result = list_vaults(args.kgdistiller_home)
+            elif args.vault_command == "show":
+                result = show_vault(args.selector, args.kgdistiller_home)
+            elif args.vault_command == "default":
+                result = set_default_vault(
+                    None if args.clear else args.selector,
+                    args.kgdistiller_home,
+                )
+            elif args.vault_command == "unregister":
+                result = unregister_vault(args.selector, args.kgdistiller_home)
+            else:
+                result = doctor_vaults(args.selector, args.kgdistiller_home)
+            print(pretty_json(result), end="")
+            return 1 if result.get("status") == "error" else 0
         if args.command == "codex":
             from .codex_product import CodexProductError, doctor_product, link_product
 
@@ -3405,6 +3496,14 @@ def main() -> int:
                 return 1
             print(pretty_json(result), end="")
             return 0
+        from kgdistiller.vault_registry import resolve_repo_root
+
+        repo_root = resolve_repo_root(
+            explicit_repo_root=args.repo_root,
+            explicit_vault=args.vault,
+            home=args.kgdistiller_home,
+            use_default=args.command != "init",
+        )
         if args.command == "export":
             registry = defaults(repo_root, args.registry)
             graph_dir = defaults(repo_root, args.graph)

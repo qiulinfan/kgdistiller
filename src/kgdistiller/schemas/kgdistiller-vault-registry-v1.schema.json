@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-vault-registry-v1.schema.json",
+  "title": "kgdistiller machine-local vault registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "default_vault_id", "vaults"],
+  "properties": {
+    "schema": {"const": "kgdistiller-vault-registry-v1"},
+    "default_vault_id": {
+      "anyOf": [
+        {"$ref": "#/$defs/uuid"},
+        {"type": "null"}
+      ]
+    },
+    "vaults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "path"],
+        "properties": {
+          "id": {"$ref": "#/$defs/uuid"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "path": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  }
+}

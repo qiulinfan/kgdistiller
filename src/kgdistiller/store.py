@@ -28,6 +28,11 @@ from .cli import (
 from .contracts import ContractError, canonical_json, sha256_json, validate_contract
 from .json_schema import validate_json_schema
 from .project import ensure_knowledge_gitignore
+from .vault_registry import (
+    ensure_vault_manifest,
+    load_vault_manifest,
+    vault_manifest_path,
+)
 
 
 STORE_SCHEMA = "qlkg-store-v2"
@@ -306,11 +311,24 @@ def verify_store(root: Path) -> dict[str, Any]:
         raise StoreError("store manifest digest mismatch")
 
     paths = manifest["paths"]
+    if str(paths["vault"]) != vault_manifest_path(root).relative_to(root).as_posix():
+        raise StoreError("portable vault identity path is not canonical")
+    vault_path = _resolve(root, str(paths["vault"]))
     registry = _resolve(root, str(paths["registry"]))
     graph_dir = _resolve(root, str(paths["graph"]))
     documents_path = _resolve(root, str(paths["documents"]))
     identities = _resolve(root, str(paths["identities"])) if paths.get("identities") else None
     alignments = _resolve(root, str(paths["alignments"])) if paths.get("alignments") else None
+    try:
+        vault_manifest = load_vault_manifest(root)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise StoreError(f"portable vault identity is invalid: {error}") from error
+    if vault_path != vault_manifest_path(root).resolve():
+        raise StoreError("portable vault identity path is not canonical")
+    if vault_manifest["vault_id"] != manifest["vault_id"]:
+        raise StoreError("portable vault identity does not match the store")
+    if sha256_json(vault_manifest) != manifest["vault_sha256"]:
+        raise StoreError("portable vault identity digest mismatch")
     try:
         load_sources(root, registry)
     except (KnowledgeError, OSError, UnicodeError, ValueError) as error:
@@ -390,6 +408,8 @@ def verify_store(root: Path) -> dict[str, Any]:
 
     generation = sha256_json(
         {
+            "vault_id": manifest["vault_id"],
+            "vault_sha256": manifest["vault_sha256"],
             "registry_sha256": manifest["registry_sha256"],
             "identity_sha256": manifest["identity_sha256"],
             "alignment_sha256": manifest["alignment_sha256"],
@@ -507,6 +527,9 @@ def snapshot_store(
                 "refusing to replace an in-place project"
             )
 
+    vault_manifest = ensure_vault_manifest(repo_root)
+    vault_path = vault_manifest_path(repo_root)
+    vault_sha = sha256_json(vault_manifest)
     state = load_state(graph_dir)
     registry_sha, identity_sha = _require_graph_generation_bindings(
         state, registry, identities
@@ -516,7 +539,7 @@ def snapshot_store(
     documents_text = _jsonl(documents)
     source_snapshot_sha = sha256_json(documents)
     graph_paths = _graph_paths(graph_dir, state)
-    config_paths = [registry]
+    config_paths = [vault_path, registry]
     if identities.is_file():
         config_paths.append(identities)
     if alignments.is_file():
@@ -545,14 +568,28 @@ def snapshot_store(
             managed.add("knowledge/.gitignore")
         _atomic_write_text(_resolve(target_root, DOCUMENTS_PATH), documents_text)
 
+        vault_relative = relative_path(repo_root, vault_path)
         registry_relative = relative_path(repo_root, registry)
         graph_relative = relative_path(repo_root, graph_dir)
         identities_relative = relative_path(repo_root, identities) if identities.is_file() else None
         alignments_relative = relative_path(repo_root, alignments) if alignments.is_file() else None
+        output_vault = _resolve(target_root, vault_relative)
         output_registry = _resolve(target_root, registry_relative)
         output_identities = _resolve(target_root, identities_relative) if identities_relative else None
         output_alignments = _resolve(target_root, alignments_relative) if alignments_relative else None
         graph_artifacts = _graph_artifact_records(repo_root, target_root, graph_paths)
+        if output_vault != vault_manifest_path(target_root).resolve():
+            raise StoreError("portable vault identity path is not canonical")
+        try:
+            output_vault_manifest = load_vault_manifest(target_root)
+        except (OSError, UnicodeError, ValueError) as error:
+            raise StoreError(f"portable vault identity is invalid: {error}") from error
+        output_vault_sha = sha256_json(output_vault_manifest)
+        if (
+            output_vault_manifest["vault_id"] != vault_manifest["vault_id"]
+            or output_vault_sha != vault_sha
+        ):
+            raise StoreError("vault identity changed while creating the snapshot")
         output_registry_sha = source_registry_sha256(output_registry)
         output_identity_sha = identity_registry_sha256(output_identities)
         if output_registry_sha != registry_sha or output_identity_sha != identity_sha:
@@ -562,6 +599,8 @@ def snapshot_store(
         alignment_sha = alignment_sha256_json(load_alignment_set(output_alignments))
         generation = sha256_json(
             {
+                "vault_id": output_vault_manifest["vault_id"],
+                "vault_sha256": output_vault_sha,
                 "registry_sha256": registry_sha,
                 "identity_sha256": identity_sha,
                 "alignment_sha256": alignment_sha,
@@ -574,6 +613,7 @@ def snapshot_store(
             "generator": "kgdistiller",
             "layout": layout,
             "paths": {
+                "vault": vault_relative,
                 "registry": registry_relative,
                 "identities": identities_relative,
                 "alignments": alignments_relative,
@@ -586,6 +626,8 @@ def snapshot_store(
                 "source_snapshot_sha256": source_snapshot_sha,
             },
             "graph_artifacts": graph_artifacts,
+            "vault_id": output_vault_manifest["vault_id"],
+            "vault_sha256": output_vault_sha,
             "registry_sha256": registry_sha,
             "identity_sha256": identity_sha,
             "alignment_sha256": alignment_sha,

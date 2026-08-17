@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.project import ensure_knowledge_gitignore, initialize_project  # noqa: E402
+from kgdistiller.vault_registry import VAULT_SCHEMA  # noqa: E402
 
 
 class ProjectInitializationTest(unittest.TestCase):
@@ -33,6 +34,14 @@ class ProjectInitializationTest(unittest.TestCase):
             self.assertEqual(
                 "qlkg-sources-v3",
                 json.loads(registry.read_text(encoding="utf-8"))["schema"],
+            )
+            vault_manifest = json.loads(
+                (root / "knowledge/vault.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(VAULT_SCHEMA, vault_manifest["schema"])
+            self.assertRegex(
+                vault_manifest["vault_id"],
+                r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
             )
             self.assertEqual(
                 {"schema": "qlkg-alignments-v2", "mappings": []},

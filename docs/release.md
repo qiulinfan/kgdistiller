@@ -7,6 +7,8 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 
 | Contract | Read | Write | Role |
 | --- | --- | --- | --- |
+| `kgdistiller-vault-v1` | yes | yes | Portable stable vault identity. |
+| `kgdistiller-vault-registry-v1` | yes | yes | Machine-local name/UUID/path locator. |
 | `qlkg-v3` | yes | yes | Deterministic authority graph. |
 | `qlkg-sources-v3` | yes | yes | Bounded Markdown/Typst/LaTeX registry. |
 | `qlkg-identities-v2` | yes | yes | Reviewed authored-name changes and aliases. |
@@ -106,6 +108,8 @@ Then verify that:
   current JSON Schema, product Skill, workflow manifest, workflow guide, and
   `.codex/agents` preset;
 - an isolated environment installs the wheel and runs `kgdistiller --help`;
+- installed `kgdistiller`/`kgdistiller.exe` registers and queries a vault from
+  an unrelated working directory on Linux, Windows, and macOS;
 - help exposes no profile, embedding, database, provider, or materialization
   command/flag;
 - a Markdown/Typst/LaTeX fixture passes sync, check, `agent status`, exact and

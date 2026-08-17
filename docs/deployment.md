@@ -12,6 +12,7 @@ workflow definitions.
 personal-knowledge-store/
 ├── notes/                         # native authorities
 └── knowledge/
+    ├── vault.json                 # portable kgdistiller-vault-v1 identity
     ├── sources.json               # qlkg-sources-v3
     ├── identities.json            # optional reviewed renames/aliases
     ├── alignments.json             # reviewed cross-namespace mappings
@@ -24,6 +25,33 @@ personal-knowledge-store/
 There is no database, vector bundle, model provider, local profile, or
 materialized query index. A verified checkout is directly queryable through a
 generation-checked in-memory `GraphView`.
+
+## Global command and machine-local registration
+
+Install the package as a user-level tool on Windows, macOS, or Linux, then
+register each knowledge repository once:
+
+```sh
+uv tool install git+https://github.com/qiulinfan/kgdistiller.git
+uv tool update-shell
+kgdistiller vault register PROJECT --name research
+kgdistiller --vault research agent status
+```
+
+The portable `knowledge/vault.json` stores the stable vault UUID and must travel
+with the repository. The user-level `~/.kgdistiller/vaults.json` stores only
+machine-local name/UUID/absolute-path mappings and the optional default. On
+Windows, `~` is the current user's profile directory. Do not commit the
+user-level registry, since its absolute paths are host-specific and may expose
+local directory names. `KGDISTILLER_HOME` may select a different absolute
+registry directory, while `KGDISTILLER_VAULT` selects a registered name or UUID.
+
+Use `vault list`, `vault show NAME`, `vault default NAME`, `vault doctor`, and
+`vault unregister NAME` to inspect and maintain the locator. Unregistering
+never deletes the repository or its portable identity. A moved repository can
+be registered at its new path by identity; `--replace` is required only when
+the old path still exists, which prevents accidentally treating a copied vault
+as a relocation.
 
 Version 0.4 does not read or migrate a `qlkg-v2` graph,
 `qlkg-sources-v2`, or `qlkg-identities-v1`. Before upgrading an authority
@@ -59,9 +87,9 @@ kgdistiller --repo-root STORE store verify
 ```
 
 `STORE` must not be nested in `PROJECT`. Snapshot copies only registered,
-already-ingested authorities and the exact registries, graph generation, and
-document inventory that describe them. Snapshot and verify never contact a
-network service.
+already-ingested authorities and the exact portable vault identity, registries,
+graph generation, and document inventory that describe them. Snapshot and
+verify never contact a network service.
 
 `store verify` validates the manifest schema and digest, safe managed paths,
 canonical inventory, all authority hashes, registries, entry shards, graph and
@@ -86,6 +114,7 @@ Initialize a private Git repository, commit, add a remote, or push only when
 the user explicitly authorizes that action. Track:
 
 - every registered authority and required authored asset;
+- `knowledge/vault.json`;
 - `knowledge/sources.json`;
 - optional `knowledge/identities.json` and `knowledge/alignments.json`;
 - `knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
