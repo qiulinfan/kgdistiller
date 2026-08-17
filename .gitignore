@@ -1,3 +1,4 @@
+# Python bytecode caches are generated state, never source inputs.
 __pycache__/
 *.py[cod]
 .pytest_cache/

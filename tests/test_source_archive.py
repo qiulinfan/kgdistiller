@@ -35,7 +35,9 @@ from kgdistiller.vaults import VAULT_SCHEMA, add_vault, load_vault
 class SourceArchiveTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-source-test-")
-        self.root = Path(self.temporary.name)
+        # The contract requires canonical paths. Hosted runners may expose the
+        # same temporary directory through macOS /var or a Windows 8.3 alias.
+        self.root = Path(self.temporary.name).resolve()
         self.home = self.root / "machine-home"
         self.vault = self.root / "Vault"
         for relative in (

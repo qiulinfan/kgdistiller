@@ -14,6 +14,14 @@ PACKAGE_ROOT = REPO_ROOT / "src" / "kgdistiller"
 DEFAULT_DIST_ROOT = REPO_ROOT / "dist"
 
 
+def _is_python_cache(path: Path) -> bool:
+    """Return whether a product path is generated Python bytecode state."""
+
+    return any(part.casefold() == "__pycache__" for part in path.parts) or (
+        path.suffix.casefold() in {".pyc", ".pyo"}
+    )
+
+
 def _single(dist_root: Path, pattern: str) -> Path:
     matches = sorted(dist_root.glob(pattern))
     if len(matches) != 1:
@@ -30,6 +38,8 @@ def _expected_package_files() -> set[str]:
         if not path.is_file():
             continue
         relative = path.relative_to(PACKAGE_ROOT)
+        if _is_python_cache(relative):
+            continue
         if path.suffix == ".py" or relative.parts[0] in {"schemas", "static"}:
             expected.add(PurePosixPath("kgdistiller", *relative.parts).as_posix())
     if not any(name.startswith("kgdistiller/schemas/") for name in expected):
@@ -47,7 +57,12 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         REPO_ROOT / "workflows",
         REPO_ROOT / ".codex" / "agents",
     )
-    files = [path for root in roots for path in root.rglob("*") if path.is_file()]
+    files = [
+        path
+        for root in roots
+        for path in root.rglob("*")
+        if path.is_file() and not _is_python_cache(path.relative_to(root))
+    ]
     files.append(REPO_ROOT / "docs" / "product-workflows.md")
     files.extend(
         (
