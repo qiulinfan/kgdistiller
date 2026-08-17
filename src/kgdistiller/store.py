@@ -1,4 +1,4 @@
-"""Git-friendly, JSON-only portable snapshots for kgdistiller projects."""
+"""Git-friendly portable snapshots for kgdistiller projects."""
 
 from __future__ import annotations
 
@@ -33,13 +33,14 @@ from .vault_registry import (
     load_vault_manifest,
     vault_manifest_path,
 )
+from .entry_markdown import ENTRY_INDEX_SCHEMA
 
 
-STORE_SCHEMA = "qlkg-store-v2"
-STORE_REPORT_SCHEMA = "qlkg-store-report-v1"
+STORE_SCHEMA = "kgdistiller-store-v1"
+STORE_REPORT_SCHEMA = "kgdistiller-store-report-v1"
 STORE_MANIFEST_PATH = Path("knowledge/store.json")
 DOCUMENTS_PATH = Path("knowledge/documents.jsonl")
-DOCUMENT_RECORD_SCHEMA = "qlkg-document-record-v1"
+DOCUMENT_RECORD_SCHEMA = "kgdistiller-document-record-v1"
 
 
 class StoreError(ValueError):
@@ -159,6 +160,54 @@ def _graph_paths(graph_dir: Path, state: GraphState) -> list[Path]:
     return paths
 
 
+def _entry_authority_paths(repo_root: Path, state: GraphState) -> list[Path]:
+    """Return verified entry MD authorities and their Markdown evidence."""
+
+    inventory = state.manifest.get("entry_authorities") or {}
+    if not isinstance(inventory, dict) or inventory.get("schema") != ENTRY_INDEX_SCHEMA:
+        raise StoreError("graph generation has no supported entry authority inventory")
+    raw_entries = inventory.get("entries")
+    if not isinstance(raw_entries, list):
+        raise StoreError("graph entry authority inventory is invalid")
+    paths: dict[str, Path] = {}
+    for record in raw_entries:
+        if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+            raise StoreError("graph entry authority record is invalid")
+        relative = _safe_relative(str(record["path"]))
+        path = _resolve(repo_root, relative)
+        if path.is_symlink() or not path.is_file():
+            raise StoreError(f"entry authority is not an ordinary file: {relative}")
+        _, digest = _portable_text_metrics(path)
+        if digest != record["sha256"]:
+            raise StoreError(
+                f"entry authority is out of sync with the graph: {relative}; "
+                "run kgdistiller sync"
+            )
+        paths[relative.as_posix()] = path
+    source_inventory = state.manifest.get("entry_sources") or {}
+    if (
+        not isinstance(source_inventory, dict)
+        or source_inventory.get("schema") != "kgdistiller-entry-source-index-v1"
+        or not isinstance(source_inventory.get("entries"), list)
+    ):
+        raise StoreError("graph generation has no supported entry source inventory")
+    for record in source_inventory["entries"]:
+        if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+            raise StoreError("graph entry source record is invalid")
+        relative = _safe_relative(str(record["path"]))
+        path = _resolve(repo_root, relative)
+        if path.is_symlink() or not path.is_file():
+            raise StoreError(f"entry source is not an ordinary file: {relative}")
+        _, digest = _portable_text_metrics(path)
+        if digest != record["sha256"]:
+            raise StoreError(
+                f"entry source is out of sync with the graph: {relative}; "
+                "run kgdistiller sync"
+            )
+        paths[relative.as_posix()] = path
+    return [paths[key] for key in sorted(paths)]
+
+
 def _graph_artifact_records(
     repo_root: Path, target_root: Path, paths: list[Path]
 ) -> list[dict[str, Any]]:
@@ -265,7 +314,7 @@ def _validate_manifest_schema(manifest: dict[str, Any]) -> None:
         raise StoreError(
             f"unsupported-store-schema: expected {STORE_SCHEMA}, got {manifest.get('schema')!r}"
         )
-    schema_path = Path(__file__).with_name("schemas") / "qlkg-store-v2.schema.json"
+    schema_path = Path(__file__).with_name("schemas") / "kgdistiller-store-v1.schema.json"
     schema = _read_json(schema_path)
     errors = validate_json_schema(manifest, schema)
     if errors:
@@ -296,7 +345,7 @@ def _require_graph_generation_bindings(
 
 
 def verify_store(root: Path) -> dict[str, Any]:
-    """Verify a self-contained JSON-only portable generation."""
+    """Verify a self-contained portable authority and graph generation."""
     root = root.resolve()
     lexical_manifest = root / STORE_MANIFEST_PATH
     if lexical_manifest.is_symlink() or not lexical_manifest.is_file():
@@ -375,6 +424,7 @@ def verify_store(root: Path) -> dict[str, Any]:
         )
 
     state = load_state(graph_dir)
+    _entry_authority_paths(root, state)
     snapshot = make_agent_snapshot(state)
     if snapshot["graph"]["sha256"] != manifest["graph_sha256"]:
         raise StoreError("portable graph digest mismatch")
@@ -497,7 +547,7 @@ def snapshot_store(
     identities: Path,
     alignments: Path,
 ) -> dict[str, Any]:
-    """Create or refresh one self-contained JSON-only portable generation."""
+    """Create or refresh one self-contained portable generation."""
     repo_root = repo_root.resolve()
     output_root = output_root.resolve()
     if output_root != repo_root:
@@ -536,6 +586,7 @@ def snapshot_store(
     )
     snapshot = make_agent_snapshot(state)
     documents, source_paths = _document_inventory(repo_root, registry, state)
+    source_paths.extend(_entry_authority_paths(repo_root, state))
     documents_text = _jsonl(documents)
     source_snapshot_sha = sha256_json(documents)
     graph_paths = _graph_paths(graph_dir, state)
@@ -563,6 +614,9 @@ def snapshot_store(
                 relative = relative_path(repo_root, source)
                 _copy_file(source, _resolve(target_root, relative))
                 managed.add(relative)
+            for spec in load_sources(repo_root, registry):
+                relative_root = relative_path(repo_root, spec.root)
+                _resolve(target_root, relative_root).mkdir(parents=True, exist_ok=True)
         ensure_knowledge_gitignore(target_root / "knowledge/.gitignore")
         if layout == "snapshot-copy":
             managed.add("knowledge/.gitignore")

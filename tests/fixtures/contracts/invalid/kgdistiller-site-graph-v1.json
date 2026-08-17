@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-site-graph-v1",
+  "schema": "kgdistiller-site-graph-v1",
   "namespace": "private",
   "source_graph_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "counts": {"nodes": 0, "edges": 0, "references": 0},

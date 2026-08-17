@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-static-export-v2",
+  "schema": "kgdistiller-static-export-v1",
   "status": "exported",
   "producer": {
     "name": "kgdistiller",
@@ -18,10 +18,10 @@
   },
   "visibility": {"policy": "explicit-publish", "published_sources": [], "excluded_sources": 0},
   "graph": {
-    "private_schema": "qlkg-v3",
+    "private_schema": "kgdistiller-graph-v1",
     "private_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "private_counts": {"nodes": 0, "edges": 0, "references": 0},
-    "public_schema": "qlkg-site-graph-v1",
+    "public_schema": "kgdistiller-site-graph-v1",
     "public_sha256": "ccae7880989859fbeb6b19523e12ab40b23245cd72e7c496bfb2f48fad1bfc94",
     "public_counts": {"nodes": 0, "edges": 0, "references": 0}
   },

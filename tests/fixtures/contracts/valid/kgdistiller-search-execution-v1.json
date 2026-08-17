@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-search-execution-v2",
+  "schema": "kgdistiller-search-execution-v1",
   "plan_mode": "planned",
   "namespace": "personal",
   "snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -23,7 +23,7 @@
     }
   ],
   "result": {
-    "schema": "qlkg-search-result-v3",
+    "schema": "kgdistiller-search-result-v1",
     "plan_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "lanes": {
       "identity": {"status": "enabled", "queries": 2, "results": 2},

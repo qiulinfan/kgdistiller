@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-store-report-v1.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-store-report-v1.schema.json",
   "title": "kgdistiller portable store operation report v1",
   "type": "object",
   "additionalProperties": false,
@@ -10,9 +10,9 @@
     "query_backend", "layout"
   ],
   "properties": {
-    "schema": {"const": "qlkg-store-report-v1"},
+    "schema": {"const": "kgdistiller-store-report-v1"},
     "status": {"const": "verified"},
-    "artifact_schema": {"const": "qlkg-store-v2"},
+    "artifact_schema": {"const": "kgdistiller-store-v1"},
     "root": {"type": "string", "minLength": 1},
     "store_sha256": {"$ref": "#/$defs/sha256"},
     "store_generation_sha256": {"$ref": "#/$defs/sha256"},

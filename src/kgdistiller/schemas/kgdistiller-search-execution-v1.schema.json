@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-search-execution-v2.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-search-execution-v1.schema.json",
   "title": "kgdistiller deterministic search execution envelope v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "plan_mode", "namespace", "snapshot_sha256", "graph_sha256", "identity_resolutions", "result"],
   "properties": {
-    "schema": {"const": "qlkg-search-execution-v2"},
+    "schema": {"const": "kgdistiller-search-execution-v1"},
     "plan_mode": {"enum": ["planned", "legacy"]},
     "namespace": {"$ref": "#/$defs/namespace"},
     "snapshot_sha256": {"$ref": "#/$defs/sha256"},
@@ -15,8 +15,8 @@
     "result": {
       "type": "object",
       "required": ["schema"],
-      "properties": {"schema": {"const": "qlkg-search-result-v3"}},
-      "description": "A qlkg-search-result-v3 object validated recursively against its immutable contract."
+      "properties": {"schema": {"const": "kgdistiller-search-result-v1"}},
+      "description": "A kgdistiller-search-result-v1 object validated recursively against its immutable contract."
     }
   },
   "$defs": {

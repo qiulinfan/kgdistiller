@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-search-result-v3",
+  "schema": "kgdistiller-search-result-v1",
   "plan_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
   "lanes": {
     "identity": {"status": "enabled", "queries": 0, "results": 0},

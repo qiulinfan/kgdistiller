@@ -16,25 +16,25 @@ MAX_NAMESPACE_LENGTH = 256
 CONTRACT_SCHEMAS = {
     name: f"{name}.schema.json"
     for name in (
-        "qlkg-query-status-v1",
-        "qlkg-retrieval-plan-v2",
-        "qlkg-search-result-v3",
-        "qlkg-search-execution-v2",
-        "qlkg-document-record-v1",
-        "qlkg-store-v2",
-        "qlkg-store-report-v1",
-        "qlkg-obsidian-projection-v1",
-        "qlkg-obsidian-export-report-v1",
-        "qlkg-static-export-v2",
-        "qlkg-static-export-report-v1",
-        "qlkg-site-graph-v1",
+        "kgdistiller-query-status-v1",
+        "kgdistiller-retrieval-plan-v1",
+        "kgdistiller-search-result-v1",
+        "kgdistiller-search-execution-v1",
+        "kgdistiller-document-record-v1",
+        "kgdistiller-store-v1",
+        "kgdistiller-store-report-v1",
+        "kgdistiller-obsidian-projection-v1",
+        "kgdistiller-obsidian-export-report-v1",
+        "kgdistiller-static-export-v1",
+        "kgdistiller-static-export-report-v1",
+        "kgdistiller-site-graph-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
-    "qlkg-store-v2": "store_sha256",
-    "qlkg-obsidian-projection-v1": "projection_sha256",
-    "qlkg-static-export-v2": "export_sha256",
-    "qlkg-site-graph-v1": "graph_sha256",
+    "kgdistiller-store-v1": "store_sha256",
+    "kgdistiller-obsidian-projection-v1": "projection_sha256",
+    "kgdistiller-static-export-v1": "export_sha256",
+    "kgdistiller-site-graph-v1": "graph_sha256",
 }
 
 
@@ -115,7 +115,7 @@ def _format_violation(error: SchemaViolation) -> str:
 
 
 def _validate_document_record(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-document-record-v1":
+    if payload.get("schema") != "kgdistiller-document-record-v1":
         return
     authority = str(payload.get("authority", ""))
     expected_suffix = {
@@ -130,7 +130,7 @@ def _validate_document_record(payload: dict[str, Any]) -> None:
 
 
 def _validate_search_execution(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "qlkg-search-execution-v2":
+    if payload.get("schema") != "kgdistiller-search-execution-v1":
         return
     resolutions = payload.get("identity_resolutions") or []
     indices = [resolution.get("query_index") for resolution in resolutions]
@@ -139,9 +139,9 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
             "identity resolution query_index values must be unique and contiguous"
         )
     result = payload.get("result")
-    if not isinstance(result, dict) or result.get("schema") != "qlkg-search-result-v3":
+    if not isinstance(result, dict) or result.get("schema") != "kgdistiller-search-result-v1":
         raise ContractError(
-            "qlkg-search-execution-v2 must contain qlkg-search-result-v3"
+            "kgdistiller-search-execution-v1 must contain kgdistiller-search-result-v1"
         )
     validate_contract(result)
 

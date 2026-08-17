@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-static-export-v2",
+  "schema": "kgdistiller-static-export-v1",
   "status": "exported",
   "producer": {
     "name": "kgdistiller",
@@ -24,10 +24,10 @@
     "excluded_sources": 0
   },
   "graph": {
-    "private_schema": "qlkg-v3",
+    "private_schema": "kgdistiller-graph-v1",
     "private_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "private_counts": {"nodes": 0, "edges": 0, "references": 0},
-    "public_schema": "qlkg-site-graph-v1",
+    "public_schema": "kgdistiller-site-graph-v1",
     "public_sha256": "ccae7880989859fbeb6b19523e12ab40b23245cd72e7c496bfb2f48fad1bfc94",
     "public_counts": {"nodes": 0, "edges": 0, "references": 0}
   },
@@ -36,5 +36,5 @@
     {"kind": "typst-registry", "path": "knowledge-registry.typ", "bytes": 2, "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
     {"kind": "standalone-verifier", "path": "verify_export.py", "bytes": 2, "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}
   ],
-  "export_sha256": "61a68a64e2d14468556b61c799167cf3541ed2a881e1a5cda7c69566b93f93f2"
+  "export_sha256": "7d9a081e9835147a0ec321d18fa09069f1857cf2b4fc917b1ee8ebbae5ff1ec6"
 }

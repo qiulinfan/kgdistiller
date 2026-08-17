@@ -69,7 +69,7 @@ def main() -> int:
 
         synchronized = run(root, "sync")
         require(synchronized.get("definitions") == 1, "sync omitted authority definition")
-        require(run_text(root, "check").startswith("OK: qlkg-v3"), "graph check failed")
+        require(run_text(root, "check").startswith("OK: kgdistiller-graph-v1"), "graph check failed")
 
         status = run(root, "agent", "status")
         require(status.get("backend") == "json-memory", "wrong query backend")
@@ -115,12 +115,12 @@ def main() -> int:
         require((state / "vaults.json").is_file(), "machine-local vault registry missing")
 
         store = run(root, "store", "snapshot")
-        require(store.get("schema") == "qlkg-store-report-v1", "store-v2 snapshot failed")
-        require(store.get("artifact_schema") == "qlkg-store-v2", "store-v2 report mismatch")
+        require(store.get("schema") == "kgdistiller-store-report-v1", "store-v1 snapshot failed")
+        require(store.get("artifact_schema") == "kgdistiller-store-v1", "store-v1 report mismatch")
         require(run(root, "store", "verify").get("status") == "verified", "store verify failed")
         projection = run(root, "export", "obsidian")
-        require(projection.get("schema") == "qlkg-obsidian-export-report-v1", "Obsidian export failed")
-        require(projection.get("artifact_schema") == "qlkg-obsidian-projection-v1", "Obsidian report mismatch")
+        require(projection.get("schema") == "kgdistiller-obsidian-export-report-v1", "Obsidian export failed")
+        require(projection.get("artifact_schema") == "kgdistiller-obsidian-projection-v1", "Obsidian report mismatch")
         require(
             (root / "knowledge/build/obsidian/concepts/Measure.md").is_file(),
             "raw Markdown Wikilink target projection missing",
@@ -129,7 +129,7 @@ def main() -> int:
         require(not any(root.rglob("*.sqlite")), "self-contained runtime created SQLite")
 
     print(
-        "installed global command, vault registry, JSON runtime, store-v2, "
+        "installed global command, vault registry, JSON runtime, store-v1, "
         "and Obsidian projection smoke passed"
     )
     return 0

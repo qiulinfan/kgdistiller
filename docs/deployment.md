@@ -1,8 +1,9 @@
 # Local-first deployment and recovery
 
 The knowledge project is the deployment and backup unit. It owns registered
-Markdown, Typst, and LaTeX authorities, reviewed registries, the deterministic
-`qlkg-v3` graph, and the `qlkg-store-v2` manifest. The kgdistiller product
+Markdown, Typst, and LaTeX identity authorities, converted Markdown evidence,
+Markdown atomic entries, reviewed registries, the deterministic `kgdistiller-graph-v1`
+graph, and the `kgdistiller-store-v1` manifest. The kgdistiller product
 checkout owns only engine code, schemas, native frontend assets, Skills, and
 workflow definitions.
 
@@ -13,12 +14,14 @@ personal-knowledge-store/
 ├── notes/                         # native authorities
 └── knowledge/
     ├── vault.json                 # portable kgdistiller-vault-v1 identity
-    ├── sources.json               # qlkg-sources-v3
+    ├── sources.json               # kgdistiller-sources-v1
     ├── identities.json            # optional reviewed renames/aliases
     ├── alignments.json             # reviewed cross-namespace mappings
-    ├── graph/                      # deterministic qlkg-v3 generation
+    ├── derived/                    # Markdown conversions; imports or by-source
+    ├── entries/                    # kgdistiller-entry-v1 atomic authorities
+    ├── graph/                      # deterministic kgdistiller-graph-v1 generation
     ├── documents.jsonl            # canonical authority inventory
-    ├── store.json                 # qlkg-store-v2
+    ├── store.json                 # kgdistiller-store-v1
     └── build/                      # ignored plans, receipts, journals, previews
 ```
 
@@ -53,20 +56,15 @@ be registered at its new path by identity; `--replace` is required only when
 the old path still exists, which prevents accidentally treating a copied vault
 as a relocation.
 
-Version 0.4 does not read or migrate a `qlkg-v2` graph,
-`qlkg-sources-v2`, or `qlkg-identities-v1`. Before upgrading an authority
-repository, commit the native authorities and reviewed registries as a Git
-rollback point. While still running 0.3, export any Agent-curated entries and
-semantic edges that must survive for later human review. With 0.4 installed,
-explicitly move the old generated `knowledge/graph/` outside the project or
-delete that exact directory after confirming the rollback commit. Review and
-change the source registry discriminator to `qlkg-sources-v3` and the optional
-identity registry discriminator to `qlkg-identities-v2`, then run an unscoped
-`sync` to rebuild `qlkg-v3` artifacts from the native authorities. Re-review
-any old `qlkg-agent-delta-v2` content before issuing it as
-`qlkg-agent-delta-v3`. The rebuild restores marker-derived nodes and references
-only; it intentionally drops 0.3 Agent-curated entries and semantic edges that
-are not re-authored after the rebuild.
+Version 0.4 has no legacy schema reader or automatic migration. Before
+upgrading an authority repository, commit native authorities and reviewed
+registries as a Git rollback point. Preserve any Agent-curated entries and
+semantic edges that need later human review. Then move the old generated
+`knowledge/graph/` outside the project, or delete that exact directory after
+confirming the rollback commit. Write the source and optional identity
+registries as `kgdistiller-sources-v1` and `kgdistiller-identities-v1`, then run
+an unscoped `sync` to derive `kgdistiller-graph-v1`. Re-review retained metadata
+before issuing it as `kgdistiller-agent-delta-v1`.
 
 ## Create or refresh a store
 
@@ -87,21 +85,21 @@ kgdistiller --repo-root STORE store verify
 ```
 
 `STORE` must not be nested in `PROJECT`. Snapshot copies only registered,
-already-ingested authorities and the exact portable vault identity, registries,
-graph generation, and document inventory that describe them. Snapshot and
-verify never contact a network service.
+already-ingested identity authorities, manifest-bound entry Markdown, their
+Markdown evidence, and the exact portable vault identity, registries, graph
+generation, and document inventory that describe them. Snapshot and verify
+never contact a network service.
 
 `store verify` validates the manifest schema and digest, safe managed paths,
-canonical inventory, all authority hashes, registries, entry shards, graph and
-snapshot digests, and the combined store generation. It recomputes the document
+canonical inventory, all authority and entry hashes, registries, derived entry
+shards, graph and snapshot digests, and the combined store generation. It recomputes the document
 inventory from the copied authorities, source registry, and graph rather than
 trusting inventory rows in isolation. Source roots must resolve inside the
 project, including when a registered glob currently matches no files.
-Neither `qlkg-store-v1` nor a store carrying a `qlkg-v2` core graph is a 0.4
-compatibility input. If an old store is the only surviving copy, use the earlier
-release to restore its native authorities and reviewed registries, commit that
-recovery point, then follow the explicit discriminator-update and rebuild
-procedure above.
+Pre-0.4 stores and graphs are not compatibility inputs. If an old store is the
+only surviving copy, use the earlier release to restore its native authorities
+and reviewed registries, commit that recovery point, then rebuild under the
+current contracts.
 
 Graph artifact size/digest records use LF-normalized UTF-8 text, matching the
 graph loader and authority hash boundary. A Git checkout that materializes CRLF
@@ -117,6 +115,8 @@ the user explicitly authorizes that action. Track:
 - `knowledge/vault.json`;
 - `knowledge/sources.json`;
 - optional `knowledge/identities.json` and `knowledge/alignments.json`;
+- `knowledge/derived/` evidence referenced by entries and
+  `knowledge/entries/`;
 - `knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
 
 Ignore `knowledge/build/`, transaction staging and journals, plans, receipts,
@@ -147,18 +147,18 @@ a separate empty path and adopt it through Git review.
 product and binds to `127.0.0.1` by default. It is not an authenticated public
 service. `kgdistiller mcp` exposes only bounded read-only graph operations.
 
-`export site` produces a privacy-filtered `qlkg-static-export-v2` bundle with a
+`export site` produces a privacy-filtered `kgdistiller-static-export-v1` bundle with a
 dependency-free verifier. Producer release, authority generation, export, and
 consumer adoption are separate provenance events. Verify the bundle before a
 consumer commits its exact files.
 
-`export obsidian` produces a `qlkg-obsidian-projection-v1` downstream view.
+`export obsidian` produces a `kgdistiller-obsidian-projection-v1` downstream view.
 Open the knowledge repository root as the editor vault; its registered Markdown
-files remain non-lossy native authorities. Only the managed default subtree is
+files and `knowledge/entries/*.md` remain non-lossy authorities. Only the managed default subtree is
 a lossy projection. An external output is a browsing-only vault/projection and
 links back with `file:` URLs. Never register projected output as a source,
 rescan it, or use edits in it to update the graph. Replace the projection from
-the native authorities instead.
+the identity and entry authorities instead.
 
 ## Deployment receipt
 

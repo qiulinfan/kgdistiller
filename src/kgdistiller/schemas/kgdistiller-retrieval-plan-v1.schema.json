@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-retrieval-plan-v2.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-retrieval-plan-v1.schema.json",
   "title": "kgdistiller bounded deterministic retrieval plan v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "question", "namespace", "identity_queries", "lexical_queries", "graph", "filters", "limit"],
   "properties": {
-    "schema": {"const": "qlkg-retrieval-plan-v2"},
+    "schema": {"const": "kgdistiller-retrieval-plan-v1"},
     "question": {"type": "string", "minLength": 1, "maxLength": 8192},
     "namespace": {"$ref": "#/$defs/namespace"},
     "identity_queries": {"$ref": "#/$defs/queries"},

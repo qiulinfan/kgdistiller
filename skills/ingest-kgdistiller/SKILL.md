@@ -21,8 +21,8 @@ Read [references/transaction-contract.md](references/transaction-contract.md)
 completely before the first write. Use the public
 `kgdistiller --repo-root PROJECT` CLI.
 
-Start with `agent status`. Require `qlkg-query-status-v1`, the
-`json-memory`/`read-only-query-v3` capabilities, `qlkg-ingest-request-v2`, and
+Start with `agent status`. Require `kgdistiller-query-status-v1`, the
+`json-memory`/`read-only-query-v3` capabilities, `kgdistiller-ingest-request-v1`, and
 exact target graph, snapshot, and alignment digests from `$query-kgdistiller`.
 The ingest request separately declares `transactional-ingest-v1`; return to
 query when any precondition is stale.
@@ -35,7 +35,7 @@ Require one bounded request containing:
 - exact registered authority paths, normalized expected source hashes, native
   patch contents, and complete post-patch marker/ref state;
 - content-addressed candidate snapshot and query report paths;
-- one reviewed `qlkg-agent-delta-v3`;
+- one reviewed `kgdistiller-agent-delta-v1`;
 - optional reviewed alignment decisions with evidence/justification;
 - review evidence and source provenance.
 
@@ -50,7 +50,7 @@ store, check, and export.
 
 ## Plan, review, then apply
 
-1. Build canonical `qlkg-ingest-request-v2` content in `plan` mode and compute
+1. Build canonical `kgdistiller-ingest-request-v1` content in `plan` mode and compute
    `request_sha256` over canonical JSON excluding that field.
 2. Run:
 
@@ -67,7 +67,7 @@ store, check, and export.
      --receipt RECEIPT.json
    ```
 
-5. Accept only `qlkg-ingest-receipt-v2` with `status: committed`, a valid
+5. Accept only `kgdistiller-ingest-receipt-v1` with `status: committed`, a valid
    canonical digest, and after-digests matching fresh `agent status`.
 6. If `knowledge/store.json` exists, refresh and verify it:
 
@@ -76,15 +76,17 @@ store, check, and export.
    kgdistiller --repo-root PROJECT store verify
    ```
 
-   This records the JSON-only `qlkg-store-v2` generation. If no store exists,
+   This records the file-based `kgdistiller-store-v1` generation, including entry
+   Markdown and its evidence. If no store exists,
    report `local-only`; do not silently initialize Git, commit, or push.
 7. Create a static-site or lossy Obsidian projection only when explicitly in
    scope. Neither export is authority, and the managed Obsidian subtree or an
    external browsing-only vault/projection must never be rescanned or ingested.
 
 The engine owns locking, optimistic concurrency, staging, scan, delta apply,
-sync, curation, global validation, atomic JSON-generation installation, crash
-recovery, and idempotency. There is no database/index/vector rebuild. A failed
+entry-Markdown installation, sync, curation, global validation, atomic graph
+generation installation, crash recovery, and idempotency. There is no
+database/index/vector rebuild. A failed
 transaction must return its stable error and preserve the before-digests.
 
 ## Return the receipt

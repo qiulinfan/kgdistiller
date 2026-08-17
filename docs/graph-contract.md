@@ -2,9 +2,11 @@
 
 ## Authority
 
-Configured `.md`, `.typ`, and `.tex` files remain authoritative in their own
-formats. Generated graph artifacts, in-memory query views, HTML, static sites,
-and Obsidian projections never become a second authority.
+Authority is layered. Configured `.md`, `.typ`, and `.tex` markers define
+identity. Converted evidence is Markdown under `knowledge/derived/`, and every
+curated atomic entry is an Obsidian-compatible Markdown authority under
+`knowledge/entries/`. Generated graph artifacts, in-memory query views, HTML,
+static sites, and managed Obsidian projections never become another authority.
 
 One authored knowledge name has at most one active definition marker across the
 whole project:
@@ -24,7 +26,7 @@ Changing an authored name is an explicit identity decision. The deterministic
 scanner does not infer it from document order, proximity, a matching Git hunk,
 or textual similarity. `kgdistiller reconcile rename-node <id> <new-name>`
 records the new canonical name and prior aliases in the optional
-`qlkg-identities-v2` registry before the source is synchronized.
+`kgdistiller-identities-v1` registry before the source is synchronized.
 
 ## Node selection
 
@@ -50,10 +52,52 @@ references.
 
 ## Entries and provenance
 
-Every curated active knowledge node has a concise, source-grounded entry. The
-entry improves search and explanation but does not replace the authoritative
-statement or proof. Provenance continues to record the authority file, line,
-source format, source name, and canonical location.
+Every curated active knowledge node has a concise, source-grounded
+`knowledge/entries/<node-id>.md` file using the
+`kgdistiller-entry-v1` frontmatter contract. The entry improves search and
+explanation but does not replace the identity marker or its statement/proof.
+The entry records its Markdown evidence, evidence digest, and reviewed
+definition digest. The JSONL copy in `knowledge/graph/entries/` is derived and
+must never be edited as authority.
+
+```markdown
+---
+kgd_schema: "kgdistiller-entry-v1"
+kgd_id: "measure-space"
+kgd_label: "Measure space"
+kgd_entry_origin: "agent-extracted"
+kgd_source: "knowledge/derived/by-source/notes/chapter.typ.md"
+kgd_source_sha256: "..."
+kgd_definition_sha256: "..."
+---
+
+# Measure space
+
+## Summary
+
+A measurable space equipped with a measure.
+```
+
+The remaining supported level-two sections are `Context`, `Role`,
+`Prerequisites`, `Common confusions`, `Open questions`, and `Sources`. The last
+four use Markdown `- ` list items. Unknown frontmatter fields or sections fail
+closed instead of becoming invisible graph data. Normal IDs use
+`<node-id>.md`; Windows-reserved or overlong IDs use a deterministic `_kgd-...`
+filename while `kgd_id` remains the stable graph identity.
+
+Direct Markdown identity sources may be entry evidence themselves. Typst and
+LaTeX entries require their converted Markdown at
+`knowledge/derived/by-source/<vault-relative-source>.md`; the relative source
+already retains its original suffix.
+Internal PDF conversion uses the same path rule and its derived Markdown is the
+scanned identity source. Same-stem formats remain distinct.
+
+An internal derived Markdown file uses `kgdistiller-derived-markdown-v1`
+frontmatter to bind the upstream vault-relative source path, source format, and
+digest. If the original file is outside every vault, a target vault is
+mandatory and the persisted `knowledge/derived/imports/*.md` deliberately omits
+the external path and digest. That Markdown is the first persisted source in
+the chain.
 
 Research nodes may carry structured dossiers with summary, context, role,
 prerequisites, common confusions, open questions, and sources. Before creating a
@@ -77,11 +121,11 @@ origin, confidence, and source-grounded evidence.
 
 ## Agent delta
 
-Semantic curation uses a reviewable `qlkg-agent-delta-v3` document:
+Semantic curation uses a reviewable `kgdistiller-agent-delta-v1` document:
 
 ```json
 {
-  "schema": "qlkg-agent-delta-v3",
+  "schema": "kgdistiller-agent-delta-v1",
   "remove_nodes": [],
   "nodes": [
     {
@@ -106,8 +150,8 @@ Semantic curation uses a reviewable `qlkg-agent-delta-v3` document:
 ```
 
 Source marker edits and graph deltas are reviewed together. Applying a delta can
-add entries and semantic relations, but cannot create a second active authority
-for a knowledge name.
+create/update entry Markdown and semantic relations, but cannot create a second
+active identity authority for a knowledge name.
 
 ## Incremental workflow
 
@@ -152,7 +196,7 @@ and static export share this one function, so Git's checkout newline policy
 cannot create a false source change. Raw-byte hashing remains reserved for
 binary and byte-stable artifacts.
 
-Generated graph JSON/JSONL and entry shards are serialized with LF.
+Generated graph JSON/JSONL and derived entry shards are serialized with LF.
 Hydration and `check` read those text projections with the same universal-
 newline behavior before comparing their manifest digests and canonical
 serialization. Thus an otherwise clean CRLF checkout still represents the
@@ -180,17 +224,17 @@ and scoped aliases, Unicode NFKC/casefold normalization, and explicit alignment
 evidence. Lexical score, acronym expansion, and graph proximity retrieve or
 rank candidates but never create identity or semantic edges.
 
-`qlkg-retrieval-plan-v2` has deterministic identity, lexical, and bounded graph
+`kgdistiller-retrieval-plan-v1` has deterministic identity, lexical, and bounded graph
 lanes. It has no semantic/vector lane. Read-only results bind their snapshot
 and graph digests so a later transaction can reject a stale decision.
 
 ## Derived projections
 
-`qlkg-static-export-v2` is a privacy-filtered consumer bundle.
-`qlkg-obsidian-projection-v1` is a lossy, disposable managed downstream view.
-The project root may be the editor vault, where registered Markdown remains
-native authority; the managed projection subtree is not authority. It must
-never be registered in
+`kgdistiller-static-export-v1` is a privacy-filtered consumer bundle.
+`kgdistiller-obsidian-projection-v1` is a lossy, disposable managed downstream view.
+The project root may be the editor vault, where registered Markdown and
+`knowledge/entries/*.md` remain native authorities; the managed projection
+subtree is not authority. It must never be registered in
 `knowledge/sources.json`, scanned, or ingested back; regenerate it from the
 Markdown, Typst, or LaTeX authorities and the deterministic graph.
 
@@ -204,7 +248,8 @@ Markdown, Typst, or LaTeX authorities and the deterministic graph.
 - no field-to-field `contains` edges;
 - every active knowledge node resolves to at least one field;
 - Typst label HTML contains no active or unsafe content;
-- entry shards are bounded and referenced from the manifest;
+- entry Markdown authorities are manifest-bound and their derived shards are
+  bounded and referenced from the manifest;
 - unresolved references and orphaned nodes remain visible diagnostics;
 - changed definitions and their affected semantic edges remain visible review
   diagnostics rather than being silently trusted or deleted;

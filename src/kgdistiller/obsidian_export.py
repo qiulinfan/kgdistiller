@@ -28,10 +28,10 @@ from .json_schema import validate_json_schema
 from .query import GraphView, QueryError, load_graph_view
 
 
-PROJECTION_SCHEMA = "qlkg-obsidian-projection-v1"
-PROJECTION_REPORT_SCHEMA = "qlkg-obsidian-export-report-v1"
-CONCEPT_SCHEMA = "qlkg-obsidian-concept-v1"
-SOURCE_SCHEMA = "qlkg-obsidian-source-v1"
+PROJECTION_SCHEMA = "kgdistiller-obsidian-projection-v1"
+PROJECTION_REPORT_SCHEMA = "kgdistiller-obsidian-export-report-v1"
+CONCEPT_SCHEMA = "kgdistiller-obsidian-concept-v1"
+SOURCE_SCHEMA = "kgdistiller-obsidian-source-v1"
 _WIKILINK_SEMANTIC_RE = re.compile(r"%%|[#^|\[\]\\\r\n]")
 _WINDOWS_INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 _WINDOWS_RESERVED_FILENAMES = frozenset(
@@ -522,6 +522,38 @@ def _require_fresh_authorities(
     )
 
 
+def _require_fresh_entry_authorities(repo_root: Path, graph_dir: Path) -> None:
+    """Require Obsidian-visible entry Markdown to match the graph generation."""
+
+    try:
+        manifest = json.loads((graph_dir / "manifest.json").read_text(encoding="utf-8"))
+        for key, label in (
+            ("entry_authorities", "entry authority"),
+            ("entry_sources", "entry source"),
+        ):
+            inventory = manifest.get(key) or {}
+            if not isinstance(inventory, dict):
+                raise ValueError(f"invalid {label} inventory")
+            entries = inventory.get("entries") or []
+            if not isinstance(entries, list):
+                raise ValueError(f"invalid {label} inventory")
+            for record in entries:
+                if not isinstance(record, dict):
+                    raise ValueError(f"invalid {label} record")
+                relative = _safe_relative(str(record.get("path", "")))
+                digest = str(record.get("sha256", ""))
+                path = _resolve(repo_root, relative)
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError(f"{label} is missing: {relative}")
+                if sha256_authority_file(path) != digest:
+                    raise ValueError(f"{label} changed: {relative}")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+        raise ObsidianExportError(
+            f"entry Markdown authorities are out of sync with the graph: {error}; "
+            "run kgdistiller sync"
+        ) from error
+
+
 def _require_fresh_registries(
     graph_dir: Path,
     registry: Path,
@@ -579,7 +611,7 @@ def _artifact_record(relative: str, content: bytes, kind: str) -> dict[str, Any]
 
 
 def _schema() -> dict[str, Any]:
-    path = Path(__file__).with_name("schemas") / "qlkg-obsidian-projection-v1.schema.json"
+    path = Path(__file__).with_name("schemas") / "kgdistiller-obsidian-projection-v1.schema.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -690,6 +722,7 @@ def build_obsidian_projection(
         raise ObsidianExportError(f"cannot load the authority graph: {error}") from error
     _require_fresh_registries(graph_dir, registry, identities, view)
     _require_fresh_authorities(repo_root, registry, view)
+    _require_fresh_entry_authorities(repo_root, graph_dir)
     snapshot = view.snapshot
     graph_sha = str(snapshot["graph"]["sha256"])
     source_hashes = view.source_hashes

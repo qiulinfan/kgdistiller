@@ -31,10 +31,15 @@ class ProjectInitializationTest(unittest.TestCase):
                 alignments=alignments,
             )
 
+            sources = json.loads(registry.read_text(encoding="utf-8"))
+            self.assertEqual("kgdistiller-sources-v1", sources["schema"])
             self.assertEqual(
-                "qlkg-sources-v3",
-                json.loads(registry.read_text(encoding="utf-8"))["schema"],
+                {"local:notes", "local:derived-imports", "local:derived-pdf"},
+                {source["id"] for source in sources["sources"]},
             )
+            self.assertTrue((root / "knowledge/entries").is_dir())
+            self.assertTrue((root / "knowledge/derived/imports").is_dir())
+            self.assertTrue((root / "knowledge/derived/by-source").is_dir())
             vault_manifest = json.loads(
                 (root / "knowledge/vault.json").read_text(encoding="utf-8")
             )
@@ -44,7 +49,7 @@ class ProjectInitializationTest(unittest.TestCase):
                 r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
             )
             self.assertEqual(
-                {"schema": "qlkg-alignments-v2", "mappings": []},
+                {"schema": "kgdistiller-alignments-v1", "mappings": []},
                 json.loads(alignments.read_text(encoding="utf-8")),
             )
             self.assertEqual(
@@ -52,7 +57,7 @@ class ProjectInitializationTest(unittest.TestCase):
                 (root / "knowledge/.gitignore").read_text(encoding="utf-8"),
             )
             reviewed = {
-                "schema": "qlkg-alignments-v2",
+                "schema": "kgdistiller-alignments-v1",
                 "mappings": [{"preserved": True}],
             }
             alignments.write_text(json.dumps(reviewed), encoding="utf-8")

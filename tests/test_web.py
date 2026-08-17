@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import io
 import json
 import sys
 import tempfile
@@ -111,7 +112,11 @@ class WebPayloadTest(unittest.TestCase):
         outside = self.root.parent / f"{self.root.name}-outside.md"
         outside.write_text("secret\n", encoding="utf-8")
         link = self.root / "notes/outside.md"
-        link.symlink_to(outside)
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError) as error:
+            outside.unlink(missing_ok=True)
+            self.skipTest(f"file symlinks unavailable: {error}")
         try:
             with self.assertRaisesRegex(ValueError, "outside"):
                 source_excerpt(self.root, "notes/outside.md", 1)
@@ -126,11 +131,19 @@ class WebPayloadTest(unittest.TestCase):
         replacement.write_text("new\ngeneration\n", encoding="utf-8")
         real_open = Path.open
 
+        class ReplaceOnRead(io.StringIO):
+            def read(self, *args: object, **kwargs: object) -> str:
+                text = super().read(*args, **kwargs)
+                replacement.replace(source)
+                return text
+
         def open_then_replace(path: Path, *args: object, **kwargs: object):
             handle = real_open(path, *args, **kwargs)
-            if path == source.resolve():
-                replacement.replace(path)
-            return handle
+            if path != source.resolve():
+                return handle
+            with handle:
+                generation = handle.read()
+            return ReplaceOnRead(generation)
 
         with patch.object(Path, "open", open_then_replace):
             excerpt = source_excerpt(

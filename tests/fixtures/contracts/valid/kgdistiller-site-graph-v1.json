@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-site-graph-v1",
+  "schema": "kgdistiller-site-graph-v1",
   "namespace": "public",
   "source_graph_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "counts": {"nodes": 0, "edges": 0, "references": 0},
@@ -7,5 +7,5 @@
   "edges": [],
   "references": [],
   "diagnostics": {"errors": [], "warnings": [], "info": []},
-  "graph_sha256": "041f5d892050e8860a91f49a79b68f1f5762d40442ccc275bc5952f03c23b3fb"
+  "graph_sha256": "b5d7d187a9a9c8c2e00e62810dd4960c497fb80a2115586944c9601afde54fd0"
 }

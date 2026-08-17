@@ -80,7 +80,7 @@
     },
     {
       "id": "portable-store",
-      "description": "Create or verify a JSON-only portable generation that is immediately queryable without materialization.",
+      "description": "Create or verify a file-based portable generation with Markdown authorities and a query-ready JSON graph.",
       "steps": [
         {"id": "snapshot", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "transaction"},
         {"id": "verify", "skill": "deploy-kgdistiller", "agent": "transaction-reviewer", "mode": "read-only"}

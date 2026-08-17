@@ -34,9 +34,9 @@ from .cli import (
 from .contracts import finalize_self_digest, sha256_json, validate_contract
 from .static_export_verifier import verify_export
 
-EXPORT_SCHEMA = "qlkg-static-export-v2"
-EXPORT_REPORT_SCHEMA = "qlkg-static-export-report-v1"
-SITE_GRAPH_SCHEMA = "qlkg-site-graph-v1"
+EXPORT_SCHEMA = "kgdistiller-static-export-v1"
+EXPORT_REPORT_SCHEMA = "kgdistiller-static-export-report-v1"
+SITE_GRAPH_SCHEMA = "kgdistiller-site-graph-v1"
 PRODUCT_REPOSITORY = "https://github.com/qiulinfan/kgdistiller"
 GIT_COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 SITE_BUNDLE_FILES = {
@@ -345,6 +345,7 @@ def _source_inputs(
     graph_dir: Path,
     graph_manifest: dict[str, Any],
     source_hashes: dict[str, Any],
+    state: GraphState | None = None,
 ) -> list[Path]:
     paths = [registry, *(graph_dir / name for name in sorted(SOURCE_GRAPH_FILES))]
     entry_store = graph_manifest.get("entry_store") or {}
@@ -362,6 +363,80 @@ def _source_inputs(
                 f"authority graph contains an unsafe entry shard: {relative}"
             )
         paths.append(graph_dir / relative)
+    entry_authorities = graph_manifest.get("entry_authorities") or {}
+    if not isinstance(entry_authorities, dict):
+        raise StaticExportError("authority graph entry_authorities is invalid")
+    raw_entries = entry_authorities.get("entries") or []
+    if not isinstance(raw_entries, list):
+        raise StaticExportError("authority graph entry_authorities is invalid")
+    for record in raw_entries:
+        if not isinstance(record, dict):
+            raise StaticExportError("authority graph entry_authorities contains a non-object")
+        relative = Path(str(record.get("path", "")))
+        digest = record.get("sha256")
+        if (
+            not str(relative)
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise StaticExportError("authority graph contains an invalid entry authority")
+        path = repo_root / relative
+        try:
+            actual = sha256_authority_file(path)
+        except (OSError, UnicodeError) as error:
+            raise StaticExportError(
+                f"cannot read entry authority: {relative.as_posix()}"
+            ) from error
+        if actual != digest:
+            raise StaticExportError(
+                f"entry authority does not match the committed graph hash: {relative.as_posix()}"
+            )
+        paths.append(path)
+    entry_sources = graph_manifest.get("entry_sources") or {}
+    if not isinstance(entry_sources, dict):
+        raise StaticExportError("authority graph entry_sources is invalid")
+    raw_entry_sources = entry_sources.get("entries") or []
+    if not isinstance(raw_entry_sources, list):
+        raise StaticExportError("authority graph entry_sources is invalid")
+    for record in raw_entry_sources:
+        if not isinstance(record, dict):
+            raise StaticExportError("authority graph entry_sources contains a non-object")
+        relative = Path(str(record.get("path", "")))
+        digest = record.get("sha256")
+        if (
+            not str(relative)
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise StaticExportError("authority graph contains an invalid entry source")
+        path = repo_root / relative
+        try:
+            actual = sha256_authority_file(path)
+        except (OSError, UnicodeError) as error:
+            raise StaticExportError(
+                f"cannot read entry source: {relative.as_posix()}"
+            ) from error
+        if actual != digest:
+            raise StaticExportError(
+                f"entry source does not match the committed graph hash: {relative.as_posix()}"
+            )
+        paths.append(path)
+    if state is not None:
+        for node in state.nodes.values():
+            source = str((node.get("properties") or {}).get("entry_source", ""))
+            if not source:
+                continue
+            relative = Path(source)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise StaticExportError(f"authority graph contains an unsafe entry source: {source}")
+            path = repo_root / relative
+            if path.is_symlink() or not path.is_file():
+                raise StaticExportError(f"entry source is missing or symbolic: {source}")
+            paths.append(path)
     for authority, digest in sorted(source_hashes.items()):
         authority_text = str(authority)
         authority_path = Path(authority_text)
@@ -1037,6 +1112,7 @@ def export_site_bundle(
             graph_dir,
             state.manifest,
             raw_source_hashes,
+            state,
         ),
     )
     private_counts_raw = state.manifest.get("counts") or {}

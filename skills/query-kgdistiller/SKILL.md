@@ -17,7 +17,8 @@ keys and action codes, and raw errors unchanged.
 
 ## Keep the boundary read-only
 
-- Never open `knowledge/graph/*.jsonl` or entry shards.
+- Never open `knowledge/graph/*.jsonl`, derived entry shards, or atomic entry
+  Markdown; use the bounded query interface.
 - Never edit an authority, identity/alignment registry, or graph artifact.
 - Never run `apply`, `sync`, `reconcile`, `ingest`, or another writer.
 - Never promote lexical, acronym, translation, or topology similarity into
@@ -35,15 +36,15 @@ Start with `kg_status` or:
 kgdistiller --repo-root PROJECT agent status
 ```
 
-Require `qlkg-query-status-v1`, `qlkg-agent-snapshot-v2`, `qlkg-v3`,
-`qlkg-alignments-v2`, and the `json-memory`/`read-only-query-v3` capabilities.
+Require `kgdistiller-query-status-v1`, `kgdistiller-agent-snapshot-v1`, `kgdistiller-graph-v1`,
+`kgdistiller-alignments-v1`, and the `json-memory`/`read-only-query-v3` capabilities.
 Record `snapshot_sha256`, `graph_sha256`, and `alignment_sha256` so a later
 transactional writer can reject a stale decision.
 
 ## Plan deterministic retrieval
 
 For retrieval beyond exact batch resolution, create one bounded
-`qlkg-retrieval-plan-v2`:
+`kgdistiller-retrieval-plan-v1`:
 
 - put canonical names and explicit aliases in `identity_queries`;
 - put concise discriminating terms, including source-language forms, in
@@ -52,22 +53,23 @@ For retrieval beyond exact batch resolution, create one bounded
 - bound query counts, result limit, edge types, graph depth, direction, node
   types, stale/orphaned inclusion, and strategy.
 
-There is no semantic/vector lane. Never add `semantic_queries`; v2 rejects it.
+There is no semantic/vector lane. Never add `semantic_queries`; the v1 plan
+contract rejects it.
 Execute once with `kg_search`, `kg_build_context`, or:
 
 ```sh
 kgdistiller --repo-root PROJECT agent search --plan RETRIEVAL_PLAN.json
 ```
 
-Require `qlkg-search-execution-v2` with a validated
-`qlkg-search-result-v3`. Preserve each lane's status and stable reason. Exact
+Require `kgdistiller-search-execution-v1` with a validated
+`kgdistiller-search-result-v1`. Preserve each lane's status and stable reason. Exact
 identity evidence takes precedence over score fusion; lexical and graph signals
 only rank review candidates.
 
 ## Accept one bounded handoff
 
 Accept either a batch of candidate names with source-local aliases and concise
-evidence, or one valid `qlkg-agent-snapshot-v2` in an isolated namespace such
+evidence, or one valid `kgdistiller-agent-snapshot-v1` in an isolated namespace such
 as `paper:<digest>`. Prefer an ignored local artifact path over pasted graph
 content. Reject a candidate snapshot in the `personal` namespace.
 
@@ -78,7 +80,7 @@ kgdistiller --repo-root PROJECT agent resolve "Concept A" "Concept B"
 ```
 
 Use bounded `kg_search`, `kg_get_node`, `kg_expand`, or `kg_build_context` only
-for unmatched or ambiguous cases. Require `qlkg-context-bundle-v2` from context
+for unmatched or ambiguous cases. Require `kgdistiller-context-bundle-v1` from context
 packing. Do not issue a broad context query for every obvious exact match.
 
 Identity-authoritative evidence is limited to a machine ID, canonical label,
@@ -99,19 +101,20 @@ kgdistiller --repo-root PROJECT agent compare CANDIDATE
 ```
 
 Alignment is evidence, not a write request. Do not reconcile mappings here.
-Require `qlkg-alignment-report-v2`, preserve its `alignment_sha256`, fresh
+Require `kgdistiller-alignment-report-v1`, preserve its `alignment_sha256`, fresh
 `rejected_target_ids`, and registry evidence, then require
-`qlkg-graph-comparison-v2`. Interpret node statuses conservatively:
+`kgdistiller-graph-comparison-v1`. Interpret node statuses conservatively:
 
 - `matched`: return the exact personal handle and bridge; caller may use a ref;
 - `ambiguous`: return ranked candidates and non-authoritative reasons for review;
 - `unmatched`: retain the source-backed candidate without a personal identity.
 
-Comparison v2 reports only those node states and `present`/`missing` candidate
-edges. It does not diagnose partial entries, missing roles, or conflicting
-claims. Never invent those conclusions from retrieval evidence.
+`kgdistiller-graph-comparison-v1` reports only those node states and
+`present`/`missing` candidate edges. It does not diagnose partial entries,
+missing roles, or conflicting claims. Never invent those conclusions from
+retrieval evidence.
 
-If requested, `qlkg-agent-proposal-v2` is a deterministic review package bound
+If requested, `kgdistiller-agent-proposal-v1` is a deterministic review package bound
 to the comparison and alignment digests. Its `delta_ready` may be false; do not
 treat its operations or empty `delta_preview` as an actionable write delta.
 

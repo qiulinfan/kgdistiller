@@ -1,11 +1,11 @@
 {
-  "schema": "qlkg-document-record-v1",
+  "schema": "kgdistiller-document-record-v1",
   "source_id": "synthetic-notes",
   "subject": "Synthetic subject",
   "course": "Synthetic course",
   "knowledge_origin": "personal-note",
   "authority": "notes/synthetic.md",
-  "format": "typst",
+  "format": "markdown",
   "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
   "definition_ids": ["synthetic-concept"],
   "reference_count": 0

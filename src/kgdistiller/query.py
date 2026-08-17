@@ -40,11 +40,11 @@ from .cli import (
 from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
 
 
-SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v2"
-QUERY_STATUS_SCHEMA = "qlkg-query-status-v1"
-COMPARISON_SCHEMA = "qlkg-graph-comparison-v2"
-PROPOSAL_SCHEMA = "qlkg-agent-proposal-v2"
-CONTEXT_SCHEMA = "qlkg-context-bundle-v2"
+SNAPSHOT_SCHEMA = "kgdistiller-agent-snapshot-v1"
+QUERY_STATUS_SCHEMA = "kgdistiller-query-status-v1"
+COMPARISON_SCHEMA = "kgdistiller-graph-comparison-v1"
+PROPOSAL_SCHEMA = "kgdistiller-agent-proposal-v1"
+CONTEXT_SCHEMA = "kgdistiller-context-bundle-v1"
 QUERY_CAPABILITY = "json-memory"
 DEFAULT_SEMANTIC_RELATIONS = {
     "prerequisite-for",

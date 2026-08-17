@@ -330,22 +330,22 @@ class TransactionalIngestTest(unittest.TestCase):
 
         plan = plan_ingest(self.paths, self.request("plan"))
 
-        self.assertEqual("qlkg-ingest-plan-v1", plan["schema"])
+        self.assertEqual("kgdistiller-ingest-plan-v1", plan["schema"])
         self.assertEqual("planned", plan["status"])
         self.assertEqual(["beta"], plan["changes"]["nodes"]["added"])
         self.assertNotEqual(plan["before"]["graph_sha256"], plan["after"]["graph_sha256"])
         self.assertEqual(before, self.material_hashes())
         self.assertFalse(any(self.repo.rglob("*.sqlite")))
 
-    def test_ingest_request_v2_refuses_superseded_request_and_delta_contracts(
+    def test_ingest_request_v1_refuses_unknown_request_and_delta_contracts(
         self,
     ) -> None:
         cases = (
-            ("request", lambda value: value.__setitem__("schema", "qlkg-ingest-request-v1")),
+            ("request", lambda value: value.__setitem__("schema", "legacy-ingest-request-v0")),
             (
                 "delta",
                 lambda value: value["delta"].__setitem__(
-                    "schema", "qlkg-agent-delta-v2"
+                    "schema", "legacy-agent-delta-v0"
                 ),
             ),
         )
@@ -380,7 +380,7 @@ class TransactionalIngestTest(unittest.TestCase):
         second = apply_ingest(self.paths, request)
 
         self.assertEqual(first, second)
-        self.assertEqual("qlkg-ingest-receipt-v2", first["schema"])
+        self.assertEqual("kgdistiller-ingest-receipt-v1", first["schema"])
         self.assertEqual("committed", first["status"])
         self.assertEqual("json-memory", first["engine"]["query_backend"])
         self.assertNotIn("index_schema", first["engine"])
@@ -419,7 +419,7 @@ class TransactionalIngestTest(unittest.TestCase):
             apply_ingest(self.paths, request)
 
         legacy = copy.deepcopy(receipt)
-        legacy["schema"] = "qlkg-ingest-receipt-v1"
+        legacy["schema"] = "legacy-ingest-receipt-v0"
         receipt_path.write_text(json.dumps(legacy), encoding="utf-8")
         with self.assertRaisesRegex(IngestError, "expected stored"):
             apply_ingest(self.paths, request)
@@ -483,7 +483,7 @@ class TransactionalIngestTest(unittest.TestCase):
 
         self.assertEqual("stale-query-report", rejected.exception.code)
 
-    def test_v2_comparison_rejects_legacy_identity_statuses(self) -> None:
+    def test_v1_comparison_rejects_legacy_identity_statuses(self) -> None:
         self.query_report["results"][0]["status"] = "new"
         self.query_path.write_text(json.dumps(self.query_report), encoding="utf-8")
         request = self.request("plan", request_id="legacy-comparison-status")

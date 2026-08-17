@@ -12,7 +12,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import synchronize  # noqa: E402
+from kgdistiller.cli import apply_delta, synchronize  # noqa: E402
 from kgdistiller.contracts import canonical_json, sha256_json  # noqa: E402
 from kgdistiller.project import initialize_project  # noqa: E402
 from kgdistiller.store import StoreError, snapshot_store, verify_store  # noqa: E402
@@ -20,7 +20,7 @@ from kgdistiller.store import StoreError, snapshot_store, verify_store  # noqa: 
 
 class JsonStoreTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-store-v2-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-store-v1-")
         root = Path(self.temporary.name)
         self.source = root / "source"
         self.output = root / "portable"
@@ -37,7 +37,7 @@ class JsonStoreTest(unittest.TestCase):
         )
         self.identities.write_text(
             json.dumps(
-                {"schema": "qlkg-identities-v2", "identities": []},
+                {"schema": "kgdistiller-identities-v1", "identities": []},
                 ensure_ascii=False,
                 indent=2,
             )
@@ -62,6 +62,28 @@ class JsonStoreTest(unittest.TestCase):
             subject=None,
             write=True,
         )
+        delta = self.source / "knowledge/build/entry.delta.json"
+        delta.parent.mkdir(parents=True, exist_ok=True)
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "kgdistiller-agent-delta-v1",
+                    "nodes": [
+                        {
+                            "id": "sigma-algebra",
+                            "text": "A family of sets closed under the defining operations.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        apply_delta(
+            self.graph,
+            self.typst_registry,
+            delta,
+            repo_root=self.source,
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -80,8 +102,8 @@ class JsonStoreTest(unittest.TestCase):
         created = self.snapshot()
         verified = verify_store(self.output)
 
-        self.assertEqual("qlkg-store-report-v1", created["schema"])
-        self.assertEqual("qlkg-store-v2", created["artifact_schema"])
+        self.assertEqual("kgdistiller-store-report-v1", created["schema"])
+        self.assertEqual("kgdistiller-store-v1", created["artifact_schema"])
         self.assertEqual("snapshot-copy", created["layout"])
         self.assertEqual("json-memory", verified["query_backend"])
         self.assertEqual(created["store_generation_sha256"], verified["store_generation_sha256"])
@@ -89,6 +111,9 @@ class JsonStoreTest(unittest.TestCase):
         self.assertTrue((self.output / "knowledge/vault.json").is_file())
         self.assertTrue((self.output / "knowledge/graph/manifest.json").is_file())
         self.assertTrue((self.output / "knowledge/documents.jsonl").is_file())
+        self.assertTrue(
+            (self.output / "knowledge/entries/sigma-algebra.md").is_file()
+        )
         self.assertFalse(any(self.output.rglob("*.sqlite")))
         self.assertFalse((self.output / "knowledge/embeddings").exists())
         store_manifest = json.loads(
@@ -130,7 +155,48 @@ class JsonStoreTest(unittest.TestCase):
         self.snapshot()
         authority = self.output / "notes/concepts.md"
         authority.write_text(authority.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
-        with self.assertRaisesRegex(StoreError, "authority digest mismatch"):
+        with self.assertRaisesRegex(StoreError, "entry source is out of sync"):
+            verify_store(self.output)
+
+    def test_snapshot_copies_and_verifies_unregistered_derived_entry_evidence(self) -> None:
+        typst = self.source / "notes/typst-concept.typ"
+        typst.write_text("#definition(title: [#kn[Typst concept]])[Body.]\n", encoding="utf-8")
+        derived = (
+            self.source
+            / "knowledge/derived/by-source/notes/typst-concept.typ.md"
+        )
+        derived.parent.mkdir(parents=True, exist_ok=True)
+        derived.write_text("# Converted Typst concept\n", encoding="utf-8")
+        synchronize(
+            self.source,
+            self.registry,
+            self.graph,
+            self.typst_registry,
+            identities=self.identities,
+            alignments=self.alignments,
+            files=[],
+            course=None,
+            subject=None,
+            write=True,
+        )
+        delta = self.source / "knowledge/build/typst-entry.delta.json"
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "kgdistiller-agent-delta-v1",
+                    "nodes": [{"id": "typst-concept", "text": "Reviewed Typst concept."}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.source)
+
+        self.snapshot()
+
+        copied = self.output / derived.relative_to(self.source)
+        self.assertTrue(copied.is_file())
+        copied.write_text("# Tampered conversion\n", encoding="utf-8")
+        with self.assertRaisesRegex(StoreError, "entry source is out of sync"):
             verify_store(self.output)
 
     def test_verify_rejects_tampered_vault_identity(self) -> None:
@@ -266,7 +332,7 @@ class JsonStoreTest(unittest.TestCase):
         sentinel = self.output / "knowledge/embeddings/keep.f32"
         sentinel.write_bytes(b"old-vector")
         (self.output / "knowledge/store.json").write_text(
-            json.dumps({"schema": "qlkg-store-v1"}), encoding="utf-8"
+            json.dumps({"schema": "legacy-store-v0"}), encoding="utf-8"
         )
 
         with self.assertRaisesRegex(StoreError, "unsupported-store-schema"):

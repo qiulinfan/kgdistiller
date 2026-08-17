@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-retrieval-plan-v2",
+  "schema": "kgdistiller-retrieval-plan-v1",
   "question": "Synthetic question",
   "namespace": "personal",
   "identity_queries": [],

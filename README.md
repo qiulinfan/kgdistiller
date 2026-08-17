@@ -1,26 +1,22 @@
 # kgdistiller
 
-`kgdistiller` compiles registered Markdown, Typst, and LaTeX authorities into a
-deterministic, source-backed `qlkg-v3` JSON graph. The authority remains in its
-native source format; graph files, browser views, search results, static sites,
-and Obsidian notes are derived products.
+`kgdistiller` compiles registered Markdown, Typst, and LaTeX identity
+authorities plus Markdown atomic entries into a deterministic, source-backed
+`kgdistiller-graph-v1` JSON graph. Graph files, browser views, search results,
+static sites, and managed Obsidian projections are derived products.
 
-Version 0.4 is a breaking JSON-only release. It has no SQLite, vector,
+Version 0.4 is a breaking file-based release. It has no SQLite, vector,
 embedding-provider, machine-profile, or materialization runtime. Read-only
 queries load one generation-checked in-memory `GraphView` from the committed
 graph artifacts.
 
-Version 0.4 accepts only `qlkg-v3`, `qlkg-sources-v3`,
-`qlkg-identities-v2`, and `qlkg-agent-delta-v3` at the persisted core
-boundary. It does not migrate or retain 0.3 core artifacts. Before upgrading,
-commit the native authorities and reviewed registries as a Git rollback point.
-Export any 0.3 Agent-curated entries or semantic edges that must survive for
-later human review. Then explicitly move/delete the old generated
-`knowledge/graph/`, review and update the source/optional identity registry
-discriminators, and run an unscoped `sync` to rebuild the graph from the native
-Markdown, Typst, and LaTeX authorities. Re-review and re-author any metadata
-that must be recreated under the v3 delta contract; otherwise the rebuild
-intentionally discards it.
+Version 0.4 establishes the `kgdistiller-*` contract namespace. Its persisted
+core accepts only `kgdistiller-graph-v1`, `kgdistiller-sources-v1`,
+`kgdistiller-identities-v1`, and `kgdistiller-agent-delta-v1`; there are no
+legacy schema aliases or readers. Before upgrading, commit native authorities
+and reviewed registries as a Git rollback point, preserve any curated content
+that needs human re-review, remove the old generated graph, and run an unscoped
+`sync`. Re-author retained metadata under `kgdistiller-agent-delta-v1`.
 
 ## Authority markers
 
@@ -99,10 +95,55 @@ the default so a new working directory can be initialized safely.
 Typst is required only when Typst-authored labels must be rendered. Markdown
 and LaTeX scanning use the Python standard library.
 
+## Vault data layout and derivation
+
+The editor/source tree is never used for generated files. Every managed
+derivation and atomic entry lives under the owning vault's `knowledge/` tree:
+
+```text
+vault/
+├── notes/chapter.typ
+└── knowledge/
+    ├── derived/
+    │   ├── by-source/notes/chapter.typ.md
+    │   └── imports/paper.md
+    ├── entries/measure-space.md
+    └── graph/
+```
+
+`knowledge/derived/by-source/` mirrors an in-vault `.typ`, `.tex`, or `.pdf`
+path and retains its original suffix before `.md`, so same-stem inputs cannot
+collide. Its frontmatter records the upstream vault-relative path, format, and
+digest. `knowledge/derived/imports/` is for sources outside every vault. Such a
+source requires explicit `--repo-root` or `--vault`; the installed Markdown is
+the beginning of the persisted provenance chain and therefore does not record
+the external machine path.
+
+```sh
+kgdistiller derive locate notes/chapter.typ
+kgdistiller derive install notes/chapter.typ --input converted.md
+kgdistiller --vault research derive install /tmp/paper.pdf --input paper.md
+```
+
+`derive install` places already-converted Markdown; conversion itself remains
+an extractor/Agent responsibility. It never writes beside the input. The
+nearest enclosing `knowledge/vault.json` wins. If none exists, the command
+fails until a target vault is explicitly selected. Initialized vaults register
+`knowledge/derived/imports/**/*.md` and internal `*.pdf.md` derivations as
+Markdown identity sources; Typst and LaTeX identities continue to come from
+their native markers.
+
+Curated atomic content is authoritative in
+`knowledge/entries/<node-id>.md`, including its Markdown evidence path and
+digests. These files are ordinary Obsidian-visible notes. Applying a reviewed
+delta creates or updates them; `sync` reads them back and rebuilds the JSONL
+entry shards under `knowledge/graph/` only as a bounded query index.
+
 ## Deterministic graph and queries
 
-The committed graph under `knowledge/graph/` contains the `qlkg-v3` manifest,
-nodes, edges, references, diagnostics, and bounded entry shards. A file path is
+The committed graph under `knowledge/graph/` contains the `kgdistiller-graph-v1` manifest,
+nodes, edges, references, diagnostics, and bounded derived entry shards. The
+manifest binds the `knowledge/entries/*.md` inventory. A file path is
 provenance, never identity. Source hashes use UTF-8 text with CRLF/CR normalized
 to LF, so checkout newline conversion alone does not create a new generation.
 The manifest also binds the canonical source registry and optional reviewed
@@ -131,7 +172,7 @@ NFKC/casefolded lexical matching, and typed graph traversal only retrieve or
 rank bounded candidates; similar text, acronyms, and graph proximity never
 establish identity.
 
-Planned search accepts `qlkg-retrieval-plan-v2`:
+Planned search accepts `kgdistiller-retrieval-plan-v1`:
 
 ```sh
 kgdistiller agent search --plan knowledge/build/query.plan.json
@@ -140,7 +181,7 @@ kgdistiller agent context --plan knowledge/build/query.plan.json --budget 6000
 
 The plan has only `identity_queries`, `lexical_queries`, and a bounded graph
 lane. A `semantic_queries` field is rejected. Results use
-`qlkg-search-result-v3` inside `qlkg-search-execution-v2` and bind to the exact
+`kgdistiller-search-result-v1` inside `kgdistiller-search-execution-v1` and bind to the exact
 snapshot and graph digests used by the request.
 
 ## MCP and local browser
@@ -173,7 +214,7 @@ generations.
 ## Reviewed transactional ingest
 
 Agents first resolve identities through the read-only query surface, then pass
-one reviewed `qlkg-ingest-request-v2` to the only high-level write boundary:
+one reviewed `kgdistiller-ingest-request-v1` to the only high-level write boundary:
 
 ```sh
 kgdistiller ingest plan request.json --output plan.json
@@ -183,14 +224,15 @@ kgdistiller ingest apply request.json --receipt receipt.json
 Plan runs in staging. Apply rechecks graph, alignment, source, candidate, and
 query-report digests under the single-writer lock; installs the authority,
 registries, and deterministic graph generation atomically; and returns a
-canonical `qlkg-ingest-receipt-v2`. See
+canonical `kgdistiller-ingest-receipt-v1`. See
 [docs/transactional-ingest.md](docs/transactional-ingest.md).
 
-## Portable JSON store
+## Portable store
 
-`qlkg-store-v2` is the portable backup boundary. It contains registered
-authorities, registries, deterministic graph artifacts, and the canonical
-document inventory—no database or model-derived vectors.
+`kgdistiller-store-v1` is the portable backup boundary. It contains registered
+authorities, Markdown entry authorities and their evidence, registries,
+deterministic graph artifacts, and the canonical document inventory—no database
+or model-derived vectors.
 
 ```sh
 kgdistiller check
@@ -211,7 +253,8 @@ A verified clone is immediately queryable; there is no materialization step.
 Use private Git for backup only with explicit authorization. Track authorities,
 `knowledge/vault.json`, `knowledge/sources.json`, optional identity/alignment
 registries,
-`knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
+`knowledge/derived/`, `knowledge/entries/`, `knowledge/graph/`,
+`knowledge/documents.jsonl`, and `knowledge/store.json`.
 Keep `knowledge/build/`, plans, receipts, transaction journals, and credentials
 untracked.
 
@@ -234,9 +277,9 @@ Obsidian vault and keep the projection at its ignored default location:
 kgdistiller export obsidian --replace
 ```
 
-The repository root is the editor vault, and its registered Markdown files
-remain non-lossy native authorities. The managed
-`qlkg-obsidian-projection-v1` subtree under `knowledge/build/obsidian/` is a
+The repository root is the editor vault, and its registered Markdown files plus
+`knowledge/entries/*.md` remain non-lossy authorities. The managed
+`kgdistiller-obsidian-projection-v1` subtree under `knowledge/build/obsidian/` is a
 deliberately lossy, disposable view. Its source proxies link to registered
 Markdown authorities elsewhere in the same vault. An output outside the
 repository is a browsing-only vault/projection and uses `file:` links back to

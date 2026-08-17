@@ -15,7 +15,7 @@ from .query import QueryError, SNAPSHOT_SCHEMA, validate_agent_snapshot
 from .json_schema import validate_json_schema
 
 
-CANDIDATE_SOURCE_SCHEMA = "qlkg-candidate-graph-v2"
+CANDIDATE_SOURCE_SCHEMA = "kgdistiller-candidate-graph-v1"
 NAMESPACE_RE = re.compile(
     rf"(?=.{{1,{MAX_NAMESPACE_LENGTH}}}\Z)[a-z0-9][a-z0-9._-]*"
     r"(?::[a-z0-9][a-z0-9._-]*)*"
@@ -40,7 +40,7 @@ class CandidateError(ValueError):
 def _schema() -> dict[str, Any]:
     return json.loads(
         resources.files("kgdistiller")
-        .joinpath("schemas", "qlkg-candidate-graph-v2.schema.json")
+        .joinpath("schemas", "kgdistiller-candidate-graph-v1.schema.json")
         .read_text(encoding="utf-8")
     )
 

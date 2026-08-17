@@ -1,5 +1,5 @@
 {
-  "schema": "qlkg-search-execution-v2",
+  "schema": "kgdistiller-search-execution-v1",
   "plan_mode": "planned",
   "namespace": "personal",
   "snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",

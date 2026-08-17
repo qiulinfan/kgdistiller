@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def candidate_graph() -> dict:
     return {
-        "schema": "qlkg-candidate-graph-v2",
+        "schema": "kgdistiller-candidate-graph-v1",
         "namespace": "paper:fixture",
         "nodes": [
             {
@@ -76,8 +76,8 @@ class CandidateBuilderTest(unittest.TestCase):
         second = build_candidate_snapshot(candidate_graph())
 
         self.assertEqual(first, second)
-        self.assertEqual("qlkg-agent-snapshot-v2", first["schema"])
-        self.assertEqual("qlkg-v3", first["graph"]["schema"])
+        self.assertEqual("kgdistiller-agent-snapshot-v1", first["schema"])
+        self.assertEqual("kgdistiller-graph-v1", first["graph"]["schema"])
         self.assertEqual(
             ["first-concept", "second-concept"],
             [node["id"] for node in first["nodes"]],
@@ -164,7 +164,7 @@ class CandidateBuilderTest(unittest.TestCase):
             )
             self.assertEqual(0, validated.returncode, validated.stderr)
             self.assertEqual(
-                "qlkg-agent-snapshot-v2", json.loads(validated.stdout)["schema"]
+                "kgdistiller-agent-snapshot-v1", json.loads(validated.stdout)["schema"]
             )
 
 

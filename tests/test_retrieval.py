@@ -30,7 +30,7 @@ from tests.test_query import fixture_nodes, fixture_snapshot, snapshot_with  # n
 
 def retrieval_plan() -> dict:
     return {
-        "schema": "qlkg-retrieval-plan-v2",
+        "schema": "kgdistiller-retrieval-plan-v1",
         "question": "How does a measure depend on a sigma algebra?",
         "namespace": "personal",
         "identity_queries": ["西格玛代数"],
@@ -55,7 +55,7 @@ class RetrievalTest(unittest.TestCase):
     def setUp(self) -> None:
         self.view = GraphView.from_snapshot(fixture_snapshot())
 
-    def test_v2_plan_forbids_semantic_queries_and_is_bounded(self) -> None:
+    def test_v1_plan_forbids_semantic_queries_and_is_bounded(self) -> None:
         plan = legacy_retrieval_plan("measure")
         self.assertEqual(RETRIEVAL_PLAN_SCHEMA, plan["schema"])
         self.assertNotIn("semantic_queries", plan)
@@ -273,7 +273,7 @@ class RetrievalTest(unittest.TestCase):
 
         self.assertEqual(plan["question"], bundle["question"])
         self.assertEqual(CONTEXT_SCHEMA, bundle["schema"])
-        self.assertEqual("qlkg-context-bundle-v2", bundle["schema"])
+        self.assertEqual("kgdistiller-context-bundle-v1", bundle["schema"])
         self.assertEqual(self.view.snapshot["snapshot_sha256"], bundle["snapshot_sha256"])
         self.assertLessEqual(bundle["budget"]["estimated_tokens"], 2000)
         stale = dict(execution)
@@ -312,13 +312,13 @@ class RetrievalTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RetrievalError, "budget-too-small"):
             build_context_from_execution(
-                self.view, execution, plan=plan, token_budget=1027
+                self.view, execution, plan=plan, token_budget=1048
             )
         bundle = build_context_from_execution(
-            self.view, execution, plan=plan, token_budget=1028
+            self.view, execution, plan=plan, token_budget=1049
         )
         self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
-        self.assertLessEqual(bundle["budget"]["estimated_tokens"], 1028)
+        self.assertLessEqual(bundle["budget"]["estimated_tokens"], 1049)
 
     def test_context_obeys_plan_edge_types_and_stale_policy(self) -> None:
         snapshot = fixture_snapshot()

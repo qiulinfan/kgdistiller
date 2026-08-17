@@ -1,9 +1,9 @@
 # Transactional ingest contract
 
 `transactional-ingest-v1` is kgdistiller's only high-level personal-knowledge
-write API. It accepts reviewed semantic decisions and commits native authority
-documents, reviewed registries, and one deterministic `qlkg-v3` JSON generation
-as a single client-visible transaction.
+write API. It accepts reviewed semantic decisions and commits identity
+authorities, Markdown atomic entries, reviewed registries, and one deterministic
+`kgdistiller-graph-v1` JSON generation as a single client-visible transaction.
 
 Ingest does not discover concepts or decide ambiguous identities. Resolve and
 compare through the generation-checked read-only query surface first.
@@ -29,7 +29,7 @@ precondition. The request `mode` must match the selected operation.
 ## Request boundary
 
 The packaged request schema is
-`kgdistiller/schemas/qlkg-ingest-request-v2.schema.json`. A request binds:
+`kgdistiller/schemas/kgdistiller-ingest-request-v1.schema.json`. A request binds:
 
 - `request_id`, `request_sha256`, `mode`, and
   `capabilities: ["transactional-ingest-v1"]`;
@@ -37,7 +37,7 @@ The packaged request schema is
 - a content-addressed candidate snapshot and query report;
 - exact registered authority patches, normalized expected source hashes, and
   complete post-patch marker/reference expectations;
-- one reviewed `qlkg-agent-delta-v3`;
+- one reviewed `kgdistiller-agent-delta-v1`;
 - optional reviewed alignment decisions;
 - explicit review evidence and provenance.
 
@@ -65,8 +65,8 @@ The engine:
 4. synchronizes stable marker-derived identities, applies the reviewed delta
    and mappings, and runs scoped plus global deterministic validation;
 5. backs up every live target and records a recovery journal;
-6. installs authorities, registries, graph artifacts, and generated Typst
-   registry while holding the writer lock;
+6. installs identity authorities, `knowledge/entries/`, registries, graph
+   artifacts, and the generated Typst registry while holding the writer lock;
 7. persists the canonical receipt, marks the journal committed, and removes
    the backup.
 
@@ -82,7 +82,7 @@ state.
 ## Receipt, idempotency, and store refresh
 
 The packaged receipt schema is
-`kgdistiller/schemas/qlkg-ingest-receipt-v2.schema.json`. Accept success only
+`kgdistiller/schemas/kgdistiller-ingest-receipt-v1.schema.json`. Accept success only
 when `status` is `committed`, the canonical receipt digest verifies, and its
 after-digests match a fresh `agent status`.
 
@@ -98,7 +98,8 @@ kgdistiller --repo-root PROJECT store snapshot
 kgdistiller --repo-root PROJECT store verify
 ```
 
-This records the native authorities and deterministic JSON generation only.
+This records identity authorities, Markdown entry/evidence authorities, and the
+deterministic JSON generation.
 Git commit, remote push, static export, and Obsidian projection remain separate
 authorities and require explicit scope.
 

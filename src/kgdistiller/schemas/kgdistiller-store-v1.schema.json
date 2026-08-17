@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-store-v2.schema.json",
-  "title": "kgdistiller JSON-only portable knowledge store v2",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-store-v1.schema.json",
+  "title": "kgdistiller portable knowledge store v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,7 +10,7 @@
     "store_generation_sha256", "managed_paths", "store_sha256"
   ],
   "properties": {
-    "schema": {"const": "qlkg-store-v2"},
+    "schema": {"const": "kgdistiller-store-v1"},
     "generator": {"const": "kgdistiller"},
     "layout": {"enum": ["in-place", "snapshot-copy"]},
     "paths": {

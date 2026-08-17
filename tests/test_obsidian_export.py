@@ -64,7 +64,7 @@ class ObsidianExportTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v3",
+                    "schema": "kgdistiller-agent-delta-v1",
                     "nodes": [],
                     "edges": [
                         {
@@ -100,7 +100,7 @@ class ObsidianExportTest(unittest.TestCase):
         identities = (
             json.loads(self.identities.read_text(encoding="utf-8"))
             if self.identities.is_file()
-            else {"schema": "qlkg-identities-v2", "identities": []}
+            else {"schema": "kgdistiller-identities-v1", "identities": []}
         )
         identities["identities"].extend(
             {
@@ -145,7 +145,7 @@ class ObsidianExportTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v3",
+                    "schema": "kgdistiller-agent-delta-v1",
                     "nodes": [
                         {
                             "id": "measure",
@@ -167,8 +167,8 @@ class ObsidianExportTest(unittest.TestCase):
         created = self.build()
         verified = verify_obsidian_projection(self.output)
 
-        self.assertEqual("qlkg-obsidian-export-report-v1", created["schema"])
-        self.assertEqual("qlkg-obsidian-projection-v1", created["artifact_schema"])
+        self.assertEqual("kgdistiller-obsidian-export-report-v1", created["schema"])
+        self.assertEqual("kgdistiller-obsidian-projection-v1", created["artifact_schema"])
         self.assertEqual(created["projection_sha256"], verified["projection_sha256"])
         self.assertEqual(2, created["counts"]["concepts"])
         sigma = (self.output / "concepts/Sigma algebra.md").read_text(encoding="utf-8")
@@ -296,7 +296,7 @@ class ObsidianExportTest(unittest.TestCase):
         proxy = (external / "sources/notes/chapter.md.md").read_text(encoding="utf-8")
         self.assertEqual("file-uri", json.loads((external / "manifest.json").read_text(encoding="utf-8"))["policy"]["authority_links"])
         self.assertIn("[Open registered Markdown authority](file:", proxy)
-        self.assertEqual("qlkg-obsidian-export-report-v1", created["schema"])
+        self.assertEqual("kgdistiller-obsidian-export-report-v1", created["schema"])
 
     def test_hash_filename_uses_safe_proxy_and_file_uri(self) -> None:
         hash_authority = self.repo / "notes/C#-notes.md"
@@ -348,7 +348,7 @@ class ObsidianExportTest(unittest.TestCase):
         delta.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-agent-delta-v3",
+                    "schema": "kgdistiller-agent-delta-v1",
                     "nodes": [],
                     "edges": [
                         {
@@ -630,7 +630,7 @@ class ObsidianExportTest(unittest.TestCase):
             identities = (
                 json.loads(original_identities)
                 if original_identities is not None
-                else {"schema": "qlkg-identities-v2", "identities": []}
+                else {"schema": "kgdistiller-identities-v1", "identities": []}
             )
             identities["identities"].append(
                 {

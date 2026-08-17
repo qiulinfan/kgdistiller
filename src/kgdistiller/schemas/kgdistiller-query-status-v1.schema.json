@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-query-status-v1.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-query-status-v1.schema.json",
   "title": "kgdistiller JSON query status v1",
   "type": "object",
   "additionalProperties": false,
@@ -11,18 +11,18 @@
     "alignment_sha256", "alignment_counts"
   ],
   "properties": {
-    "schema": {"const": "qlkg-query-status-v1"},
-    "snapshot_schema": {"const": "qlkg-agent-snapshot-v2"},
+    "schema": {"const": "kgdistiller-query-status-v1"},
+    "snapshot_schema": {"const": "kgdistiller-agent-snapshot-v1"},
     "namespace": {"$ref": "#/$defs/namespace"},
     "snapshot_sha256": {"$ref": "#/$defs/sha256"},
-    "graph_schema": {"const": "qlkg-v3"},
+    "graph_schema": {"const": "kgdistiller-graph-v1"},
     "graph_sha256": {"$ref": "#/$defs/sha256"},
     "generation": {"$ref": "#/$defs/sha256"},
     "counts": {"$ref": "#/$defs/counts"},
     "backend": {"const": "json-memory"},
     "retrieval_lanes": {"const": ["identity", "lexical", "graph", "ppr"]},
     "capabilities": {"const": ["json-memory", "read-only-query-v3"]},
-    "alignment_schema": {"const": "qlkg-alignments-v2"},
+    "alignment_schema": {"const": "kgdistiller-alignments-v1"},
     "alignment_sha256": {"$ref": "#/$defs/sha256"},
     "alignment_counts": {
       "type": "object",

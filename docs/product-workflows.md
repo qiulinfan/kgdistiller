@@ -3,8 +3,9 @@
 kgdistiller owns the deterministic engine, native frontend, CLI/read-only MCP
 server, JSON Schemas, product Skills, Codex agent presets, and
 `workflows/manifest.json`. A knowledge project owns its Markdown, Typst, and
-LaTeX authorities, reviewed registries, `qlkg-v3` graph, optional
-`qlkg-store-v2` snapshot, and explicitly adopted downstream exports.
+LaTeX identity authorities, `knowledge/derived/` evidence,
+`knowledge/entries/` atomic authorities, reviewed registries, `kgdistiller-graph-v1` graph,
+optional `kgdistiller-store-v1` snapshot, and explicitly adopted downstream exports.
 
 The manifest is the portable asset/workflow inventory. Install and validate it
 from a source checkout or package with:
@@ -30,7 +31,7 @@ Use `$curate-kgdistiller-notes` to extract one bounded authority set,
 `$query-kgdistiller` to resolve the full candidate batch through the
 generation-checked read-only `GraphView`, and `$ingest-kgdistiller` to plan and
 apply one reviewed transaction. Identity ambiguity blocks its own write path.
-Query comparison v2 represents identity only as `matched`,
+`kgdistiller-graph-comparison-v1` represents identity only as `matched`,
 `ambiguous`, or `unmatched`; ambiguity blocks the write path, while content
 conflicts or enrichment of matched identities require a separate source-backed
 review rather than inference from comparison output.
@@ -50,7 +51,7 @@ personal-graph mutation.
 ### Back up or restore a portable store
 
 Use `$deploy-kgdistiller` to run `check`, `agent status`, `store snapshot`, and
-`store verify`. A `qlkg-store-v2` clone is JSON-only and immediately queryable;
+`store verify`. A `kgdistiller-store-v1` clone is file-based and immediately queryable;
 there is no profile, provider, database, or materialization step. Git
 initialization, commit, remote configuration, and push remain explicit separate
 actions.
@@ -65,12 +66,13 @@ not the kgdistiller checkout.
 ### Export Obsidian
 
 Use `$deploy-kgdistiller` and open the knowledge-project root as the editor
-vault. Registered Markdown files there remain non-lossy native authorities.
-Create the managed `qlkg-obsidian-projection-v1` subtree as a lossy downstream
+vault. Registered Markdown files and `knowledge/entries/*.md` remain non-lossy
+authorities.
+Create the managed `kgdistiller-obsidian-projection-v1` subtree as a lossy downstream
 view; never register that subtree in `sources.json`, rescan it, feed it to
 candidate/ingest, or treat projected-note edits as round-trip authority. An
 external output is a browsing-only vault/projection. Rebuild either projection
-with `--replace` from the native authority graph.
+with `--replace` from the authority graph.
 
 ### Serve the native frontend
 

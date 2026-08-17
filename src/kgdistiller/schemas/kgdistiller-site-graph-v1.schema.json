@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-site-graph-v1.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-site-graph-v1.schema.json",
   "title": "kgdistiller filtered hydrated site graph v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "namespace", "source_graph_sha256", "counts", "nodes", "edges", "references", "diagnostics", "graph_sha256"],
   "properties": {
-    "schema": {"const": "qlkg-site-graph-v1"},
+    "schema": {"const": "kgdistiller-site-graph-v1"},
     "namespace": {"const": "public"},
     "source_graph_sha256": {"$ref": "#/$defs/sha256"},
     "counts": {"$ref": "#/$defs/counts"},

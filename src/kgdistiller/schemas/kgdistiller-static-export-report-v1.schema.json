@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-static-export-report-v1.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-static-export-report-v1.schema.json",
   "title": "kgdistiller static export operation report v1",
   "type": "object",
   "additionalProperties": false,
@@ -10,9 +10,9 @@
     "source", "graph", "visibility", "replaced", "replaces_export_sha256"
   ],
   "properties": {
-    "schema": {"const": "qlkg-static-export-report-v1"},
+    "schema": {"const": "kgdistiller-static-export-report-v1"},
     "status": {"const": "exported"},
-    "artifact_schema": {"const": "qlkg-static-export-v2"},
+    "artifact_schema": {"const": "kgdistiller-static-export-v1"},
     "committed": {"const": true},
     "cleanup_status": {"enum": ["complete", "pending"]},
     "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}},
@@ -69,10 +69,10 @@
       "additionalProperties": false,
       "required": ["private_schema", "private_sha256", "private_counts", "public_schema", "public_sha256", "public_counts"],
       "properties": {
-        "private_schema": {"const": "qlkg-v3"},
+        "private_schema": {"const": "kgdistiller-graph-v1"},
         "private_sha256": {"$ref": "#/$defs/sha256"},
         "private_counts": {"$ref": "#/$defs/counts"},
-        "public_schema": {"const": "qlkg-site-graph-v1"},
+        "public_schema": {"const": "kgdistiller-site-graph-v1"},
         "public_sha256": {"$ref": "#/$defs/sha256"},
         "public_counts": {"$ref": "#/$defs/counts"}
       }

@@ -213,18 +213,18 @@ class QueryTest(unittest.TestCase):
                 with self.assertRaisesRegex(QueryError, message):
                     GraphView.from_snapshot(snapshot)
 
-    def test_query_view_refuses_superseded_snapshot_graph_and_alignment_contracts(
+    def test_query_view_refuses_unknown_snapshot_graph_and_alignment_contracts(
         self,
     ) -> None:
         legacy_snapshot = fixture_snapshot()
-        legacy_snapshot["schema"] = "qlkg-agent-snapshot-v1"
+        legacy_snapshot["schema"] = "legacy-agent-snapshot-v0"
         legacy_snapshot.pop("snapshot_sha256")
         legacy_snapshot["snapshot_sha256"] = sha256_json(legacy_snapshot)
         with self.assertRaisesRegex(QueryError, SNAPSHOT_SCHEMA):
             GraphView.from_snapshot(legacy_snapshot)
 
         legacy_graph = fixture_snapshot()
-        legacy_graph["graph"]["schema"] = "qlkg-v2"
+        legacy_graph["graph"]["schema"] = "legacy-graph-v0"
         legacy_graph.pop("snapshot_sha256")
         legacy_graph["snapshot_sha256"] = sha256_json(legacy_graph)
         with self.assertRaisesRegex(QueryError, GRAPH_SCHEMA):
@@ -233,7 +233,7 @@ class QueryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, ALIGNMENT_SCHEMA):
             GraphView.from_snapshot(
                 fixture_snapshot(),
-                alignments={"schema": "qlkg-alignments-v1", "mappings": []},
+                alignments={"schema": "legacy-alignments-v0", "mappings": []},
             )
 
     def test_snapshot_requires_source_grounded_candidate_nodes(self) -> None:
@@ -526,11 +526,11 @@ class QueryTest(unittest.TestCase):
         proposal = propose(changed_view, candidate_snapshot)
 
         self.assertEqual(ALIGNMENT_REPORT_SCHEMA, changed["schema"])
-        self.assertEqual("qlkg-alignment-report-v2", changed["schema"])
+        self.assertEqual("kgdistiller-alignment-report-v1", changed["schema"])
         self.assertEqual(COMPARISON_SCHEMA, comparison["schema"])
-        self.assertEqual("qlkg-graph-comparison-v2", comparison["schema"])
+        self.assertEqual("kgdistiller-graph-comparison-v1", comparison["schema"])
         self.assertEqual(PROPOSAL_SCHEMA, proposal["schema"])
-        self.assertEqual("qlkg-agent-proposal-v2", proposal["schema"])
+        self.assertEqual("kgdistiller-agent-proposal-v1", proposal["schema"])
         self.assertEqual(baseline["alignments"], changed["alignments"])
         self.assertNotEqual(
             baseline["alignment_sha256"], changed["alignment_sha256"]
@@ -546,7 +546,7 @@ class QueryTest(unittest.TestCase):
             changed["alignment_sha256"], proposal["alignment_sha256"]
         )
 
-    def test_v2_comparison_and_proposal_are_bounded_review_outputs(self) -> None:
+    def test_v1_comparison_and_proposal_are_bounded_review_outputs(self) -> None:
         matched = copy.deepcopy(fixture_nodes()[0])
         unmatched = copy.deepcopy(fixture_nodes()[1])
         unmatched.update({"id": "paper-only", "label": "Paper-only concept"})
@@ -750,7 +750,7 @@ class QueryTest(unittest.TestCase):
 
         bundle = context(self.view, ["measure"], token_budget=2000)
         self.assertEqual(CONTEXT_SCHEMA, bundle["schema"])
-        self.assertEqual("qlkg-context-bundle-v2", bundle["schema"])
+        self.assertEqual("kgdistiller-context-bundle-v1", bundle["schema"])
         self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
         self.assertLessEqual(bundle["budget"]["estimated_tokens"], 2000)
 

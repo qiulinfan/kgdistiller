@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-candidate-graph-v2.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-candidate-graph-v1.schema.json",
   "title": "kgdistiller isolated candidate graph v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "namespace", "nodes", "edges", "references", "diagnostics"],
   "properties": {
-    "schema": {"const": "qlkg-candidate-graph-v2"},
+    "schema": {"const": "kgdistiller-candidate-graph-v1"},
     "namespace": {"type": "string", "maxLength": 256, "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$", "not": {"const": "personal"}},
     "nodes": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/node"}},
     "edges": {"type": "array", "maxItems": 500000, "items": {"$ref": "#/$defs/edge"}},

@@ -44,7 +44,7 @@ candidates block their own import and never become new identities by default.
 ## Plan and apply one transaction
 
 Build the reviewed source patch, post-patch marker/ref state, candidate and query
-digests, and `qlkg-agent-delta-v3`. Hand them to `$ingest-kgdistiller`. Review
+digests, and `kgdistiller-agent-delta-v1`. Hand them to `$ingest-kgdistiller`. Review
 the plan before apply and accept only a canonical committed receipt whose
 after-digests match `agent status`.
 

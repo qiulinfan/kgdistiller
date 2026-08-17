@@ -26,9 +26,9 @@ from .query import (
 )
 
 
-RETRIEVAL_PLAN_SCHEMA = "qlkg-retrieval-plan-v2"
-SEARCH_RESULT_SCHEMA = "qlkg-search-result-v3"
-SEARCH_EXECUTION_SCHEMA = "qlkg-search-execution-v2"
+RETRIEVAL_PLAN_SCHEMA = "kgdistiller-retrieval-plan-v1"
+SEARCH_RESULT_SCHEMA = "kgdistiller-search-result-v1"
+SEARCH_EXECUTION_SCHEMA = "kgdistiller-search-execution-v1"
 MAX_RETRIEVAL_PLAN_BYTES = 1024 * 1024
 MAX_RETRIEVAL_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_CONTEXT_BUDGET = 200_000

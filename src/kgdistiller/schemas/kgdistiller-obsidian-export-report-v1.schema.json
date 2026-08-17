@@ -1,19 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-obsidian-projection-v1.schema.json",
-  "title": "kgdistiller Obsidian projection v1",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-obsidian-export-report-v1.schema.json",
+  "title": "kgdistiller Obsidian export operation report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "status", "source", "policy", "counts", "artifacts", "projection_sha256"],
+  "required": [
+    "schema", "status", "artifact_schema", "projection_sha256", "source",
+    "policy", "counts", "output"
+  ],
   "properties": {
-    "schema": {"const": "qlkg-obsidian-projection-v1"},
-    "status": {"const": "ready"},
+    "schema": {"const": "kgdistiller-obsidian-export-report-v1"},
+    "status": {"const": "verified"},
+    "artifact_schema": {"const": "kgdistiller-obsidian-projection-v1"},
+    "projection_sha256": {"$ref": "#/$defs/sha256"},
     "source": {
       "type": "object",
       "additionalProperties": false,
       "required": ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
       "properties": {
-        "graph_schema": {"const": "qlkg-v3"},
+        "graph_schema": {"const": "kgdistiller-graph-v1"},
         "graph_sha256": {"$ref": "#/$defs/sha256"},
         "snapshot_sha256": {"$ref": "#/$defs/sha256"},
         "source_hashes_sha256": {"$ref": "#/$defs/sha256"}
@@ -40,24 +45,10 @@
         "links": {"type": "integer", "minimum": 0}
       }
     },
-    "artifacts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["kind", "path", "bytes", "sha256"],
-        "properties": {
-          "kind": {"enum": ["concept", "source"]},
-          "path": {"$ref": "#/$defs/path"},
-          "bytes": {"type": "integer", "minimum": 0},
-          "sha256": {"$ref": "#/$defs/sha256"}
-        }
-      }
-    },
-    "projection_sha256": {"$ref": "#/$defs/sha256"}
+    "output": {"type": "string", "minLength": 1},
+    "changed": {"type": "boolean"}
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"}
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }
 }

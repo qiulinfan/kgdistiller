@@ -110,8 +110,56 @@ def initialize_project(
         configured_root = resolved_source.resolve().relative_to(project_root.resolve()).as_posix()
     except ValueError as error:
         raise ValueError("source root must be inside the project") from error
+    sources = [
+        {
+            "id": "local:notes",
+            "subject": "local",
+            "course": "notes",
+            "knowledge_origin": "personal-note",
+            "fields": ["general"],
+            "root": configured_root,
+            "files": ["**/*.md", "**/*.typ", "**/*.tex"],
+            "web": "",
+            "topics": [],
+        }
+    ]
+    derived_imports = project_root / "knowledge/derived/imports"
+    derived_imports.mkdir(parents=True, exist_ok=True)
+    (project_root / "knowledge/derived/by-source").mkdir(
+        parents=True, exist_ok=True
+    )
+    if resolved_source.resolve() not in (
+        derived_imports.resolve(),
+        *derived_imports.resolve().parents,
+    ):
+        sources.append(
+            {
+                "id": "local:derived-imports",
+                "subject": "local",
+                "course": "derived-imports",
+                "knowledge_origin": "personal-note",
+                "fields": ["general"],
+                "root": "knowledge/derived/imports",
+                "files": ["**/*.md"],
+                "web": "",
+                "topics": [],
+            }
+        )
+        sources.append(
+            {
+                "id": "local:derived-pdf",
+                "subject": "local",
+                "course": "derived-pdf",
+                "knowledge_origin": "personal-note",
+                "fields": ["general"],
+                "root": "knowledge/derived/by-source",
+                "files": ["**/*.pdf.md"],
+                "web": "",
+                "topics": [],
+            }
+        )
     payload = {
-        "schema": "qlkg-sources-v3",
+        "schema": "kgdistiller-sources-v1",
         "fields": [
             {
                 "id": "general",
@@ -119,22 +167,12 @@ def initialize_project(
                 "text": "Knowledge that has not yet been assigned a more specific field.",
             }
         ],
-        "sources": [
-            {
-                "id": "local:notes",
-                "subject": "local",
-                "course": "notes",
-                "knowledge_origin": "personal-note",
-                "fields": ["general"],
-                "root": configured_root,
-                "files": ["**/*.md", "**/*.typ", "**/*.tex"],
-                "web": "",
-                "topics": [],
-            }
-        ],
+        "sources": sources,
     }
     registry.parent.mkdir(parents=True, exist_ok=True)
     default_knowledge = project_root / "knowledge"
+    (default_knowledge / "entries").mkdir(parents=True, exist_ok=True)
+    (default_knowledge / "derived").mkdir(parents=True, exist_ok=True)
     ensure_knowledge_gitignore(default_knowledge / ".gitignore")
     if registry.parent.resolve() != default_knowledge.resolve():
         ensure_knowledge_gitignore(registry.parent / ".gitignore")
@@ -148,7 +186,7 @@ def initialize_project(
         alignment_path.parent.mkdir(parents=True, exist_ok=True)
         alignment_path.write_text(
             json.dumps(
-                {"schema": "qlkg-alignments-v2", "mappings": []},
+                {"schema": "kgdistiller-alignments-v1", "mappings": []},
                 ensure_ascii=False,
                 indent=2,
             )

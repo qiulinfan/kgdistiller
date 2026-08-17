@@ -53,7 +53,7 @@ class StaticSiteExportTests(unittest.TestCase):
         self.registry.write_text(
             json.dumps(
                 {
-                    "schema": "qlkg-sources-v3",
+                    "schema": "kgdistiller-sources-v1",
                     "fields": [
                         {
                             "id": "shared-field",
@@ -614,7 +614,7 @@ class StaticSiteExportTests(unittest.TestCase):
             self.identities.write_text(
                 json.dumps(
                     {
-                        "schema": "qlkg-identities-v2",
+                        "schema": "kgdistiller-identities-v1",
                         "identities": [
                             {
                                 "id": "unsynchronized-identity",
@@ -922,11 +922,11 @@ class StaticSiteExportTests(unittest.TestCase):
         ):
             verify_export(output)
 
-    def test_static_verifier_refuses_superseded_v1_manifest(self) -> None:
+    def test_static_verifier_refuses_pre_namespace_manifest(self) -> None:
         output = self.export()
         manifest_path = output / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["schema"] = "qlkg-static-export-v1"
+        manifest["schema"] = "legacy-static-export-v0"
         manifest = finalize_self_digest(manifest, "export_sha256")
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",

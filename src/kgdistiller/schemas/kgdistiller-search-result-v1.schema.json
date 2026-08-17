@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-search-result-v3.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-search-result-v1.schema.json",
   "title": "kgdistiller bounded deterministic search result v3",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "plan_sha256", "lanes", "results"],
   "properties": {
-    "schema": {"const": "qlkg-search-result-v3"},
+    "schema": {"const": "kgdistiller-search-result-v1"},
     "plan_sha256": {"$ref": "#/$defs/sha256"},
     "lanes": {
       "type": "object",

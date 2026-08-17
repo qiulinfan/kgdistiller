@@ -25,12 +25,12 @@ from kgdistiller.json_schema import validate_json_schema
 
 FIXTURES = Path(__file__).parent / "fixtures" / "contracts"
 FIXTURE_CONTRACTS = (
-    "qlkg-retrieval-plan-v2",
-    "qlkg-search-result-v3",
-    "qlkg-search-execution-v2",
-    "qlkg-document-record-v1",
-    "qlkg-static-export-v2",
-    "qlkg-site-graph-v1",
+    "kgdistiller-retrieval-plan-v1",
+    "kgdistiller-search-result-v1",
+    "kgdistiller-search-execution-v1",
+    "kgdistiller-document-record-v1",
+    "kgdistiller-static-export-v1",
+    "kgdistiller-site-graph-v1",
 )
 
 
@@ -44,7 +44,7 @@ def minimal_store() -> dict:
     digest = "a" * 64
     return finalize_self_digest(
         {
-            "schema": "qlkg-store-v2",
+            "schema": "kgdistiller-store-v1",
             "generator": "kgdistiller",
             "layout": "in-place",
             "paths": {
@@ -87,18 +87,18 @@ def minimal_store() -> dict:
 def minimal_query_status() -> dict:
     digest = "c" * 64
     return {
-        "schema": "qlkg-query-status-v1",
-        "snapshot_schema": "qlkg-agent-snapshot-v2",
+        "schema": "kgdistiller-query-status-v1",
+        "snapshot_schema": "kgdistiller-agent-snapshot-v1",
         "namespace": "personal",
         "snapshot_sha256": digest,
-        "graph_schema": "qlkg-v3",
+        "graph_schema": "kgdistiller-graph-v1",
         "graph_sha256": digest,
         "generation": digest,
         "counts": {"nodes": 0, "edges": 0, "references": 0},
         "backend": "json-memory",
         "retrieval_lanes": ["identity", "lexical", "graph", "ppr"],
         "capabilities": ["json-memory", "read-only-query-v3"],
-        "alignment_schema": "qlkg-alignments-v2",
+        "alignment_schema": "kgdistiller-alignments-v1",
         "alignment_sha256": digest,
         "alignment_counts": {"mappings": 0},
     }
@@ -108,10 +108,10 @@ def minimal_obsidian() -> dict:
     digest = "b" * 64
     return finalize_self_digest(
         {
-            "schema": "qlkg-obsidian-projection-v1",
+            "schema": "kgdistiller-obsidian-projection-v1",
             "status": "ready",
             "source": {
-                "graph_schema": "qlkg-v3",
+                "graph_schema": "kgdistiller-graph-v1",
                 "graph_sha256": digest,
                 "snapshot_sha256": digest,
                 "source_hashes_sha256": digest,
@@ -132,9 +132,9 @@ def minimal_obsidian() -> dict:
 def minimal_store_report() -> dict:
     digest = "d" * 64
     return {
-        "schema": "qlkg-store-report-v1",
+        "schema": "kgdistiller-store-report-v1",
         "status": "verified",
-        "artifact_schema": "qlkg-store-v2",
+        "artifact_schema": "kgdistiller-store-v1",
         "root": "/tmp/store",
         "store_sha256": digest,
         "store_generation_sha256": digest,
@@ -149,12 +149,12 @@ def minimal_store_report() -> dict:
 def minimal_obsidian_report() -> dict:
     digest = "e" * 64
     return {
-        "schema": "qlkg-obsidian-export-report-v1",
+        "schema": "kgdistiller-obsidian-export-report-v1",
         "status": "verified",
-        "artifact_schema": "qlkg-obsidian-projection-v1",
+        "artifact_schema": "kgdistiller-obsidian-projection-v1",
         "projection_sha256": digest,
         "source": {
-            "graph_schema": "qlkg-v3",
+            "graph_schema": "kgdistiller-graph-v1",
             "graph_sha256": digest,
             "snapshot_sha256": digest,
             "source_hashes_sha256": digest,
@@ -175,9 +175,9 @@ def minimal_static_report() -> dict:
     digest = "f" * 64
     counts = {"nodes": 0, "edges": 0, "references": 0}
     return {
-        "schema": "qlkg-static-export-report-v1",
+        "schema": "kgdistiller-static-export-report-v1",
         "status": "exported",
-        "artifact_schema": "qlkg-static-export-v2",
+        "artifact_schema": "kgdistiller-static-export-v1",
         "committed": True,
         "cleanup_status": "complete",
         "warnings": [],
@@ -197,10 +197,10 @@ def minimal_static_report() -> dict:
             "published_digest": digest,
         },
         "graph": {
-            "private_schema": "qlkg-v3",
+            "private_schema": "kgdistiller-graph-v1",
             "private_sha256": digest,
             "private_counts": counts,
-            "public_schema": "qlkg-site-graph-v1",
+            "public_schema": "kgdistiller-site-graph-v1",
             "public_sha256": digest,
             "public_counts": counts,
         },
@@ -218,18 +218,18 @@ class ContractTest(unittest.TestCase):
     def test_current_contract_catalog_is_packaged(self) -> None:
         self.assertEqual(
             {
-                "qlkg-retrieval-plan-v2",
-                "qlkg-query-status-v1",
-                "qlkg-search-result-v3",
-                "qlkg-search-execution-v2",
-                "qlkg-document-record-v1",
-                "qlkg-store-v2",
-                "qlkg-store-report-v1",
-                "qlkg-obsidian-projection-v1",
-                "qlkg-obsidian-export-report-v1",
-                "qlkg-static-export-v2",
-                "qlkg-static-export-report-v1",
-                "qlkg-site-graph-v1",
+                "kgdistiller-retrieval-plan-v1",
+                "kgdistiller-query-status-v1",
+                "kgdistiller-search-result-v1",
+                "kgdistiller-search-execution-v1",
+                "kgdistiller-document-record-v1",
+                "kgdistiller-store-v1",
+                "kgdistiller-store-report-v1",
+                "kgdistiller-obsidian-projection-v1",
+                "kgdistiller-obsidian-export-report-v1",
+                "kgdistiller-static-export-v1",
+                "kgdistiller-static-export-report-v1",
+                "kgdistiller-site-graph-v1",
             },
             set(CONTRACT_SCHEMAS),
         )
@@ -263,32 +263,32 @@ class ContractTest(unittest.TestCase):
 
     def test_removed_runtime_contracts_are_explicitly_unsupported(self) -> None:
         for discriminator in (
-            "qlkg-local-profile-v1",
-            "qlkg-embedding-policy-v1",
-            "qlkg-store-v1",
-            "qlkg-retrieval-plan-v1",
-            "qlkg-static-export-v1",
-            "qlkg-document-upsert-request-v1",
-            "qlkg-document-ingest-receipt-v1",
-            "qlkg-document-record-v2",
+            "legacy-local-profile-v0",
+            "legacy-embedding-policy-v0",
+            "legacy-store-v0",
+            "legacy-retrieval-plan-v0",
+            "legacy-static-export-v0",
+            "legacy-document-upsert-request-v0",
+            "legacy-document-ingest-receipt-v0",
+            "legacy-document-record-v0",
         ):
             with self.subTest(schema=discriminator):
                 with self.assertRaisesRegex(ContractError, "unsupported contract schema"):
                     validate_contract({"schema": discriminator})
 
-    def test_current_wrapper_contracts_reject_superseded_graph_schema(self) -> None:
+    def test_current_wrapper_contracts_reject_unknown_graph_schema(self) -> None:
         cases = [
             (minimal_query_status(), ("graph_schema",)),
             (minimal_obsidian(), ("source", "graph_schema")),
             (minimal_obsidian_report(), ("source", "graph_schema")),
             (minimal_static_report(), ("graph", "private_schema")),
-            (fixture("qlkg-static-export-v2"), ("graph", "private_schema")),
+            (fixture("kgdistiller-static-export-v1"), ("graph", "private_schema")),
         ]
         for payload, path in cases:
             target = payload
             for key in path[:-1]:
                 target = target[key]
-            target[path[-1]] = "qlkg-v2"
+            target[path[-1]] = "legacy-graph-v0"
             with self.subTest(schema=payload["schema"]):
                 with self.assertRaises(ContractError):
                     validate_contract(payload)
@@ -305,13 +305,13 @@ class ContractTest(unittest.TestCase):
             self.assertNotEqual(payload[field], self_digest(payload, field))
 
     def test_search_execution_identity_indices_are_contiguous(self) -> None:
-        payload = fixture("qlkg-search-execution-v2")
+        payload = fixture("kgdistiller-search-execution-v1")
         payload["identity_resolutions"][1]["query_index"] = 3
         with self.assertRaisesRegex(ContractError, "unique and contiguous"):
             validate_contract(payload)
 
     def test_nested_search_result_is_validated_by_its_own_contract(self) -> None:
-        execution = validate_contract(fixture("qlkg-search-execution-v2"))
+        execution = validate_contract(fixture("kgdistiller-search-execution-v1"))
         self.assertEqual(execution["result"], validate_contract(execution["result"]))
         invalid = copy.deepcopy(execution["result"])
         invalid["lanes"]["semantic"] = {
@@ -326,18 +326,18 @@ class ContractTest(unittest.TestCase):
             validate_contract(execution)
 
     def test_search_result_seed_counts_obey_the_runtime_limit(self) -> None:
-        result = fixture("qlkg-search-result-v3")
+        result = fixture("kgdistiller-search-result-v1")
         result["lanes"]["ppr"]["seeds"] = 129
         with self.assertRaisesRegex(ContractError, "must be <= 128"):
             validate_contract(result)
 
     def test_document_normalization_and_public_edge_privacy_are_enforced(self) -> None:
-        document = fixture("qlkg-document-record-v1")
+        document = fixture("kgdistiller-document-record-v1")
         document["format"] = "typst"
         with self.assertRaisesRegex(ContractError, "authority extension"):
             validate_contract(document)
 
-        graph = fixture("qlkg-site-graph-v1")
+        graph = fixture("kgdistiller-site-graph-v1")
         graph["nodes"] = [
             {"id": "a", "type": "knowledge", "label": "A"},
             {"id": "b", "type": "knowledge", "label": "B"},
@@ -359,7 +359,7 @@ class ContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with mock.patch("kgdistiller.contracts.resources.files", return_value=Path(temporary)):
                 with self.assertRaisesRegex(ContractError, "unavailable"):
-                    load_contract_schema("qlkg-store-v2")
+                    load_contract_schema("kgdistiller-store-v1")
         with self.assertRaisesRegex(ContractError, "malformed contract JSON"):
             parse_contract_json("{")
         for constant in ("NaN", "Infinity", "-Infinity"):

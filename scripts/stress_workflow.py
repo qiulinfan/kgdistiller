@@ -97,7 +97,7 @@ def _graph_bytes(graph_dir: Path) -> dict[str, str]:
 
 def _registry() -> dict[str, Any]:
     return {
-        "schema": "qlkg-sources-v3",
+        "schema": "kgdistiller-sources-v1",
         "fields": [
             {
                 "id": "stress-testing",
@@ -143,6 +143,14 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
     (notes / "concepts.md").write_text("\n".join(markdown), encoding="utf-8")
     (notes / "concepts.typ").write_text("\n".join(typst), encoding="utf-8")
     (notes / "concepts.tex").write_text("\n".join(latex), encoding="utf-8")
+    derived = root / "knowledge/derived/by-source/notes/stress"
+    derived.mkdir(parents=True)
+    (derived / "concepts.typ.md").write_text(
+        "# Converted Typst stress authority\n", encoding="utf-8"
+    )
+    (derived / "concepts.tex.md").write_text(
+        "# Converted LaTeX stress authority\n", encoding="utf-8"
+    )
 
     registry = root / "knowledge/sources.json"
     alignments = root / "knowledge/alignments.json"
@@ -173,7 +181,7 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
     _write_json(
         delta,
         {
-            "schema": "qlkg-agent-delta-v3",
+            "schema": "kgdistiller-agent-delta-v1",
             "remove_nodes": [],
             "nodes": [
                 {
@@ -201,10 +209,10 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
 
 def _candidate_snapshot() -> dict[str, Any]:
     snapshot = {
-        "schema": "qlkg-agent-snapshot-v2",
+        "schema": "kgdistiller-agent-snapshot-v1",
         "namespace": "paper:stress",
         "graph": {
-            "schema": "qlkg-v3",
+            "schema": "kgdistiller-graph-v1",
             "sha256": "c" * 64,
             "counts": {"nodes": 1, "edges": 0, "references": 0},
         },
@@ -319,7 +327,7 @@ def _transaction_request(
                 }
             ],
             "delta": {
-                "schema": "qlkg-agent-delta-v3",
+                "schema": "kgdistiller-agent-delta-v1",
                 "remove_nodes": [],
                 "nodes": [
                     {
@@ -481,7 +489,7 @@ def run(nodes: int, query_samples: int, *, transaction: bool, fault_injection: b
             node.get("type") == "knowledge" for node in final_state.nodes.values()
         )
         return {
-            "schema": "qlkg-stress-report-v2",
+            "schema": "kgdistiller-stress-report-v1",
             "status": "passed",
             "knowledge_nodes": nodes,
             "final_knowledge_nodes": final_knowledge,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgdistiller.dev/schemas/qlkg-ingest-receipt-v2.schema.json",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-ingest-receipt-v1.schema.json",
   "title": "kgdistiller transactional ingest receipt v2",
   "type": "object",
   "additionalProperties": false,
@@ -10,7 +10,7 @@
     "status"
   ],
   "properties": {
-    "schema": {"const": "qlkg-ingest-receipt-v2"},
+    "schema": {"const": "kgdistiller-ingest-receipt-v1"},
     "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "request_sha256": {"$ref": "#/$defs/sha256"},
     "receipt_sha256": {"$ref": "#/$defs/sha256"},
@@ -24,7 +24,7 @@
           "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
           "items": {"type": "string", "minLength": 1, "maxLength": 128}
         },
-        "graph_schema": {"const": "qlkg-v3"},
+        "graph_schema": {"const": "kgdistiller-graph-v1"},
         "query_backend": {"const": "json-memory"}
       }
     },

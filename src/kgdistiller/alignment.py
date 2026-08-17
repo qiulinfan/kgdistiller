@@ -11,9 +11,9 @@ from typing import Any, Iterable
 from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
 
 
-ALIGNMENT_SCHEMA = "qlkg-alignments-v2"
-ALIGNMENT_REPORT_SCHEMA = "qlkg-alignment-report-v2"
-SCOPED_ALIAS_SCHEMA = "qlkg-scoped-aliases-v1"
+ALIGNMENT_SCHEMA = "kgdistiller-alignments-v1"
+ALIGNMENT_REPORT_SCHEMA = "kgdistiller-alignment-report-v1"
+SCOPED_ALIAS_SCHEMA = "kgdistiller-scoped-aliases-v1"
 ALIGNMENT_PREDICATES = {
     "exact-match",
     "close-match",

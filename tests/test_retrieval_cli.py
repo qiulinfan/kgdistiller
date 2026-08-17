@@ -24,7 +24,7 @@ from tests.test_query import write_fixture_graph  # noqa: E402
 
 def retrieval_plan() -> dict:
     return {
-        "schema": "qlkg-retrieval-plan-v2",
+        "schema": "kgdistiller-retrieval-plan-v1",
         "question": "How does a measure depend on a sigma algebra?",
         "namespace": "personal",
         "identity_queries": ["西格玛代数"],

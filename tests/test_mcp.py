@@ -147,7 +147,7 @@ class MCPTest(unittest.TestCase):
         nodes_path.write_text(original, encoding="utf-8")
         self.assertEqual(first["snapshot_sha256"], call_tool(self.graph, "kg_status", {})["snapshot_sha256"])
 
-    def test_mcp_context_and_alignment_outputs_use_bound_v2_contracts(self) -> None:
+    def test_mcp_context_and_alignment_outputs_use_bound_v1_contracts(self) -> None:
         status = call_tool(self.graph, "kg_status", {})
         context = call_tool(
             self.graph,
@@ -174,10 +174,10 @@ class MCPTest(unittest.TestCase):
             {"candidate_snapshot": candidate_snapshot},
         )
 
-        self.assertEqual("qlkg-context-bundle-v2", context["schema"])
-        self.assertEqual("qlkg-alignment-report-v2", alignment["schema"])
-        self.assertEqual("qlkg-graph-comparison-v2", comparison["schema"])
-        self.assertEqual("qlkg-agent-proposal-v2", proposal["schema"])
+        self.assertEqual("kgdistiller-context-bundle-v1", context["schema"])
+        self.assertEqual("kgdistiller-alignment-report-v1", alignment["schema"])
+        self.assertEqual("kgdistiller-graph-comparison-v1", comparison["schema"])
+        self.assertEqual("kgdistiller-agent-proposal-v1", proposal["schema"])
         for report in (alignment, comparison, proposal):
             self.assertEqual(status["alignment_sha256"], report["alignment_sha256"])
 

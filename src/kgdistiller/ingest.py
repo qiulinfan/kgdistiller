@@ -51,12 +51,12 @@ from .cli import (
 from .json_schema import validate_json_schema
 
 
-REQUEST_SCHEMA = "qlkg-ingest-request-v2"
-PLAN_SCHEMA = "qlkg-ingest-plan-v1"
-RECEIPT_SCHEMA = "qlkg-ingest-receipt-v2"
-ERROR_SCHEMA = "qlkg-ingest-error-v1"
+REQUEST_SCHEMA = "kgdistiller-ingest-request-v1"
+PLAN_SCHEMA = "kgdistiller-ingest-plan-v1"
+RECEIPT_SCHEMA = "kgdistiller-ingest-receipt-v1"
+ERROR_SCHEMA = "kgdistiller-ingest-error-v1"
 CAPABILITY = "transactional-ingest-v1"
-JOURNAL_SCHEMA = "qlkg-ingest-journal-v1"
+JOURNAL_SCHEMA = "kgdistiller-ingest-journal-v1"
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 HEX_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
@@ -823,6 +823,16 @@ def _prepare_shadow(paths: IngestPaths, root: Path) -> IngestPaths:
             _filesystem_path(paths.graph_dir),
             _filesystem_path(shadow.graph_dir),
         )
+    for relative in (Path("knowledge/entries"), Path("knowledge/derived")):
+        source_root = paths.repo_root / relative
+        target_root = root / relative
+        if source_root.is_dir():
+            shutil.copytree(
+                _filesystem_path(source_root),
+                _filesystem_path(target_root),
+                dirs_exist_ok=True,
+            )
+    (root / "knowledge/entries").mkdir(parents=True, exist_ok=True)
     for spec in specs:
         relative_root = relative_path(paths.repo_root, spec.root)
         (root / relative_root).mkdir(parents=True, exist_ok=True)
@@ -977,6 +987,7 @@ def _stage_ingest(
                     shadow.graph_dir,
                     shadow.typst_registry,
                     delta_path,
+                    repo_root=shadow.repo_root,
                 )
             except (KnowledgeError, OSError, ValueError) as error:
                 raise IngestError("delta-failed", str(error), stage="delta") from error
@@ -1570,6 +1581,7 @@ def _validate_journal(
     configured: dict[str, str] = {}
     for field, target, kind in (
         ("graph", paths.graph_dir, "directory"),
+        ("entries", paths.repo_root / "knowledge/entries", "directory"),
         ("alignments", paths.alignments, "file"),
         ("typst_registry", paths.typst_registry, "file"),
     ):
@@ -1866,6 +1878,7 @@ def _install_staged(
     for patch in staged.request["authority_patches"]:
         targets.append(paths.repo_root / str(patch["path"]))
     targets.extend([paths.graph_dir, paths.alignments, paths.typst_registry])
+    targets.append(paths.repo_root / "knowledge/entries")
     unique_targets: list[Path] = []
     seen: set[str] = set()
     for target in targets:
@@ -1897,6 +1910,11 @@ def _install_staged(
         if staged.paths.alignments.is_file():
             _atomic_copy(staged.paths.alignments, paths.alignments)
         _invoke(failure_injector, "installed-alignments")
+        _install_directory(
+            staged.paths.repo_root / "knowledge/entries",
+            paths.repo_root / "knowledge/entries",
+            staged.request_sha256,
+        )
         _install_directory(staged.paths.graph_dir, paths.graph_dir, staged.request_sha256)
         _invoke(failure_injector, "installed-graph")
         if staged.paths.typst_registry.is_file():
@@ -1939,7 +1957,7 @@ def _receipt_payload(staged: StagedIngest, plan: dict[str, Any]) -> dict[str, An
     }
     receipt["receipt_sha256"] = canonical_digest(receipt, "receipt_sha256")
     _validate_json_schema(
-        receipt, "qlkg-ingest-receipt-v2.schema.json", "invalid-receipt"
+        receipt, "kgdistiller-ingest-receipt-v1.schema.json", "invalid-receipt"
     )
     return receipt
 
@@ -1970,7 +1988,7 @@ def _validate_stored_receipt(payload: dict[str, Any]) -> dict[str, Any]:
             stage="idempotency",
         )
     _validate_json_schema(
-        payload, "qlkg-ingest-receipt-v2.schema.json", "invalid-receipt"
+        payload, "kgdistiller-ingest-receipt-v1.schema.json", "invalid-receipt"
     )
     if payload.get("receipt_sha256") != canonical_digest(payload, "receipt_sha256"):
         raise IngestError(

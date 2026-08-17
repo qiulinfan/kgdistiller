@@ -22,12 +22,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-GRAPH_SCHEMA = "qlkg-v3"
-SOURCE_SCHEMA = "qlkg-sources-v3"
-DELTA_SCHEMA = "qlkg-agent-delta-v3"
-IDENTITY_SCHEMA = "qlkg-identities-v2"
-ENTRY_STORE_SCHEMA = "qlkg-entry-shards-v1"
-AGENT_SNAPSHOT_SCHEMA = "qlkg-agent-snapshot-v2"
+GRAPH_SCHEMA = "kgdistiller-graph-v1"
+SOURCE_SCHEMA = "kgdistiller-sources-v1"
+DELTA_SCHEMA = "kgdistiller-agent-delta-v1"
+IDENTITY_SCHEMA = "kgdistiller-identities-v1"
+ENTRY_STORE_SCHEMA = "kgdistiller-entry-shards-v1"
+ENTRY_AUTHORITY_SCHEMA = "kgdistiller-entry-index-v1"
+ENTRY_SOURCE_INDEX_SCHEMA = "kgdistiller-entry-source-index-v1"
+AGENT_SNAPSHOT_SCHEMA = "kgdistiller-agent-snapshot-v1"
 ENTRY_SHARD_LIMIT = 48 * 1024 * 1024
 KNOWLEDGE_ORIGINS = {"personal-note", "research"}
 MAX_NODE_ID_LENGTH = 256
@@ -2019,6 +2021,11 @@ def make_agent_snapshot(
     computed_artifacts = make_artifacts(
         copy.deepcopy(state),
         dict(state.manifest.get("source_hashes") or {}),
+        entry_hashes={
+            str(item.get("path")): str(item.get("sha256"))
+            for item in ((state.manifest.get("entry_authorities") or {}).get("entries", []))
+            if item.get("path") and item.get("sha256")
+        },
         registry_sha256=str(state.manifest.get("registry_sha256", "")) or None,
         identity_sha256=str(state.manifest.get("identity_sha256", "")) or None,
         git_revision=str(state.manifest.get("git_revision", "")) or None,
@@ -2050,12 +2057,19 @@ def make_artifacts(
     state: GraphState,
     source_hashes: dict[str, str],
     *,
+    entry_hashes: dict[str, str] | None = None,
     registry_sha256: str | None = None,
     identity_sha256: str | None = None,
     git_revision: str | None = None,
 ) -> dict[str, str]:
     if registry_sha256 is None:
         registry_sha256 = str(state.manifest.get("registry_sha256", "")) or None
+    if entry_hashes is None:
+        entry_hashes = {
+            str(item.get("path")): str(item.get("sha256"))
+            for item in ((state.manifest.get("entry_authorities") or {}).get("entries", []))
+            if item.get("path") and item.get("sha256")
+        }
     refresh_node_curation_defaults(state)
     nodes = sorted(state.nodes.values(), key=lambda item: item["id"])
     edges = sorted(
@@ -2067,6 +2081,16 @@ def make_artifacts(
         key=lambda item: (item.get("authority", ""), item.get("line", 0), item["target"]),
     )
     diagnostics = validate_state(state)
+    entry_source_hashes: dict[str, str] = {}
+    for node in nodes:
+        properties = node.get("properties") or {}
+        path = str(properties.get("entry_source", ""))
+        digest_value = str(properties.get("entry_source_current_sha256", ""))
+        if not path or not digest_value:
+            continue
+        previous_digest = entry_source_hashes.setdefault(path, digest_value)
+        if previous_digest != digest_value:
+            raise KnowledgeError(f"inconsistent entry source digest: {path}")
     entry_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     serialized_nodes: list[dict[str, Any]] = []
     for node in nodes:
@@ -2120,6 +2144,10 @@ def make_artifacts(
         )
     digest_input = nodes_text + edges_text + references_text
     digest_input += "".join(path + entry_artifacts[path] for path in sorted(entry_artifacts))
+    digest_input += "".join(path + entry_hashes[path] for path in sorted(entry_hashes))
+    digest_input += "".join(
+        path + entry_source_hashes[path] for path in sorted(entry_source_hashes)
+    )
     digest = sha256_text(digest_input)
     node_types = Counter(item["type"] for item in nodes)
     relations = Counter(item["relation"] for item in edges)
@@ -2153,6 +2181,20 @@ def make_artifacts(
             "schema": ENTRY_STORE_SCHEMA,
             "entries": sum(item["count"] for item in entry_shards),
             "shards": entry_shards,
+        },
+        "entry_authorities": {
+            "schema": ENTRY_AUTHORITY_SCHEMA,
+            "entries": [
+                {"path": path, "sha256": digest}
+                for path, digest in sorted(entry_hashes.items())
+            ],
+        },
+        "entry_sources": {
+            "schema": ENTRY_SOURCE_INDEX_SCHEMA,
+            "entries": [
+                {"path": path, "sha256": digest}
+                for path, digest in sorted(entry_source_hashes.items())
+            ],
         },
     }
     if registry_sha256:
@@ -2210,7 +2252,7 @@ def render_typst_labels(state: GraphState) -> None:
     ]
     for node_id, typst_name in candidates:
         lines.append(f'#graph-label("{typst_string(node_id)}")[{typst_name}]')
-    with tempfile.TemporaryDirectory(prefix="qlkg-labels-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="kgdistiller-labels-") as temporary:
         source = Path(temporary) / "labels.typ"
         output = Path(temporary) / "labels.html"
         source.write_text("\n\n".join(lines) + "\n", encoding="utf-8")
@@ -2411,6 +2453,15 @@ def synchronize(
             source_hashes[key] = sha256_authority_file(path)
         else:
             source_hashes.pop(key, None)
+    from kgdistiller.entry_markdown import (
+        EntryMarkdownError,
+        load_entry_authorities,
+    )
+
+    try:
+        entry_hashes = load_entry_authorities(repo_root, state.nodes)
+    except EntryMarkdownError as error:
+        raise KnowledgeError(str(error)) from error
     refresh_semantic_edge_curation(state)
     render_typst_labels(state)
     previous_git_revision = str(previous.manifest.get("git_revision", "")) or None
@@ -2423,6 +2474,7 @@ def synchronize(
     artifacts = make_artifacts(
         state,
         source_hashes,
+        entry_hashes=entry_hashes,
         registry_sha256=source_registry_sha256(registry),
         identity_sha256=identity_registry_sha256(identities),
         git_revision=git_revision,
@@ -2481,11 +2533,31 @@ def apply_delta(
     graph_dir: Path,
     typst_registry: Path,
     delta_path: Path,
+    *,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     delta = read_json(delta_path, {})
     if delta.get("schema") != DELTA_SCHEMA:
         raise KnowledgeError(f"expected {DELTA_SCHEMA} delta: {delta_path}")
     state = load_state(graph_dir)
+    repo_root = (
+        repo_root.resolve(strict=False)
+        if repo_root is not None
+        else graph_dir.resolve(strict=False).parent.parent
+    )
+    from kgdistiller.entry_markdown import (
+        EntryMarkdownError,
+        authority_sha256,
+        entry_relative,
+        load_entry_authorities,
+        normalize_entry,
+        render_entry,
+        resolve_entry_source,
+        write_entry,
+    )
+
+    entry_deletes: set[Path] = set()
+    entry_writes: dict[Path, str] = {}
     before = dict(state.manifest.get("counts") or {})
     removed_nodes = 0
     for raw_id in delta.get("remove_nodes", []):
@@ -2496,6 +2568,7 @@ def apply_delta(
         if existing.get("type") == "knowledge" and (existing.get("provenance") or {}).get("active"):
             raise KnowledgeError(f"cannot remove active authored knowledge node: {node_id}")
         state.nodes.pop(node_id)
+        entry_deletes.add(repo_root / entry_relative(node_id))
         removed_nodes += 1
         state.edges = {
             key: edge
@@ -2561,6 +2634,36 @@ def apply_delta(
                     "curation_status", "current" if text_value.strip() or raw_entry else "pending"
                 )
         state.nodes[node_id] = node
+        if node_type == "knowledge" and ("text" in raw or "entry" in raw):
+            entry_path = repo_root / entry_relative(node_id)
+            if not text_value.strip() and not raw_entry:
+                entry_deletes.add(entry_path)
+                entry_writes.pop(entry_path, None)
+            else:
+                try:
+                    source, source_path = resolve_entry_source(
+                        repo_root,
+                        node,
+                        str(raw.get("entry_source", "")) or None,
+                    )
+                    normalized_entry = normalize_entry(raw_entry, text_value)
+                    source_sha = authority_sha256(source_path)
+                    definition_sha = str(
+                        (node.get("provenance") or {}).get("definition_sha256", "")
+                    )
+                    content = render_entry(
+                        node_id=node_id,
+                        label=str(node["label"]),
+                        entry=normalized_entry,
+                        source=source,
+                        source_sha256=source_sha,
+                        definition_sha256=definition_sha,
+                        origin=str(properties.get("entry_origin", "agent-extracted")),
+                    )
+                except EntryMarkdownError as error:
+                    raise KnowledgeError(str(error)) from error
+                entry_writes[entry_path] = content
+                entry_deletes.discard(entry_path)
     for raw in delta.get("remove_edges", []):
         state.edges.pop(
             (str(raw["source"]), str(raw["relation"]), str(raw["target"])),
@@ -2578,9 +2681,23 @@ def apply_delta(
         state.edges[edge_key(edge)] = edge
     refresh_semantic_edge_curation(state)
     render_typst_labels(state)
+    # Entry Markdown is the authority. Install reviewed entry changes before
+    # hydrating the graph projection from those files.
+    for path in sorted(entry_deletes):
+        if path.is_symlink():
+            raise KnowledgeError(f"entry authority is a symlink: {path}")
+        if path.is_file():
+            path.unlink()
+    for path, content in sorted(entry_writes.items(), key=lambda item: str(item[0])):
+        write_entry(path, content)
+    try:
+        entry_hashes = load_entry_authorities(repo_root, state.nodes)
+    except EntryMarkdownError as error:
+        raise KnowledgeError(str(error)) from error
     artifacts = make_artifacts(
         state,
         dict(state.manifest.get("source_hashes") or {}),
+        entry_hashes=entry_hashes,
         registry_sha256=state.manifest.get("registry_sha256"),
         identity_sha256=state.manifest.get("identity_sha256"),
         git_revision=state.manifest.get("git_revision"),
@@ -2890,7 +3007,7 @@ def curation_report(
             )
 
     return {
-        "schema": "qlkg-curation-check-v1",
+        "schema": "kgdistiller-curation-check-v1",
         "files": sorted(authorities),
         "nodes": len(selected),
         "entries": entries,
@@ -3012,7 +3129,7 @@ def audit_report(state: GraphState) -> dict[str, Any]:
     entry_count = sum(bool(str(node.get("text", "")).strip()) for node in active.values())
     relation_counts = Counter(str(edge.get("relation", "")) for edge in state.edges.values())
     return {
-        "schema": "qlkg-audit-v1",
+        "schema": "kgdistiller-audit-v1",
         "counts": {
             "nodes": len(state.nodes),
             "active_knowledge": len(active),
@@ -3170,6 +3287,21 @@ def parse_args() -> argparse.Namespace:
         add_scope_arguments(command)
     apply_command = commands.add_parser("apply")
     apply_command.add_argument("delta", type=Path)
+    derive_command = commands.add_parser(
+        "derive",
+        help="place converted Markdown under the owning vault's knowledge/derived tree",
+    )
+    derive_commands = derive_command.add_subparsers(
+        dest="derive_command", required=True
+    )
+    derive_locate = derive_commands.add_parser("locate")
+    derive_locate.add_argument("source", type=Path)
+    derive_locate.add_argument("--output", type=Path)
+    derive_install = derive_commands.add_parser("install")
+    derive_install.add_argument("source", type=Path)
+    derive_install.add_argument("--input", type=Path, required=True)
+    derive_install.add_argument("--output", type=Path)
+    derive_install.add_argument("--replace", action="store_true")
     reconcile_command = commands.add_parser("reconcile")
     reconcile_commands = reconcile_command.add_subparsers(dest="reconcile_command", required=True)
     rename_command = reconcile_commands.add_parser("rename-node")
@@ -3239,7 +3371,7 @@ def parse_args() -> argparse.Namespace:
     agent_search_command.add_argument(
         "--plan",
         type=Path,
-        help="execute a qlkg-retrieval-plan-v2 JSON file instead of a legacy query",
+        help="execute a kgdistiller-retrieval-plan-v1 JSON file instead of a legacy query",
     )
     agent_search_command.add_argument("--namespace")
     agent_search_command.add_argument("--type", action="append", dest="node_types")
@@ -3291,7 +3423,7 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument(
         "--plan",
         type=Path,
-        help="execute a qlkg-retrieval-plan-v2 JSON file instead of a legacy query",
+        help="execute a kgdistiller-retrieval-plan-v1 JSON file instead of a legacy query",
     )
     context_command.add_argument("--namespace")
     context_command.add_argument("--type", action="append", dest="node_types")
@@ -3497,6 +3629,41 @@ def main() -> int:
             print(pretty_json(result), end="")
             return 0
         from kgdistiller.vault_registry import resolve_repo_root
+
+        if args.command == "derive":
+            from kgdistiller.derivation import (
+                DerivationError,
+                install_derivation,
+                plan_derivation,
+            )
+
+            explicit_target = None
+            if args.repo_root is not None or args.vault is not None:
+                explicit_target = resolve_repo_root(
+                    explicit_repo_root=args.repo_root,
+                    explicit_vault=args.vault,
+                    home=args.kgdistiller_home,
+                    use_default=False,
+                )
+            try:
+                if args.derive_command == "locate":
+                    result = plan_derivation(
+                        args.source,
+                        target_vault=explicit_target,
+                        output=args.output,
+                    )
+                else:
+                    result = install_derivation(
+                        args.source,
+                        args.input,
+                        target_vault=explicit_target,
+                        output=args.output,
+                        replace=args.replace,
+                    )
+            except DerivationError as error:
+                raise KnowledgeError(str(error)) from error
+            print(pretty_json(result), end="")
+            return 0
 
         repo_root = resolve_repo_root(
             explicit_repo_root=args.repo_root,
@@ -3836,6 +4003,7 @@ def main() -> int:
                         graph_dir,
                         typst_registry,
                         delta,
+                        repo_root=repo_root,
                     )
                 ),
                 end="",
