@@ -274,8 +274,15 @@ For editor-plus-browser use, open the knowledge repository itself as the
 Obsidian vault and keep the projection at its ignored default location:
 
 ```sh
+kgdistiller obsidian install
 kgdistiller export obsidian --replace
 ```
+
+With the global registry, both commands can be run from any directory by adding
+`--vault <registered-name-or-id>`. Plugin updates require
+`obsidian install --replace`; the installer preserves plugin settings and
+configures the community plugin as enabled. Reload Obsidian after installation
+or update.
 
 The repository root is the editor vault, and its registered Markdown files plus
 `knowledge/entries/*.md` remain non-lossy authorities. The managed

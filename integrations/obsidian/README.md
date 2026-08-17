@@ -14,7 +14,28 @@ The plugin is read-only. It reads the public
 reads kgdistiller's internal JSONL files and never edits authorities or graph
 state.
 
-## Build and install
+## Install in a vault
+
+Install the plugin bundled with the global kgdistiller command into a registered
+Obsidian vault from any directory:
+
+```sh
+kgdistiller --vault <registered-name-or-id> obsidian install
+```
+
+The command atomically installs `main.js`, `manifest.json`, and `styles.css`
+under `.obsidian/plugins/kgdistiller/`, preserves existing `data.json` settings,
+and adds `kgdistiller` to `.obsidian/community-plugins.json`. Use `--replace` to
+update an existing bundle, or `--no-enable` to leave the enabled-plugin list
+unchanged. Reload Obsidian after installation or update.
+
+Then generate the graph projection:
+
+```sh
+kgdistiller --vault <registered-name-or-id> export obsidian --replace
+```
+
+## Develop the plugin
 
 From this directory:
 
@@ -23,18 +44,11 @@ npm ci
 npm run check
 ```
 
-Create `<your-vault>/.obsidian/plugins/kgdistiller/` and copy these files into
-it:
+The production bundle consists of:
 
 - `main.js`
 - `manifest.json`
 - `styles.css`
-
-Then, from any directory, generate the projection for the registered vault:
-
-```sh
-kgdistiller --vault <registered-name-or-id> export obsidian --replace
-```
 
 Open the vault in Obsidian, enable **kgdistiller** under Community plugins, and
 run **kgdistiller: Open typed graph** or use the ribbon icon. The default input
@@ -57,3 +71,12 @@ and open projected concept notes or their source notes. Edge styles are:
 
 Regenerate the projection after `kgdistiller sync` or ingest. The plugin watches
 the semantic graph file and reloads open graph views when that artifact changes.
+
+## Roadmap
+
+- [ ] Add an explicit opt-in, desktop-only hot-update pipeline. Registered
+  authority changes should trigger a debounced `kgdistiller sync` followed by
+  `kgdistiller export obsidian --replace`; generated graph/build paths must be
+  excluded to prevent feedback loops, and failures must remain visible to the
+  user. The existing artifact watcher already refreshes open views after a
+  successful export.

@@ -60,6 +60,7 @@ def main() -> int:
         root = Path(raw) / "project"
         initialized = run(root, "init", "--source-root", "notes")
         require(initialized.get("initialized") == str(root.resolve()), "init failed")
+        (root / ".obsidian").mkdir()
         authority = root / "notes/concepts.md"
         authority.write_text(
             "> **Definition: --[[Measure]]--**\n>\n"
@@ -93,6 +94,37 @@ def main() -> int:
             cwd=outside,
         )
         require(registration.get("status") == "registered", "vault registration failed")
+        plugin = run_command(
+            "--kgdistiller-home",
+            str(state),
+            "--vault",
+            "research",
+            "obsidian",
+            "install",
+            cwd=outside,
+        )
+        require(
+            plugin.get("schema") == "kgdistiller-obsidian-plugin-install-v1",
+            "Obsidian plugin install failed",
+        )
+        require(
+            plugin.get("status") == "installed",
+            "Obsidian plugin install status mismatch",
+        )
+        for name in ("main.js", "manifest.json", "styles.css"):
+            require(
+                (root / ".obsidian/plugins/kgdistiller" / name).is_file(),
+                f"installed Obsidian plugin is missing {name}",
+            )
+        require(
+            json.loads(
+                (root / ".obsidian/community-plugins.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            == ["kgdistiller"],
+            "Obsidian plugin was not configured as enabled",
+        )
         registered_status = run_command(
             "--kgdistiller-home",
             str(state),
@@ -129,8 +161,8 @@ def main() -> int:
         require(not any(root.rglob("*.sqlite")), "self-contained runtime created SQLite")
 
     print(
-        "installed global command, vault registry, JSON runtime, store-v1, "
-        "and Obsidian projection smoke passed"
+        "installed global command, vault registry, Obsidian plugin, JSON runtime, "
+        "store-v1, and Obsidian projection smoke passed"
     )
     return 0
 

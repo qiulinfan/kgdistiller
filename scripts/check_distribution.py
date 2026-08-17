@@ -80,6 +80,18 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
     return wheel, sdist
 
 
+def _expected_obsidian_plugin_files() -> tuple[set[str], set[str]]:
+    wheel: set[str] = set()
+    sdist: set[str] = set()
+    for name in ("main.js", "manifest.json", "styles.css"):
+        source = REPO_ROOT / "integrations" / "obsidian" / name
+        if not source.is_file() or source.stat().st_size == 0:
+            raise RuntimeError(f"Obsidian plugin bundle file is missing or empty: {source}")
+        wheel.add(PurePosixPath("kgdistiller", "obsidian_plugin", name).as_posix())
+        sdist.add(PurePosixPath("integrations", "obsidian", name).as_posix())
+    return wheel, sdist
+
+
 def _missing(expected: set[str], observed: set[str]) -> list[str]:
     return sorted(expected - observed)
 
@@ -140,11 +152,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         package_files = _expected_package_files()
         product_files, product_sources = _expected_product_files()
-        expected = package_files | product_files
+        obsidian_files, obsidian_sources = _expected_obsidian_plugin_files()
+        expected = package_files | product_files | obsidian_files
         wheel = _single(dist_root, "kgdistiller-*.whl")
         sdist = _single(dist_root, "kgdistiller-*.tar.gz")
         check_wheel(wheel, expected)
-        check_sdist(sdist, package_files, product_sources)
+        check_sdist(
+            sdist,
+            package_files,
+            product_sources | obsidian_sources,
+        )
     except (OSError, RuntimeError, tarfile.TarError, zipfile.BadZipFile) as error:
         print(f"distribution check failed: {error}", file=sys.stderr)
         return 1
@@ -152,9 +169,13 @@ def main(argv: list[str] | None = None) -> int:
     static = sum(name.startswith("kgdistiller/static/") for name in expected)
     modules = sum(name.endswith(".py") for name in expected)
     product = sum(name.startswith("kgdistiller/product/") for name in expected)
+    obsidian = sum(
+        name.startswith("kgdistiller/obsidian_plugin/") for name in expected
+    )
     print(
         f"distribution check passed: modules={modules} schemas={schemas} "
-        f"static={static} product={product} wheel={wheel.name} sdist={sdist.name}"
+        f"static={static} product={product} obsidian={obsidian} "
+        f"wheel={wheel.name} sdist={sdist.name}"
     )
     return 0
 

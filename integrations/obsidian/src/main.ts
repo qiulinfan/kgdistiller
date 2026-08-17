@@ -1,6 +1,7 @@
 import { Notice, Plugin, TAbstractFile, normalizePath } from "obsidian";
 
 import {
+  KGDISTILLER_ICON,
   KgdistillerGraphView,
   VIEW_TYPE_KGDISTILLER_GRAPH,
 } from "./view";
@@ -19,7 +20,7 @@ export default class KgdistillerPlugin extends Plugin {
       VIEW_TYPE_KGDISTILLER_GRAPH,
       (leaf) => new KgdistillerGraphView(leaf, this),
     );
-    this.addRibbonIcon("git-fork", "Open kgdistiller Graph", () => {
+    this.addRibbonIcon(KGDISTILLER_ICON, "Open kgdistiller Graph", () => {
       void this.activateGraphView();
     });
     this.addCommand({

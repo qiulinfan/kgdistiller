@@ -3313,6 +3313,27 @@ def parse_args() -> argparse.Namespace:
     derive_install.add_argument("--input", type=Path, required=True)
     derive_install.add_argument("--output", type=Path)
     derive_install.add_argument("--replace", action="store_true")
+    obsidian_command = commands.add_parser(
+        "obsidian",
+        help="manage kgdistiller's integration with an Obsidian vault",
+    )
+    obsidian_commands = obsidian_command.add_subparsers(
+        dest="obsidian_command", required=True
+    )
+    obsidian_install = obsidian_commands.add_parser(
+        "install", help="install the bundled kgdistiller plugin into the selected vault"
+    )
+    obsidian_install.add_argument(
+        "--replace",
+        action="store_true",
+        help="atomically update an existing kgdistiller plugin bundle",
+    )
+    obsidian_install.add_argument(
+        "--no-enable",
+        action="store_false",
+        dest="enable",
+        help="install the plugin files without adding kgdistiller to community-plugins.json",
+    )
     reconcile_command = commands.add_parser("reconcile")
     reconcile_commands = reconcile_command.add_subparsers(dest="reconcile_command", required=True)
     rename_command = reconcile_commands.add_parser("rename-node")
@@ -3682,6 +3703,30 @@ def main() -> int:
             home=args.kgdistiller_home,
             use_default=args.command != "init",
         )
+        if args.command == "obsidian":
+            from .obsidian_plugin import ObsidianPluginError, install_obsidian_plugin
+
+            try:
+                result = install_obsidian_plugin(
+                    repo_root,
+                    replace=args.replace,
+                    enable=args.enable,
+                )
+            except ObsidianPluginError as error:
+                print(
+                    pretty_json(
+                        {
+                            "kind": "kgdistiller-obsidian-plugin-error",
+                            "code": "obsidian-plugin-install-failed",
+                            "message": str(error),
+                        }
+                    ),
+                    end="",
+                    file=sys.stderr,
+                )
+                return 1
+            print(pretty_json(result), end="")
+            return 0
         if args.command == "export":
             registry = defaults(repo_root, args.registry)
             graph_dir = defaults(repo_root, args.graph)

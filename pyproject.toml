@@ -40,6 +40,9 @@ packages = ["src/kgdistiller"]
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
+"integrations/obsidian/main.js" = "kgdistiller/obsidian_plugin/main.js"
+"integrations/obsidian/manifest.json" = "kgdistiller/obsidian_plugin/manifest.json"
+"integrations/obsidian/styles.css" = "kgdistiller/obsidian_plugin/styles.css"
 
 [tool.hatch.build]
 include = [
@@ -52,4 +55,7 @@ include = [
   "docs/product-workflows.md",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",
+  "integrations/obsidian/main.js",
+  "integrations/obsidian/manifest.json",
+  "integrations/obsidian/styles.css",
 ]

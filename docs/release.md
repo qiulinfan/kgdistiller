@@ -104,11 +104,13 @@ cd integrations/obsidian && npm ci && npm run check
 Then verify that:
 
 - wheel and sdist contain Python modules, native static frontend assets, every
-  current JSON Schema, product Skill, workflow manifest, workflow guide, and
-  `.codex/agents` preset;
+  current JSON Schema, product Skill, workflow manifest, workflow guide,
+  `.codex/agents` preset, and the three-file Obsidian plugin bundle;
 - an isolated environment installs the wheel and runs `kgdistiller --help`;
 - installed `kgdistiller`/`kgdistiller.exe` registers and queries a vault from
   an unrelated working directory on Linux, Windows, and macOS;
+- the installed wheel atomically installs the Obsidian plugin into a vault,
+  configures it as enabled, and preserves existing plugin settings on update;
 - help exposes no profile, embedding, database, provider, or materialization
   command/flag;
 - a Markdown/Typst/LaTeX fixture passes sync, check, `agent status`, exact and

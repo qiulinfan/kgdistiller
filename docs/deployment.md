@@ -153,6 +153,11 @@ consumer adoption are separate provenance events. Verify the bundle before a
 consumer commits its exact files.
 
 `export obsidian` produces a `kgdistiller-obsidian-projection-v1` downstream view.
+Install the packaged read-only plugin into a selected vault with
+`kgdistiller --vault <name-or-id> obsidian install`; use `--replace` for an
+upgrade. The installer manages only `main.js`, `manifest.json`, and `styles.css`,
+preserves `data.json`, and can leave the enabled-plugin list untouched with
+`--no-enable`.
 Open the knowledge repository root as the editor vault; its registered Markdown
 files and `knowledge/entries/*.md` remain non-lossy authorities. Only the managed default subtree is
 a lossy projection. An external output is a browsing-only vault/projection and

@@ -65,6 +65,11 @@ require incrementing the affected contract version.
   `kgdistiller-obsidian-graph-v1` projection. The custom view keeps semantic
   edge type, direction, and evidence distinct from source definition/reference
   edges while native Obsidian backlinks continue to work independently.
+- Package that plugin in the Python distribution and add cross-platform
+  `kgdistiller obsidian install`, with atomic replacement, settings preservation,
+  and registered-vault selection from any working directory. Give the plugin a
+  dedicated distillation icon and record the opt-in source-to-projection
+  hot-update pipeline as future work.
 - Remove superseded 0.3 database/vector design specifications; Git history is
   their archive.
 

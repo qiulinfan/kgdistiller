@@ -21,6 +21,7 @@ import {
 import type { KgdistillerSettings } from "./settings";
 
 export const VIEW_TYPE_KGDISTILLER_GRAPH = "kgdistiller-graph-view";
+export const KGDISTILLER_ICON = "flask-conical";
 
 export interface GraphViewHost {
   app: App;
@@ -58,7 +59,7 @@ export class KgdistillerGraphView extends ItemView {
   }
 
   getIcon(): string {
-    return "git-fork";
+    return KGDISTILLER_ICON;
   }
 
   async onOpen(): Promise<void> {
