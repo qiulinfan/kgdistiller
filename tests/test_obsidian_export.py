@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.cli import apply_delta, synchronize  # noqa: E402
+from kgdistiller.contracts import sha256_json, validate_contract  # noqa: E402
 from kgdistiller.obsidian_export import (  # noqa: E402
     ObsidianExportError,
     _concept_relatives,
@@ -174,6 +175,9 @@ class ObsidianExportTest(unittest.TestCase):
         sigma = (self.output / "concepts/Sigma algebra.md").read_text(encoding="utf-8")
         measure = (self.output / "concepts/Measure.md").read_text(encoding="utf-8")
         proxy = (self.output / "sources/notes/chapter.md.md").read_text(encoding="utf-8")
+        plugin_graph = json.loads(
+            (self.output / "semantic-graph.json").read_text(encoding="utf-8")
+        )
         self.assertIn('kgd_id: "sigma-algebra"', sigma)
         self.assertIn("`prerequisite-for`", sigma)
         self.assertIn("[[Measure|Measure]]", sigma)
@@ -182,6 +186,41 @@ class ObsidianExportTest(unittest.TestCase):
         self.assertIn("A measure is not the same thing as its sigma algebra.", measure)
         self.assertIn("[[notes/chapter|Open registered Markdown authority]]", proxy)
         self.assertIn("[[../../concepts/Sigma algebra|Sigma algebra]]", proxy)
+        self.assertEqual(plugin_graph, validate_contract(plugin_graph))
+        self.assertEqual("kgdistiller-obsidian-graph-v1", plugin_graph["schema"])
+        self.assertEqual(
+            {
+                "concepts": 2,
+                "sources": 1,
+                "semantic_edges": 1,
+                "definitions": 2,
+                "references": 1,
+            },
+            plugin_graph["counts"],
+        )
+        self.assertEqual(
+            {
+                "source": "sigma-algebra",
+                "relation": "prerequisite-for",
+                "target": "measure",
+                "evidence": "A measure is defined on a sigma algebra.",
+            },
+            plugin_graph["semantic_edges"][0],
+        )
+        self.assertEqual("notes/chapter.md", plugin_graph["references"][0]["source_authority"])
+        self.assertEqual("sigma-algebra", plugin_graph["references"][0]["target"])
+        manifest = json.loads((self.output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertIn(
+            {
+                "kind": "semantic-graph",
+                "path": "semantic-graph.json",
+                "bytes": (self.output / "semantic-graph.json").stat().st_size,
+                "sha256": hashlib.sha256(
+                    (self.output / "semantic-graph.json").read_bytes()
+                ).hexdigest(),
+            },
+            manifest["artifacts"],
+        )
 
     def test_chinese_canonical_label_is_the_raw_authority_wikilink_target(self) -> None:
         self.add_identity_definitions({"chinese-concept-id": "中文名"})
@@ -527,6 +566,30 @@ class ObsidianExportTest(unittest.TestCase):
                     verify_obsidian_projection(self.output)
             finally:
                 fifo.unlink()
+
+        semantic_graph_path = self.output / "semantic-graph.json"
+        semantic_graph = json.loads(semantic_graph_path.read_text(encoding="utf-8"))
+        semantic_graph["concepts"][0]["label"] = "Tampered"
+        semantic_content = (
+            json.dumps(semantic_graph, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode("utf-8")
+        semantic_graph_path.write_bytes(semantic_content)
+        manifest_path = self.output / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        semantic_artifact = next(
+            item for item in manifest["artifacts"] if item["kind"] == "semantic-graph"
+        )
+        semantic_artifact["bytes"] = len(semantic_content)
+        semantic_artifact["sha256"] = hashlib.sha256(semantic_content).hexdigest()
+        manifest["projection_sha256"] = sha256_json(
+            {key: value for key, value in manifest.items() if key != "projection_sha256"}
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ObsidianExportError, "invalid semantic graph artifact"):
+            verify_obsidian_projection(self.output)
 
     def test_verifier_rejects_symlink_manifest_before_reading_it(self) -> None:
         self.build()

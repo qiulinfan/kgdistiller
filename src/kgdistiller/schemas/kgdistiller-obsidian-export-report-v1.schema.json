@@ -27,11 +27,12 @@
     "policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nodes", "edges", "edge_semantics_in_obsidian_graph", "authority_links"],
+      "required": ["nodes", "edges", "edge_semantics_in_obsidian_graph", "plugin_graph", "authority_links"],
       "properties": {
         "nodes": {"const": "active-knowledge"},
         "edges": {"const": "current-semantic"},
         "edge_semantics_in_obsidian_graph": {"const": "lossy"},
+        "plugin_graph": {"const": "typed"},
         "authority_links": {"enum": ["vault-relative", "file-uri"]}
       }
     },

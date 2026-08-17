@@ -22,11 +22,12 @@
     "policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nodes", "edges", "edge_semantics_in_obsidian_graph", "authority_links"],
+      "required": ["nodes", "edges", "edge_semantics_in_obsidian_graph", "plugin_graph", "authority_links"],
       "properties": {
         "nodes": {"const": "active-knowledge"},
         "edges": {"const": "current-semantic"},
         "edge_semantics_in_obsidian_graph": {"const": "lossy"},
+        "plugin_graph": {"const": "typed"},
         "authority_links": {"enum": ["vault-relative", "file-uri"]}
       }
     },
@@ -42,22 +43,40 @@
     },
     "artifacts": {
       "type": "array",
+      "minItems": 1,
+      "contains": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {"kind": {"const": "semantic-graph"}}
+      },
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["kind", "path", "bytes", "sha256"],
         "properties": {
-          "kind": {"enum": ["concept", "source"]},
-          "path": {"$ref": "#/$defs/path"},
+          "kind": {"enum": ["concept", "source", "semantic-graph"]},
+          "path": {"$ref": "#/$defs/artifact_path"},
           "bytes": {"type": "integer", "minimum": 0},
           "sha256": {"$ref": "#/$defs/sha256"}
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {"kind": {"const": "semantic-graph"}}
+            },
+            "then": {"properties": {"path": {"const": "semantic-graph.json"}}},
+            "else": {"properties": {"path": {"$ref": "#/$defs/note_path"}}}
+          }
+        ]
       }
     },
     "projection_sha256": {"$ref": "#/$defs/sha256"}
   },
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"}
+    "artifact_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?:.+\\.md|semantic-graph\\.json)$"},
+    "note_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"}
   }
 }

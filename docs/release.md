@@ -41,6 +41,7 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | `kgdistiller-static-export-report-v1` | yes | output | Static export operation and cleanup result. |
 | `kgdistiller-static-export-verification-v1` | yes | output | Standalone verifier result. |
 | `kgdistiller-obsidian-projection-v1` | yes | yes | Lossy downstream Obsidian projection. |
+| `kgdistiller-obsidian-graph-v1` | yes | yes | Typed, source-backed Obsidian plugin graph. |
 | `kgdistiller-obsidian-export-report-v1` | yes | output | Obsidian build or verification result. |
 | `kgdistiller-obsidian-concept-v1` | yes | output | Generated concept-note frontmatter tag. |
 | `kgdistiller-obsidian-source-v1` | yes | output | Generated source-proxy frontmatter tag. |
@@ -97,6 +98,7 @@ Run from a clean engine worktree:
 uv run python -m unittest discover -s tests -v
 uv build --out-dir build/release/0.4.0
 uv run python scripts/check_distribution.py --dist-root build/release/0.4.0
+cd integrations/obsidian && npm ci && npm run check
 ```
 
 Then verify that:
@@ -124,7 +126,10 @@ Then verify that:
   rejects dirty/untracked instance inputs, and preserves an existing valid
   destination on failed `--replace`;
 - Obsidian export validates its managed boundary, rejects unsafe/unmanaged
-  replacement, and can be regenerated solely from the native graph;
+  replacement, emits one closed typed plugin graph, and can be regenerated
+  solely from the native graph;
+- the Obsidian plugin passes contract/parser tests, type checking, and a
+  production bundle build;
 - every materially updated Skill passes the active `skill-creator` validator,
   product doctor, and an isolated Agent evaluation;
 - POSIX and Windows copy/link doctor tests preserve unrelated Codex files;

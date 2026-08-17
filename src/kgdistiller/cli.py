@@ -542,6 +542,7 @@ def find_matching(text: str, start: int, opening: str, closing: str) -> int:
     depth = 0
     content_depth = 0
     quote = False
+    math = False
     escaped = False
     for index in range(start, len(text)):
         character = text[index]
@@ -555,6 +556,16 @@ def find_matching(text: str, start: int, opening: str, closing: str) -> int:
             continue
         if character == '"' and (index == 0 or text[index - 1] != "\\"):
             quote = True
+            continue
+        # Typst math uses ``$...$`` and square brackets inside it are ordinary
+        # interval/set delimiters, not nested content blocks. In particular,
+        # half-open intervals such as ``$[0,1)$`` are intentionally unbalanced
+        # as square brackets and must not consume the surrounding statement's
+        # closing content delimiter.
+        if character == "$" and (index == 0 or text[index - 1] != "\\"):
+            math = not math
+            continue
+        if math:
             continue
         if opening == "(" and character == "[" and (index == 0 or text[index - 1] != "\\"):
             content_depth += 1

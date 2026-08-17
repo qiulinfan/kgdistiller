@@ -120,12 +120,79 @@ def minimal_obsidian() -> dict:
                 "nodes": "active-knowledge",
                 "edges": "current-semantic",
                 "edge_semantics_in_obsidian_graph": "lossy",
+                "plugin_graph": "typed",
                 "authority_links": "vault-relative",
             },
             "counts": {"concepts": 0, "sources": 0, "links": 0},
-            "artifacts": [],
+            "artifacts": [
+                {
+                    "kind": "semantic-graph",
+                    "path": "semantic-graph.json",
+                    "bytes": 0,
+                    "sha256": digest,
+                }
+            ],
         },
         "projection_sha256",
+    )
+
+
+def minimal_obsidian_graph() -> dict:
+    digest = "9" * 64
+    return finalize_self_digest(
+        {
+            "schema": "kgdistiller-obsidian-graph-v1",
+            "source": {
+                "graph_schema": "kgdistiller-graph-v1",
+                "graph_sha256": digest,
+                "snapshot_sha256": digest,
+                "source_hashes_sha256": digest,
+            },
+            "counts": {
+                "concepts": 1,
+                "sources": 1,
+                "semantic_edges": 0,
+                "definitions": 1,
+                "references": 1,
+            },
+            "concepts": [
+                {
+                    "id": "measure",
+                    "label": "Measure",
+                    "note_path": "concepts/Measure.md",
+                    "authority": "notes/chapter.md",
+                    "curation_status": "current",
+                    "aliases": ["Measure"],
+                    "fields": ["mathematics"],
+                }
+            ],
+            "sources": [
+                {
+                    "authority": "notes/chapter.md",
+                    "note_path": "sources/notes/chapter.md.md",
+                }
+            ],
+            "semantic_edges": [],
+            "definitions": [
+                {
+                    "source_authority": "notes/chapter.md",
+                    "target": "measure",
+                    "line_start": 1,
+                    "line_end": 3,
+                }
+            ],
+            "references": [
+                {
+                    "id": "notes/chapter.md:7:measure",
+                    "source_authority": "notes/chapter.md",
+                    "target": "measure",
+                    "label": "Measure",
+                    "line": 7,
+                    "context": "A reference to Measure.",
+                }
+            ],
+        },
+        "bundle_sha256",
     )
 
 
@@ -163,6 +230,7 @@ def minimal_obsidian_report() -> dict:
             "nodes": "active-knowledge",
             "edges": "current-semantic",
             "edge_semantics_in_obsidian_graph": "lossy",
+            "plugin_graph": "typed",
             "authority_links": "vault-relative",
         },
         "counts": {"concepts": 0, "sources": 0, "links": 0},
@@ -226,6 +294,7 @@ class ContractTest(unittest.TestCase):
                 "kgdistiller-store-v1",
                 "kgdistiller-store-report-v1",
                 "kgdistiller-obsidian-projection-v1",
+                "kgdistiller-obsidian-graph-v1",
                 "kgdistiller-obsidian-export-report-v1",
                 "kgdistiller-static-export-v1",
                 "kgdistiller-static-export-report-v1",
@@ -247,6 +316,7 @@ class ContractTest(unittest.TestCase):
                 minimal_store(),
                 minimal_store_report(),
                 minimal_obsidian(),
+                minimal_obsidian_graph(),
                 minimal_obsidian_report(),
                 minimal_static_report(),
             ]
@@ -280,6 +350,7 @@ class ContractTest(unittest.TestCase):
         cases = [
             (minimal_query_status(), ("graph_schema",)),
             (minimal_obsidian(), ("source", "graph_schema")),
+            (minimal_obsidian_graph(), ("source", "graph_schema")),
             (minimal_obsidian_report(), ("source", "graph_schema")),
             (minimal_static_report(), ("graph", "private_schema")),
             (fixture("kgdistiller-static-export-v1"), ("graph", "private_schema")),
@@ -297,12 +368,26 @@ class ContractTest(unittest.TestCase):
         for payload, field in (
             (minimal_store(), "store_sha256"),
             (minimal_obsidian(), "projection_sha256"),
+            (minimal_obsidian_graph(), "bundle_sha256"),
         ):
             payload["status" if "status" in payload else "generator"] = "tampered"
             with self.subTest(schema=payload["schema"]):
                 with self.assertRaises(ContractError):
                     validate_contract(payload)
             self.assertNotEqual(payload[field], self_digest(payload, field))
+
+    def test_obsidian_graph_requires_closed_endpoints_and_exact_counts(self) -> None:
+        payload = minimal_obsidian_graph()
+        payload["references"][0]["target"] = "unknown"
+        payload = finalize_self_digest(payload, "bundle_sha256")
+        with self.assertRaisesRegex(ContractError, "unknown endpoint"):
+            validate_contract(payload)
+
+        payload = minimal_obsidian_graph()
+        payload["counts"]["references"] = 0
+        payload = finalize_self_digest(payload, "bundle_sha256")
+        with self.assertRaisesRegex(ContractError, "counts do not match"):
+            validate_contract(payload)
 
     def test_search_execution_identity_indices_are_contiguous(self) -> None:
         payload = fixture("kgdistiller-search-execution-v1")

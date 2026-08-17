@@ -238,6 +238,15 @@ subtree is not authority. It must never be registered in
 `knowledge/sources.json`, scanned, or ingested back; regenerate it from the
 Markdown, Typst, or LaTeX authorities and the deterministic graph.
 
+Every Obsidian projection includes one `kgdistiller-obsidian-graph-v1` JSON
+artifact. It closes concept IDs, source authorities, semantic endpoints,
+definition endpoints, and reference endpoints; binds the originating graph,
+snapshot, and source inventory digests; and has its own canonical
+`bundle_sha256`. This is the only supported input to the Obsidian plugin. The
+plugin must not parse `nodes.jsonl`, `edges.jsonl`, or `references.jsonl`
+directly. The native graph remains a no-plugin, lossy link projection, while
+the plugin graph retains semantic relation labels, direction, and evidence.
+
 ## Required invariants
 
 - at most one active authority marker per global knowledge name;

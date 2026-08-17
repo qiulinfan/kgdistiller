@@ -1,0 +1,10 @@
+{
+  "id": "kgdistiller",
+  "name": "kgdistiller",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Explore typed semantic relations and source references from a kgdistiller vault.",
+  "author": "Qiulin Fan",
+  "authorUrl": "https://github.com/qiulinfan",
+  "isDesktopOnly": false
+}

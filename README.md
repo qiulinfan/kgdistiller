@@ -285,6 +285,13 @@ Markdown authorities elsewhere in the same vault. An output outside the
 repository is a browsing-only vault/projection and uses `file:` links back to
 authority files. The managed subtree is never authority, must not be registered
 in `sources.json`, and must never be scanned or ingested back into kgdistiller.
+The same export also writes a digest-bound `kgdistiller-obsidian-graph-v1`
+artifact at `knowledge/build/obsidian/semantic-graph.json`. Obsidian's native
+graph still treats the generated Wikilinks as ordinary links; the optional
+[kgdistiller Obsidian plugin](integrations/obsidian/README.md) reads this JSON in
+a separate view and preserves semantic edge type, direction, evidence, and the
+distinct source-definition/reference layers. The plugin is read-only and never
+turns the projection into authority.
 For a registered Markdown definition, a portable, collision-free exact
 Wikilink target becomes the projection filename; Typst and LaTeX definitions
 use their canonical label. This lets native Markdown `[[Label]]` references and
@@ -319,6 +326,7 @@ must pass:
 uv run python -m unittest discover -s tests -v
 uv build --out-dir build/release/0.4.0
 uv run python scripts/check_distribution.py --dist-root build/release/0.4.0
+cd integrations/obsidian && npm ci && npm run check
 ```
 
 See [docs/graph-contract.md](docs/graph-contract.md),

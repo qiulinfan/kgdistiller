@@ -61,6 +61,10 @@ require incrementing the affected contract version.
   source to `kgdistiller-graph-v1`; 0.4 does not read pre-0.4 bundle manifests.
 - Add `kgdistiller-obsidian-projection-v1` as a lossy, disposable downstream export
   that is never registered, rescanned, or used for round-trip authoring.
+- Add a read-only Obsidian plugin and the digest-bound
+  `kgdistiller-obsidian-graph-v1` projection. The custom view keeps semantic
+  edge type, direction, and evidence distinct from source definition/reference
+  edges while native Obsidian backlinks continue to work independently.
 - Remove superseded 0.3 database/vector design specifications; Git history is
   their archive.
 

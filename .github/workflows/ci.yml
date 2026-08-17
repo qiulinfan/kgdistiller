@@ -8,6 +8,32 @@ permissions:
   contents: read
 
 jobs:
+  obsidian-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/obsidian
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: integrations/obsidian/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - name: Validate installable plugin files
+        run: test -s main.js && test -s manifest.json && test -s styles.css
+      - name: Upload plugin bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: kgdistiller-obsidian-0.1.0
+          path: |
+            integrations/obsidian/main.js
+            integrations/obsidian/manifest.json
+            integrations/obsidian/styles.css
+          if-no-files-found: error
+
   linux-versions:
     strategy:
       fail-fast: false

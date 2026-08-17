@@ -160,6 +160,12 @@ links back with `file:` URLs. Never register projected output as a source,
 rescan it, or use edits in it to update the graph. Replace the projection from
 the identity and entry authorities instead.
 
+The projection contains `semantic-graph.json`, a validated
+`kgdistiller-obsidian-graph-v1` plugin boundary. Native Obsidian keeps using
+ordinary Wikilinks and backlinks. The optional kgdistiller plugin adds a
+separate typed graph view over semantic, definition, and reference edges; it
+does not read private JSONL graph internals or write any authority.
+
 ## Deployment receipt
 
 Record the absolute project/store root, installed kgdistiller version and exact

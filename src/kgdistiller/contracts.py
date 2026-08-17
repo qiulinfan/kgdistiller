@@ -24,6 +24,7 @@ CONTRACT_SCHEMAS = {
         "kgdistiller-store-v1",
         "kgdistiller-store-report-v1",
         "kgdistiller-obsidian-projection-v1",
+        "kgdistiller-obsidian-graph-v1",
         "kgdistiller-obsidian-export-report-v1",
         "kgdistiller-static-export-v1",
         "kgdistiller-static-export-report-v1",
@@ -33,6 +34,7 @@ CONTRACT_SCHEMAS = {
 SELF_DIGEST_FIELDS = {
     "kgdistiller-store-v1": "store_sha256",
     "kgdistiller-obsidian-projection-v1": "projection_sha256",
+    "kgdistiller-obsidian-graph-v1": "bundle_sha256",
     "kgdistiller-static-export-v1": "export_sha256",
     "kgdistiller-site-graph-v1": "graph_sha256",
 }
@@ -146,6 +148,73 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
     validate_contract(result)
 
 
+def _validate_obsidian_graph(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "kgdistiller-obsidian-graph-v1":
+        return
+    concepts = payload.get("concepts") or []
+    sources = payload.get("sources") or []
+    semantic_edges = payload.get("semantic_edges") or []
+    definitions = payload.get("definitions") or []
+    references = payload.get("references") or []
+    expected_counts = {
+        "concepts": len(concepts),
+        "sources": len(sources),
+        "semantic_edges": len(semantic_edges),
+        "definitions": len(definitions),
+        "references": len(references),
+    }
+    if payload.get("counts") != expected_counts:
+        raise ContractError("Obsidian graph counts do not match its arrays")
+    concept_ids = [str(item["id"]) for item in concepts]
+    source_authorities = [str(item["authority"]) for item in sources]
+    if len(concept_ids) != len(set(concept_ids)):
+        raise ContractError("Obsidian graph contains duplicate concept IDs")
+    if len(source_authorities) != len(set(source_authorities)):
+        raise ContractError("Obsidian graph contains duplicate source authorities")
+    concept_set = set(concept_ids)
+    source_set = set(source_authorities)
+    note_paths = [
+        str(item["note_path"])
+        for item in [*concepts, *sources]
+    ]
+    if len(note_paths) != len(set(note_paths)):
+        raise ContractError("Obsidian graph contains duplicate note paths")
+    if any(str(item["authority"]) not in source_set for item in concepts):
+        raise ContractError("Obsidian graph concept has an unknown source authority")
+    edge_keys: set[tuple[str, str, str]] = set()
+    for edge in semantic_edges:
+        key = (str(edge["source"]), str(edge["relation"]), str(edge["target"]))
+        if key[0] not in concept_set or key[2] not in concept_set:
+            raise ContractError("Obsidian graph semantic edge has an unknown endpoint")
+        if key in edge_keys:
+            raise ContractError("Obsidian graph contains duplicate semantic edges")
+        edge_keys.add(key)
+    definition_targets: set[str] = set()
+    for definition in definitions:
+        source = str(definition["source_authority"])
+        target = str(definition["target"])
+        if source not in source_set or target not in concept_set:
+            raise ContractError("Obsidian graph definition has an unknown endpoint")
+        if int(definition["line_end"]) < int(definition["line_start"]):
+            raise ContractError("Obsidian graph definition line range is reversed")
+        if target in definition_targets:
+            raise ContractError("Obsidian graph concept has multiple definitions")
+        definition_targets.add(target)
+    if definition_targets != concept_set:
+        raise ContractError("Obsidian graph concepts must each have one definition")
+    reference_ids: set[str] = set()
+    for reference in references:
+        reference_id = str(reference["id"])
+        if (
+            str(reference["source_authority"]) not in source_set
+            or str(reference["target"]) not in concept_set
+        ):
+            raise ContractError("Obsidian graph reference has an unknown endpoint")
+        if reference_id in reference_ids:
+            raise ContractError("Obsidian graph contains duplicate reference IDs")
+        reference_ids.add(reference_id)
+
+
 def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
     """Validate a supported contract and its self-digest, failing closed."""
     if not isinstance(payload, dict):
@@ -162,6 +231,7 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         raise ContractError(_format_violation(errors[0]))
     _validate_document_record(payload)
     _validate_search_execution(payload)
+    _validate_obsidian_graph(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:
         claimed = payload.get(digest_field)

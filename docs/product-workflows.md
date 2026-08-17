@@ -73,6 +73,10 @@ view; never register that subtree in `sources.json`, rescan it, feed it to
 candidate/ingest, or treat projected-note edits as round-trip authority. An
 external output is a browsing-only vault/projection. Rebuild either projection
 with `--replace` from the authority graph.
+The optional Obsidian plugin consumes only the generated
+`kgdistiller-obsidian-graph-v1` `semantic-graph.json`; it preserves typed
+semantic edges and source definition/reference edges without changing this
+authority boundary.
 
 ### Serve the native frontend
 

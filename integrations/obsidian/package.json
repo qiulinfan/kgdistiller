@@ -1,0 +1,30 @@
+{
+  "name": "kgdistiller-obsidian",
+  "version": "0.1.0",
+  "description": "Typed, source-backed kgdistiller graph view for Obsidian.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "check": "npm run test && npm run build"
+  },
+  "keywords": [
+    "obsidian",
+    "knowledge-graph",
+    "kgdistiller"
+  ],
+  "author": "Qiulin Fan",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "cytoscape": "3.34.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "esbuild": "0.25.5",
+    "obsidian": "1.13.1",
+    "typescript": "^5.8.3",
+    "vitest": "4.1.10"
+  }
+}

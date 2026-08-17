@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-obsidian-graph-v1.schema.json",
+  "title": "kgdistiller Obsidian semantic graph v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "source", "counts", "concepts", "sources", "semantic_edges",
+    "definitions", "references", "bundle_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "kgdistiller-obsidian-graph-v1"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
+      "properties": {
+        "graph_schema": {"const": "kgdistiller-graph-v1"},
+        "graph_sha256": {"$ref": "#/$defs/sha256"},
+        "snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "source_hashes_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "counts": {"$ref": "#/$defs/counts"},
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "note_path", "authority", "curation_status", "aliases", "fields"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "label": {"type": "string", "minLength": 1},
+          "note_path": {"$ref": "#/$defs/note_path"},
+          "authority": {"$ref": "#/$defs/authority"},
+          "curation_status": {"enum": ["current", "pending", "needs-review"]},
+          "aliases": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "fields": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/id"}
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["authority", "note_path"],
+        "properties": {
+          "authority": {"$ref": "#/$defs/authority"},
+          "note_path": {"$ref": "#/$defs/note_path"}
+        }
+      }
+    },
+    "semantic_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "relation", "target", "evidence"],
+        "properties": {
+          "source": {"$ref": "#/$defs/id"},
+          "relation": {"type": "string", "minLength": 1, "not": {"const": "contains"}},
+          "target": {"$ref": "#/$defs/id"},
+          "evidence": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "definitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_authority", "target", "line_start", "line_end"],
+        "properties": {
+          "source_authority": {"$ref": "#/$defs/authority"},
+          "target": {"$ref": "#/$defs/id"},
+          "line_start": {"type": "integer", "minimum": 1},
+          "line_end": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "source_authority", "target", "label", "line"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "source_authority": {"$ref": "#/$defs/authority"},
+          "target": {"$ref": "#/$defs/id"},
+          "label": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "context": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "bundle_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "authority": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.(?:[mM][dD]|[tT][yY][pP]|[tT][eE][xX])$"
+    },
+    "note_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concepts", "sources", "semantic_edges", "definitions", "references"],
+      "properties": {
+        "concepts": {"type": "integer", "minimum": 0},
+        "sources": {"type": "integer", "minimum": 0},
+        "semantic_edges": {"type": "integer", "minimum": 0},
+        "definitions": {"type": "integer", "minimum": 0},
+        "references": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

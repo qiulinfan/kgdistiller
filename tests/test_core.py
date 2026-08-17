@@ -135,6 +135,26 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertIn('id: "sigma-algebra"', registry)
         self.assertIn("<math>", state.nodes["sigma-algebra"]["properties"]["label_html"])
 
+    def test_typst_math_interval_brackets_do_not_break_statement_scan(self) -> None:
+        self.chapter.write_text(
+            """#theorem(title: [Integral test])[
+  Let #kn[the test domain] be $[1,infinity)$.
+]
+
+#example(title: [Half-open domain])[
+  Let #kn[the example domain] be $x in [0,1)$ and #strong[bounded].
+]
+""",
+            encoding="utf-8",
+        )
+        spec = knowledge.load_sources(self.repo, self.registry)[0]
+        result = knowledge.scan_source(self.repo, spec, self.chapter, {})
+        self.assertEqual([], result.errors)
+        self.assertEqual(
+            {"the-test-domain", "the-example-domain"},
+            {item.id for item in result.definitions},
+        )
+
     def test_graph_entry_url_is_derived_from_registered_note_web(self) -> None:
         state = knowledge.GraphState(
             nodes={

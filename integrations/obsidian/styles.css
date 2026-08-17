@@ -1,0 +1,141 @@
+.kgd-graph-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+.kgd-toolbar {
+  align-items: end;
+  border-bottom: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.kgd-control {
+  display: grid;
+  font-size: var(--font-ui-smaller);
+  gap: 3px;
+}
+
+.kgd-control > span {
+  color: var(--text-muted);
+}
+
+.kgd-toggle {
+  align-items: center;
+  display: flex;
+  font-size: var(--font-ui-small);
+  gap: 5px;
+  min-height: var(--input-height);
+}
+
+.kgd-icon-button {
+  margin-bottom: 2px;
+}
+
+.kgd-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 28%);
+  min-height: 0;
+}
+
+.kgd-canvas {
+  background:
+    radial-gradient(circle at center, transparent 0, var(--background-primary) 75%),
+    var(--background-primary);
+  min-height: 360px;
+  min-width: 0;
+  position: relative;
+}
+
+.kgd-details {
+  background: var(--background-secondary);
+  border-left: 1px solid var(--background-modifier-border);
+  overflow: auto;
+  padding: 14px;
+}
+
+.kgd-details h3 {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.kgd-details blockquote {
+  margin-inline: 0;
+  overflow-wrap: anywhere;
+}
+
+.kgd-detail-row {
+  font-size: var(--font-ui-small);
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+
+.kgd-kind {
+  border-radius: 999px;
+  color: white;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
+.kgd-kind-concept,
+.kgd-kind-semantic {
+  background: #7c3aed;
+}
+
+.kgd-kind-source,
+.kgd-kind-definition {
+  background: #059669;
+}
+
+.kgd-kind-reference {
+  background: #0284c7;
+}
+
+.kgd-legend {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  padding-inline-start: 18px;
+}
+
+.kgd-empty-state {
+  color: var(--text-muted);
+  left: 50%;
+  max-width: 460px;
+  position: absolute;
+  text-align: center;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.kgd-status {
+  border-top: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  padding: 5px 12px;
+}
+
+.kgd-status-error {
+  color: var(--text-error);
+}
+
+@media (max-width: 700px) {
+  .kgd-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(360px, 1fr) auto;
+  }
+
+  .kgd-details {
+    border-left: 0;
+    border-top: 1px solid var(--background-modifier-border);
+    max-height: 35vh;
+  }
+}

@@ -23,13 +23,19 @@ from .cli import (
     sha256_authority_file,
     source_registry_sha256,
 )
-from .contracts import sha256_json, validate_contract
+from .contracts import (
+    ContractError,
+    finalize_self_digest,
+    sha256_json,
+    validate_contract,
+)
 from .json_schema import validate_json_schema
 from .query import GraphView, QueryError, load_graph_view
 
 
 PROJECTION_SCHEMA = "kgdistiller-obsidian-projection-v1"
 PROJECTION_REPORT_SCHEMA = "kgdistiller-obsidian-export-report-v1"
+PLUGIN_GRAPH_SCHEMA = "kgdistiller-obsidian-graph-v1"
 CONCEPT_SCHEMA = "kgdistiller-obsidian-concept-v1"
 SOURCE_SCHEMA = "kgdistiller-obsidian-source-v1"
 _WIKILINK_SEMANTIC_RE = re.compile(r"%%|[#^|\[\]\\\r\n]")
@@ -610,6 +616,130 @@ def _artifact_record(relative: str, content: bytes, kind: str) -> dict[str, Any]
     }
 
 
+def _build_plugin_graph(
+    *,
+    graph_sha256: str,
+    snapshot_sha256: str,
+    source_hashes_sha256: str,
+    nodes: dict[str, dict[str, Any]],
+    authorities: list[str],
+    concept_relatives: dict[str, Path],
+    semantic_edges: list[dict[str, Any]],
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the typed, read-only graph consumed by the Obsidian plugin."""
+
+    concepts: list[dict[str, Any]] = []
+    definitions: list[dict[str, Any]] = []
+    for node_id, node in sorted(nodes.items()):
+        properties = (
+            node.get("properties") if isinstance(node.get("properties"), dict) else {}
+        )
+        provenance = (
+            node.get("provenance") if isinstance(node.get("provenance"), dict) else {}
+        )
+        label = str(node.get("label", node_id)).strip() or node_id
+        authority = str(provenance.get("authority", ""))
+        aliases = sorted(
+            {
+                str(value).strip()
+                for value in [label, *(properties.get("aliases") or [])]
+                if str(value).strip() and str(value).strip() != node_id
+            },
+            key=lambda value: value.casefold(),
+        )
+        fields = sorted(
+            {
+                str(value).strip()
+                for value in properties.get("fields", [])
+                if str(value).strip()
+            }
+        )
+        concepts.append(
+            {
+                "id": node_id,
+                "label": label,
+                "note_path": concept_relatives[node_id].as_posix(),
+                "authority": authority,
+                "curation_status": str(properties.get("curation_status", "pending")),
+                "aliases": aliases,
+                "fields": fields,
+            }
+        )
+        line_start = int(
+            provenance.get("definition_start_line") or provenance.get("line") or 1
+        )
+        definitions.append(
+            {
+                "source_authority": authority,
+                "target": node_id,
+                "line_start": line_start,
+                "line_end": int(provenance.get("definition_end_line") or line_start),
+            }
+        )
+    sources = [
+        {
+            "authority": authority,
+            "note_path": _source_relative(authority).as_posix(),
+        }
+        for authority in authorities
+    ]
+    plugin_references: list[dict[str, Any]] = []
+    for reference in sorted(
+        references,
+        key=lambda item: (
+            str(item.get("authority", "")),
+            int(item.get("line", 0)),
+            str(item.get("target", "")),
+            str(item.get("id", "")),
+        ),
+    ):
+        target = str(reference.get("target", ""))
+        if target not in nodes:
+            continue
+        item: dict[str, Any] = {
+            "id": str(reference.get("id", "")),
+            "source_authority": str(reference.get("authority", "")),
+            "target": target,
+            "label": str(reference.get("label") or target),
+            "line": int(reference.get("line") or 1),
+        }
+        context = str(reference.get("context") or "").strip()
+        if context:
+            item["context"] = context
+        plugin_references.append(item)
+    graph = {
+        "schema": PLUGIN_GRAPH_SCHEMA,
+        "source": {
+            "graph_schema": GRAPH_SCHEMA,
+            "graph_sha256": graph_sha256,
+            "snapshot_sha256": snapshot_sha256,
+            "source_hashes_sha256": source_hashes_sha256,
+        },
+        "counts": {
+            "concepts": len(concepts),
+            "sources": len(sources),
+            "semantic_edges": len(semantic_edges),
+            "definitions": len(definitions),
+            "references": len(plugin_references),
+        },
+        "concepts": concepts,
+        "sources": sources,
+        "semantic_edges": sorted(
+            semantic_edges,
+            key=lambda edge: (edge["source"], edge["relation"], edge["target"]),
+        ),
+        "definitions": sorted(
+            definitions,
+            key=lambda item: (item["source_authority"], item["target"]),
+        ),
+        "references": plugin_references,
+    }
+    finalized = finalize_self_digest(graph, "bundle_sha256")
+    validate_contract(finalized)
+    return finalized
+
+
 def _schema() -> dict[str, Any]:
     path = Path(__file__).with_name("schemas") / "kgdistiller-obsidian-projection-v1.schema.json"
     return json.loads(path.read_text(encoding="utf-8"))
@@ -627,6 +757,15 @@ def verify_obsidian_projection(output: Path) -> dict[str, Any]:
     errors = validate_json_schema(manifest, _schema())
     if errors:
         raise ObsidianExportError(f"invalid projection manifest: {errors[0].message}")
+    semantic_artifacts = [
+        artifact
+        for artifact in manifest["artifacts"]
+        if artifact.get("kind") == "semantic-graph"
+    ]
+    if len(semantic_artifacts) != 1:
+        raise ObsidianExportError(
+            "projection must contain exactly one semantic graph artifact"
+        )
     digest_payload = dict(manifest)
     claimed = str(digest_payload.pop("projection_sha256", ""))
     if sha256_json(digest_payload) != claimed:
@@ -643,6 +782,13 @@ def verify_obsidian_projection(output: Path) -> dict[str, Any]:
         content = path.read_bytes()
         if len(content) != int(artifact["bytes"]) or _sha256_bytes(content) != artifact["sha256"]:
             raise ObsidianExportError(f"projection artifact digest mismatch: {relative}")
+        if artifact["kind"] == "semantic-graph":
+            try:
+                validate_contract(json.loads(content.decode("utf-8")))
+            except (ContractError, UnicodeError, json.JSONDecodeError) as error:
+                raise ObsidianExportError(
+                    f"invalid semantic graph artifact: {relative}: {error}"
+                ) from error
         declared.add(relative)
     actual = {
         path.relative_to(output).as_posix()
@@ -744,6 +890,7 @@ def build_obsidian_projection(
     relations: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
         node_id: [] for node_id in nodes
     }
+    semantic_edges: list[dict[str, Any]] = []
     link_count = 0
     for edge in snapshot["edges"]:
         source = str(edge.get("source", ""))
@@ -758,6 +905,14 @@ def build_obsidian_projection(
             continue
         relations[source].append(("outgoing", relation, nodes[target]))
         relations[target].append(("incoming", relation, nodes[source]))
+        semantic_edges.append(
+            {
+                "source": source,
+                "relation": relation,
+                "target": target,
+                "evidence": str(edge.get("evidence", "")).strip(),
+            }
+        )
         link_count += 2
     for values in relations.values():
         values.sort(key=lambda item: (item[1], str(item[2].get("label", "")), str(item[2]["id"])))
@@ -808,6 +963,22 @@ def build_obsidian_projection(
             target.write_bytes(content)
             artifacts.append(_artifact_record(relative.as_posix(), content, "source"))
             link_count += len(by_authority.get(authority, [])) + len(refs_by_authority.get(authority, []))
+        plugin_graph = _build_plugin_graph(
+            graph_sha256=graph_sha,
+            snapshot_sha256=str(snapshot["snapshot_sha256"]),
+            source_hashes_sha256=source_hashes_sha,
+            nodes=nodes,
+            authorities=authorities,
+            concept_relatives=concept_relatives,
+            semantic_edges=semantic_edges,
+            references=list(snapshot["references"]),
+        )
+        plugin_graph_content = _pretty_json(plugin_graph).encode("utf-8")
+        plugin_graph_relative = "semantic-graph.json"
+        _resolve(stage, plugin_graph_relative).write_bytes(plugin_graph_content)
+        artifacts.append(
+            _artifact_record(plugin_graph_relative, plugin_graph_content, "semantic-graph")
+        )
         artifacts.sort(key=lambda artifact: str(artifact["path"]))
         manifest: dict[str, Any] = {
             "schema": PROJECTION_SCHEMA,
@@ -822,6 +993,7 @@ def build_obsidian_projection(
                 "nodes": "active-knowledge",
                 "edges": "current-semantic",
                 "edge_semantics_in_obsidian_graph": "lossy",
+                "plugin_graph": "typed",
                 "authority_links": authority_link_mode,
             },
             "counts": {
