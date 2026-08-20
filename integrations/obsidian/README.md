@@ -74,6 +74,12 @@ the semantic graph file and reloads open graph views when that artifact changes.
 
 ## Roadmap
 
+- [ ] After the knowledge system and graph interaction model have matured,
+  extract the Obsidian integration into a standalone, community-publishable
+  plugin repository with root-level release metadata, dedicated release
+  automation, policy disclosures, and Obsidian directory submission. Keep the
+  in-product bundled installer as the development and self-hosted path until
+  that boundary is ready.
 - [ ] Add an explicit opt-in, desktop-only hot-update pipeline. Registered
   authority changes should trigger a debounced `kgdistiller sync` followed by
   `kgdistiller export obsidian --replace`; generated graph/build paths must be

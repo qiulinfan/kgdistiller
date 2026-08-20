@@ -18,6 +18,9 @@ and reviewed registries as a Git rollback point, preserve any curated content
 that needs human re-review, remove the old generated graph, and run an unscoped
 `sync`. Re-author retained metadata under `kgdistiller-agent-delta-v1`.
 
+Longer-term product and retrieval research directions are tracked in the
+[project roadmap](docs/roadmap.md).
+
 ## Authority markers
 
 Each global knowledge name has at most one active definition marker.

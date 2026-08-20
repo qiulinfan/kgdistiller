@@ -11,3 +11,9 @@
 - Run the complete unit test suite and package build for implementation changes.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
   this repository.
+- Claude Code integration is skills-only through
+  `scripts/link-claude-skills.sh` / `scripts/link-claude-skills.ps1`. Keep those
+  scripts independent of `workflows/manifest.json` and of the transactional
+  `kgdistiller codex link` installer; they must install no agents, workflows,
+  or receipts, and porting the full product integration to Claude Code needs
+  an explicit request.
