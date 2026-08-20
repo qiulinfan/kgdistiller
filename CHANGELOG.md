@@ -6,6 +6,13 @@ require incrementing the affected contract version.
 
 ## 0.4.0 — unreleased
 
+- Port the full product integration to Claude Code: transactional
+  `kgdistiller claude link` / `kgdistiller claude doctor` driven by
+  `workflows/claude-manifest.json` install the Skills, the Claude Code agent
+  presets from `.claude/agents/*.md`, and the canonical product root below the
+  Claude Code home, with `kgdistiller-claude-links-v1` state and adoption of
+  symlinks previously created by the skills-only shortcut scripts. The shared
+  product-link engine is runtime-parameterized; Codex behavior is unchanged.
 - Add a cross-platform installed `kgdistiller`/`kgd` command with a strict
   machine-local vault registry at `~/.kgdistiller/vaults.json`. Commands can
   select a registered vault by name or stable UUID from any working directory,

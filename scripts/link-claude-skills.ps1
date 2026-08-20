@@ -3,9 +3,10 @@
 #
 # Links each skills\<name> of this checkout into the Claude Code user Skill
 # directory as an individually owned junction, so local edits are visible
-# immediately. It installs no agents, workflow manifests, or receipts: the
-# full product integration stays Codex-only (the transactional `kgdistiller codex link` installer),
-# and porting it to Claude Code is a separate project.
+# immediately. It is a development shortcut: it installs no agents, workflow
+# manifests, or receipts. The full transactional Claude Code product install
+# is `kgdistiller claude link` (see scripts/link-claude-product.ps1), which
+# adopts links created here.
 [CmdletBinding()]
 param([string]$ClaudeHome)
 
@@ -64,4 +65,4 @@ foreach ($skillDirectory in (Get-ChildItem -LiteralPath $repositorySkills -Direc
     $linked++
 }
 
-Write-Host "CLAUDE_SKILLS_OK ($linked kgdistiller Skills; skills-only, agents and workflows stay Codex-only)"
+Write-Host "CLAUDE_SKILLS_OK ($linked kgdistiller Skills; skills-only shortcut, run ``kgdistiller claude link`` for the full product install)"

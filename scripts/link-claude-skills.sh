@@ -3,9 +3,10 @@
 #
 # Links each skills/<name> of this checkout into the Claude Code user Skill
 # directory as an individually owned symlink, so local edits are visible
-# immediately. It installs no agents, workflow manifests, or receipts: the
-# full product integration stays Codex-only (the transactional `kgdistiller codex link` installer),
-# and porting it to Claude Code is a separate project.
+# immediately. It is a development shortcut: it installs no agents, workflow
+# manifests, or receipts. The full transactional Claude Code product install
+# is `kgdistiller claude link` (see scripts/link-claude-product.sh), which
+# adopts symlinks created here.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -63,5 +64,5 @@ for source_dir in "$skills_repo_dir"/*/; do
   linked=$((linked + 1))
 done
 
-printf 'ok: linked %s kgdistiller Skills into %s (skills-only; agents and workflows stay Codex-only)\n' \
+printf 'ok: linked %s kgdistiller Skills into %s (skills-only shortcut; run `kgdistiller claude link` for the full product install)\n' \
   "$linked" "$claude_skills_dir"

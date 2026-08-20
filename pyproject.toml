@@ -37,9 +37,12 @@ packages = ["src/kgdistiller"]
 "skills" = "kgdistiller/product/skills"
 "workflows" = "kgdistiller/product/workflows"
 ".codex/agents" = "kgdistiller/product/.codex/agents"
+".claude/agents" = "kgdistiller/product/.claude/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
+"scripts/link-claude-product.sh" = "kgdistiller/product/scripts/link-claude-product.sh"
+"scripts/link-claude-product.ps1" = "kgdistiller/product/scripts/link-claude-product.ps1"
 "integrations/obsidian/main.js" = "kgdistiller/obsidian_plugin/main.js"
 "integrations/obsidian/manifest.json" = "kgdistiller/obsidian_plugin/manifest.json"
 "integrations/obsidian/styles.css" = "kgdistiller/obsidian_plugin/styles.css"
@@ -52,9 +55,12 @@ include = [
   "skills/**",
   "workflows/**",
   ".codex/agents/*.toml",
+  ".claude/agents/*.md",
   "docs/product-workflows.md",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",
+  "scripts/link-claude-product.sh",
+  "scripts/link-claude-product.ps1",
   "integrations/obsidian/main.js",
   "integrations/obsidian/manifest.json",
   "integrations/obsidian/styles.css",

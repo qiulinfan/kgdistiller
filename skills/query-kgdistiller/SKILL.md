@@ -1,6 +1,6 @@
 ---
 name: query-kgdistiller
-description: Query a kgdistiller external-brain graph without reading or mutating its graph files. Use when an Agent must batch-resolve canonical names and aliases, run deterministic lexical or graph retrieval, retrieve a bounded source-backed neighborhood, align a candidate note or paper graph, classify candidate identity as matched, ambiguous, or unmatched, or connect an isolated graph to a personal graph before authoring.
+description: Query a kgdistiller external-brain graph without reading or mutating its graph files. Use when an Agent must batch-resolve canonical names and aliases, run deterministic lexical or graph retrieval, retrieve a bounded source-backed neighborhood, align a candidate note or paper graph, classify candidate identity as matched, ambiguous, or unmatched, or connect an isolated graph to a personal graph before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Query kgdistiller

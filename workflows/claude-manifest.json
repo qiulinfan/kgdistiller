@@ -1,0 +1,216 @@
+{
+  "schema": "kgdistiller-claude-workflows-v1",
+  "product": "kgdistiller",
+  "version": 1,
+  "installation": {
+    "product_root": "workflow-products/kgdistiller",
+    "state": ".kgdistiller-product-links.json"
+  },
+  "workflow_guide": "docs/product-workflows.md",
+  "linkers": [
+    {
+      "platform": "posix",
+      "path": "scripts/link-claude-product.sh"
+    },
+    {
+      "platform": "windows",
+      "path": "scripts/link-claude-product.ps1"
+    }
+  ],
+  "skills": [
+    {
+      "name": "curate-kgdistiller-notes",
+      "path": "skills/curate-kgdistiller-notes"
+    },
+    {
+      "name": "deploy-kgdistiller",
+      "path": "skills/deploy-kgdistiller"
+    },
+    {
+      "name": "distill-paper-knowledge",
+      "path": "skills/distill-paper-knowledge"
+    },
+    {
+      "name": "extract-paper-markdown",
+      "path": "skills/extract-paper-markdown"
+    },
+    {
+      "name": "import-paper-knowledge",
+      "path": "skills/import-paper-knowledge"
+    },
+    {
+      "name": "ingest-kgdistiller",
+      "path": "skills/ingest-kgdistiller"
+    },
+    {
+      "name": "query-kgdistiller",
+      "path": "skills/query-kgdistiller"
+    },
+    {
+      "name": "trace-concept-lineage",
+      "path": "skills/trace-concept-lineage"
+    }
+  ],
+  "agents": [
+    {
+      "name": "note-curator",
+      "path": ".claude/agents/note-curator.md",
+      "install_as": "kgdistiller-note-curator.md"
+    },
+    {
+      "name": "paper-distiller",
+      "path": ".claude/agents/paper-distiller.md",
+      "install_as": "kgdistiller-paper-distiller.md"
+    },
+    {
+      "name": "query-reviewer",
+      "path": ".claude/agents/query-reviewer.md",
+      "install_as": "kgdistiller-query-reviewer.md"
+    },
+    {
+      "name": "transaction-reviewer",
+      "path": ".claude/agents/transaction-reviewer.md",
+      "install_as": "kgdistiller-transaction-reviewer.md"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "curate-notes",
+      "description": "Extract a bounded registered note set, resolve identities, and apply one reviewed transaction.",
+      "steps": [
+        {
+          "id": "extract",
+          "skill": "curate-kgdistiller-notes",
+          "agent": "note-curator",
+          "mode": "author"
+        },
+        {
+          "id": "resolve",
+          "skill": "query-kgdistiller",
+          "agent": "query-reviewer",
+          "mode": "read-only"
+        },
+        {
+          "id": "commit",
+          "skill": "ingest-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "transaction"
+        }
+      ]
+    },
+    {
+      "id": "federate-paper",
+      "description": "Acquire a paper, build an isolated candidate graph, and align it without importing personal knowledge.",
+      "steps": [
+        {
+          "id": "acquire",
+          "skill": "extract-paper-markdown",
+          "agent": "paper-distiller",
+          "mode": "author"
+        },
+        {
+          "id": "distill",
+          "skill": "distill-paper-knowledge",
+          "agent": "paper-distiller",
+          "mode": "author"
+        },
+        {
+          "id": "align",
+          "skill": "query-kgdistiller",
+          "agent": "query-reviewer",
+          "mode": "read-only"
+        }
+      ]
+    },
+    {
+      "id": "import-paper",
+      "description": "Import only explicitly selected paper candidates into a registered research authority.",
+      "steps": [
+        {
+          "id": "select",
+          "skill": "import-paper-knowledge",
+          "agent": "paper-distiller",
+          "mode": "author"
+        },
+        {
+          "id": "revalidate",
+          "skill": "query-kgdistiller",
+          "agent": "query-reviewer",
+          "mode": "read-only"
+        },
+        {
+          "id": "commit",
+          "skill": "ingest-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "transaction"
+        }
+      ]
+    },
+    {
+      "id": "trace-lineage",
+      "description": "Research source-backed concept dossiers and derive a prerequisite-ordered learning route.",
+      "steps": [
+        {
+          "id": "trace",
+          "skill": "trace-concept-lineage",
+          "agent": "paper-distiller",
+          "mode": "author"
+        }
+      ]
+    },
+    {
+      "id": "portable-store",
+      "description": "Create or verify a file-based portable generation with Markdown authorities and a query-ready JSON graph.",
+      "steps": [
+        {
+          "id": "snapshot",
+          "skill": "deploy-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "transaction"
+        },
+        {
+          "id": "verify",
+          "skill": "deploy-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "read-only"
+        }
+      ]
+    },
+    {
+      "id": "publish-static",
+      "description": "Verify a portable store and create a privacy-filtered, independently verifiable static site bundle.",
+      "steps": [
+        {
+          "id": "verify",
+          "skill": "deploy-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "read-only"
+        },
+        {
+          "id": "export",
+          "skill": "deploy-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "export"
+        }
+      ]
+    },
+    {
+      "id": "export-obsidian",
+      "description": "Create a lossy downstream Obsidian projection that is never registered or rescanned as authority.",
+      "steps": [
+        {
+          "id": "verify",
+          "skill": "deploy-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "read-only"
+        },
+        {
+          "id": "export",
+          "skill": "deploy-kgdistiller",
+          "agent": "transaction-reviewer",
+          "mode": "export"
+        }
+      ]
+    }
+  ]
+}

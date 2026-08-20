@@ -98,6 +98,33 @@ the default so a new working directory can be initialized safely.
 Typst is required only when Typst-authored labels must be rendered. Markdown
 and LaTeX scanning use the Python standard library.
 
+## Agent install recipe
+
+kgdistiller is designed to be installed and driven by a coding agent: the user
+asks in natural language, the agent runs the commands. When a user says
+"install kgdistiller from this repository", the agent should:
+
+1. Install the command with `uv tool install
+   git+https://github.com/qiulinfan/kgdistiller.git` (or `uv sync` inside a
+   checkout) and verify `kgdistiller --help`.
+2. Detect which runtime it is and install that runtime's product integration:
+   Codex runs `kgdistiller codex link` then `kgdistiller codex doctor`;
+   Claude Code runs `kgdistiller claude link` then `kgdistiller claude doctor`.
+   Both installers are transactional, install Skills plus runtime agent
+   presets plus the canonical `workflow-products/kgdistiller` root, and never
+   touch unrelated global configuration.
+3. Register the user's knowledge vaults with `kgdistiller vault register
+   /absolute/path --name NAME` and validate them with `kgdistiller vault
+   doctor`.
+4. Smoke-test recall with `kgdistiller agent status` (add `--vault NAME`
+   outside a vault).
+
+After that no slash commands are needed. The installed Skills describe their
+own triggers, so requests like "file this note into my kgdt knowledge base" or
+"search my knowledge base for measure spaces" route to the curate, query, and
+ingest workflows automatically, and the installed agent presets give each
+workflow step a bounded reviewer.
+
 ## Vault data layout and derivation
 
 The editor/source tree is never used for generated files. Every managed
@@ -321,11 +348,17 @@ round-trip source.
 
 ## Product Skills and development
 
-Install the shipped Codex Skills, agent presets, and workflow manifest with:
+Install the shipped Skills, agent presets, and workflow manifest for the
+runtime you are using:
 
 ```sh
 kgdistiller codex link
 kgdistiller codex doctor
+```
+
+```sh
+kgdistiller claude link
+kgdistiller claude doctor
 ```
 
 The supported workflow order is documented in

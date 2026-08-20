@@ -3556,6 +3556,21 @@ def parse_args() -> argparse.Namespace:
     codex_doctor = codex_commands.add_parser("doctor")
     codex_doctor.add_argument("--codex-home", type=Path)
     codex_doctor.add_argument("--source-only", action="store_true")
+    claude_command = commands.add_parser("claude")
+    claude_commands = claude_command.add_subparsers(
+        dest="claude_command", required=True
+    )
+    claude_link = claude_commands.add_parser("link")
+    claude_link.add_argument("--claude-home", type=Path)
+    claude_link.add_argument(
+        "--mode",
+        choices=("auto", "symlink", "copy"),
+        default="auto",
+        help="auto requires live links; copy is an explicit non-live snapshot",
+    )
+    claude_doctor = claude_commands.add_parser("doctor")
+    claude_doctor.add_argument("--claude-home", type=Path)
+    claude_doctor.add_argument("--source-only", action="store_true")
     commands.add_parser("mcp")
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
@@ -3651,6 +3666,38 @@ def main() -> int:
                         {
                             "kind": "kgdistiller-codex-product-error",
                             "code": "codex-product-failed",
+                            "message": str(error),
+                        }
+                    ),
+                    end="",
+                    file=sys.stderr,
+                )
+                return 1
+            print(pretty_json(result), end="")
+            return 0
+        if args.command == "claude":
+            from .claude_product import (
+                ClaudeProductError,
+                doctor_claude_product,
+                link_claude_product,
+            )
+
+            try:
+                if args.claude_command == "link":
+                    result = link_claude_product(
+                        claude_home=args.claude_home, mode=args.mode
+                    )
+                else:
+                    result = doctor_claude_product(
+                        claude_home=args.claude_home,
+                        source_only=args.source_only,
+                    )
+            except (ClaudeProductError, OSError) as error:
+                print(
+                    pretty_json(
+                        {
+                            "kind": "kgdistiller-claude-product-error",
+                            "code": "claude-product-failed",
                             "message": str(error),
                         }
                     ),

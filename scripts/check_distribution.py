@@ -56,6 +56,7 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         REPO_ROOT / "skills",
         REPO_ROOT / "workflows",
         REPO_ROOT / ".codex" / "agents",
+        REPO_ROOT / ".claude" / "agents",
     )
     files = [
         path
@@ -68,6 +69,8 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         (
             REPO_ROOT / "scripts" / "link-codex-product.sh",
             REPO_ROOT / "scripts" / "link-codex-product.ps1",
+            REPO_ROOT / "scripts" / "link-claude-product.sh",
+            REPO_ROOT / "scripts" / "link-claude-product.ps1",
         )
     )
     for path in files:

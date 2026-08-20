@@ -1,27 +1,39 @@
 # kgdistiller product workflows
 
 kgdistiller owns the deterministic engine, native frontend, CLI/read-only MCP
-server, JSON Schemas, product Skills, Codex agent presets, and
-`workflows/manifest.json`. A knowledge project owns its Markdown, Typst, and
+server, JSON Schemas, product Skills, per-runtime agent presets, and the
+runtime workflow manifests `workflows/manifest.json` (Codex) and
+`workflows/claude-manifest.json` (Claude Code). Both manifests declare the
+same Skills and workflows; only linkers and agent-preset formats differ. A
+knowledge project owns its Markdown, Typst, and
 LaTeX identity authorities, `knowledge/derived/` evidence,
 `knowledge/entries/` atomic authorities, reviewed registries, `kgdistiller-graph-v1` graph,
 optional `kgdistiller-store-v1` snapshot, and explicitly adopted downstream exports.
 
-The manifest is the portable asset/workflow inventory. Install and validate it
-from a source checkout or package with:
+The manifests are the portable asset/workflow inventory. Install and validate
+the integration for the runtime you are using from a source checkout or
+package with:
 
 ```sh
 kgdistiller codex link
 kgdistiller codex doctor
 ```
 
+```sh
+kgdistiller claude link
+kgdistiller claude doctor
+```
+
 The portable entry is
-`$CODEX_HOME/workflow-products/kgdistiller/workflows/manifest.json`; resolve
-`workflow_guide` relative to that canonical product root. The linker manages
-only manifest-declared kgdistiller assets and namespaced state. It must not
-replace global `AGENTS.md`, `config.toml`, unrelated Skills, or unrelated agent
-presets. Explicit copy mode is a snapshot and must be refreshed after product
-changes; live link modes reflect source changes.
+`$CODEX_HOME/workflow-products/kgdistiller/workflows/manifest.json` for Codex
+and `workflow-products/kgdistiller/workflows/claude-manifest.json` below the
+Claude Code home (`$CLAUDE_CONFIG_DIR` when set, otherwise `.claude` in the
+user profile) for Claude Code; resolve `workflow_guide` relative to that
+canonical product root. Each linker manages only manifest-declared kgdistiller
+assets and namespaced state. It must not replace global `AGENTS.md`,
+`config.toml`, `CLAUDE.md`, `settings.json`, unrelated Skills, or unrelated
+agent presets. Explicit copy mode is a snapshot and must be refreshed after
+product changes; live link modes reflect source changes.
 
 ## Workflow boundaries
 

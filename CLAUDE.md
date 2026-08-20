@@ -2,12 +2,14 @@
 
 Read and follow `AGENTS.md` for repository conventions.
 
-Claude Code integration is currently skills-only: `scripts/link-claude-skills.sh`
-on POSIX/WSL or `scripts/link-claude-skills.ps1` on native Windows links each
-`skills/<name>` into the Claude Code user Skill directory (`~/.claude/skills`,
-honoring `CLAUDE_CONFIG_DIR`). These scripts are deliberately independent of the
-Codex product manifest (`workflows/manifest.json`) and of the transactional
-`kgdistiller codex link` installer; they install no agents, workflows, or
-receipts. Porting the full product integration (agents, workflow manifest,
-transactional install) to Claude Code is a separate project that needs an
-explicit request.
+Claude Code has the full product integration. `kgdistiller claude link`
+transactionally installs the Skills, the Claude Code agent presets from
+`.claude/agents/*.md`, and the canonical product root declared by
+`workflows/claude-manifest.json` into the Claude Code home (`~/.claude`,
+honoring `CLAUDE_CONFIG_DIR`); `kgdistiller claude doctor` verifies the
+installation. The `skills` and `workflows` sections of
+`workflows/claude-manifest.json` must stay identical to
+`workflows/manifest.json`. `scripts/link-claude-skills.sh` /
+`scripts/link-claude-skills.ps1` remain a skills-only development shortcut;
+the full installer adopts symlinks they created. The agent-facing install
+recipe lives in the README.
