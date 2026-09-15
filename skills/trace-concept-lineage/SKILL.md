@@ -1,24 +1,34 @@
 ---
 name: trace-concept-lineage
-description: Batch-distill a technical paper or concept inventory into source-backed concept dossiers, a typed knowledge graph, and a prerequisite-ordered reading route. Collapse generic calculus, linear algebra, and probability foundations into one assumed MATH-FOUNDATION node, and delegate independent domain concepts to parallel subagents that write disjoint files. Use when Codex must turn a paper into a one-session learning map, research many related concepts with authoritative web sources, or prepare non-interactive study material grounded in a target paper.
+description: Research paper-scoped methods and their concretely used prerequisites into source-backed dossiers and a reading route, with default read-only links to verified personal knowledge entries. Treat exact applicable matches as mastered and explain unmatched definitions, operations, theorems and inequalities without assuming whole-subject mastery; delegate new dossiers in parallel. Use for non-interactive learning maps and method-lineage research.
 ---
 
 # Trace Concept Lineage
 
 Distill a paper into a browsable concept library rather than teaching it
-interactively. Browsing is mandatory for every explained concept. Keep generic
-mathematical foundations compressed into one assumed node.
+interactively. Browsing is mandatory for every explained concept. Trace the
+specific prerequisites used by the paper and link verified personal entries
+through read-only queries. Per the user's convention, an exact applicable entry
+is mastered: link it and its use here without reteaching or copying the entry.
+
+## Align language and source
+
+Match explanations and handoffs to the user's language. Preserve commands and
+identifiers. Read LaTeX entrypoints and includes directly. Use source files, line
+ranges, sections and labels for provenance. Do not acquire/compile/render PDFs
+or create evidence directories. Source-only validation is sufficient to start;
+do not wait for parallel transcription or translation. Describe
+figures from source text and captions; state specific visual gaps.
 
 ## Inputs and output
 
 Use:
 
-- a paper repository, paper file, or complete paper text;
+- a validated arXiv LaTeX package (`source/`, `source.json`, `link.txt`);
 - an optional concept inventory, especially one produced by
   `$distill-paper-knowledge` candidate graph from an
   `$extract-paper-markdown` package;
-- the learner profile, defaulting to familiarity with foundational
-  mathematics;
+- the user's stated scope and explanation preferences, without assumed subject mastery;
 - an optional output directory.
 
 Default the output directory to `<paper-root>/learning/`. Follow
@@ -34,51 +44,62 @@ Read the complete source, or consume a complete source-grounded inventory.
 Inspect enough surrounding LaTeX, prose, equations, theorems, and experiments
 to determine what each term means in this paper.
 
-Create stable node IDs and canonical names before delegation. Keep concepts
-that are necessary to understand:
+Read `references/research-paper-contract.md` from the installed
+`$distill-paper-knowledge` Skill and apply its method/mechanism admission and
+paper-scoped identity rules before delegation, including for existing inventories. Retain
+concrete methods, algorithms and mechanisms with identifiable objects,
+operations or structure, and defining conditions. Also retain concrete definitions,
+operations, theorems and inequalities actually required by a specific paper step,
+with their exact form and assumptions. Attach conditions to their owning knowledge
+unit. Experimental data, evaluation settings, performance explanations,
+concept comparisons and review judgments belong in reading notes, not nodes.
 
-- the motivating problem;
-- the model, mechanism, objective, or algorithm;
-- the paper's assumptions and proof strategy;
-- architectural or data constraints;
-- the main results, comparisons, and failure modes.
+Do not promote a discussion heading such as "how bottleneck reduces computation"
+or "optimization versus generalization" into a node or dossier. A useful teaching
+topic alone is insufficient. Recheck legacy inventories instead of expanding
+every existing candidate automatically.
 
-Do not create nodes merely because a term appears. Merge aliases and paper-
-local renamings into one node unless their distinction matters to a result.
+Create stable IDs and paper-qualified canonical names before delegation. Preserve
+the paper identifier, version, full source digest and local terminology in every
+dossier. Merge aliases only after checking that they name the same mechanism
+within the same paper and version. Same-name mechanisms in other papers retain
+their source scope and require explicit comparison; never silently fold later
+variants into the target paper's definition.
 
-## 2. Collapse foundational mathematics
+## 2. Trace concrete dependencies and resolve existing entries
 
-Create exactly one assumed node:
+For each method, follow its actual computations and derivations. Retain the
+specific convolution operation, the particular inequality on Lp or ell-p spaces,
+or the exact law-of-large-numbers version used at that step, including shapes,
+exponent ranges, independence, integrability or other applicable conditions.
+These are examples of specificity, not a checklist to add to every paper.
+Never substitute a broad subject label or an assumed-foundation placeholder.
+Do not assume mastery of calculus, linear algebra or probability.
 
-`MATH-FOUNDATION — calculus, linear algebra, and probability foundations`
+For every dependency record the paper location, exact form and conditions,
+the step it enables, and its source-backed explanation. Distinguish a dependency
+explicitly invoked by the author from one inferred by your derivation. Do not
+claim a named theorem was used unless the source or a checked derivation supports
+that attribution. Expand only as needed to explain the retained paper steps;
+do not traverse an entire textbook or add nodes for subject coverage.
 
-Do not create dossiers for generic foundations such as:
+By default use `$query-kgdistiller` to resolve these dependencies in a bounded
+read-only batch against the configured personal knowledge base. Inspect the
+returned source-backed entries and compare exact definitions, forms and
+conditions. Preserve the verified knowledge handles and query generation/digests.
+A name match is a candidate for inspection, not a verified conceptual link.
+An exact matched entry whose meaning and conditions apply to this step is treated
+as mastered. Retain its handle and explain where it is used, without reteaching it
+or creating a duplicate dossier. A partial, ambiguous or inapplicable match needs
+local explanation. Never generalize one match into mastery of a whole subject.
+Preserve paper-scoped method
+identities and keep personal-entry links distinct from local semantic edges.
 
-- limits, derivatives, gradients, Jacobians, integrals, or routine ODE
-  manipulation;
-- vectors, matrices, linear maps, subspaces, projections, eigenvalues, rank,
-  norms, positive semidefiniteness, or Kronecker products;
-- random variables, distributions, densities, expectation, variance,
-  covariance, Gaussian variables, conditioning, Bayes' rule, or basic
-  asymptotics.
-
-Treat this node as an already-satisfied prerequisite. Use the mathematics
-compactly inside domain dossiers. Define only paper-local or domain-specific
-notation, not foundational operations.
-
-Do not collapse a domain mechanism merely because it is expressed
-mathematically. Keep concepts such as diffusion processes, Brownian motion in
-diffusion modeling, stochastic differential equations, reverse-time dynamics,
-score matching, denoisers, samplers, probability-flow ODEs, Wasserstein
-objectives, spectral obstructions, or architecture-specific invariants when
-they matter to the paper.
-
-For a borderline term, keep it as a separate node if at least one is true:
-
-- the paper's contribution or theorem depends on its domain-specific meaning;
-- changing it would change the model, algorithm, or conclusion;
-- it has a meaningful technical lineage beyond foundational mathematics;
-- its name is a useful standalone research query in the paper's field.
+If the user excludes the personal base, honor that scope. If access is unavailable
+or an entry is unmatched, ambiguous or unsuitable, record that state and retain
+the local explanation; do not invent handles, write to the base, or block ordinary
+reading. Reuse the
+parent's current verified batch where available instead of repeating the lookup.
 
 ## 3. Plan the global graph before writing
 
@@ -110,22 +131,27 @@ mere co-occurrence into a relationship.
 
 ## 4. Delegate concept dossiers in parallel
 
-Delegate each explainable node to a subagent. Use all safe available
+Delegate each new or unmatched explainable node to a subagent. Verified mastered
+prerequisites stay linked in the index and dependency ledger, without duplicate
+dossiers or extra workers. Use all safe available
 concurrency and refill slots until every node is complete. Assign one concept
 per subagent; assign a tightly coupled pair only when separating them would
 make either dossier incoherent.
 
 Give every worker:
 
-- the node ID, canonical name, aliases, and intended sense;
+- the node ID, paper-qualified canonical name, local aliases, and intended sense;
+- the owning paper identifier, version and full source digest;
 - the exact target file under `concepts/`;
 - the paper path and exact relevant locations or excerpts;
 - direct prerequisite and neighboring node IDs;
-- the learner assumption that `MATH-FOUNDATION` is mastered;
+- each concrete dependency's paper location, form/conditions, use step and
+  checked knowledge handle, or the explicit unresolved lookup state;
 - the dossier contract at
   [references/dossier-contract.md](references/dossier-contract.md);
 - an instruction to browse authoritative sources;
-- an instruction to write only its assigned file.
+- an instruction that other workers share the workspace, to preserve their edits
+  and write only its assigned file.
 
 Use minimal or no inherited conversation context when the orchestration
 environment supports it. Disjoint output paths are mandatory.
@@ -150,7 +176,7 @@ Each worker must not:
 - edit the paper source;
 - edit another concept dossier;
 - edit either global deliverable;
-- explain generic calculus, linear algebra, or probability;
+- expand mathematical subjects beyond the specific dependencies used here;
 - ask understanding questions or wait for learner interaction;
 - paste the dossier into its agent response.
 
@@ -184,9 +210,10 @@ independent retrospective source. Open every cited source. Cite the supporting
 page, not a search-results page. Prefer paraphrase to quotation and represent
 disagreements explicitly.
 
-Explain domain ideas from first principles while assuming the collapsed math
-node. Define each paper-local symbol before use, but do not reteach the
-mathematical operation that the symbol participates in.
+Explain the paper's ideas and the concrete mathematical steps they require.
+Define notation before use and explain an unmatched or inapplicable prerequisite
+where it is needed, with its conditions. For exact applicable personal matches,
+show the link and its role in this paper's step without re-explaining the entry.
 
 ## 6. Integrate and validate
 
@@ -197,7 +224,12 @@ After all workers finish, read every dossier and reconcile:
 - proposed edges and their directions;
 - conflicting historical claims;
 - missing citations or paper locations;
-- accidental foundational-math tutorials;
+- broad subject inventories or ungrounded prerequisite expansion;
+- whole-subject mastery inferred from a name match or one concrete matched entry;
+- duplicate explanations of verified mastered prerequisites;
+- dependency records missing forms, conditions, use steps or checked link states;
+- accidental result, evaluation or discussion nodes;
+- lost paper scope or same-name mechanisms merged across sources;
 - unresolved references to nonexistent nodes.
 
 The root agent decides which proposed edges enter the global graph. Mark an
@@ -207,7 +239,9 @@ Read each edge literally as `<from> <relation> <to>` to verify direction.
 Write `knowledge-graph.md` and `reading-route.md` only after dossier
 integration. The full graph may contain contrast or generalization cycles.
 Derive the reading route only from the acyclic `prerequisite-for` subgraph.
-Place `MATH-FOUNDATION` at stage 0 and mark it as assumed, with no dossier.
+Begin with the actual prerequisite nodes needed by this paper. Preserve verified
+mastered entries in the dependency order as linked references with no required
+rereading; explain only unresolved prerequisites before their dependent methods.
 
 ## 7. Deliver
 
@@ -217,8 +251,8 @@ Return links to:
 - `reading-route.md`;
 - the `concepts/` directory or its index.
 
-Report the number of explained nodes, the collapsed math node, and any
-material source gaps. Do not paste the dossiers or conduct a quiz unless the
+Report the explained methods and concrete prerequisites, verified personal links,
+and material source or lookup gaps. Do not paste the dossiers or conduct a quiz unless the
 user explicitly asks.
 
 ## Quality gate
@@ -226,7 +260,13 @@ user explicitly asks.
 Before delivery, verify:
 
 - every retained concept has a paper-grounded reason to exist;
-- generic mathematics appears only as `MATH-FOUNDATION`;
+- each method retains its paper scope and each prerequisite has a concrete paper use;
+- observations and discussion topics remain prose, not graph nodes;
+- no generic foundation placeholder or whole-subject mastery assumption appears;
+- every dependency has a location, exact form/conditions, use step and checked
+  knowledge handle or explicit unresolved lookup state;
+- personal queries were read-only; exact applicable matches are linked as mastered
+  without duplicate explanation, and unresolved dependencies are explained;
 - every explained node links to one complete dossier;
 - every dossier used authoritative web research and cites the paper location;
 - each dossier covers motivation, lineage, mechanism, formalism, contrasts,

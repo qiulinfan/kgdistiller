@@ -1,4 +1,4 @@
 interface:
-  display_name: "Extract Paper Markdown"
-  short_description: "Turn papers into traceable image-free Markdown"
-  default_prompt: "Use $extract-paper-markdown to acquire this paper and turn it into traceable image-free Markdown with semantic figure and table summaries."
+  display_name: "Read arXiv LaTeX Source"
+  short_description: "Prepare TeX sources and aligned bilingual full texts"
+  default_prompt: "Use $extract-paper-markdown to prepare this paper's LaTeX source and complete aligned English and Chinese Markdown readings."

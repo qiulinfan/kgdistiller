@@ -1,179 +1,120 @@
 from __future__ import annotations
-
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR = (
-    REPO_ROOT
-    / "skills"
-    / "extract-paper-markdown"
-    / "scripts"
-    / "validate_paper_markdown.py"
-)
-PREPARER = (
-    REPO_ROOT
-    / "skills"
-    / "extract-paper-markdown"
-    / "scripts"
-    / "prepare_paper.py"
-)
-PREPARE_SPEC = importlib.util.spec_from_file_location("kg_prepare_paper", PREPARER)
-assert PREPARE_SPEC is not None and PREPARE_SPEC.loader is not None
-prepare_paper = importlib.util.module_from_spec(PREPARE_SPEC)
-PREPARE_SPEC.loader.exec_module(prepare_paper)
-
+SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/extract-paper-markdown/scripts'
+spec = importlib.util.spec_from_file_location('paper_prepare_tests', SCRIPTS/'prepare_paper.py')
+prepare = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(prepare)
 
 class PaperMarkdownSkillTests(unittest.TestCase):
-    def make_package(self, root: Path) -> tuple[Path, Path]:
-        source = root / "source.pdf"
-        source.write_bytes(b"%PDF-minimal-test-fixture\n")
-        digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        text = root / "evidence" / "text" / "page-0001.txt"
-        text.parent.mkdir(parents=True)
-        text.write_text("Complete extracted page text.\n", encoding="utf-8")
-        markdown = root / "paper.md"
-        markdown.write_text(
-            "\n".join(
-                (
-                    "<!-- qlpaper-markdown-v1 -->",
-                    f"<!-- qlpaper-source-sha256: {digest} -->",
-                    "",
-                    "# A complete semantic transcription",
-                    "",
-                    "<!-- qlpaper-source: page=1 -->",
-                    "The paper makes a source-grounded claim.",
-                    "",
-                )
-            ),
-            encoding="utf-8",
-        )
-        manifest = root / "source.json"
-        manifest.write_text(
-            json.dumps(
-                {
-                    "schema": "qlpaper-markdown-source-v1",
-                    "source_pdf": "source.pdf",
-                    "source_sha256": digest,
-                    "page_count": 1,
-                    "pages": [{"page": 1, "text_path": "evidence/text/page-0001.txt"}],
-                    "object_candidates": [],
-                    "visual_pages": [],
-                    "markdown": "paper.md",
-                    "attachments": [],
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        return manifest, markdown
+    def archive(self, entries):
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode='w:gz') as tar:
+            for name, content in entries:
+                member = tarfile.TarInfo(name)
+                member.size = len(content)
+                tar.addfile(member, io.BytesIO(content))
+        return output.getvalue()
 
-    def run_validator(
-        self, manifest: Path, markdown: Path
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [
-                sys.executable,
-                str(VALIDATOR),
-                "--manifest",
-                str(manifest),
-                "--markdown",
-                str(markdown),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+    def package(self, root):
+        archive = root/'input.tar.gz'
+        archive.write_bytes(self.archive([('论文/main.tex', b'\\documentclass{article}\n\\input{section}\n'), ('论文/section.tex', b'\\section{Method}\nA supported claim.\n'), ('fig.pdf', b'%PDF-discard'), ('fig.png',b'png')]))
+        out = root/'paper'
+        prepare.prepare(archive,out,'https://arxiv.org/abs/1512.03385v1')
+        return out
 
-    def test_complete_image_free_package_validates(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="kgdistiller-paper-skill-"
-        ) as temporary:
-            manifest, markdown = self.make_package(Path(temporary))
-            completed = self.run_validator(manifest, markdown)
-            self.assertEqual(0, completed.returncode, completed.stderr)
-            result = json.loads(completed.stdout)
-            self.assertEqual("ok", result["status"])
-            self.assertEqual(1, result["pages"])
+    def validate(self, out, extra=()):
+        return subprocess.run([sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json'),'--source-only',*extra],capture_output=True,text=True)
 
-    def test_package_path_escape_and_embedded_media_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="kgdistiller-paper-skill-invalid-"
-        ) as temporary:
-            root = Path(temporary)
-            manifest, markdown = self.make_package(root)
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-            payload["source_pdf"] = "../outside.pdf"
-            manifest.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-            markdown.write_text(
-                markdown.read_text(encoding="utf-8") + "![leak](figure.png)\n",
-                encoding="utf-8",
-            )
-            completed = self.run_validator(manifest, markdown)
-            self.assertNotEqual(0, completed.returncode)
-            self.assertIn("package path escapes its root", completed.stderr)
-            self.assertIn("forbidden Markdown image embed", completed.stderr)
+    def test_archive_is_text_only_and_queryable_without_pdf_or_markdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self.package(Path(tmp))
+            self.assertEqual('https://arxiv.org/abs/1512.03385\n',(out/'link.txt').read_text())
+            self.assertFalse(list(out.rglob('*.pdf')))
+            self.assertFalse((out/'evidence').exists())
+            self.assertFalse((out/'paper.md').exists())
+            result=self.validate(out)
+            self.assertEqual(0,result.returncode,result.stderr)
+            self.assertEqual(2,json.loads(result.stdout)['files'])
 
-    def test_render_page_preserves_unicode_paths_with_byte_subprocess_io(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="kgdistiller-paper-unicode-"
-        ) as temporary:
-            root = Path(temporary)
-            source = root / "论文" / "输入.pdf"
-            target = root / "证据" / "第一个页面.png"
-            source.parent.mkdir()
-            source.write_bytes(b"%PDF-fixture\n")
+    def test_tampered_source_and_extra_files_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out=self.package(Path(tmp))
+            (out/'source/论文/section.tex').write_text('changed')
+            (out/'source/extra.tex').write_text('extra')
+            result=self.validate(out)
+            self.assertNotEqual(0,result.returncode)
+            self.assertIn('hash/size mismatch',result.stderr)
+            self.assertIn('inventory differs',result.stderr)
 
-            def render(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-                Path(arguments[-1]).with_suffix(".png").write_bytes(b"png")
-                return subprocess.CompletedProcess(arguments, 0, None, b"")
+    def test_unsafe_archive_entries_fail_without_writing_outside(self):
+        for name in ['../escape.tex','/escape.tex','a/../../escape.tex','C:/evil.tex']:
+            with self.subTest(name=name), self.assertRaises(prepare.PrepareError):
+                prepare.source_members(self.archive([(name,b'\\documentclass{article}')]))
+        output=io.BytesIO()
+        with tarfile.open(fileobj=output,mode='w') as tar:
+            member=tarfile.TarInfo('alias.tex');member.type=tarfile.SYMTYPE;member.linkname='../outside';tar.addfile(member)
+        with self.assertRaisesRegex(prepare.PrepareError,'links'):
+            prepare.source_members(output.getvalue())
 
-            with (
-                patch.object(prepare_paper.shutil, "which", return_value="pdftoppm"),
-                patch.object(prepare_paper.subprocess, "run", side_effect=render) as run,
-            ):
-                prepare_paper.render_page(source, target, 1, 144)
-            self.assertEqual(b"png", target.read_bytes())
-            arguments = run.call_args.args[0]
-            self.assertIn(str(source), arguments)
-            self.assertIn(str(target.with_suffix("")), arguments)
-            self.assertIs(run.call_args.kwargs["text"], False)
-            self.assertEqual(subprocess.DEVNULL, run.call_args.kwargs["stdout"])
-            self.assertEqual(subprocess.PIPE, run.call_args.kwargs["stderr"])
+    def test_duplicate_archive_paths_and_binary_tex_fail(self):
+        for entries in [[('main.tex',b'x'),('main.tex',b'y')],[('main.tex',b'%PDF-fake')]]:
+            with self.assertRaises(prepare.PrepareError):
+                prepare.source_members(self.archive(entries))
 
-    def test_render_page_invalid_utf8_and_process_errors_are_structured(self) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="kgdistiller-paper-errors-"
-        ) as temporary:
-            root = Path(temporary)
-            source = root / "论文.pdf"
-            target = root / "页面.png"
-            source.write_bytes(b"%PDF-fixture\n")
-            invalid = subprocess.CompletedProcess([], 1, None, b"\xff")
-            with (
-                patch.object(prepare_paper.shutil, "which", return_value="pdftoppm"),
-                patch.object(prepare_paper.subprocess, "run", return_value=invalid),
-                self.assertRaisesRegex(prepare_paper.PrepareError, "not valid UTF-8"),
-            ):
-                prepare_paper.render_page(source, target, 1, 144)
-            with (
-                patch.object(prepare_paper.shutil, "which", return_value="pdftoppm"),
-                patch.object(
-                    prepare_paper.subprocess,
-                    "run",
-                    side_effect=OSError("injected process failure"),
-                ),
-                self.assertRaisesRegex(prepare_paper.PrepareError, "cannot run"),
-            ):
-                prepare_paper.render_page(source, target, 1, 144)
+    def test_rejects_pdf_input_missing_version_and_source_less_archive(self):
+        for data in [b'%PDF-file',self.archive([('figure.pdf',b'%PDF-file')])]:
+            with self.assertRaises(prepare.PrepareError):prepare.source_members(data)
+        with self.assertRaises(prepare.PrepareError):prepare.arxiv_identity('https://arxiv.org/abs/1512.03385')
+        self.assertEqual(('hep-th/9901001','v2'),prepare.arxiv_identity('https://arxiv.org/abs/hep-th/9901001v2'))
 
+    def test_evidence_pdf_and_multiline_link_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out=self.package(Path(tmp));(out/'evidence').mkdir();(out/'source.pdf').write_bytes(b'%PDF-')
+            (out/'link.txt').write_text('https://arxiv.org/abs/1512.03385\nextra\n')
+            result=self.validate(out)
+            self.assertNotEqual(0,result.returncode)
+            for text in ['evidence directory','PDF files','link.txt']:self.assertIn(text,result.stderr)
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_manifest_escape_and_bad_optional_markdown_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out=self.package(Path(tmp));m=json.loads((out/'source.json').read_text());m['files'][0]['path']='../escape.tex';(out/'source.json').write_text(json.dumps(m))
+            result=self.validate(out);self.assertIn('escapes its root',result.stderr)
+        with tempfile.TemporaryDirectory() as tmp:
+            out=self.package(Path(tmp));md=out/'paper.md';md.write_text('<!-- qlpaper-source: file=source/论文/main.tex; lines=1-999 -->\n![bad](x.png)\n')
+            result=self.validate(out,['--markdown',str(md)])
+            self.assertIn('line range out of bounds',result.stderr);self.assertIn('forbidden Markdown image',result.stderr)
+
+    def test_bilingual_reading_requires_complete_aligned_blocks_and_math(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out=self.package(Path(tmp))
+            args=[sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json')]
+            self.assertNotEqual(0,subprocess.run(args,capture_output=True).returncode)
+            (out/'paper.md').write_text('<!-- qlpaper-block: b001 -->\n# Method\n\n<!-- qlpaper-block: b002 -->\nResidual learning uses $x+y$.\n')
+            (out/'paper_ch.md').write_text('<!-- qlpaper-block: b001 -->\n# Method\n\n<!-- qlpaper-block: b002 -->\nResidual learning 使用 $x+y$。\n')
+            result=subprocess.run(args,capture_output=True,text=True)
+            self.assertEqual(0,result.returncode,result.stderr)
+            (out/'paper_ch.md').write_text('<!-- qlpaper-block: b001 -->\n摘要 $z$。\n')
+            result=subprocess.run(args,capture_output=True,text=True)
+            self.assertIn('block order/coverage',result.stderr)
+            self.assertIn('mathematical expressions differ',result.stderr)
+
+    def test_plain_gzipped_tex_and_existing_output(self):
+        import gzip
+        content=b'\\documentclass{article}\nText\n'
+        self.assertEqual(content,prepare.source_members(gzip.compress(content))[0]['main.tex'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);out=self.package(root)
+            with self.assertRaisesRegex(prepare.PrepareError,'empty'):
+                prepare.prepare(root/'input.tar.gz',out,'https://arxiv.org/abs/1512.03385v1')
+
+if __name__ == '__main__':unittest.main()

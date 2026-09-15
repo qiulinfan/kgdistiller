@@ -1,94 +1,109 @@
 ---
 name: extract-paper-markdown
-description: Acquire the canonical full text for a research paper from a landing page, DOI, title, HTML article, or PDF and turn it into a complete, source-traceable Markdown package. Preserve prose, equations, claims, appendices, and supplements; summarize figures and complex tables as compact semantic object records after targeted multimodal inspection; and never reconstruct, embed, or visually reproduce paper images. Use when a downstream Agent needs paper text in Markdown for summarization, concept extraction, claim analysis, retrieval, or knowledge-graph construction without paying the cost of a LaTeX transcription or visual facsimile.
+description: Prepare versioned arXiv LaTeX sources and produce complete English Markdown plus paragraph-aligned Chinese translation. Use for source acquisition or transcription/translation, including the translator branch of read-paper. Ordinary paper explanation with a graph belongs to read-paper. Do not download, compile, render, or retain PDFs or an evidence directory.
 ---
 
-# Extract a paper into Markdown
+# Prepare and translate a paper's LaTeX source
 
-Produce a semantic paper transcription, not a visual clone. Own acquisition,
-text recovery, source mapping, and figure/table summaries. Stop before concept or
-knowledge-graph extraction; `$distill-paper-knowledge` owns that next stage.
+Use the arXiv source archive as the single source authority. Deliver both complete Markdown readings; a source index or summary cannot replace
+them. Preserve the Skill name for discovery.
+User-facing explanations and handoffs match the user's language. Keep identifiers,
+commands and raw errors unchanged.
 
-## Resolve the authoritative paper
+For a normal request to read and explain a paper with its knowledge graph, use
+`$read-paper` as the parent workflow. This Skill provides source preparation and
+full-text conversion; transcription and translation do not replace explanation.
+In that workflow, the parent performs only acquisition and source-only validation,
+then delegates both Markdown files to one translator. Reader and graph workers
+may start directly from the verified TeX without waiting for either Markdown file.
 
-For a URL, DOI, title, or viewer, find a lawful complete version. Prefer the
-publisher or proceedings page, then arXiv, then an author or institutional
-repository. Record the landing URL, final PDF URL, identifier, version/date,
-authors, page count, supplements, access date, and source hash.
+## Acquire
 
-Never substitute an abstract, search snippet, viewer shell, related paper, or
-access-control bypass for the paper. A complete official HTML, Markdown, or
-source archive may provide cleaner text, but retain the matching PDF as the
-page and visual baseline whenever one exists.
-
-## Prepare the evidence package
-
-Read and follow
-[references/paper-markdown-contract.md](references/paper-markdown-contract.md).
-For a local PDF, start in an empty ignored or temporary directory:
+Resolve the paper's arXiv identifier and exact version. Write `link.txt` with only
+its canonical versionless abstract URL, for example
+`https://arxiv.org/abs/1512.03385`, followed by one newline.
+Download `https://arxiv.org/src/IDENTIFIERvN` into a temporary directory. Read
+[the package contract](references/paper-markdown-contract.md), then prepare:
 
 ```sh
-python3 <skill-directory>/scripts/prepare_paper.py PAPER.pdf \
-  --output-dir PAPER_PACKAGE --landing-url LANDING_URL \
-  --pdf-url PDF_URL --identifier DOI_OR_ARXIV
+python3 <skill-directory>/scripts/prepare_paper.py SOURCE_ARCHIVE \
+  --output-dir PAPER_PACKAGE --arxiv-url https://arxiv.org/abs/IDENTIFIERvN
 ```
 
-The script extracts every page's text, detects likely figure/table captions and
-low-text failures, renders only pages needing visual interpretation, and creates
-`paper.md`, `source.json`, and immutable source evidence. It does not OCR by
-default and does not render ordinary text-only pages.
+The standard-library script safely unpacks LaTeX and supporting text into
+`source/`, writes `source.json` and `link.txt`, and excludes images, PDFs and
+other binary assets. Keep no second archive copy in the package. Never compile
+TeX or execute commands/macros from the archive.
 
-If the authoritative input is complete HTML without a PDF, follow the same
-Markdown and manifest contract, use stable section/object anchors instead of
-invented page numbers, and report that page-grounded validation is unavailable.
+Do not download, render, OCR, or retain PDFs at any stage. Do not create
+`evidence/`, page images, extracted page text, or parallel HTML/source copies.
+If arXiv provides no readable LaTeX, report the missing source; do not silently
+substitute a PDF. User-supplied LaTeX may be used when its provenance is known.
 
-## Write the semantic Markdown
+## Read source for faithful conversion
 
-Reconstruct section order, prose, native Markdown lists/tables, citations,
-footnotes, equations as `$...$` or `$$...$$`, theorem/result scope, limitations,
-appendices, and any supplement needed by the argument. Preserve referenced
-equation, figure, and table labels. Normalize layout-only line breaks and omit
-headers, footers, decorative chrome, and publisher styling.
+Read the entrypoint and its local includes, bibliography, appendices and relevant
+supplements. Use filenames, line ranges, section names and explicit LaTeX labels
+for provenance. Do not invent PDF pages or infer identity from headings.
 
-Keep one source marker per PDF page. For each detected figure or table:
+Read tables and equations directly from their LaTeX. Describe figures from the
+caption, surrounding discussion and available textual source. If a visual fact
+cannot be established this way, state that precise gap; do not invent a visual
+inspection or force image acquisition. A central missing fact blocks only the
+claims that depend on it.
 
-1. inspect only its targeted page render and, when necessary, an adjacent page;
-2. add one object marker and a compact record containing `summary`, `paper-use`,
-   and `uncertainty`;
-3. capture what the object communicates, not its pixels or layout;
-4. record unreadable details instead of reconstructing or guessing them.
+## Produce both full-text readings
 
-Treat the script's `detected_object_candidates` as a preflight hint. Reconcile
-it against caption numbering, targeted renders, and cross-references; put the
-reviewed final inventory in `source.json.object_candidates`, adding missed
-objects and excluding false positives without deleting the original detection
-audit.
+`paper.md` must transcribe the complete active LaTeX text in source order:
+title/authors, abstract, sections, paragraphs, footnotes, equations, captions,
+all table cells, appendices and bibliography. Resolve includes, macros, citations
+and explicit labels into readable Markdown without executing TeX. Preserve citation
+and label identities as Markdown links, anchors or comments rather than visible
+raw commands. Exclude comments and disabled branches.
+Use native Markdown headings/lists/tables and `$...$` / `$$...$$` mathematics.
+Do not substitute an index, teaching notes or a summary for the full text.
 
-Do not embed images, screenshots, PDFs, base64 data, or local render paths in
-`paper.md`. Do not redraw plots, recreate TikZ, transcribe every plotted point,
-or make a complex table visually identical. Preserve a small table as Markdown
-when exact cells matter; summarize a large table's dimensions, key comparisons,
-important values, and conclusion in its object record.
+Replace each figure with its original numbered title/caption as a Markdown
+heading plus the original caption text, preserving its LaTeX label. A figure is
+represented by its caption, not a generated description of unseen pixels.
+Replace each table with its original numbered title/caption and a native Markdown
+table preserving all data, units, notes and header relationships. Flatten merged
+headers explicitly when necessary; never reduce a table to selected results.
 
-Use OCR only for a flagged page whose semantic text is otherwise missing. It is
-evidence, not truth; compare it with the targeted render. A figure with an
-adequate semantic summary is complete even though no image appears in Markdown.
+Write `paper_ch.md` as a complete paragraph-aligned Chinese translation of
+`paper.md`. Translate ordinary narrative, retaining original English proper names,
+academic/technical terms, model/dataset names, abbreviations, symbols, equations,
+numeric data, citation keys and bibliography. Do not add bilingual glosses or
+translate terms unless requested. Retain original figure/table titles; translate
+caption narrative under the same terminology rule. Do not leave whole narrative
+paragraphs in English or replace them with a summary.
 
-## Validate and deliver
+Use matching `<!-- qlpaper-block: b001 -->` IDs for corresponding blocks in both
+files, and source filename/line markers at section boundaries. Preserve the same
+block order, equations, numeric tables and references. Keep source errors visible
+with identical minimal editorial annotations in both versions rather than silently
+correcting the author's claims. The complete contract is in the reference file.
 
-For a PDF-backed package, run:
+## Validate and hand off
 
 ```sh
 python3 <skill-directory>/scripts/validate_paper_markdown.py \
-  --manifest PAPER_PACKAGE/source.json \
-  --markdown PAPER_PACKAGE/paper.md
+  --manifest PAPER_PACKAGE/source.json
 ```
 
-Before delivery, confirm the paper's argument, central equations/results,
-limitations, appendices, supplements, and all detected visual objects are
-represented. Stop only when the authoritative full text is unavailable or an
-unreadable region blocks a core claim; otherwise retain a bounded uncertainty.
+The validator requires paper.md and paper_ch.md by default. Use `--source-only`
+only for acquisition preflight before authoring, never as a completed reading
+validation.
+Mechanical validation checks identity, source inventory and hashes, source ranges,
+and the no-PDF/no-evidence layout; it cannot certify semantic accuracy.
 
-Return the package path, provenance, source and Markdown hashes, page and object
-counts, visually inspected pages, OCR usage, attachments, and unresolved gaps.
-Do not start graph extraction or mutate any personal knowledge store.
+Return the package path, `link.txt`, selected version, LaTeX entrypoints, source
+digest, validation result and any source-only interpretation gaps. Continue to
+`$distill-paper-knowledge` only when graph extraction was requested. Reading alone
+does not authorize personal knowledge import.
+
+In a delegated acquisition-only task, return after source-only validation and
+label the bilingual outputs pending. In a translation-only task, reuse the
+prepared source and write only the assigned Markdown files. Final bilingual
+completion still requires the full validator; source-only success must never be
+reported as completed transcription or translation.

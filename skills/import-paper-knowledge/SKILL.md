@@ -1,6 +1,6 @@
 ---
 name: import-paper-knowledge
-description: Import an explicitly selected subset of new or partial concepts from a validated federated paper graph into a registered kgdistiller research authority, preserving full paper provenance and using query-kgdistiller plus ingest-kgdistiller for stale-safe reviewed mutation. Use only when the user explicitly authorizes paper knowledge import and identifies candidate IDs and the target authority.
+description: Import explicitly selected methods and mechanisms from a validated paper graph into a registered kgdistiller research authority, preserving paper-qualified identity and definitions. Use query-kgdistiller and ingest-kgdistiller for stale-safe reviewed mutation only when the user authorizes import and selects candidate IDs and the target authority.
 ---
 
 # Import selected paper knowledge
@@ -9,16 +9,22 @@ This is the authorization boundary between read-only paper federation and a
 personal knowledge project. Never interpret a request to read, summarize,
 distill, compare, or trace a paper as permission to import it.
 
+## Align language
+
+Match explanations and handoffs to the user's language; preserve commands,
+identifiers and raw errors.
+
 ## Require an exact reviewed handoff
 
-Read [references/import-contract.md](references/import-contract.md). Require:
+Require a validated LaTeX source package (`source/`, `source.json`, `link.txt`);
+no PDF or evidence directory. Read [references/import-contract.md](references/import-contract.md). Require:
 
 - a validated paper package and deterministic federated snapshot;
 - the alignment response and exact personal graph, snapshot, and alignment
   digests it used;
-- user-selected `new` or `partial` candidate IDs;
+- user-selected method/mechanism candidate IDs and their reviewed authoring actions;
 - a registered Markdown, Typst, or LaTeX research authority destination;
-- title, authors, version, DOI/arXiv/URL when available, and precise paper
+- title, authors, version, arXiv URL from link.txt, and precise LaTeX source
   locations for every selected claim;
 - an explicit decision for every conflict or uncertain candidate.
 
@@ -28,18 +34,36 @@ creating the authority. Do not select candidates on the user's behalf.
 
 ## Revalidate identity and author the research authority
 
+Read `references/research-paper-contract.md` from the installed
+`$distill-paper-knowledge` Skill to recheck method/mechanism admission and paper scope.
+Concrete prerequisite definitions/theorems with an evidenced use are eligible;
+reuse verified existing entries by ref, without copying their tutorials. Importing
+a new prerequisite still requires its explicit selection. Reject result, protocol,
+comparison or assessment nodes in legacy handoffs. Do
+not silently import them or rewrite the old paper graph during import.
+
 Run `$query-kgdistiller` again against the selected candidates. Reject stale
-target digests. A formerly new candidate may now be known; use a native ref
-instead of creating a duplicate identity.
+target digests. Preserve raw engine identity statuses separately from the
+source-backed authoring decision. If the same paper-qualified identity already
+exists with matching scope, use a native ref or add only the reviewed missing
+material. Do not infer content completeness from `matched`.
 
-Write refs for known concepts. For selected partial concepts, author only the
-missing material. For selected new concepts, write one native authority marker
-and a source-grounded entry. Add only direct relations supported by precise
-paper evidence. Do not copy the full paper, figures, screenshots, or long table
-contents into the authority.
+For a selected mechanism not yet represented in this paper scope, write one
+paper-qualified native authority marker and source-grounded entry. A name match
+or even a reviewed equivalent mechanism from a different paper is not a duplicate
+of this scoped entry. Preserve the paper's own definition, operations, conditions,
+local terminology and source provenance. Keep any reviewed cross-paper bridges
+separate and within the authorized transaction scope; do not add bare global
+aliases or merge paper identities.
 
-Unselected candidates remain outside the personal graph. Conflict and uncertain
-candidates block their own import and never become new identities by default.
+Add only direct mechanism relations supported by precise source evidence.
+Experimental data and assessments remain unmarked paper notes. Do not copy the
+full paper, figures, screenshots, or long table contents into the authority.
+
+Unselected candidates remain outside the personal graph. Unresolved identity
+conflicts block their own import; do not invent a new identity to evade a
+possible duplicate within the same paper scope. Distinct paper scopes alone do
+not constitute an identity conflict.
 
 ## Plan and apply one transaction
 

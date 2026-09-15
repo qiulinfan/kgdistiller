@@ -1,258 +1,142 @@
 #!/usr/bin/env python3
-"""Validate mechanical invariants of a qlpaper Markdown package."""
-
+"""Validate the LaTeX source package; check complete aligned bilingual Markdown readings."""
 from __future__ import annotations
-
 import argparse
-import hashlib
 import json
 import re
-import sys
 from pathlib import Path
-from typing import Any
+from prepare_paper import SCHEMA, TEXT_SUFFIXES, arxiv_identity, digest, tree_digest
 
-
-SCHEMA = "qlpaper-markdown-source-v1"
-OBJECT_RE = re.compile(
-    r"^<!-- qlpaper-object: kind=(figure|table); label=([^;]+); page=(\d+) -->$",
-    re.M,
-)
-FORBIDDEN_MEDIA = (
-    (re.compile(r"!\[[^\]]*\]\([^)]*\)"), "Markdown image embed"),
-    (re.compile(r"<\s*(?:img|picture|video|object|embed)\b", re.I), "HTML media embed"),
-    (re.compile(r"data:image/", re.I), "base64 image data"),
-)
-FORBIDDEN_CONVERSION_DEBRIS = (
-    (
-        re.compile(
-            r"<\s*/?\s*[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*?)?/?>",
-            re.I,
-        ),
-        "raw HTML tag",
-    ),
-    (
-        re.compile(r"^```\s*(?:math|latex|tex)\s*$", re.I | re.M),
-        "fenced TeX math block",
-    ),
-    (re.compile(r"\$`|`\$"), "Pandoc backtick math delimiter"),
-)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--markdown", type=Path, required=True)
-    return parser.parse_args()
-
-
-def candidate_key(item: dict[str, Any]) -> tuple[str, str, int]:
-    return (str(item.get("kind")), str(item.get("label")), int(item.get("page", 0)))
-
-
-def package_path(root: Path, raw: object) -> Path:
-    path = (root / str(raw)).resolve()
-    try:
-        path.relative_to(root.resolve())
-    except ValueError as error:
-        raise ValueError(f"package path escapes its root: {raw}") from error
+def package_path(root, value):
+    if not isinstance(value, str) or not value:
+        raise ValueError('invalid package path')
+    path = root / value
+    if Path(value).is_absolute() or '..' in Path(value).parts or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError('package path escapes its root')
+    current = path
+    while current != root:
+        if current.is_symlink():
+            raise ValueError('source symlinks are forbidden')
+        current = current.parent
     return path
 
-
-def main() -> int:
-    args = parse_args()
-    manifest_path = args.manifest.expanduser().resolve()
-    markdown_path = args.markdown.expanduser().resolve()
-    errors: list[str] = []
+def validate(manifest_path, markdown=None, source_only=False):
+    root = manifest_path.parent
+    m = json.loads(manifest_path.read_text(encoding='utf-8'))
+    errors = []
+    if m.get('schema') != SCHEMA:
+        return ['expected ' + SCHEMA]
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        content = markdown_path.read_text(encoding="utf-8")
-    except (OSError, json.JSONDecodeError) as error:
-        print(f"validate_paper_markdown: {error}", file=sys.stderr)
-        return 1
-
-    if manifest.get("schema") != SCHEMA:
-        errors.append(f"manifest schema must be {SCHEMA}")
-    if not content.startswith("<!-- qlpaper-markdown-v1 -->\n"):
-        errors.append("missing qlpaper-markdown-v1 header")
-    if "QLPAPER_UNRESOLVED" in content:
-        errors.append("unresolved transcription or object markers remain")
-    if "\ufffd" in content:
-        errors.append("Markdown contains Unicode replacement characters")
-    if "\x00" in content:
-        errors.append("Markdown contains NUL characters")
-
-    page_count = manifest.get("page_count")
-    if not isinstance(page_count, int) or page_count < 1:
-        errors.append("manifest page_count must be a positive integer")
-        page_count = 0
-    expected_pages = list(range(1, page_count + 1))
-    found_pages = [
-        int(value)
-        for value in re.findall(r"^<!-- qlpaper-source: page=(\d+) -->$", content, re.M)
-    ]
-    if found_pages != expected_pages:
-        errors.append(
-            "page markers must appear exactly once in source order: "
-            f"expected {expected_pages}, found {found_pages}"
-        )
-
-    expected_digest = str(manifest.get("source_sha256", ""))
-    digest_match = re.search(
-        r"^<!-- qlpaper-source-sha256: ([0-9a-f]{64}) -->$", content, re.M
-    )
-    if digest_match is None or digest_match.group(1) != expected_digest:
-        errors.append("Markdown source digest does not match manifest")
-    try:
-        source_pdf = package_path(
-            manifest_path.parent, manifest.get("source_pdf", "source.pdf")
-        )
-    except ValueError as error:
+        ident, version = arxiv_identity(m['arxiv_url'] + m['version'])
+        if ident != m['identifier'] or m['archive_url'] != 'https://arxiv.org/src/'+ident+version:
+            errors.append('inconsistent arXiv identity')
+        if (root/'link.txt').read_text(encoding='utf-8') != m['arxiv_url']+'\n':
+            errors.append('link.txt must contain exactly the canonical arXiv abs URL and newline')
+    except (KeyError, OSError, ValueError, TypeError) as error:
         errors.append(str(error))
-        source_pdf = manifest_path.parent / "__invalid_source.pdf"
-    if not source_pdf.is_file():
-        errors.append(f"source PDF is missing: {source_pdf}")
-    elif expected_digest and sha256(source_pdf) != expected_digest:
-        errors.append("source PDF digest no longer matches manifest")
-
-    try:
-        declared_markdown = package_path(
-            manifest_path.parent, manifest.get("markdown", "paper.md")
-        )
-    except ValueError as error:
-        errors.append(str(error))
+    files = m.get('files', [])
+    if not isinstance(files, list) or not files:
+        return errors + ['source file inventory is empty or invalid']
+    seen = set()
+    for record in files:
+        try:
+            name = record['path']
+            path = package_path(root, name)
+            if not name.startswith('source/') or path.suffix.lower() not in TEXT_SUFFIXES:
+                raise ValueError('inventory must contain only LaTeX/text source files')
+            if name in seen:
+                raise ValueError('duplicate source file')
+            seen.add(name)
+            payload = path.read_bytes()
+            if b'\0' in payload or payload.startswith(b'%PDF-'):
+                raise ValueError('binary source file')
+            if len(payload) != record['bytes'] or digest(payload) != record['sha256']:
+                raise ValueError('source file hash/size mismatch: '+name)
+        except (KeyError, OSError, ValueError, TypeError) as error:
+            errors.append(str(error))
+    actual = {x.relative_to(root).as_posix() for x in (root/'source').rglob('*') if x.is_file() or x.is_symlink()}
+    if actual != seen:
+        errors.append('source inventory differs from on-disk files')
+    if m.get('source_sha256') != tree_digest(files):
+        errors.append('source tree digest mismatch')
+    mains = m.get('entrypoints', [])
+    if not isinstance(mains, list) or not mains:
+        errors.append('LaTeX entrypoints are missing')
     else:
-        if declared_markdown != markdown_path:
-            errors.append("validated Markdown path does not match the manifest")
+        for main in mains:
+            try:
+                if main not in seen or Path(main).suffix.lower() not in {'.tex', '.ltx'} or not re.search(rb'^\s*\\document(?:class|style)\b',package_path(root, main).read_bytes(), re.M):
+                    errors.append('invalid LaTeX entrypoint: '+str(main))
+            except (OSError, ValueError, TypeError) as error:
+                errors.append(str(error))
+    if not re.fullmatch('[0-9a-f]{64}', str(m.get('archive_sha256',''))):
+        errors.append('missing archive digest')
+    if (root/'evidence').exists():
+        errors.append('evidence directory is not part of the lightweight package')
+    if any(x.suffix.lower() == '.pdf' for x in root.rglob('*')):
+        errors.append('PDF files are forbidden in the paper package')
+    if markdown is not None:
+        try:
+            path = package_path(root, str(markdown.resolve().relative_to(root.resolve())))
+            text = path.read_text(encoding='utf-8')
+            if '\0' in text or re.search(r'QLPAPER_UNRESOLVED|\bTODO\b|\bTBD\b', text):
+                errors.append('unresolved Markdown content')
+            if re.search(r'!\[.*?\]\(|<(?:img|svg|iframe|object|embed)\b|data:image', text, re.I):
+                errors.append('forbidden Markdown image embed or media')
+            for name, start, end in re.findall(r'<!-- qlpaper-source: file=([^;]+); lines=(\d+)-(\d+) -->', text):
+                if name not in seen:
+                    errors.append('unknown source marker file: '+name)
+                else:
+                    count = len(package_path(root,name).read_bytes().splitlines())
+                    if not 1 <= int(start) <= int(end) <= count:
+                        errors.append('source marker line range out of bounds')
+        except (OSError, ValueError, UnicodeError) as error:
+            errors.append(str(error))
+    if not source_only:
+        english = markdown if markdown is not None else root/'paper.md'
+        chinese = root/'paper_ch.md'
+        try:
+            english = package_path(root, str(english.relative_to(root)))
+            chinese = package_path(root, 'paper_ch.md')
+            en = english.read_text(encoding='utf-8')
+            ch = chinese.read_text(encoding='utf-8')
+            pattern = r'<!-- qlpaper-block: ([A-Za-z0-9_-]+) -->'
+            en_ids, ch_ids = re.findall(pattern, en), re.findall(pattern, ch)
+            if not en_ids or len(en_ids) != len(set(en_ids)):
+                errors.append('paper.md requires unique aligned block IDs')
+            if en_ids != ch_ids:
+                errors.append('paper_ch.md block order/coverage differs from paper.md')
+            if not re.search(r'[\u4e00-\u9fff]', ch):
+                errors.append('paper_ch.md contains no Chinese narrative')
+            for text in [en, ch]:
+                if re.search(r'QLPAPER_UNRESOLVED|\bTODO\b|\bTBD\b', text):
+                    errors.append('unfinished bilingual reading')
+                if re.search(r'!\[.*?\]\(|<(?:img|svg|iframe|object|embed)\b|data:image', text, re.I):
+                    errors.append('forbidden media in bilingual reading')
+                if re.search(r'<table\b|\\begin\{tabular\}|`\{=(?:html|latex)\}', text, re.I):
+                    errors.append('raw table/layout residue in bilingual reading')
+            # Translation preserves mathematical expressions literally.
+            math = r'(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$[^$\n]+?(?<!\\)\$'
+            if re.findall(math, en) != re.findall(math, ch):
+                errors.append('bilingual mathematical expressions differ')
+        except (OSError, ValueError, UnicodeError) as error:
+            errors.append('complete paper.md and paper_ch.md are required: '+str(error))
+    return errors
 
-    for pattern, label in FORBIDDEN_MEDIA:
-        if pattern.search(content):
-            errors.append(f"forbidden {label} remains")
-    for pattern, label in FORBIDDEN_CONVERSION_DEBRIS:
-        if pattern.search(content):
-            errors.append(f"forbidden conversion debris remains: {label}")
-
-    found_objects: list[tuple[str, str, int]] = []
-    matches = list(OBJECT_RE.finditer(content))
-    for index, match in enumerate(matches):
-        key = (match.group(1), match.group(2).strip(), int(match.group(3)))
-        found_objects.append(key)
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
-        block = content[match.end() : end]
-        for field in ("`summary`:", "`paper-use`:", "`uncertainty`:"):
-            if field not in block:
-                errors.append(f"object {key} is missing {field}")
-    if len(found_objects) != len(set(found_objects)):
-        errors.append("duplicate qlpaper object markers found")
-
-    raw_candidates = manifest.get("object_candidates", [])
-    if not isinstance(raw_candidates, list):
-        errors.append("manifest object_candidates must be a list")
-        raw_candidates = []
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--manifest', type=Path, required=True)
+    parser.add_argument('--markdown', type=Path)
+    parser.add_argument('--source-only', action='store_true', help='acquisition preflight only; not a completed reading')
+    args = parser.parse_args()
     try:
-        expected_objects = [
-            candidate_key(item) for item in raw_candidates if isinstance(item, dict)
-        ]
-    except (TypeError, ValueError):
-        errors.append("manifest contains an invalid object candidate")
-        expected_objects = []
-    missing_objects = sorted(set(expected_objects) - set(found_objects))
-    if missing_objects:
-        errors.append(f"Markdown is missing manifest object candidates: {missing_objects}")
+        errors = validate(args.manifest,args.markdown,args.source_only)
+        if errors:
+            parser.exit(1, '\n'.join(errors)+'\n')
+        m = json.loads(args.manifest.read_text())
+    except (OSError, ValueError, TypeError) as error:
+        parser.exit(1, str(error)+'\n')
+    print(json.dumps({'schema':'qlpaper-latex-validation-v1','status':'ok','scope':'source-only' if args.source_only else 'bilingual-reading','files':len(m['files']),'source_sha256':m['source_sha256']}))
 
-    raw_pages = manifest.get("pages", [])
-    if not isinstance(raw_pages, list):
-        errors.append("manifest pages must be a list")
-        raw_pages = []
-    for page in expected_pages:
-        record = next(
-            (item for item in raw_pages if isinstance(item, dict) and item.get("page") == page),
-            None,
-        )
-        if record is None:
-            errors.append(f"manifest has no record for source page {page}")
-            continue
-        try:
-            text_path = package_path(manifest_path.parent, record.get("text_path", ""))
-        except ValueError as error:
-            errors.append(str(error))
-            continue
-        if not text_path.is_file():
-            errors.append(f"page {page} extracted text is missing: {text_path}")
-        elif b"\x00" in text_path.read_bytes():
-            errors.append(f"page {page} extracted text contains NUL characters")
-
-    raw_visual = manifest.get("visual_pages", [])
-    if not isinstance(raw_visual, list):
-        errors.append("manifest visual_pages must be a list")
-        raw_visual = []
-    for item in raw_visual:
-        if not isinstance(item, dict):
-            errors.append("manifest contains an invalid visual-page record")
-            continue
-        try:
-            render = package_path(manifest_path.parent, item.get("path", ""))
-        except ValueError as error:
-            errors.append(str(error))
-            continue
-        if not render.is_file():
-            errors.append(f"targeted visual render is missing: {render}")
-
-    raw_attachments = manifest.get("attachments", [])
-    if not isinstance(raw_attachments, list):
-        errors.append("manifest attachments must be a list")
-        raw_attachments = []
-    for item in raw_attachments:
-        raw_path = item.get("path") if isinstance(item, dict) else item
-        try:
-            attachment = package_path(manifest_path.parent, raw_path)
-        except ValueError as error:
-            errors.append(str(error))
-            continue
-        if not attachment.is_file():
-            errors.append(f"semantic attachment is missing: {attachment}")
-            continue
-        if attachment.suffix.lower() != ".md":
-            errors.append(f"semantic attachment must be Markdown: {attachment}")
-            continue
-        attachment_text = attachment.read_text(encoding="utf-8")
-        if "QLPAPER_UNRESOLVED" in attachment_text or "\ufffd" in attachment_text:
-            errors.append(f"semantic attachment is unresolved or corrupted: {attachment}")
-        for pattern, label in FORBIDDEN_MEDIA:
-            if pattern.search(attachment_text):
-                errors.append(f"attachment contains forbidden {label}: {attachment}")
-        for pattern, label in FORBIDDEN_CONVERSION_DEBRIS:
-            if pattern.search(attachment_text):
-                errors.append(
-                    f"attachment contains forbidden conversion debris ({label}): "
-                    f"{attachment}"
-                )
-
-    if errors:
-        for error in errors:
-            print(f"validate_paper_markdown: {error}", file=sys.stderr)
-        return 1
-    print(
-        json.dumps(
-            {
-                "schema": "qlpaper-markdown-validation-v1",
-                "status": "ok",
-                "pages": page_count,
-                "objects": len(found_objects),
-                "markdown_sha256": sha256(markdown_path),
-            },
-            ensure_ascii=False,
-        )
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == '__main__':
+    main()

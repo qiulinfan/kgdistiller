@@ -38,6 +38,20 @@ Sections, proofs, examples, exercises, equations, figures, and remarks are not
 nodes merely because they exist. An author or Agent must explicitly mark a
 genuinely reusable concept.
 
+The paper-reading Skills apply a narrower admission policy: extract concrete
+methods, mechanisms and the specific prerequisite definitions/operators/theorems
+used by their actual steps, with paper-scoped uses and source provenance.
+Default read-only lookup links applicable personal entries; accurate matches are
+treated as mastered and are not retaught. Do not substitute broad subject labels
+for concrete dependencies or infer mastery of entire disciplines. Paper-specific
+method identities retain paper/version-qualified names.
+Keep experimental results, evaluation settings and paper assessments outside the
+knowledge nodes. Same-name terms across papers are retrieval candidates until
+their definitions and operations are compared; reviewed bridges retain separate
+scoped identities. See the [paper graph contract](../skills/distill-paper-knowledge/references/research-paper-contract.md).
+This policy does not narrow the general note-authority formats or the engine's
+supported mathematical node types.
+
 `field` nodes form a flat overlapping facet layer. `topic` nodes are curated
 clusters. Subject names and directory names do not automatically become graph
 nodes. Multiple field memberships are valid.

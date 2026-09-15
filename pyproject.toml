@@ -18,9 +18,6 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-[project.optional-dependencies]
-paper = ["pdfplumber>=0.11,<1"]
-
 [project.urls]
 Homepage = "https://github.com/qiulinfan/kgdistiller"
 Repository = "https://github.com/qiulinfan/kgdistiller"

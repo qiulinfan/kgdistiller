@@ -1,162 +1,101 @@
-# Paper Markdown package contract
-
-This contract defines the handoff from paper acquisition to downstream semantic
-analysis. The package preserves source locations and meaning without reproducing
-the paper's visual layout.
-
-## Package layout
+# Lightweight LaTeX paper package
 
 ```text
 <paper-package>/
-├── paper.md
-├── source.json
-├── source.pdf                 # when a canonical PDF exists
-├── attachments/              # optional semantic supplement Markdown
-└── evidence/
-    ├── text/page-0001.txt
-    └── visual/page-0007.png   # targeted inspection only; never embedded
+├── link.txt             # one versionless https://arxiv.org/abs/IDENTIFIER URL
+├── source.json          # small provenance and source-text inventory
+├── source/              # original LaTeX and supporting text, once only
+│   ├── main.tex
+│   └── references.bib
+├── reading.md           # independent explanation in the read-paper workflow
+├── paper.md             # complete LaTeX -> Markdown transcription
+├── paper_ch.md          # aligned Chinese narrative; English academic terms
+├── knowledge/           # isolated graph when requested
+└── learning/            # concept dossiers and reading route when requested
 ```
 
-`source.pdf`, extracted page text, and targeted renders are evidence. `paper.md`
-is the semantic handoff. An ignored build directory or reported temporary
-directory is appropriate; do not add generated packages to Git unless requested.
+No `evidence/`, PDFs (including figure PDFs), rendered pages, OCR output, duplicate
+HTML or retained compressed archive. Fetch the archive temporarily, keep its hash,
+and retain only its text source. The prepared subset is for semantic reading,
+not a promise that the original paper can be compiled from this subset.
 
-`source.json` uses `qlpaper-markdown-source-v1` and records:
+In `$read-paper`, the parent prepares only source/, source.json and link.txt.
+After source-only validation, three workers can run concurrently: a translator
+owns both Markdown full texts, an independent reader owns reading.md, and a graph
+extractor owns knowledge/. Reader and graph extraction consume original TeX and
+do not depend on the translation. Full bilingual validation remains a final gate
+for the translator's branch, not a gate for beginning ordinary interpretation.
 
-- selected source identity, URLs, access date, identifier, and version;
-- source PDF hash, byte size, metadata, and page count when applicable;
-- one extracted-text record per page;
-- preliminary detected visual-object candidates, the reviewed final object
-  inventory, and their caption locations;
-- targeted visual pages and reasons;
-- the relative Markdown and attachment paths.
+## Manifest
 
-Do not put credentials, cookies, expiring download tokens, or unrelated local
-paths in the manifest.
+`source.json` uses `qlpaper-latex-source-v1`:
 
-## Markdown source markers
+- `identifier`, `version`: exact arXiv paper/version;
+- `arxiv_url`: canonical versionless abs URL, identical to `link.txt`;
+- `archive_url`: versioned arXiv src URL;
+- `archive_sha256`: digest of downloaded archive before filtering;
+- `files`: sorted records of `path`, `sha256`, `bytes` for all retained source text;
+- `source_sha256`: SHA256 of the UTF-8, sorted-key, compact JSON encoding of `files`;
+- `entrypoints`: files containing a LaTeX documentclass/documentstyle declaration;
+- `omitted_assets`: paths excluded from the downloaded archive, not their contents.
 
-Start a PDF-backed document with:
+The source tree's bytes remain unchanged. A changed source requires a rebuilt
+manifest, candidate snapshot and fresh alignment; never hand-edit a digest to
+make stale graph artifacts pass. Do not change registered personal graphs during
+paper package maintenance. Old PDF packages are not accepted by this validator;
+convert them only in a user-authorized scope.
+
+## Location evidence
+
+Prefer `source/main.tex`, a bounded line range and `\label{...}` / section name.
+Read `\input`, `\include`, bibliography and supplement dependencies rather than
+assuming one file is complete. The script discovers document entrypoints, not
+all semantic dependencies; the acting Agent reviews that coverage.
+
+Both complete Markdown readings use source markers and identical block IDs:
 
 ```markdown
-<!-- qlpaper-markdown-v1 -->
-<!-- qlpaper-source-sha256: <64 lowercase hex characters> -->
+<!-- qlpaper-source: file=source/main.tex; lines=20-35 -->
+<!-- qlpaper-block: b001 -->
 ```
 
-Retain one page boundary marker for every source PDF page, in order:
+No page-count, page-marker or visual-inspection requirement. Equations, small
+important table cells, claims, assumptions and exceptions must remain traceable.
+Describe visual content only to the extent supported by captions, surrounding
+text or original textual figure source. Record exact missing visual information
+when needed. Never treat an omitted asset as evidence that was inspected.
 
-```markdown
-<!-- qlpaper-source: page=7 -->
-```
+Validation output goes to stdout. If a log must be retained, use an explicitly
+assigned temporary location outside the paper package; a parallel translator
+must not write into the graph worker's `knowledge/` directory. Do not create a
+parallel evidence tree. Explain the result without dumping hashes or internal details.
 
-Place it immediately before semantic content beginning on that page. A page with
-only layout or decorative matter still gets a marker and a short omission note.
-Do not force headings or paragraphs to break merely to imitate pagination.
+## Bilingual full-text contract
 
-For an authoritative HTML-only paper, use `qlpaper-markdown-v1` plus stable
-source URL and section anchors in the manifest. Do not invent PDF hashes, page
-numbers, or visual validation claims. The bundled deterministic validator is
-PDF-backed; report a manual source/anchor audit instead of claiming it passed.
+paper.md is a complete source-order transcription, including all active body text,
+footnotes, appendices, bibliography, equations and table cells. paper_ch.md follows
+the same blocks and order, translating narrative into Chinese while retaining
+English proper names and academic terms, mathematical notation, data and reference
+identities. An index or summary does not meet either deliverable.
 
-## Visual object records
+Each figure/table keeps its original numbered title/caption as a Markdown heading
+and its LaTeX label. Figures retain caption text without images or invented visual
+summaries. Tables become native Markdown tables with all values; clarify merged
+header relationships through repeated/combined labels. Do not silently omit a row,
+column, footnote or uncertainty. paper_ch.md retains the original table/figure
+titles and identifiers; caption narrative is translated with technical terms kept.
 
-Use one record per meaningful figure or table detected in the paper:
+Every corresponding heading/paragraph/formula/table block has the same unique
+`qlpaper-block` ID in each version. Block-ID agreement alone is not a completeness
+proof: review both against the active LaTeX, and verify mathematical/data fidelity
+and that Chinese prose retains all qualifications. A translation must not add a
+teaching explanation absent from the original. Bibliography remains unchanged.
 
-```markdown
-<!-- qlpaper-object: kind=figure; label=Figure 3; page=7 -->
-> **Figure 3 — Caption or concise title**
->
-> - `summary`: axes/components, comparison, direction, trend, or mechanism
-> - `paper-use`: the claim or argument step supported by this object
-> - `uncertainty`: none, or the exact unreadable/ambiguous detail
-```
+If a converter is used, inspect its warnings, unresolved macros, raw wrappers,
+figure/title loss and complex table conversion. TeX is parsed, never executed;
+local include paths must stay within the source inventory. No PDF fallback.
 
-For tables, use `kind=table` and the paper's exact label. Labels and pages must
-match `source.json`. Put multi-panel details in `summary`; do not create one
-record per panel unless the paper numbers them independently.
-
-A useful figure summary normally names:
-
-- what is compared or connected;
-- axes, components, groups, or stages that determine interpretation;
-- the important trend, ordering, qualitative mechanism, or quantity;
-- what conclusion the authors use it to support;
-- any unreadable legend, scale, error bar, or panel.
-
-A useful table summary normally names its row/column dimensions, metric and
-units, strongest comparisons, claim-relevant values, and caveats. Preserve a
-small table as native Markdown only when the exact cells are themselves evidence;
-the object record is still required.
-
-Never use Markdown image syntax, HTML image/media tags, base64 media, SVG, a
-source PDF embed, or a link whose target is required to understand the record.
-The render may remain under `evidence/visual/` solely for audit.
-
-Do not leave Pandoc or source-converter syntax in the semantic handoff. Normalize
-raw HTML tags, HTML tables, layout wrappers, fenced TeX `math` blocks, and
-Pandoc's `$`-plus-backtick math form into native Markdown and `$...$` or
-`$$...$$` mathematics before validation.
-
-## Text fidelity
-
-Preserve semantic content required to recover the paper's argument:
-
-- title, authors, abstract, headings, lists, definitions, algorithms, theorem
-  statements, proof steps, results, limitations, appendices, and supplements;
-- math using Markdown-compatible LaTeX delimiters, including referenced labels;
-- citation keys or unambiguous inline citations and bibliography entries;
-- author-stated uncertainty, negative results, exceptions, and scope boundaries.
-
-Use an official HTML or source archive to reduce extraction noise when it matches
-the selected version. Never import statements, appendix material, or corrected
-equations absent from the selected paper without labeling them as separate
-supplementary evidence.
-
-Normalize columns, line wrapping, ligatures, and hyphenation. Do not silently
-repair a suspected paper error. Record ambiguous symbols or broken text with a
-bounded warning and source location.
-
-## Targeted visual policy
-
-`prepare_paper.py` renders pages with caption candidates, substantial raster
-objects, very little extracted text, or extraction corruption. Inspect every
-listed targeted render. Inspect an adjacent page only when the caption and object
-appear to be split across a boundary.
-
-The generated `detected_object_candidates` list is immutable audit evidence, not
-the final truth. Reconcile false positives and missed objects into
-`object_candidates` after reading captions, numbering sequences, cross-
-references, and targeted renders. The validator requires a Markdown record for
-every item in that reviewed list.
-
-Do not conduct an all-page visual sweep merely to prove layout fidelity. Open a
-previously unrendered page only when extracted text, a cross-reference, or an
-object candidate shows a concrete semantic ambiguity. OCR only that bounded
-region or page when necessary.
-
-The semantic gate passes when every core claim and detected figure/table has a
-traceable representation. Pixel fidelity, page-break fidelity, font matching,
-LaTeX compilation, and image reconstruction are explicitly outside scope.
-
-## Attachments
-
-Put a complete official supplement or appendix in `attachments/<name>.md` when
-it is semantically independent of the main file. Apply the same source and
-object marker rules and list the path in `source.json`. Retain raw supplementary
-PDFs only as evidence. Do not copy an entire source repository or build tree into
-the package.
-
-## Validation gate
-
-The deterministic validator checks source hash and page count, ordered page
-markers, manifest coverage, object-candidate coverage, required object record
-fields, unresolved placeholders, forbidden media embeds, raw HTML/layout
-wrappers, Pandoc math residue, and NUL-corrupted extracted text. It cannot decide
-whether prose or an object summary is accurate. The acting Agent must separately
-check:
-
-- all main argument steps and central results are present;
-- equations and labels used by later claims remain interpretable;
-- object summaries match the targeted render and surrounding text;
-- limitations and negative evidence are not dropped;
-- every uncertainty is specific enough for downstream graph extraction.
+Citation and cross-reference commands must be rendered as readable Markdown
+references/links, retaining their original identifiers as anchors or comments.
+Do not leave visible \cite, \ref or \label commands in narrative text. Inspect
+converter macro loss in bibliography titles, table headers and highlighted cells.

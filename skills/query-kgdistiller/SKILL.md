@@ -46,7 +46,8 @@ transactional writer can reject a stale decision.
 For retrieval beyond exact batch resolution, create one bounded
 `kgdistiller-retrieval-plan-v1`:
 
-- put canonical names and explicit aliases in `identity_queries`;
+- put canonical names and explicit identity-authoritative aliases in `identity_queries`;
+  for paper candidates these must retain the paper identifier and version;
 - put concise discriminating terms, including source-language forms, in
   `lexical_queries`;
 - add `graph.seed_ids` only after identity is established;
@@ -83,6 +84,54 @@ Use bounded `kg_search`, `kg_get_node`, `kg_expand`, or `kg_build_context` only
 for unmatched or ambiguous cases. Require `kgdistiller-context-bundle-v1` from context
 packing. Do not issue a broad context query for every obvious exact match.
 
+### Paper-scoped candidates
+
+Separate two operations in paper work: aligning the paper's scoped identities,
+and looking up an existing prerequisite that is used at a specific source step.
+For prerequisite lookup, accept a batch of precise names plus required statements,
+domains and conditions. Resolve ordinary canonical names/aliases in the target
+graph, then inspect bounded content for applicability. This is a use of existing
+knowledge, not a request to merge an unqualified paper node into that identity.
+Do not reject such a lookup merely because its query is not paper-qualified.
+
+Return the use site, required formulation, verified existing handle and relevant
+source content, and whether the entry actually supplies the needed step. For
+example, distinguish an Lp from an ell-p setting or a weak from a strong law of
+large numbers when the source requires that distinction. If a broad theorem
+contains the needed special case, record why its conditions apply. Name matches
+with a different sense remain unresolved.
+
+Under the user's convention, an accurately matched applicable entry is mastered;
+the author should link it and skip its tutorial, keeping only the paper-specific
+application. Never generalize this to an entire discipline. An unavailable query
+is not an unmatched concept, and an unmatched concept is not proof the user lacks
+the surrounding subject. Do not query generic subject names as substitutes for
+actual prerequisite uses.
+
+For paper handoffs, require a qualified label such as
+`Identity shortcut (arXiv:1512.03385v1)`, an isolated namespace, a source-digest-prefixed ID, and
+paper provenance including version and source digest. Route bare terms and
+paper-local aliases to lexical retrieval, not identity resolution. If a legacy
+handoff uses unqualified labels or bare IDs, return it to the paper author for scoped
+regeneration; do not repair the candidate or establish bridges here.
+
+Within the same paper scope, resolve an existing qualified identity normally.
+Verify the full source digest when reusing an ID. A raw ID hit or an explicit
+`target_id` pointing to another paper/generic entry also requires the review below;
+neither is an exemption from paper scope.
+Across papers, revisions, or against a generic entry, spelling and aliases are
+retrieval evidence only. Inspect bounded definitions, operations, formulas and
+defining conditions before accepting a reviewed equivalence bridge. A fresh
+reviewed mapping must have that source-backed semantic evidence; an exact label
+hit alone is insufficient. Keep the engine's raw statuses unchanged and report
+the semantic review and permitted caller action separately. If provenance or
+meaning is insufficient, use caller action `review` without an accepted bridge.
+
+Even equivalent mechanisms retain their paper-specific identities and content.
+A cross-paper bridge does not authorize replacing the paper entry with a generic
+ref or merging it into another paper's entry. This paper-specific gate qualifies
+the general identity rules below; it does not change the query API's semantics.
+
 Identity-authoritative evidence is limited to a machine ID, canonical label,
 collision-free reviewed global alias, or fresh reviewed exact mapping. A fresh
 reviewed `different-from` or rejected `exact-match` decision suppresses every
@@ -105,7 +154,8 @@ Require `kgdistiller-alignment-report-v1`, preserve its `alignment_sha256`, fres
 `rejected_target_ids`, and registry evidence, then require
 `kgdistiller-graph-comparison-v1`. Interpret node statuses conservatively:
 
-- `matched`: return the exact personal handle and bridge; caller may use a ref;
+- `matched`: return the exact personal handle and identity evidence; for papers,
+  apply the scope and semantic-review gate above before accepting a bridge/ref;
 - `ambiguous`: return ranked candidates and non-authoritative reasons for review;
 - `unmatched`: retain the source-backed candidate without a personal identity.
 
@@ -125,7 +175,8 @@ namespace and ID/name, status, established personal handle, mapping predicate
 and authoritative evidence, bounded provenance, retrieval reasons, rejected
 targets, and caller action (`ref`, `author-new`, or `review`).
 
-For papers, keep matched concepts only as paper-local roles and bridge endpoints;
-never copy personal entries into the paper artifact. Report operations used,
+For papers, return the paper scope, raw engine status, semantic comparison evidence,
+and bridge decision separately. Preserve the paper's own definition and mechanism
+in the author handoff; never copy a personal entry over it. Report operations used,
 result counts, ambiguity, omitted context, and target digests. Make no
 repository changes.
