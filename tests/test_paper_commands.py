@@ -40,16 +40,16 @@ class PaperCommandTests(unittest.TestCase):
                     link_claude_product(claude_home=home, mode="copy", source_root=ROOT)
                 for name in PAPER_COMMANDS:
                     folder = home / "skills" / name
-                    header = (folder / "SKILL.md").read_text().split("---", 2)[1]
+                    header = (folder / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
                     self.assertIn("disable-model-invocation: true", header.splitlines())
-                    metadata = (folder / "agents/openai.yaml").read_text()
+                    metadata = (folder / "agents/openai.yaml").read_text(encoding="utf-8")
                     self.assertIn("policy:\n  allow_implicit_invocation: false", metadata)
                 related = home / "skills/paper-related-work"
                 self.assertTrue((related / "references/citation-discovery.md").is_file())
                 self.assertFalse((home / "skills/read-paper").exists())
                 self.assertFalse((home / "skills/extract-paper-markdown").exists())
                 self.assertFalse((home / "skills/prepare-paper").exists())
-                manifest = json.loads((ROOT / "workflows/manifest.json").read_text())
+                manifest = json.loads((ROOT / "workflows/manifest.json").read_text(encoding="utf-8"))
                 for workflow in manifest["workflows"]:
                     if workflow["id"] in {"distill-paper", "harvest-paper", "paper-related-work"}:
                         self.assertEqual(1, len(workflow["steps"]))
@@ -60,7 +60,7 @@ class PaperCommandTests(unittest.TestCase):
 
     def test_claude_scout_has_no_delegation_or_shell_capability(self) -> None:
         # Verify the packaged runtime boundary, not just a prose promise.
-        text = (ROOT / ".claude/agents/related-work-scout.md").read_text()
+        text = (ROOT / ".claude/agents/related-work-scout.md").read_text(encoding="utf-8")
         header = text.split("---", 2)[1]
         tools_line = next(line for line in header.splitlines() if line.startswith("tools:"))
         allowed = {item.strip() for item in tools_line.split(":", 1)[1].split(",")}

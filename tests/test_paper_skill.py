@@ -38,7 +38,7 @@ class PaperMarkdownSkillTests(unittest.TestCase):
     def test_archive_is_text_only_and_queryable_without_pdf_or_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = self.package(Path(tmp))
-            self.assertEqual('https://arxiv.org/abs/1512.03385\n',(out/'link.txt').read_text())
+            self.assertEqual('https://arxiv.org/abs/1512.03385\n',(out/'link.txt').read_text(encoding="utf-8"))
             self.assertFalse(list(out.rglob('*.pdf')))
             self.assertFalse((out/'evidence').exists())
             self.assertFalse((out/'paper.md').exists())
@@ -50,8 +50,8 @@ class PaperMarkdownSkillTests(unittest.TestCase):
     def test_tampered_source_and_extra_files_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             out=self.package(Path(tmp))
-            (out/'source/论文/section.tex').write_text('changed')
-            (out/'source/extra.tex').write_text('extra')
+            (out/'source/论文/section.tex').write_text('changed', encoding="utf-8")
+            (out/'source/extra.tex').write_text('extra', encoding="utf-8")
             result=self.validate(out)
             self.assertNotEqual(0,result.returncode)
             self.assertIn('hash/size mismatch',result.stderr)
@@ -81,17 +81,17 @@ class PaperMarkdownSkillTests(unittest.TestCase):
     def test_evidence_pdf_and_multiline_link_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             out=self.package(Path(tmp));(out/'evidence').mkdir();(out/'source.pdf').write_bytes(b'%PDF-')
-            (out/'link.txt').write_text('https://arxiv.org/abs/1512.03385\nextra\n')
+            (out/'link.txt').write_text('https://arxiv.org/abs/1512.03385\nextra\n', encoding="utf-8")
             result=self.validate(out)
             self.assertNotEqual(0,result.returncode)
             for text in ['evidence directory','PDF files','link.txt']:self.assertIn(text,result.stderr)
 
     def test_manifest_escape_and_bad_optional_markdown_range(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out=self.package(Path(tmp));m=json.loads((out/'source.json').read_text());m['files'][0]['path']='../escape.tex';(out/'source.json').write_text(json.dumps(m))
+            out=self.package(Path(tmp));m=json.loads((out/'source.json').read_text(encoding="utf-8"));m['files'][0]['path']='../escape.tex';(out/'source.json').write_text(json.dumps(m), encoding="utf-8")
             result=self.validate(out);self.assertIn('escapes its root',result.stderr)
         with tempfile.TemporaryDirectory() as tmp:
-            out=self.package(Path(tmp));md=out/'paper.md';md.write_text('<!-- qlpaper-source: file=source/论文/main.tex; lines=1-999 -->\n![bad](x.png)\n')
+            out=self.package(Path(tmp));md=out/'paper.md';md.write_text('<!-- qlpaper-source: file=source/论文/main.tex; lines=1-999 -->\n![bad](x.png)\n', encoding="utf-8")
             result=self.validate(out,['--markdown',str(md)])
             self.assertIn('line range out of bounds',result.stderr);self.assertIn('forbidden Markdown image',result.stderr)
 
@@ -117,11 +117,11 @@ class PaperMarkdownSkillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out=self.package(Path(tmp))
             md=out/'reading.md'
-            md.write_text('<!-- qlpaper-source: file=source/论文/main.tex; lines=1-2 -->\nAn explanation.\n')
+            md.write_text('<!-- qlpaper-source: file=source/论文/main.tex; lines=1-2 -->\nAn explanation.\n', encoding="utf-8")
             result=self.validate(out,['--markdown',str(md)])
             self.assertEqual(0,result.returncode,result.stderr)
             outside=Path(tmp)/'outside.md'
-            outside.write_text('Outside the package.\n')
+            outside.write_text('Outside the package.\n', encoding="utf-8")
             result=self.validate(out,['--markdown',str(outside)])
             self.assertNotEqual(0,result.returncode)
 
