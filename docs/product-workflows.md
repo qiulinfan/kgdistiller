@@ -59,10 +59,35 @@ current conversation; none of these commands repeats a long explanation through 
 Distillation uses a deterministic HTML fetch/text helper (`read_html.py`) so the
 source is not first rewritten by a WebFetch model. The source copy preserves
 headings, math alternatives and anchors. `lookup.py` batches the public read-only
-resolve/search/content calls and returns definitions/provenance for applicability
-review; it does not decide semantic equivalence. The note is written once, and
+resolve/search calls and returns candidate titles and short summaries. The agent
+screens relevance, refines weak searches, then uses `--read` for selected IDs and
+checks definitions/conditions/provenance. No automatic first-N content retrieval
+or semantic-equivalence decision is made by the helper. The note is written once, and
 the final reply only links it. The two-minute aim never excuses lost conditions
 or treating retrieval errors as missing knowledge.
+
+Full-paper reading is a prerequisite, including proofs, substantive appendices,
+active source includes and the bibliography. Trace three source-backed paths:
+architecture components/interfaces and their reuse or changes; mathematical steps
+and the exact definitions/theorems/conditions they use; citations and the specific
+work borrowed or compared. Inspect architecture figures when text is insufficient.
+Record a compact component/step → dependency/work → use-site → personal-link map.
+Lookup candidates come from this coverage, not a title-derived keyword list.
+A known paper does not establish mastery of every internal component. Resolve
+needed citation details locally first; only inspect a cited source further to
+clarify a real dependency, without recursive literature expansion. Missing source
+coverage stays explicit. Plan for up to 30 concrete lookup terms per paper,
+including rephrasings and borrowed-paper identities; technical coverage can justify
+more. The helper accepts 30 terms or selected IDs per call, and follow-up searches
+are allowed. Selected IDs are read separately for each vault.
+
+Only citations that actually supply a reused method, component or mathematical
+result get an additional bounded paper-title/arXiv/DOI lookup. Connect a verified
+reading record to the specific borrowed part; a missing concept entry does not
+prove a paper is unread. Do not query the entire bibliography, comparison-only
+references or mere experiment tools. Familiar elementary steps can be recorded
+without separate lookup when consistent with the user's stated background;
+skipping that lookup is not the same as a verified knowledge-base match.
 
 Distillation checks the established knowledge targets or registered default via
 read-only queries. Look up methods and prerequisites at actual use sites, rather

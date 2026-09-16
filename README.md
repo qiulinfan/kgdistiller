@@ -131,7 +131,7 @@ when you want their extra work:
 
 | Codex | Claude Code | Purpose |
 |---|---|---|
-| `$distill-paper` | `/distill-paper` | HTML-first reading, short section guide, existing-knowledge links and new candidates |
+| `$distill-paper` | `/distill-paper` | Full-paper reading, architecture/math/citation dependencies, existing links and new candidates |
 | `$harvest-paper` | `/harvest-paper` | Review static candidates, select/edit in the current conversation, then import confirmed changes |
 | `$paper-related-work` | `/paper-related-work` | Scoped research without a time limit: up to eight predecessors and eight successors grouped by research relationship, plus online discussion |
 

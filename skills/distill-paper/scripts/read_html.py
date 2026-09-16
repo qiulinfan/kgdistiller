@@ -9,7 +9,7 @@ import re
 import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
 BLOCK = {'article', 'main', 'section', 'div', 'p', 'blockquote', 'figure', 'figcaption', 'table', 'tr', 'ul', 'ol', 'pre'}
@@ -65,7 +65,7 @@ def extract(html, source_url):
     root = root or next((n for n in nodes if n.tag == 'body'), tree.root)
     metadata = {n.attrs.get('name'): n.attrs.get('content') for n in nodes if n.tag == 'meta' and n.attrs.get('name')}
     title = next((n.text().strip() for n in nodes if n.tag == 'title'), '')
-    warnings, anchors = set(), []
+    warnings, anchors, visuals = set(), [], []
 
     def render(n):
         if isinstance(n, str):
@@ -84,10 +84,14 @@ def extract(html, source_url):
             return ' [MathML: ' + n.text().strip() + '] '
         if n.tag in {'img', 'svg', 'object', 'canvas', 'iframe'}:
             warnings.add('Images are not visually inspected; consult original figures when needed.')
+            location = a.get('src') or a.get('data')
+            url = urljoin(source_url, location) if location else None
+            if url and urlsplit(url).scheme in {'http', 'https'}:
+                visuals.append({'id': a.get('id'), 'url': url, 'alt': a.get('alt', '')})
             return ' [image: ' + (a.get('alt') or 'see original') + '] '
         content = ''.join(render(c) for c in n.children)
         marker = ''
-        if a.get('id') and (n.tag in {'section', 'figure', 'table'} or 'equation' in a.get('class', '')):
+        if a.get('id') and (n.tag in {'section', 'figure', 'table', 'li'} or 'equation' in a.get('class', '')):
             anchors.append(a['id'])
             marker = '\n\n[' + a['id'] + ']\n'
         if n.tag in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}:
@@ -97,7 +101,7 @@ def extract(html, source_url):
             if href.startswith('#') or urlsplit(href).scheme in {'http', 'https'}:
                 return '[' + content.strip() + '](' + href + ')'
         if n.tag == 'li':
-            return '\n- ' + content.strip() + '\n'
+            return marker + '\n- ' + content.strip() + '\n'
         if n.tag in {'td', 'th'}:
             return content.strip() + ' | '
         if n.tag == 'br':
@@ -115,7 +119,8 @@ def extract(html, source_url):
     if len(body) < 1000 or re.search(r'access denied|just a moment|verify you are human', title, re.I):
         raise ValueError('No readable full paper detected; use the next source format.')
     info = {'requested_url': source_url, 'title': title, 'metadata': metadata,
-            'anchors': list(dict.fromkeys(anchors)), 'warnings': sorted(warnings)}
+            'anchors': list(dict.fromkeys(anchors)), 'visual_sources': visuals,
+            'warnings': sorted(warnings)}
     return '# Source: ' + source_url + '\n\n' + body + '\n', info
 
 
@@ -142,8 +147,9 @@ def main():
                 final_url, charset = response.url, response.headers.get_content_charset() or 'utf-8'
         if len(raw) > 20_000_000:
             raise ValueError('HTML exceeds 20 MB')
-        text, info = extract(raw.decode(charset), args.url)
-        info.update(resolved_url=final_url, html_sha256=hashlib.sha256(raw).hexdigest(),
+        text, info = extract(raw.decode(charset), final_url)
+        info.update(requested_url=args.url, resolved_url=final_url,
+                    html_sha256=hashlib.sha256(raw).hexdigest(),
                     source_text_sha256=hashlib.sha256(text.encode()).hexdigest())
         args.output_dir.mkdir(parents=True, exist_ok=True)
         targets[0].write_bytes(raw)
