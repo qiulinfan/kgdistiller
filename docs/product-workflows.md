@@ -81,24 +81,23 @@ online discussion do not activate this Skill. Codex sets
 `allow_implicit_invocation: false`; Claude Code sets `disable-model-invocation: true`.
 General note curation, query, ingest and deployment keep their existing triggers.
 
-Related-work is a **two-minute quick question**, measured from task start to the
-answer, not two minutes per branch. Dispatch promptly with minimal known paper
-identity; give all workers a shared stop time at start + 75 seconds, cancel work
-that has not returned, and answer using verified findings by roughly +110 seconds.
-Never wait indefinitely for a missing branch. This is a workflow deadline; model
-or tool latency still requires runtime cancellation/observation, not a promise
-that prose instructions alone provide a hard real-time guarantee.
+Related-work has no default wall-clock deadline. Dispatch the requested branches
+and let each complete its bounded research and explanation. Do not create countdown
+tasks or cancel workers merely because a duration has elapsed. The parent waits
+for actual branch returns or concrete failures and delivers one self-contained
+synthesis; unfinished synthesis is not evidence of an empty citation search.
+Respect user cancellation and report source-access failures accurately.
 
 The `related-work-scout` preset follows the fixed
 [resource methods](../skills/paper-related-work/references/resource-methods.md) and
 returns flexible ranked lists of up to eight predecessors and eight successors,
 plus at most two online-discussion findings. Each paper gets a direct source and
-one brief connection/value statement. Select by relevance, reading value and
-complementary coverage, not citation count alone; eight is a ceiling, not a quota. Resources follow bounded identity correction and one bounded successor source
-search; access errors stop that provider. No retry loops or broad searches. Claude Code exposes only Read/WebSearch/WebFetch/ToolSearch to
+an explanation proportionate to its importance; key successors may need several
+sentences. Select by relevance, reading value and
+complementary coverage, not citation count alone; eight is a ceiling, not a quota. Resources follow bounded identity correction and one focused successor
+scholarly search; access errors stop that provider. No retry loops or broad searches. Claude Code exposes only Read/WebSearch/WebFetch/ToolSearch to
 it, blocking delegation, shell parsing and file writes. Codex has a matching
-instruction-scoped preset; the parent must enforce cancellation and the no-recursion
-rule there. Do not describe the Codex counterpart as a proven tool sandbox.
+instruction-scoped preset; the parent enforces the no-recursion rule there. Do not describe the Codex counterpart as a proven tool sandbox.
 The parent is the orchestrator; the manifest's preset association is the worker,
 not a reason to give orchestration/delegation tools to the scout.
 
@@ -106,12 +105,19 @@ Related-work research has three independent branches: the target's own reference
 with citing passages, articles citing the target, and bounded online discussion.
 A broad request uses all three; a narrow request only uses requested directions.
 Start workers promptly, with the parent optionally owning one branch; no recursive
-delegation or branch dependency. Merge brief sourced findings in conversation.
-File output requires an explicit request and shares the same time budget.
+delegation or branch dependency. Merge sourced findings and explain important research relationships in conversation.
+File output requires an explicit request.
 This parallelism belongs to research discovery, not the paper-reading pipeline.
 
-OpenAlex cites is the successor index, with bounded identity correction and at
-most one source search/read as specified in the method file. Semantic Scholar
+OpenAlex cites is the successor index, with bounded identity correction. One
+focused scholarly search complements the citation page even when it is nonempty,
+so a high-count application-heavy sample is not the only candidate pool. Read the original abstracts and relevant passages of shortlisted successors as
+needed for verification and explanation, without expanding their citation graphs. Rank at most eight
+successors total by research relationship: core advances, evaluation/criticism,
+applications/transfer, and surveys/background. Same-subfield membership is useful
+context, not a strict filter; cross-field theoretical or methodological advances
+can also receive priority. Use citation counts only as a secondary tie-breaker,
+show only populated groups, and keep uncertain classifications explicit. Semantic Scholar
 has been removed. Any citing paper qualifies as a successor, including surveys, comparisons and
 background citations. Method use is optional annotation, not an inclusion gate.
 Indexed citations do not by themselves establish method use. A source search must

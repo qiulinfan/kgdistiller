@@ -1,8 +1,8 @@
-# Quick peer-review lookup
+# Peer-review lookup
 
-This is a short answer, not a review dossier. Use the shared absolute cutoff,
-with at most one discovery search and two original-source fetches, including
-failed attempts. Return earlier when the question is answered.
+Use at most one discovery search and two original-source fetches, including failed
+attempts. Finish when these sources have answered the question or yielded a clear
+gap; there is no elapsed-time cutoff.
 
 1. Reuse the supplied title and official forum ID; do not rediscover known
    metadata. With both an OpenReview ID and title, fetch this public original-note

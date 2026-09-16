@@ -133,7 +133,7 @@ when you want their extra work:
 |---|---|---|
 | `$distill-paper` | `/distill-paper` | HTML-first reading, short section guide, existing-knowledge links and new candidates |
 | `$harvest-paper` | `/harvest-paper` | Review static candidates, select/edit in the current conversation, then import confirmed changes |
-| `$paper-related-work` | `/paper-related-work` | Bounded quick lookup: up to eight predecessors and eight successors, plus available online discussion |
+| `$paper-related-work` | `/paper-related-work` | Scoped research without a time limit: up to eight predecessors and eight successors grouped by research relationship, plus online discussion |
 
 Read HTML first, then LaTeX, and use PDF only as a last resort. Candidates stay
 out of the personal graph. A separate explicit `harvest-paper` shows a static

@@ -137,7 +137,7 @@
     },
     {
       "id": "paper-related-work",
-      "description": "Explicit command only: two-minute related-work lookup with a shared deadline, bounded non-recursive scouts and direct delivery; natural-language prompts do not activate it.",
+      "description": "Explicit command only: related-work research with bounded non-recursive scouts, grouped successors and source-backed explanations; no default time limit or natural-language activation.",
       "steps": [
         {
           "id": "research",

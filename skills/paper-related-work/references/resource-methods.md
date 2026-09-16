@@ -3,7 +3,8 @@
 Use only assigned channels. Distinguish identity resolution, retrieval and evidence:
 a successful HTTP response or matching paper page is not yet a useful finding.
 Use the finite paths below; no retry loops, mirror hunts or recursive expansion.
-All steps share the parent's retrieval cutoff. Skip remaining steps at the cutoff.
+Research and synthesis have no default elapsed-time limit. Complete the assigned
+source checks and explanation; finite source scope bounds the work.
 
 ## Public peer reviews (within online discussion)
 
@@ -56,24 +57,62 @@ query variants. At most two identity requests total, then stop if unresolved.
 
 For up to two verified record IDs, fetch one page via
 `/works?filter=cites:W_ID&per_page=20&sort=cited_by_count:desc&select=id,title,doi,publication_year,cited_by_count,primary_location`.
-Use `cites:W1|W2` to combine two verified versions in that single request. Return
-up to eight citing papers, prioritizing relevance to the target and useful variety
-(e.g., extensions, applications, comparisons or surveys) within this small page.
-Use only roles supported by the available evidence, and rank by more than citation
-count; do not claim these are the best papers across the full citation graph. Do not filter
-out valid citations because their method use is unknown. Neither the provider's
-default order nor high citations establish a representative sample.
-Empty results mean no incoming citations indexed for the checked records.
+Use `cites:W1|W2` to combine two verified versions in that single request. This
+page is one discovery sample, not the final ranking; do not copy its citation-count
+order into the shortlist. Empty results mean no incoming citations indexed for
+the checked records.
 
-**One bounded source search.** If OpenAlex is unavailable/unresolved/empty, the
-successor branch may run ONE exact-title web search. Discard the target's own
-records from the returned results; do not block whole scholarly domains such as
-arxiv.org or openreview.net, which also host citing papers. Inspect at most one
-original citing paper (HTML preferred; readable official PDF accepted) for the
-bibliographic entry and citing passage. This is a bounded way to recover a citation
-missed by an index, not a new branch or permission to keep changing keywords.
-A search snippet alone is an unverified lead. If OpenAlex candidates already suffice,
-use that same one source-read allowance to verify the best candidate instead.
+**One focused scholarly search.** Alongside the citation-index request, run at most
+ONE scholarly web search for the target's name/title plus its core research
+question or mechanism (taken from the target, not an invented list of successors).
+Look for work advancing or testing that research line, including less-cited recent
+papers. If no such context is available, use the exact title to discover citations.
+This search complements even a nonempty index page: high-count results can be
+mostly cross-domain applications. Do not run separate searches for every group,
+repeat query variants, or paginate to fill eight slots. Discard the target's own
+records, not entire domains such as arxiv.org or openreview.net.
+
+Merge and deduplicate candidates from both sources. An index-confirmed citing
+paper remains eligible without reading its full text. For each shortlisted
+successor that needs verification or explanation, read its accessible original
+abstract and relevant citation/method passages (HTML preferred; readable official
+PDF accepted). Focus on at most eight shortlisted papers, reusing already read
+sources rather than expanding recursively into their references or successors.
+A web-only candidate must have a verified citation before joining the confirmed
+successor list; otherwise keep it as an unverified lead. Mark any inaccessible
+source or unverified role accurately. Never assume a known-sounding successor
+actually cites the target or add papers from memory to complete a group.
+
+### Group by research relationship, then rank
+
+Return at most eight distinct successors TOTAL across the following groups; show
+only groups represented in the results, with no fixed quotas. Start with the core
+research line rather than papers from whichever application field has most hits.
+
+| Group, in usual reading order | What belongs here |
+|---|---|
+| Core research advances | Direct improvements, extensions, theoretical explanations or generalizations of the target's central question/mechanism. Same-subfield work usually belongs here when that direct connection is supported. |
+| Evaluation and critical analysis | Reproduction, comparisons, counterexamples, limitations or systematic tests that change how the target should be understood or used. |
+| Applications and cross-field transfer | Uses in a new task/domain where the central contribution is the application or adaptation. |
+| Surveys and background citations | Work organizing the literature, or citing the target mainly as context. |
+
+Within groups, prefer a direct connection to the target, substantive new insight,
+and complementary coverage over repeated applications of the same idea. Use
+citation count only as a secondary tie-breaker among comparably relevant papers;
+low citation counts do not disqualify new core advances. Same venue, shared topic
+words, and a broad label such as "statistical machine learning" do not by themselves
+establish a close research relationship. Cross-field work that contributes a new
+general mechanism or theory can rank in the first group; an especially useful
+survey can be moved forward when it serves the user's reading question.
+
+Assign one primary group per paper from the evidence actually read (abstract or
+citing passage where available). A title can suggest an application area, but
+cannot establish method inheritance. Mark provisional classifications accordingly.
+Confirmed citations whose role is unclear remain eligible under "relationship not
+checked"; uncertainty is not evidence of low value. Each selected paper gets a
+link and a source-backed explanation of its connection/reading value. Important
+advances may need several sentences; background citations can stay brief. Do not claim a
+globally best eight or hide the candidate pool's coverage limits.
 
 Report indexed citation vs source-verified citation vs passage-verified method use
 accurately. A citation alone is not method inheritance. Similarity neighbors are
@@ -119,8 +158,8 @@ no matches says only that this query found none, not that discussion cannot exis
 
 Return channel, status, a ranked shortlist of up to eight papers for each of
 predecessors/successors, and at most two online-discussion findings, with direct
-URLs and specific gaps. Use fewer when evidence or time warrants; never search
-extra pages, invent roles or exceed the shared cutoff to reach eight. Keep statuses distinct: identity unresolved, access unavailable,
+URLs and specific gaps. Use fewer when the evidence warrants; never search extra
+pages or invent roles merely to reach eight. Keep statuses distinct: identity unresolved, access unavailable,
 matched record with no indexed citations, lead only, and useful source content.
 Do not pad missing channels with abstracts, biographies or guesses. In evaluations,
 measure access success, identity matching and useful-content coverage separately;
