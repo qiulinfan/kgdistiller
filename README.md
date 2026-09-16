@@ -385,13 +385,14 @@ kgdistiller claude doctor
 
 The supported workflow order is documented in
 [docs/product-workflows.md](docs/product-workflows.md). Development changes
-must pass:
+must build the Obsidian bundle before installing or building the Python package
+(`main.js` is generated and included in the package):
 
 ```sh
+(cd integrations/obsidian && npm ci && npm run check)
 uv run python -m unittest discover -s tests -v
 uv build --out-dir build/release/0.4.0
 uv run python scripts/check_distribution.py --dist-root build/release/0.4.0
-cd integrations/obsidian && npm ci && npm run check
 ```
 
 See [docs/graph-contract.md](docs/graph-contract.md),
