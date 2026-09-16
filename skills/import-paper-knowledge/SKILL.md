@@ -1,7 +1,11 @@
 ---
 name: import-paper-knowledge
-description: Import explicitly selected methods and mechanisms from a validated paper graph into a registered kgdistiller research authority, preserving paper-qualified identity and definitions. Use query-kgdistiller and ingest-kgdistiller for stale-safe reviewed mutation only when the user authorizes import and selects candidate IDs and the target authority.
+description: Explicit command only. Import explicitly selected methods and mechanisms from a validated paper graph into a registered kgdistiller research authority, preserving paper-qualified identity and definitions. Use query-kgdistiller and ingest-kgdistiller for stale-safe reviewed mutation only when the user authorizes import and selects candidate IDs and the target authority.
+disable-model-invocation: true
 ---
+
+Run only when the user explicitly invokes `$import-paper-knowledge` or `/import-paper-knowledge`.
+Do not start this workflow from an ordinary paper-reading request or another paper command.
 
 # Import selected paper knowledge
 

@@ -2,3 +2,5 @@ interface:
   display_name: "Distill Concept Lineage"
   short_description: "Trace paper methods, concrete prerequisites and links"
   default_prompt: "Use $trace-concept-lineage to trace this paper's methods and exact prerequisites, query my knowledge base read-only, link exact applicable entries as mastered without reteaching them, and explain unmatched prerequisites in parallel dossiers without assuming whole-subject mastery."
+policy:
+  allow_implicit_invocation: false

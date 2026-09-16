@@ -64,10 +64,10 @@ class ClaudeProductTests(unittest.TestCase):
     def test_manifest_assets_are_portable_and_complete(self) -> None:
         root, manifest = load_claude_manifest(REPO_ROOT)
         self.assertEqual(REPO_ROOT, root)
-        self.assertEqual(9, len(manifest["skills"]))
+        self.assertEqual(10, len(manifest["skills"]))
         self.assertEqual(5, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
-        self.assertEqual(8, len(manifest["workflows"]))
+        self.assertEqual(10, len(manifest["workflows"]))
         for agent in manifest["agents"]:
             self.assertTrue(agent["install_as"].endswith(".md"))
         result = doctor_claude_product(source_only=True, source_root=REPO_ROOT)
@@ -127,7 +127,7 @@ class ClaudeProductTests(unittest.TestCase):
                 claude_home=home, mode="copy", source_root=REPO_ROOT
             )
             self.assertEqual("linked", linked["status"])
-            self.assertEqual(9, linked["skills"])
+            self.assertEqual(10, linked["skills"])
             self.assertEqual(5, linked["agents"])
             self.assertEqual([], linked["adopted"])
             self.assertEqual(str(home), linked["claude_home"])
@@ -152,8 +152,8 @@ class ClaudeProductTests(unittest.TestCase):
                 [
                     "agents/kgdistiller-note-curator.md",
                     "agents/kgdistiller-paper-distiller.md",
-                    "agents/kgdistiller-paper-reader.md",
                     "agents/kgdistiller-query-reviewer.md",
+                    "agents/kgdistiller-related-work-scout.md",
                     "agents/kgdistiller-transaction-reviewer.md",
                 ],
                 installed_agents,
@@ -183,7 +183,7 @@ class ClaudeProductTests(unittest.TestCase):
 
             checked = doctor_claude_product(claude_home=home, source_root=REPO_ROOT)
             self.assertEqual("ok", checked["status"])
-            self.assertEqual({"copy": 15}, checked["modes"])
+            self.assertEqual({"copy": 16}, checked["modes"])
             self.assertFalse(checked["real_time"])
 
     def test_symlink_link_adopts_existing_skills_only_links(self) -> None:

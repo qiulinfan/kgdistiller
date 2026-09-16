@@ -119,11 +119,33 @@ asks in natural language, the agent runs the commands. When a user says
 4. Smoke-test recall with `kgdistiller agent status` (add `--vault NAME`
    outside a vault).
 
-After that no slash commands are needed. The installed Skills describe their
-own triggers, so requests like "file this note into my kgdt knowledge base" or
+General knowledge-base operations can use natural-language triggers. Requests like "file this note into my kgdt knowledge base" or
 "search my knowledge base for measure spaces" route to the curate, query, and
 ingest workflows automatically, and the installed agent presets give each
 workflow step a bounded reviewer.
+
+## Optional paper commands
+
+Read and explain papers normally without a Skill. Use these independent commands
+when you want their extra work:
+
+| Codex | Claude Code | Purpose |
+|---|---|---|
+| `$distill-paper` | `/distill-paper` | HTML-first reading, short section guide, existing-knowledge links and new candidates |
+| `$harvest-paper` | `/harvest-paper` | Review static candidates, select/edit in the current conversation, then import confirmed changes |
+| `$paper-related-work` | `/paper-related-work` | Bounded quick lookup: up to eight predecessors and eight successors, plus available online discussion |
+
+Read HTML first, then LaTeX, and use PDF only as a last resort. Candidates stay
+out of the personal graph. A separate explicit `harvest-paper` shows a static
+review note; the current conversation or native question UI carries selection,
+edits and confirmation. No local web service is needed. Local source
+reading and original knowledge notes do not imply redistribution of the paper.
+`distill-paper`, `harvest-paper` and `paper-related-work` are explicit-command-only.
+Use `$paper-related-work` / `/paper-related-work` to search three directions in
+parallel. Natural-language requests for related papers or reviews do not activate
+it. Advanced paper graph, concept-lineage and import commands are also explicit-only.
+See the
+[workflow guide](docs/product-workflows.md#independent-paper-workflows).
 
 ## Vault data layout and derivation
 

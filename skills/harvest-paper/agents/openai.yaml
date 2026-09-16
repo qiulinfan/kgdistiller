@@ -1,0 +1,6 @@
+interface:
+  display_name: "Harvest Paper"
+  short_description: "Review static candidates and confirm import in conversation"
+  default_prompt: "Use $harvest-paper to show a static candidate review, let me select and edit it in this conversation, and import only my confirmed choices."
+policy:
+  allow_implicit_invocation: false

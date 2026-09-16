@@ -1,4 +1,0 @@
-interface:
-  display_name: "Read arXiv LaTeX Source"
-  short_description: "Prepare TeX sources and aligned bilingual full texts"
-  default_prompt: "Use $extract-paper-markdown to prepare this paper's LaTeX source and complete aligned English and Chinese Markdown readings."

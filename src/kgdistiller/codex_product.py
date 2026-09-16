@@ -375,7 +375,15 @@ def _validate_workflows(
                 raise CodexProductError(
                     f"workflow {workflow_id} has an invalid step id"
                 )
-            if skill not in skill_names or agent not in agent_names:
+            # A thin command runs in the current agent without a product preset.
+            if (
+                not isinstance(skill, str)
+                or skill not in skill_names
+                or (
+                    agent is not None
+                    and (not isinstance(agent, str) or agent not in agent_names)
+                )
+            ):
                 raise CodexProductError(
                     f"workflow {workflow_id} references an unknown product asset"
                 )
@@ -385,7 +393,8 @@ def _validate_workflows(
                 )
             step_ids.add(step_id)
             used_skills.add(str(skill))
-            used_agents.add(str(agent))
+            if agent is not None:
+                used_agents.add(agent)
         workflow_ids.add(workflow_id)
     if used_skills != skill_names:
         raise CodexProductError("every shipped Skill must occur in a product workflow")

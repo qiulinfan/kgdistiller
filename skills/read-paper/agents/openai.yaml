@@ -1,4 +1,0 @@
-interface:
-  display_name: "Read Paper"
-  short_description: "Explain papers with parallel translation and linked knowledge"
-  default_prompt: "Use $read-paper to explain this paper while workers translate it and link its methods and exact prerequisites to my knowledge base; skip re-explaining accurately matched entries."

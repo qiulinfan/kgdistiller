@@ -1,7 +1,11 @@
 ---
 name: trace-concept-lineage
-description: Research paper-scoped methods and their concretely used prerequisites into source-backed dossiers and a reading route, with default read-only links to verified personal knowledge entries. Treat exact applicable matches as mastered and explain unmatched definitions, operations, theorems and inequalities without assuming whole-subject mastery; delegate new dossiers in parallel. Use for non-interactive learning maps and method-lineage research.
+description: Explicit command only. Research paper-scoped methods and their concretely used prerequisites into source-backed dossiers and a reading route, with default read-only links to verified personal knowledge entries. Treat exact applicable matches as mastered and explain unmatched definitions, operations, theorems and inequalities without assuming whole-subject mastery; delegate new dossiers in parallel. Use for non-interactive learning maps and method-lineage research.
+disable-model-invocation: true
 ---
+
+Run only when the user explicitly invokes `$trace-concept-lineage` or `/trace-concept-lineage`.
+Do not start this workflow from an ordinary paper-reading request or another paper command.
 
 # Trace Concept Lineage
 
@@ -17,7 +21,7 @@ Match explanations and handoffs to the user's language. Preserve commands and
 identifiers. Read LaTeX entrypoints and includes directly. Use source files, line
 ranges, sections and labels for provenance. Do not acquire/compile/render PDFs
 or create evidence directories. Source-only validation is sufficient to start;
-do not wait for parallel transcription or translation. Describe
+do not wait for the independent explanation or section guide. Describe
 figures from source text and captions; state specific visual gaps.
 
 ## Inputs and output
@@ -27,7 +31,7 @@ Use:
 - a validated arXiv LaTeX package (`source/`, `source.json`, `link.txt`);
 - an optional concept inventory, especially one produced by
   `$distill-paper-knowledge` candidate graph from an
-  `$extract-paper-markdown` package;
+  `$distill-paper` package;
 - the user's stated scope and explanation preferences, without assumed subject mastery;
 - an optional output directory.
 

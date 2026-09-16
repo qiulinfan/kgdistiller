@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/extract-paper-markdown/scripts'
+SCRIPTS = Path(__file__).resolve().parents[1] / 'skills/distill-paper/scripts'
 spec = importlib.util.spec_from_file_location('paper_prepare_tests', SCRIPTS/'prepare_paper.py')
 prepare = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prepare)
@@ -33,7 +33,7 @@ class PaperMarkdownSkillTests(unittest.TestCase):
         return out
 
     def validate(self, out, extra=()):
-        return subprocess.run([sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json'),'--source-only',*extra],capture_output=True,text=True)
+        return subprocess.run([sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json'),*extra],capture_output=True,text=True)
 
     def test_archive_is_text_only_and_queryable_without_pdf_or_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,6 +42,7 @@ class PaperMarkdownSkillTests(unittest.TestCase):
             self.assertFalse(list(out.rglob('*.pdf')))
             self.assertFalse((out/'evidence').exists())
             self.assertFalse((out/'paper.md').exists())
+            self.assertFalse((out/'paper_ch.md').exists())
             result=self.validate(out)
             self.assertEqual(0,result.returncode,result.stderr)
             self.assertEqual(2,json.loads(result.stdout)['files'])
@@ -94,19 +95,35 @@ class PaperMarkdownSkillTests(unittest.TestCase):
             result=self.validate(out,['--markdown',str(md)])
             self.assertIn('line range out of bounds',result.stderr);self.assertIn('forbidden Markdown image',result.stderr)
 
-    def test_bilingual_reading_requires_complete_aligned_blocks_and_math(self):
+    def test_source_only_flag_matches_default_and_preserves_optional_old_readings(self):
         with tempfile.TemporaryDirectory() as tmp:
             out=self.package(Path(tmp))
-            args=[sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json')]
-            self.assertNotEqual(0,subprocess.run(args,capture_output=True).returncode)
-            (out/'paper.md').write_text('<!-- qlpaper-block: b001 -->\n# Method\n\n<!-- qlpaper-block: b002 -->\nResidual learning uses $x+y$.\n')
-            (out/'paper_ch.md').write_text('<!-- qlpaper-block: b001 -->\n# Method\n\n<!-- qlpaper-block: b002 -->\nResidual learning 使用 $x+y$。\n')
-            result=subprocess.run(args,capture_output=True,text=True)
+            default=self.validate(out)
+            explicit=self.validate(out,['--source-only'])
+            self.assertEqual(0,default.returncode,default.stderr)
+            self.assertEqual(0,explicit.returncode,explicit.stderr)
+            self.assertEqual(json.loads(default.stdout),json.loads(explicit.stdout))
+            self.assertEqual('source-only',json.loads(default.stdout)['scope'])
+            old_files={'paper.md':b'Old draft: TODO $x+y$.\n',
+                       'paper_ch.md':'旧稿 $z$。\n'.encode('utf-8')}
+            for name,content in old_files.items():
+                (out/name).write_bytes(content)
+            result=self.validate(out)
             self.assertEqual(0,result.returncode,result.stderr)
-            (out/'paper_ch.md').write_text('<!-- qlpaper-block: b001 -->\n摘要 $z$。\n')
-            result=subprocess.run(args,capture_output=True,text=True)
-            self.assertIn('block order/coverage',result.stderr)
-            self.assertIn('mathematical expressions differ',result.stderr)
+            for name,content in old_files.items():
+                self.assertEqual(content,(out/name).read_bytes())
+
+    def test_optional_markdown_source_ranges_do_not_require_a_translation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out=self.package(Path(tmp))
+            md=out/'reading.md'
+            md.write_text('<!-- qlpaper-source: file=source/论文/main.tex; lines=1-2 -->\nAn explanation.\n')
+            result=self.validate(out,['--markdown',str(md)])
+            self.assertEqual(0,result.returncode,result.stderr)
+            outside=Path(tmp)/'outside.md'
+            outside.write_text('Outside the package.\n')
+            result=self.validate(out,['--markdown',str(outside)])
+            self.assertNotEqual(0,result.returncode)
 
     def test_plain_gzipped_tex_and_existing_output(self):
         import gzip

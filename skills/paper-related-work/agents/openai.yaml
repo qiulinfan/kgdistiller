@@ -1,0 +1,6 @@
+interface:
+  display_name: "Paper Related Work"
+  short_description: "Two-minute related-work lookup with bounded parallel search"
+  default_prompt: "Use $paper-related-work to find up to eight useful cited predecessors and eight citing successors for this paper and any discussion within the prescribed sources with a two-minute total budget and no recursive delegation."
+policy:
+  allow_implicit_invocation: false

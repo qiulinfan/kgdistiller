@@ -1,7 +1,11 @@
 ---
 name: distill-paper-knowledge
-description: Extract paper-scoped methods and mechanisms, trace exact prerequisites used in their operations and derivations, and link them to the personal knowledge base by default through read-only queries. Produce an isolated graph and readable entries directly from TeX, independently of translation or the normal paper explanation.
+description: Explicit command only. Extract paper-scoped methods and mechanisms, trace exact prerequisites used in their operations and derivations, and link them to the personal knowledge base by default through read-only queries. Produce an isolated graph and readable entries directly from TeX, independently of the section guide or the normal paper explanation.
+disable-model-invocation: true
 ---
+
+Run only when the user explicitly invokes `$distill-paper-knowledge` or `/distill-paper-knowledge`.
+Do not start this workflow from an ordinary paper-reading request or another paper command.
 
 # Distill paper knowledge
 
@@ -18,10 +22,10 @@ commands, identifiers, structured keys and raw errors unchanged.
 ## Validate the handoff
 
 Require a `qlpaper-latex-source-v1` package with `source/`, `source.json`, and
-`link.txt`. Run the validator from `$extract-paper-markdown` with `--source-only`.
-Read the original TeX and includes directly. `paper.md` and `paper_ch.md` may still
-be in progress in a parallel translation branch; do not wait for or edit them.
-Source-only success validates graph input, not completed bilingual readings.
+`link.txt`. Run the validator from `$distill-paper` with `--source-only`.
+Read the original TeX and includes directly. No full-text Markdown transcription
+or translation is required. Do not wait for the independent explanation or
+section guide, and do not edit their files.
 Stop only the claims whose necessary source text is unresolved.
 
 Read [references/research-paper-contract.md](references/research-paper-contract.md)

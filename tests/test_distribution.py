@@ -14,7 +14,7 @@ class DistributionInventoryTest(unittest.TestCase):
         product_cache = (
             REPO_ROOT
             / "skills"
-            / "extract-paper-markdown"
+            / "distill-paper"
             / "scripts"
             / "__pycache__"
         )
@@ -42,11 +42,11 @@ class DistributionInventoryTest(unittest.TestCase):
                     pass
 
         wheel_path = PurePosixPath(
-            "kgdistiller/product/skills/extract-paper-markdown/scripts/"
+            "kgdistiller/product/skills/distill-paper/scripts/"
             "__pycache__/distribution-regression.cpython-313.pyc"
         ).as_posix()
         source_path = PurePosixPath(
-            "skills/extract-paper-markdown/scripts/__pycache__/"
+            "skills/distill-paper/scripts/__pycache__/"
             "distribution-regression.cpython-313.pyc"
         ).as_posix()
         package_path = PurePosixPath(

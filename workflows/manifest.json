@@ -27,12 +27,16 @@
       "path": "skills/deploy-kgdistiller"
     },
     {
+      "name": "distill-paper",
+      "path": "skills/distill-paper"
+    },
+    {
       "name": "distill-paper-knowledge",
       "path": "skills/distill-paper-knowledge"
     },
     {
-      "name": "extract-paper-markdown",
-      "path": "skills/extract-paper-markdown"
+      "name": "harvest-paper",
+      "path": "skills/harvest-paper"
     },
     {
       "name": "import-paper-knowledge",
@@ -43,12 +47,12 @@
       "path": "skills/ingest-kgdistiller"
     },
     {
-      "name": "query-kgdistiller",
-      "path": "skills/query-kgdistiller"
+      "name": "paper-related-work",
+      "path": "skills/paper-related-work"
     },
     {
-      "name": "read-paper",
-      "path": "skills/read-paper"
+      "name": "query-kgdistiller",
+      "path": "skills/query-kgdistiller"
     },
     {
       "name": "trace-concept-lineage",
@@ -67,14 +71,14 @@
       "install_as": "kgdistiller-paper-distiller.toml"
     },
     {
-      "name": "paper-reader",
-      "path": ".codex/agents/paper-reader.toml",
-      "install_as": "kgdistiller-paper-reader.toml"
-    },
-    {
       "name": "query-reviewer",
       "path": ".codex/agents/query-reviewer.toml",
       "install_as": "kgdistiller-query-reviewer.toml"
+    },
+    {
+      "name": "related-work-scout",
+      "path": ".codex/agents/related-work-scout.toml",
+      "install_as": "kgdistiller-related-work-scout.toml"
     },
     {
       "name": "transaction-reviewer",
@@ -108,27 +112,45 @@
       ]
     },
     {
-      "id": "read-paper",
-      "description": "The parent prepares TeX, runs translation, independent reading and graph extraction concurrently, and presents the ordinary explanation before the graph and entries.",
+      "id": "distill-paper",
+      "description": "Explicit command: HTML-first source reading, short section guide, existing-knowledge links and candidates for user selection before import.",
       "steps": [
         {
-          "id": "independent-reading",
-          "skill": "read-paper",
-          "agent": "paper-reader",
+          "id": "distill",
+          "skill": "distill-paper",
+          "agent": null,
+          "mode": "author"
+        }
+      ]
+    },
+    {
+      "id": "harvest-paper",
+      "description": "Explicit command: static candidate review, native conversation selection and editing, then transactional import of confirmed content.",
+      "steps": [
+        {
+          "id": "review-and-import",
+          "skill": "harvest-paper",
+          "agent": null,
+          "mode": "transaction"
+        }
+      ]
+    },
+    {
+      "id": "paper-related-work",
+      "description": "Explicit command only: two-minute related-work lookup with a shared deadline, bounded non-recursive scouts and direct delivery; natural-language prompts do not activate it.",
+      "steps": [
+        {
+          "id": "research",
+          "skill": "paper-related-work",
+          "agent": "related-work-scout",
           "mode": "author"
         }
       ]
     },
     {
       "id": "federate-paper",
-      "description": "Extract paper-scoped methods and concrete prerequisite uses from TeX, and link applicable personal knowledge entries by default without import.",
+      "description": "Explicit advanced command: build an isolated paper graph from an existing source package and link concrete prerequisites.",
       "steps": [
-        {
-          "id": "acquire",
-          "skill": "extract-paper-markdown",
-          "agent": "paper-distiller",
-          "mode": "author"
-        },
         {
           "id": "distill",
           "skill": "distill-paper-knowledge",

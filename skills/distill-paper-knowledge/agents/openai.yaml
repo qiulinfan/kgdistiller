@@ -2,3 +2,5 @@ interface:
   display_name: "Distill Paper Knowledge"
   short_description: "Extract methods and link concrete prerequisite uses"
   default_prompt: "Use $distill-paper-knowledge to trace this paper's methods and exact prerequisite uses, query my knowledge base by default, link mastered matches and explain specific gaps."
+policy:
+  allow_implicit_invocation: false

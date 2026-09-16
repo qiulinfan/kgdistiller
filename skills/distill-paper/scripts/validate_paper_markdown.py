@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the LaTeX source package; check complete aligned bilingual Markdown readings."""
+"""Validate a LaTeX source package and optionally check a supplied Markdown file."""
 from __future__ import annotations
 import argparse
 import json
@@ -21,6 +21,7 @@ def package_path(root, value):
     return path
 
 def validate(manifest_path, markdown=None, source_only=False):
+    # Existing callers pass source_only; source validation is now the default.
     root = manifest_path.parent
     m = json.loads(manifest_path.read_text(encoding='utf-8'))
     errors = []
@@ -92,42 +93,13 @@ def validate(manifest_path, markdown=None, source_only=False):
                         errors.append('source marker line range out of bounds')
         except (OSError, ValueError, UnicodeError) as error:
             errors.append(str(error))
-    if not source_only:
-        english = markdown if markdown is not None else root/'paper.md'
-        chinese = root/'paper_ch.md'
-        try:
-            english = package_path(root, str(english.relative_to(root)))
-            chinese = package_path(root, 'paper_ch.md')
-            en = english.read_text(encoding='utf-8')
-            ch = chinese.read_text(encoding='utf-8')
-            pattern = r'<!-- qlpaper-block: ([A-Za-z0-9_-]+) -->'
-            en_ids, ch_ids = re.findall(pattern, en), re.findall(pattern, ch)
-            if not en_ids or len(en_ids) != len(set(en_ids)):
-                errors.append('paper.md requires unique aligned block IDs')
-            if en_ids != ch_ids:
-                errors.append('paper_ch.md block order/coverage differs from paper.md')
-            if not re.search(r'[\u4e00-\u9fff]', ch):
-                errors.append('paper_ch.md contains no Chinese narrative')
-            for text in [en, ch]:
-                if re.search(r'QLPAPER_UNRESOLVED|\bTODO\b|\bTBD\b', text):
-                    errors.append('unfinished bilingual reading')
-                if re.search(r'!\[.*?\]\(|<(?:img|svg|iframe|object|embed)\b|data:image', text, re.I):
-                    errors.append('forbidden media in bilingual reading')
-                if re.search(r'<table\b|\\begin\{tabular\}|`\{=(?:html|latex)\}', text, re.I):
-                    errors.append('raw table/layout residue in bilingual reading')
-            # Translation preserves mathematical expressions literally.
-            math = r'(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$[^$\n]+?(?<!\\)\$'
-            if re.findall(math, en) != re.findall(math, ch):
-                errors.append('bilingual mathematical expressions differ')
-        except (OSError, ValueError, UnicodeError) as error:
-            errors.append('complete paper.md and paper_ch.md are required: '+str(error))
     return errors
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
-    parser.add_argument('--markdown', type=Path)
-    parser.add_argument('--source-only', action='store_true', help='acquisition preflight only; not a completed reading')
+    parser.add_argument('--markdown', type=Path, help='also check this package-local Markdown file and its source ranges')
+    parser.add_argument('--source-only', action='store_true', help='explicit synonym for default source validation; retained for existing callers')
     args = parser.parse_args()
     try:
         errors = validate(args.manifest,args.markdown,args.source_only)
@@ -136,7 +108,7 @@ def main():
         m = json.loads(args.manifest.read_text())
     except (OSError, ValueError, TypeError) as error:
         parser.exit(1, str(error)+'\n')
-    print(json.dumps({'schema':'qlpaper-latex-validation-v1','status':'ok','scope':'source-only' if args.source_only else 'bilingual-reading','files':len(m['files']),'source_sha256':m['source_sha256']}))
+    print(json.dumps({'schema':'qlpaper-latex-validation-v1','status':'ok','scope':'source-only','files':len(m['files']),'source_sha256':m['source_sha256']}))
 
 if __name__ == '__main__':
     main()

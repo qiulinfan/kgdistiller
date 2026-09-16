@@ -3,9 +3,8 @@
 ## Required input
 
 Consume a source-validated `qlpaper-latex-source-v1` package with `source/`,
-`source.json` and `link.txt`. Graph extraction reads TeX directly and may run
-while the translator produces paper.md and paper_ch.md. Use `--source-only`
-validation for this handoff; completed translation is not a graph prerequisite.
+`source.json` and `link.txt`. Graph extraction reads TeX directly; no generated full-text transcription or
+translation is required. Source-package validation is sufficient for this handoff.
 Read the entrypoint, includes, bibliography and appendices. Cite source files,
 lines, sections and labels. Do not acquire PDFs or create evidence directories;
 retain specific gaps when captions and text cannot establish a visual fact.
@@ -160,13 +159,12 @@ template or a separate subagent per entry for the default graph branch. A missin
 prerequisite entry explains only the specific definition/statement, conditions
 and application needed at the use site, not a survey of its parent discipline.
 
-These entries supplement the independent `reading.md` in `$read-paper`; neither
-graph admission nor comparison status restricts that ordinary explanation.
+These entries belong to an explicitly requested graph extraction; neither
+graph admission nor comparison status restricts an ordinary paper explanation.
 Keep experimental data, evaluation settings and review discussion in a clearly
 separate paper-notes section of `paper-graph.md`, or another assigned file within
 the graph output root. Do not add graph markers or include these records in
-node/edge counts. A parallel graph worker must not edit `reading.md` or either
-translator file; the parent integrates reading corrections after the reader finishes.
+node/edge counts. A parallel graph worker must not edit `reading.md` or `section-guide.md`; the parent integrates reading corrections after the reader finishes.
 
 Completion requires node-admission and paper-scope review, verified existing-entry
 links or readable gap entries, source-backed dependency uses, valid candidate and

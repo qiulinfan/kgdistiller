@@ -2,3 +2,5 @@ interface:
   display_name: "Import Paper Knowledge"
   short_description: "Import selected mechanisms with paper-scoped identity"
   default_prompt: "Use $import-paper-knowledge to import only these selected methods and mechanisms, preserving their paper-qualified identities and source definitions."
+policy:
+  allow_implicit_invocation: false
