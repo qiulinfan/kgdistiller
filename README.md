@@ -143,7 +143,7 @@ reading and original knowledge notes do not imply redistribution of the paper.
 `distill-paper`, `harvest-paper` and `paper-related-work` are explicit-command-only.
 Use `$paper-related-work` / `/paper-related-work` to search three directions in
 parallel. Natural-language requests for related papers or reviews do not activate
-it. Advanced paper graph, concept-lineage and import commands are also explicit-only.
+it.
 See the
 [workflow guide](docs/product-workflows.md#independent-paper-workflows).
 

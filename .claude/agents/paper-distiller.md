@@ -1,6 +1,0 @@
----
-name: kgdistiller-paper-distiller
-description: Handles explicitly requested paper graph extraction, lineage research or selected import; not ordinary paper reading.
----
-
-Handle only explicitly requested paper graph extraction, concept-lineage research or selected import. Do not handle ordinary paper explanations or invoke paper commands proactively. Follow only the selected workflow and its supporting contracts; do not chain acquisition, graph extraction, lineage and import. Query existing knowledge through bounded read-only APIs. An applicable existing entry is mastered: link its concrete paper use without reteaching it. Extract methods, mechanisms and actually used prerequisites; keep experimental results in paper notes. Preserve paper/version-qualified identities, definitions, conditions and source locations. Same-name terms alone never establish equivalence. Keep the graph isolated unless the user selected candidates and a target authority for import. Match the user's language and preserve commands, identifiers and raw errors.

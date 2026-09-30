@@ -98,8 +98,7 @@ is not a negative match. Preserve paper/version meaning; shared vocabulary does
 not merge identities. Store mutations remain separately authorized transactions.
 
 All paper Skills are explicit-command-only in both runtimes: `distill-paper`,
-`harvest-paper`, `paper-related-work`, `distill-paper-knowledge`,
-`trace-concept-lineage` and `import-paper-knowledge`. Invoke related-work research
+`harvest-paper` and `paper-related-work`. Invoke related-work research
 with `$paper-related-work` (Codex) or `/paper-related-work` (Claude Code).
 Natural-language requests for related papers, predecessors/successors, reviews or
 online discussion do not activate this Skill. Codex sets
@@ -193,10 +192,6 @@ Changed or unsupported content requires a revised review, not silent rewriting.
 Native input capabilities: [Codex app-server](https://learn.chatgpt.com/docs/app-server#api-overview)
 and [Claude Code AskUserQuestion](https://code.claude.com/docs/en/tools-reference#askuserquestion-tool-behavior).
 
-The legacy `import-paper-knowledge` command is
-for existing validated graph packages; it is not a prerequisite for drafting
-lightweight HTML-based candidates. No automatic write or candidate selection.
-
 Invocation controls follow [OpenAI's Skill metadata](https://learn.chatgpt.com/docs/build-skills#optional-metadata)
 and [Claude Code's invocation controls](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).
 The built-in Codex quick validator currently rejects Claude's extension key;
@@ -218,49 +213,6 @@ apply one reviewed transaction. Identity ambiguity blocks its own write path.
 `ambiguous`, or `unmatched`; ambiguity blocks the write path, while content
 conflicts or enrichment of matched identities require a separate source-backed
 review rather than inference from comparison output.
-
-### Federate and selectively import a paper
-
-These are advanced explicit commands, separate from ordinary reading and the explicit
-reading and harvesting helpers. Invoke `$distill-paper-knowledge` on an existing versioned LaTeX
-package (`source/`, `source.json`, one-URL `link.txt`) to build an isolated graph
-of concrete methods and mechanisms. If source is missing, report the gap rather
-than automatically invoking preparation. Experimental data, evaluation settings, performance explanations,
-concept comparisons and review judgments stay in paper notes, not knowledge
-nodes. Defining conditions belong with the mechanism. It can start from the
-source-validated package without generated full texts, and produces one
-verified existing-entry link or a readable gap entry per node. Trace actual
-operations and derivation steps to the exact definitions, operators, inequalities
-or theorem versions they use, with conditions and source locations. Query and
-link those through `$query-kgdistiller` by default without importing. Resolve the
-established target or registered default; unavailable lookup leaves linking
-explicitly incomplete without blocking the reading. Only when the user selects exact
-candidates and a registered native research authority should
-`$import-paper-knowledge` produce a handoff for revalidation and
-`$ingest-kgdistiller`.
-
-Paper identity is part of knowledge identity: use a source-digest namespace,
-source-digest-prefixed local IDs, paper/version-qualified labels, and full paper provenance.
-Bare terms and local aliases are retrieval hints. Same-name mechanisms in
-different papers or versions remain distinct; cross-paper equivalence requires
-comparison of definitions, operations, formulas and conditions. Reviewed bridges
-preserve scoped entries. Import keeps qualified native markers and paper-local
-definitions instead of collapsing them into generic entries. See the
-[paper graph contract](../skills/distill-paper-knowledge/references/research-paper-contract.md).
-
-`$trace-concept-lineage` applies the same concrete-dependency rules to its learning
-graph. Generic math/subject prerequisites and assumed mastery of whole disciplines
-are not allowed. A specific mathematical prerequisite can be a node when a real
-step uses it; an empirical outcome remains paper data. Evidence and review sections can be read without
-becoming graph nodes. Do not automatically rewrite existing graphs when changing
-these Skills; legacy artifacts need a separate scoped regeneration request.
-
-The legacy graph-package workflows use their LaTeX contracts and create no
-`evidence/` tree. The thin commands follow the HTML-first source order above. Cite source filenames, lines and LaTeX labels; explain any visual facts that
-cannot be verified from captions and source text.
-
-Reading, summarizing, distilling, aligning, or tracing a paper never authorizes
-personal-graph mutation.
 
 ### Back up or restore a portable store
 

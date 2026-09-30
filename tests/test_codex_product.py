@@ -66,10 +66,10 @@ class CodexProductTests(unittest.TestCase):
     def test_manifest_assets_are_portable_and_complete(self) -> None:
         root, manifest = load_manifest(REPO_ROOT)
         self.assertEqual(REPO_ROOT, root)
-        self.assertEqual(10, len(manifest["skills"]))
-        self.assertEqual(5, len(manifest["agents"]))
+        self.assertEqual(7, len(manifest["skills"]))
+        self.assertEqual(4, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
-        self.assertEqual(10, len(manifest["workflows"]))
+        self.assertEqual(7, len(manifest["workflows"]))
         result = doctor_product(source_only=True, source_root=REPO_ROOT)
         self.assertEqual("ok", result["status"])
         self.assertEqual("not-checked", result["installation"])
@@ -104,8 +104,8 @@ class CodexProductTests(unittest.TestCase):
 
             linked = link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             self.assertEqual("linked", linked["status"])
-            self.assertEqual(10, linked["skills"])
-            self.assertEqual(5, linked["agents"])
+            self.assertEqual(7, linked["skills"])
+            self.assertEqual(4, linked["agents"])
             self.assertEqual(
                 "user guidance\n", agents_guidance.read_text(encoding="utf-8")
             )
@@ -118,7 +118,7 @@ class CodexProductTests(unittest.TestCase):
             )
 
             state = json.loads((home / STATE_NAME).read_text(encoding="utf-8"))
-            self.assertEqual(16, len(state["assets"]))
+            self.assertEqual(12, len(state["assets"]))
             self.assertTrue(all(item["mode"] == "copy" for item in state["assets"]))
             self.assertTrue(
                 all(
@@ -308,16 +308,16 @@ class CodexProductTests(unittest.TestCase):
             result = link_product(
                 codex_home=home, mode="symlink", source_root=REPO_ROOT
             )
-            self.assertEqual({"symlink": 16}, result["modes"])
+            self.assertEqual({"symlink": 12}, result["modes"])
             self.assertTrue((home / "skills" / "query-kgdistiller").is_symlink())
             checked = doctor_product(codex_home=home, source_root=REPO_ROOT)
-            self.assertEqual({"symlink": 16}, checked["modes"])
+            self.assertEqual({"symlink": 12}, checked["modes"])
 
     def test_auto_mode_selects_only_supported_link_strategies(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-codex-auto-") as temporary:
             home = Path(temporary) / ".codex"
             linked = link_product(codex_home=home, mode="auto", source_root=REPO_ROOT)
-            self.assertEqual(16, sum(linked["modes"].values()))
+            self.assertEqual(12, sum(linked["modes"].values()))
             self.assertLessEqual(
                 set(linked["modes"]), {"junction", "hardlink", "symlink"}
             )
@@ -454,8 +454,8 @@ class CodexProductTests(unittest.TestCase):
             initial = link_product(codex_home=home, mode="auto", source_root=source)
             self.assertTrue(initial["real_time"])
 
-            old_name = "trace-concept-lineage"
-            new_name = "trace-technical-lineage"
+            old_name = "paper-related-work"
+            new_name = "research-related-work"
             old_source = source / "skills" / old_name
             new_source = source / "skills" / new_name
             old_source.rename(new_source)
@@ -511,7 +511,7 @@ class CodexProductTests(unittest.TestCase):
             source = copy_product_root(root / "product")
             home = root / "codex-home"
             link_product(codex_home=home, mode="copy", source_root=source)
-            name = "trace-concept-lineage"
+            name = "distill-paper"
             target = home / "skills" / name / "SKILL.md"
             target.write_text("foreign replacement\n", encoding="utf-8")
 
@@ -521,7 +521,7 @@ class CodexProductTests(unittest.TestCase):
                 item for item in manifest["skills"] if item["name"] != name
             ]
             manifest["workflows"] = [
-                item for item in manifest["workflows"] if item["id"] != "trace-lineage"
+                item for item in manifest["workflows"] if item["id"] != name
             ]
             manifest_path.write_text(
                 json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

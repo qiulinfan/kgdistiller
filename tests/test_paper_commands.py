@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
-from kgdistiller.codex_product import CodexProductError, _validate_workflows, link_product
-from kgdistiller.claude_product import link_claude_product
+from kgdistiller.codex_product import (
+    CodexProductError, _validate_workflows, doctor_product, link_product,
+)
+from kgdistiller.claude_product import doctor_claude_product, link_claude_product
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PAPER_COMMANDS = {
-    "distill-paper", "harvest-paper", "distill-paper-knowledge",
-    "trace-concept-lineage", "import-paper-knowledge", "paper-related-work",
+    "distill-paper", "harvest-paper", "paper-related-work",
+}
+RETIRED_PAPER_COMMANDS = {
+    "distill-paper-knowledge", "trace-concept-lineage", "import-paper-knowledge",
 }
 
 
@@ -49,6 +54,8 @@ class PaperCommandTests(unittest.TestCase):
                 self.assertFalse((home / "skills/read-paper").exists())
                 self.assertFalse((home / "skills/extract-paper-markdown").exists())
                 self.assertFalse((home / "skills/prepare-paper").exists())
+                for name in RETIRED_PAPER_COMMANDS:
+                    self.assertFalse((home / "skills" / name).exists())
                 manifest = json.loads((ROOT / "workflows/manifest.json").read_text(encoding="utf-8"))
                 for workflow in manifest["workflows"]:
                     if workflow["id"] in {"distill-paper", "harvest-paper", "paper-related-work"}:
@@ -57,6 +64,94 @@ class PaperCommandTests(unittest.TestCase):
                             self.assertEqual("related-work-scout", workflow["steps"][0]["agent"])
                         else:
                             self.assertIsNone(workflow["steps"][0]["agent"])
+
+    def test_upgrade_removes_retired_paper_assets_from_both_runtimes(self) -> None:
+        retired_workflows = {
+            "federate-paper": "distill-paper-knowledge",
+            "trace-lineage": "trace-concept-lineage",
+            "import-paper": "import-paper-knowledge",
+        }
+        for runtime in ("codex", "claude"):
+            with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve()
+                source = root / "product"
+                home = root / runtime
+                for name in ("skills", "workflows", ".codex/agents", ".claude/agents",
+                             "scripts", "docs"):
+                    shutil.copytree(ROOT / name, source / name,
+                                    ignore=shutil.ignore_patterns("__pycache__"))
+                manifest_path = source / "workflows" / (
+                    "manifest.json" if runtime == "codex" else "claude-manifest.json"
+                )
+                current_manifest = manifest_path.read_text(encoding="utf-8")
+                legacy_manifest = json.loads(current_manifest)
+                for name in RETIRED_PAPER_COMMANDS:
+                    folder = source / "skills" / name
+                    folder.mkdir()
+                    (folder / "SKILL.md").write_text(
+                        f"---\nname: {name}\ndescription: Retired paper command.\n---\n",
+                        encoding="utf-8",
+                    )
+                    (folder / "agents").mkdir()
+                    (folder / "agents/openai.yaml").write_text(
+                        (ROOT / "skills/distill-paper/agents/openai.yaml")
+                        .read_text(encoding="utf-8").replace("distill-paper", name),
+                        encoding="utf-8",
+                    )
+                    legacy_manifest["skills"].append({
+                        "name": name, "path": f"skills/{name}",
+                    })
+                extension = "toml" if runtime == "codex" else "md"
+                agent_path = source / f".{runtime}/agents/paper-distiller.{extension}"
+                agent_path.write_text(
+                    (source / f".{runtime}/agents/note-curator.{extension}")
+                    .read_text(encoding="utf-8").replace("note-curator", "paper-distiller"),
+                    encoding="utf-8",
+                )
+                legacy_manifest["agents"].append({
+                    "name": "paper-distiller",
+                    "path": f".{runtime}/agents/paper-distiller.{extension}",
+                    "install_as": f"kgdistiller-paper-distiller.{extension}",
+                })
+                for workflow_id, skill in retired_workflows.items():
+                    legacy_manifest["workflows"].append({
+                        "id": workflow_id, "description": "Retired paper workflow.",
+                        "steps": [{"id": "legacy", "skill": skill,
+                                   "agent": "paper-distiller", "mode": "author"}],
+                    })
+                manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+                unrelated = home / "skills/external-skill/SKILL.md"
+                unrelated.parent.mkdir(parents=True)
+                unrelated.write_text("external\n", encoding="utf-8")
+
+                def link() -> dict:
+                    if runtime == "codex":
+                        return link_product(codex_home=home, source_root=source)
+                    return link_claude_product(claude_home=home, source_root=source)
+
+                link()
+                for name in RETIRED_PAPER_COMMANDS:
+                    self.assertTrue((home / "skills" / name / "SKILL.md").is_file())
+                    shutil.rmtree(source / "skills" / name)
+                agent_path.unlink()
+                manifest_path.write_text(current_manifest, encoding="utf-8")
+
+                updated = link()
+                self.assertEqual(4, updated["removed"])
+                for name in RETIRED_PAPER_COMMANDS:
+                    target = home / "skills" / name
+                    self.assertFalse(target.exists() or target.is_symlink())
+                self.assertFalse(
+                    (home / f"agents/kgdistiller-paper-distiller.{extension}").exists()
+                )
+                self.assertEqual("external\n", unrelated.read_text(encoding="utf-8"))
+                for name in PAPER_COMMANDS:
+                    self.assertTrue((home / "skills" / name / "SKILL.md").is_file())
+                if runtime == "codex":
+                    checked = doctor_product(codex_home=home, source_root=source)
+                else:
+                    checked = doctor_claude_product(claude_home=home, source_root=source)
+                self.assertEqual("ok", checked["status"])
 
     def test_claude_scout_has_no_delegation_or_shell_capability(self) -> None:
         # Verify the packaged runtime boundary, not just a prose promise.

@@ -48,7 +48,7 @@ method identities retain paper/version-qualified names.
 Keep experimental results, evaluation settings and paper assessments outside the
 knowledge nodes. Same-name terms across papers are retrieval candidates until
 their definitions and operations are compared; reviewed bridges retain separate
-scoped identities. See the [paper graph contract](../skills/distill-paper-knowledge/references/research-paper-contract.md).
+scoped identities.
 This policy does not narrow the general note-authority formats or the engine's
 supported mathematical node types.
 

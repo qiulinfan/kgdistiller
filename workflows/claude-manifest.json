@@ -31,16 +31,8 @@
       "path": "skills/distill-paper"
     },
     {
-      "name": "distill-paper-knowledge",
-      "path": "skills/distill-paper-knowledge"
-    },
-    {
       "name": "harvest-paper",
       "path": "skills/harvest-paper"
-    },
-    {
-      "name": "import-paper-knowledge",
-      "path": "skills/import-paper-knowledge"
     },
     {
       "name": "ingest-kgdistiller",
@@ -53,10 +45,6 @@
     {
       "name": "query-kgdistiller",
       "path": "skills/query-kgdistiller"
-    },
-    {
-      "name": "trace-concept-lineage",
-      "path": "skills/trace-concept-lineage"
     }
   ],
   "agents": [
@@ -64,11 +52,6 @@
       "name": "note-curator",
       "path": ".claude/agents/note-curator.md",
       "install_as": "kgdistiller-note-curator.md"
-    },
-    {
-      "name": "paper-distiller",
-      "path": ".claude/agents/paper-distiller.md",
-      "install_as": "kgdistiller-paper-distiller.md"
     },
     {
       "name": "query-reviewer",
@@ -143,60 +126,6 @@
           "id": "research",
           "skill": "paper-related-work",
           "agent": "related-work-scout",
-          "mode": "author"
-        }
-      ]
-    },
-    {
-      "id": "federate-paper",
-      "description": "Explicit advanced command: build an isolated paper graph from an existing source package and link concrete prerequisites.",
-      "steps": [
-        {
-          "id": "distill",
-          "skill": "distill-paper-knowledge",
-          "agent": "paper-distiller",
-          "mode": "author"
-        },
-        {
-          "id": "align",
-          "skill": "query-kgdistiller",
-          "agent": "query-reviewer",
-          "mode": "read-only"
-        }
-      ]
-    },
-    {
-      "id": "import-paper",
-      "description": "Import only selected methods and mechanisms while preserving paper-qualified identities and definitions.",
-      "steps": [
-        {
-          "id": "select",
-          "skill": "import-paper-knowledge",
-          "agent": "paper-distiller",
-          "mode": "author"
-        },
-        {
-          "id": "revalidate",
-          "skill": "query-kgdistiller",
-          "agent": "query-reviewer",
-          "mode": "read-only"
-        },
-        {
-          "id": "commit",
-          "skill": "ingest-kgdistiller",
-          "agent": "transaction-reviewer",
-          "mode": "transaction"
-        }
-      ]
-    },
-    {
-      "id": "trace-lineage",
-      "description": "Research paper-scoped methods and mechanisms and derive a prerequisite-ordered learning route.",
-      "steps": [
-        {
-          "id": "trace",
-          "skill": "trace-concept-lineage",
-          "agent": "paper-distiller",
           "mode": "author"
         }
       ]
