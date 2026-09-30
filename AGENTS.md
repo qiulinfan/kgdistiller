@@ -8,6 +8,10 @@
 - The local server must bind to `127.0.0.1` by default and prevent path traversal.
 - Maintain compatibility with all three authority formats: Markdown, Typst, and
   LaTeX.
+- Native LaTeX scanning, mathematical labels, TeX registries and direct HTML
+  integration follow [docs/latex-sources.md](docs/latex-sources.md). Keep the
+  renderer in obsidian-latex-live; the graph core only resolves explicit names
+  and validates the local converter protocol.
 - Run the complete unit test suite and package build for implementation changes.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
   this repository.

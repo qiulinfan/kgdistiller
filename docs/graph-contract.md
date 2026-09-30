@@ -103,6 +103,11 @@ Direct Markdown identity sources may be entry evidence themselves. Typst and
 LaTeX entries require their converted Markdown at
 `knowledge/derived/by-source/<vault-relative-source>.md`; the relative source
 already retains its original suffix.
+Rich LaTeX knowledge names use the local obsidian-latex-live converter to
+produce passive HTML/MathML labels while preserving native TeX spellings.
+Native TeX registries and direct HTML document exports are derived views; see
+[the LaTeX source contract](latex-sources.md). They do not change identity or
+entry authority and do not route documents through Typst.
 Internal PDF conversion uses the same path rule and its derived Markdown is the
 scanned identity source. Same-stem formats remain distinct.
 

@@ -37,6 +37,31 @@ product changes; live link modes reflect source changes.
 
 ## Workflow boundaries
 
+### Native LaTeX rendering and exports
+
+For LaTeX knowledge sources, use the native `\kn{Name}` and `\knref{Name}`
+markers. `sync` renders mathematical names through the local
+`obsidian-latex-live` converter and stores passive HTML/MathML labels. The
+default executable is `latex-live-export`; `KGDISTILLER_LATEX_HTML_COMMAND`
+selects an explicit converter using a JSON argv array. A missing rich-name
+renderer is an actionable setup error, not permission to rewrite identity
+authorities into another format.
+
+From a synchronized knowledge project, `kgdistiller export latex-registry
+--output knowledge/build/knowledge-registry.tex` generates the native TeX
+marker/ID/link definitions. `kgdistiller export latex notes/main.tex --output
+knowledge/build/main.html` renders a complete native document directly. Use
+`--replace` only for an existing generated result. Names, aliases and authored
+reference spellings map to established graph IDs; rendered text never decides
+identity. These commands do not ingest knowledge or publish a website.
+
+The notes repository's LaTeX web adapter uses this direct route. Retain
+separately requested format migration tools, but do not route LaTeX web export
+through Typst or Pandoc. Whole-document export currently supports pdfLaTeX and
+XeLaTeX and explicitly rejects LuaLaTeX. Read the packaged
+[LaTeX source contract](latex-sources.md) for setup, provenance, protocol,
+marker placement and failure behavior.
+
 ### Independent paper workflows
 
 Ordinary paper reading and explanation need no Skill. The former `read-paper`

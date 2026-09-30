@@ -50,9 +50,6 @@ MARKDOWN_WIKILINK_RE = re.compile(
     r"(?P<definition>(?<![!\\])--\[\[(?P<definition_body>[^\]\n]+)\]\]--)"
     r"|(?P<reference>(?<![!\-\\])\[\[(?P<reference_body>[^\]\n]+)\]\](?!--))"
 )
-LATEX_STATEMENT_RE = re.compile(
-    r"\\begin\{(?P<kind>definition|theorem|lemma|corollary|proposition|axiom|example)\}"
-)
 LABEL_HTML_RE = re.compile(
     r'<ql-label data-node-id="(?P<id>[a-z0-9-]+)">(?P<html>.*?)</ql-label>',
     re.DOTALL,
@@ -629,6 +626,31 @@ def strip_latex(value: str) -> str:
     return text
 
 
+def latex_name_key(value: str) -> str:
+    # An unchanged explicit native marker keeps its existing ID even when the
+    # plain-text label normalizer learns another TeX spelling.
+    return "\0latex-source-name\0" + value
+
+
+def strip_latex_name(value: str) -> str:
+    formatting = {
+        "text", "mathrm", "mathbf", "mathbb", "mathcal", "operatorname",
+        "textbf", "textit", "textup", "textsf", "texttt", "emph", "boldsymbol",
+        "mathsf", "mathtt", "mathit", "mathfrak", "displaystyle", "textstyle",
+        "scriptstyle", "scriptscriptstyle", "left", "right", "big", "Big",
+        "bigl", "bigr", "Bigl", "Bigr", "quad", "qquad", "enspace", "thinspace",
+    }
+    recognized = {"sigma", "pi", "lambda", "mu", "rho", "Omega"}
+
+    def command(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return "\\" + name if name in formatting or name in recognized else name
+
+    # Opaque macros remain named tokens instead of disappearing and collapsing
+    # unrelated explicit mathematical names onto the same generic suffix.
+    return strip_latex(re.sub(r"\\([A-Za-z]+)\*?", command, value))
+
+
 def strip_markdown(value: str) -> str:
     text = re.sub(r"^\s*<|>\s*$", "", value.strip())
     text = re.sub(r"[*_`~]", "", text)
@@ -643,13 +665,12 @@ def wikilink_parts(value: str) -> tuple[str, str]:
 
 
 def latex_statement_ranges(text: str) -> list[StatementRange]:
-    result: list[StatementRange] = []
-    for match in LATEX_STATEMENT_RE.finditer(text):
-        closing = re.compile(rf"\\end\{{{re.escape(match.group('kind'))}\}}")
-        end_match = closing.search(text, match.end())
-        end = end_match.end() if end_match else len(text)
-        result.append(StatementRange(match.start(), end, match.group("kind")))
-    return result
+    from kgdistiller.latex_syntax import statement_ranges as latex_ranges
+
+    try:
+        return [StatementRange(item.start, item.end, item.kind) for item in latex_ranges(text)]
+    except ValueError as error:
+        raise KnowledgeError(str(error)) from error
 
 
 def identity_key(value: str) -> str:
@@ -682,6 +703,12 @@ def build_identity_index(
         if node.get("type") != "knowledge":
             continue
         properties = node.get("properties") or {}
+        if properties.get("source_format") == "latex" and properties.get("source_name"):
+            key = latex_name_key(str(properties["source_name"]))
+            existing = result.get(key)
+            if existing and existing != node["id"]:
+                raise KnowledgeError("ambiguous explicit LaTeX marker spelling")
+            result[key] = node["id"]
         names = [node.get("label", ""), *properties.get("aliases", [])]
         for raw in names:
             key = identity_key(str(raw))
@@ -693,6 +720,24 @@ def build_identity_index(
                     f"ambiguous knowledge name {raw!r}: {existing!r} and {node['id']!r}"
                 )
             result[key] = node["id"]
+    for reference in state.references:
+        if reference.get("origin") != "authored" or reference.get("source_format") != "latex":
+            continue
+        name = reference.get("source_name")
+        target = reference.get("target")
+        target_node = state.nodes.get(target) if isinstance(target, str) else None
+        if (
+            not isinstance(name, str) or not name.strip()
+            or not target_node or target_node.get("type") != "knowledge"
+            or (target_node.get("properties") or {}).get("source_status") != "active"
+            or (target_node.get("provenance") or {}).get("active") is False
+        ):
+            continue
+        key = latex_name_key(name)
+        existing = result.get(key)
+        if existing and existing != target:
+            raise KnowledgeError("ambiguous explicit LaTeX marker spelling")
+        result[key] = target
     for node_id, record in sorted((registered or {}).items()):
         for raw in (record.get("canonical_name", ""), *record.get("aliases", [])):
             key = identity_key(str(raw))
@@ -992,22 +1037,36 @@ def scan_latex(
     path: Path,
     identities: dict[str, str],
 ) -> ScanResult:
+    from kgdistiller.latex_syntax import find_group_end, mask_latex
+
     authority = relative_path(repo_root, path)
     text = path.read_text(encoding="utf-8")
-    ranges = latex_statement_ranges(text)
+    try:
+        ranges = latex_statement_ranges(text)
+        active = mask_latex(text)
+    except (KnowledgeError, ValueError) as error:
+        return ScanResult([], [], [diagnostic("latex-parse", str(error), source=authority)])
     topic = topic_for(spec, path)
     definitions: list[DefinitionOccurrence] = []
     references: list[ReferenceOccurrence] = []
     errors: list[dict[str, Any]] = []
 
-    for match in LATEX_KN_RE.finditer(text):
+    def marker_is_active(position: int) -> bool:
+        cursor = position - 1
+        while cursor >= 0 and active[cursor] == "\\":
+            cursor -= 1
+        return (position - cursor - 1) % 2 == 0
+
+    for match in LATEX_KN_RE.finditer(active):
+        if not marker_is_active(match.start()):
+            continue
         try:
-            close = find_matching(text, match.end() - 1, "{", "}")
-        except KnowledgeError as error:
+            close = find_group_end(text, match.end() - 1)
+        except ValueError as error:
             errors.append(diagnostic("latex-parse", str(error), source=authority))
             continue
         label_markup = text[match.end() : close]
-        label = strip_latex(label_markup)
+        label = strip_latex_name(active[match.end() : close])
         if not label:
             errors.append(
                 diagnostic(
@@ -1018,8 +1077,10 @@ def scan_latex(
             )
             continue
         key = identity_key(label)
-        node_id = identities.get(key) or generated_id(label)
+        native_key = latex_name_key(label_markup)
+        node_id = identities.get(native_key) or identities.get(key) or generated_id(label)
         identities.setdefault(key, node_id)
+        identities.setdefault(native_key, node_id)
         statement = containing_statement(ranges, match.start())
         fingerprint, definition_start_line, definition_end_line = definition_fingerprint(
             text, match.start(), statement
@@ -1054,13 +1115,15 @@ def scan_latex(
     for item in definitions:
         if item.statement:
             statement_nodes[(item.statement.start, item.statement.end)].append(item.id)
-    for match in LATEX_REF_RE.finditer(text):
+    for match in LATEX_REF_RE.finditer(active):
+        if not marker_is_active(match.start()):
+            continue
         try:
-            close = find_matching(text, match.end() - 1, "{", "}")
-        except KnowledgeError as error:
+            close = find_group_end(text, match.end() - 1)
+        except ValueError as error:
             errors.append(diagnostic("latex-parse", str(error), source=authority))
             continue
-        label = strip_latex(text[match.end() : close])
+        label = strip_latex_name(active[match.end() : close])
         if not label:
             errors.append(
                 diagnostic(
@@ -1070,7 +1133,7 @@ def scan_latex(
                 )
             )
             continue
-        target = identities.get(identity_key(label)) or generated_id(label)
+        target = identities.get(latex_name_key(text[match.end() : close])) or identities.get(identity_key(label)) or generated_id(label)
         statement = containing_statement(ranges, match.start())
         context = None
         if statement:
@@ -1499,8 +1562,14 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
         properties["curated_definition_sha256"] = definition.definition_sha256
     if definition.source_format == "typst":
         properties["typst_name"] = definition.label_markup
+        properties.pop("latex_name", None)
+    elif definition.source_format == "latex":
+        properties["latex_name"] = definition.label_markup
+        properties.pop("typst_name", None)
+        properties.pop("label_html", None)
     else:
         properties.pop("typst_name", None)
+        properties.pop("latex_name", None)
         properties.pop("label_html", None)
     if definition.topic:
         properties["topic"] = definition.topic
@@ -1937,6 +2006,14 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                     node=node["id"],
                 )
             )
+        if node.get("type") == "knowledge" and properties.get("latex_name") and not properties.get("label_html"):
+            errors.append(
+                diagnostic(
+                    "missing-label-html",
+                    "LaTeX-authored knowledge node has no rendered HTML label",
+                    node=node["id"],
+                )
+            )
         if (
             node.get("type") == "knowledge"
             and (node.get("provenance") or {}).get("active")
@@ -2320,6 +2397,16 @@ def render_typst_labels(state: GraphState) -> None:
         node["properties"] = properties
 
 
+def render_source_labels(state: GraphState, repo_root: Path) -> None:
+    from kgdistiller.latex_html import LatexHtmlError, render_latex_labels
+
+    render_typst_labels(state)
+    try:
+        render_latex_labels(state, repo_root)
+    except LatexHtmlError as error:
+        raise KnowledgeError(str(error)) from error
+
+
 def graph_entry_url(state: GraphState, node_id: str) -> str:
     for node in sorted(state.nodes.values(), key=lambda item: item["id"]):
         web = str((node.get("provenance") or {}).get("web", ""))
@@ -2474,7 +2561,7 @@ def synchronize(
     except EntryMarkdownError as error:
         raise KnowledgeError(str(error)) from error
     refresh_semantic_edge_curation(state)
-    render_typst_labels(state)
+    render_source_labels(state, repo_root)
     previous_git_revision = str(previous.manifest.get("git_revision", "")) or None
     git_revision = previous_git_revision
     if git_context.get("head") and (
@@ -2691,7 +2778,7 @@ def apply_delta(
         }
         state.edges[edge_key(edge)] = edge
     refresh_semantic_edge_curation(state)
-    render_typst_labels(state)
+    render_source_labels(state, repo_root)
     # Entry Markdown is the authority. Install reviewed entry changes before
     # hydrating the graph projection from those files.
     for path in sorted(entry_deletes):
@@ -3511,6 +3598,20 @@ def parse_args() -> argparse.Namespace:
     export_commands = export_command.add_subparsers(
         dest="export_command", required=True
     )
+    export_latex = export_commands.add_parser(
+        "latex", help="export native LaTeX directly through the selected local HTML converter"
+    )
+    export_latex.add_argument("source", type=Path)
+    export_latex.add_argument("--output", type=Path, required=True)
+    export_latex.add_argument("--replace", action="store_true")
+    export_latex.add_argument(
+        "--engine", choices=("auto", "pdflatex", "xelatex", "lualatex"), default="auto"
+    )
+    export_latex_registry = export_commands.add_parser(
+        "latex-registry", help="write native TeX knowledge markers, stable IDs, and links"
+    )
+    export_latex_registry.add_argument("--output", type=Path, required=True)
+    export_latex_registry.add_argument("--replace", action="store_true")
     export_site = export_commands.add_parser("site")
     export_site.add_argument("--output", type=Path, required=True)
     export_site.add_argument(
@@ -3783,7 +3884,51 @@ def main() -> int:
                 if args.output.is_absolute()
                 else Path(os.path.abspath(repo_root / args.output))
             )
-            if args.export_command == "site":
+            if args.export_command in {"latex", "latex-registry"}:
+                from kgdistiller.latex_html import LatexHtmlError, export_latex_document
+                from kgdistiller.latex_registry import latex_registry_text
+
+                try:
+                    state = load_state(graph_dir)
+                    if not state.manifest or state.manifest.get("registry_sha256") != source_registry_sha256(registry):
+                        raise LatexHtmlError("source registry is out of sync; run kgdistiller sync")
+                    problems = validate_state(state)["errors"]
+                    if problems:
+                        raise LatexHtmlError("cannot export an invalid knowledge graph")
+                    for authority, expected in state.manifest.get("source_hashes", {}).items():
+                        path = (repo_root / authority).resolve()
+                        if not path.is_relative_to(repo_root.resolve()) or not path.is_file() or sha256_authority_file(path) != expected:
+                            raise LatexHtmlError(f"source authority changed; run kgdistiller sync: {authority}")
+                    if args.export_command == "latex":
+                        result = export_latex_document(
+                            repo_root,
+                            defaults(repo_root, args.source),
+                            output,
+                            state=state,
+                            engine=args.engine,
+                            replace=args.replace,
+                        )
+                    else:
+                        if output.is_symlink() or (output.exists() and not args.replace):
+                            raise LatexHtmlError("LaTeX registry output already exists; pass --replace")
+                        if output.suffix.lower() != ".tex":
+                            raise LatexHtmlError("LaTeX registry output must be a .tex file")
+                        if output.resolve() in {(repo_root / authority).resolve() for authority in state.manifest.get("source_hashes", {})}:
+                            raise LatexHtmlError("LaTeX registry output cannot replace an authority")
+                        atomic_write(output, latex_registry_text(state))
+                        result = {
+                            "schema": "kgdistiller-latex-registry-export-v1",
+                            "status": "exported",
+                            "output": str(output),
+                        }
+                except (LatexHtmlError, ValueError, KnowledgeError, OSError) as error:
+                    print(pretty_json({
+                        "kind": "kgdistiller-latex-export-error",
+                        "code": "latex-export-failed",
+                        "message": str(error),
+                    }), end="", file=sys.stderr)
+                    return 1
+            elif args.export_command == "site":
                 from .static_export import StaticExportError, export_site_bundle
 
                 try:

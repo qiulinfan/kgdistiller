@@ -36,6 +36,7 @@ packages = ["src/kgdistiller"]
 ".codex/agents" = "kgdistiller/product/.codex/agents"
 ".claude/agents" = "kgdistiller/product/.claude/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
+"docs/latex-sources.md" = "kgdistiller/product/docs/latex-sources.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
 "scripts/link-claude-product.sh" = "kgdistiller/product/scripts/link-claude-product.sh"
@@ -54,6 +55,7 @@ include = [
   ".codex/agents/*.toml",
   ".claude/agents/*.md",
   "docs/product-workflows.md",
+  "docs/latex-sources.md",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",
   "scripts/link-claude-product.sh",

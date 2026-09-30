@@ -10,6 +10,13 @@ CHECKER = runpy.run_path(str(REPO_ROOT / "scripts" / "check_distribution.py"))
 
 
 class DistributionInventoryTest(unittest.TestCase):
+    def test_installed_product_contains_the_linked_latex_instructions(self) -> None:
+        wheel, sdist = CHECKER["_expected_product_files"]()
+        self.assertIn("kgdistiller/product/docs/latex-sources.md", wheel)
+        self.assertIn("docs/latex-sources.md", sdist)
+        guide = (REPO_ROOT / "docs/product-workflows.md").read_text(encoding="utf-8")
+        self.assertIn("[LaTeX source contract](latex-sources.md)", guide)
+
     def test_distribution_inventory_ignores_python_bytecode_caches(self) -> None:
         product_cache = (
             REPO_ROOT
