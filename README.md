@@ -187,6 +187,13 @@ asks in natural language, the agent runs the commands. When a user says
    Both installers are transactional, install Skills plus runtime agent
    presets plus the canonical `workflow-products/kgdistiller` root, and never
    touch unrelated global configuration.
+   OpenCode and OMP use the checkout's Skill-only installer:
+   `./scripts/link-skills.sh opencode` or `./scripts/link-skills.sh omp`
+   (PowerShell 7: `./scripts/link-skills.ps1 -Runtime opencode` / `omp`).
+   It links into each native Skill home, keeps foreign entries, and installs
+   no agent presets or workflow receipts. Repeat after pulling or changing the
+   Skill inventory, then start a new harness session. Full workflow operations
+   still require the runtime tools and reviewers declared by that workflow.
 3. Register the user's knowledge vaults with `kgdistiller vault register
    /absolute/path --name NAME` and validate them with `kgdistiller vault
    doctor`.

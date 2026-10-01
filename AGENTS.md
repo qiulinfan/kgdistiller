@@ -38,3 +38,7 @@
 - `scripts/link-claude-skills.sh` / `.ps1` remain a skills-only development
   shortcut independent of both manifests; they install no agents, workflows,
   or receipts, and `kgdistiller claude link` adopts symlinks they created.
+  They delegate to the product-owned `scripts/link-skills.sh RUNTIME` /
+  `.ps1 -Runtime RUNTIME`; that Skill-only linker also supports native OpenCode
+  and OMP homes. Full agent/workflow integration remains governed by the
+  Codex and Claude manifests; shared Skill links do not port agent presets.
