@@ -16,7 +16,7 @@
     "kgdistiller"
   ],
   "author": "Qiulin Fan",
-  "license": "Apache-2.0",
+  "license": "MIT-0",
   "dependencies": {
     "cytoscape": "3.34.1"
   },

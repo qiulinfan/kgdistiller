@@ -1,4 +1,77 @@
-# kgdistiller
+<div align="center">
+
+<h1>kgdistiller</h1>
+<p><strong>Source-backed knowledge graphs for your notes and research.</strong></p>
+
+[![License: MIT-0](https://img.shields.io/badge/license-MIT--0-blue.svg)](LICENSE)
+[![Obsidian 1.13.7+](https://img.shields.io/badge/Obsidian-1.13.7%2B-7c3aed)](manifest.json)
+[![Plugin release](https://img.shields.io/github/v/release/qiulinfan/kgdistiller?label=Obsidian%20plugin)](https://github.com/qiulinfan/kgdistiller/releases)
+[![CI](https://github.com/qiulinfan/kgdistiller/actions/workflows/ci.yml/badge.svg)](https://github.com/qiulinfan/kgdistiller/actions/workflows/ci.yml)
+
+**English** · [简体中文](README_zh-CN.md)
+
+</div>
+
+## Highlights
+
+- Build explicit concept identities from Markdown, Typst and LaTeX sources.
+- Explore directed, typed relations and their evidence in Obsidian or a local browser.
+- Keep source definitions and references distinct from curated semantic relations.
+- Query, curate and export a portable graph through the CLI and bounded agent workflows.
+
+The Obsidian plugin is **0.1.0**; the independent Python core is **0.4.0**. This
+repository contains both, with one shared source/projection contract.
+
+## Obsidian plugin
+
+Install the three assets from the [plugin release](https://github.com/qiulinfan/kgdistiller/releases)
+into `<vault>/.obsidian/plugins/kgdistiller/`, reload Obsidian, then enable
+**kgdistiller**. Community-directory installation will be available after
+Obsidian's review and listing. Obsidian **1.13.7 or newer** is required.
+
+The plugin displays a local `kgdistiller-obsidian-graph-v1` projection, generated
+separately with the Python CLI:
+
+```sh
+kgdistiller --vault research export obsidian --replace
+```
+
+Open **kgdistiller: Open typed graph**. Filter relations and fields, inspect
+edge evidence, and open concept/source notes. The default projection is
+`knowledge/build/obsidian/semantic-graph.json`. Existing registered vault users
+can also install/update the bundled plugin manually with
+`kgdistiller --vault research obsidian install --replace`.
+
+The viewer runs without Python or a server. **Generating or refreshing the
+projection requires a separate kgdistiller CLI installation (Python ≥3.9)**.
+Mobile users can view a projection generated elsewhere and copied/synced into
+the vault; the external CLI does not run inside the plugin. See the
+[plugin guide](integrations/obsidian/README.md) and the core quickstart below.
+
+## Privacy and data boundaries
+
+The Obsidian viewer reads the selected JSON and opens files through Obsidian's
+vault API. It makes no remote-service requests, collects no telemetry, accesses
+no files outside the vault, and installs or updates no plugin/dependency.
+Regenerating a projection is a manual external command; artifact changes then
+refresh open graph views.
+
+Core graph building and querying are local and require no account or network
+service. The optional MCP/local browser is independent of the Obsidian viewer;
+the browser binds to `127.0.0.1` by default. Research agents and optional external
+tools use the providers/services you configure. Keep your knowledge authorities,
+graph exports and credentials in your own vault, separately from this product
+repository.
+
+## License
+
+Original kgdistiller code is [MIT No Attribution (MIT-0)](LICENSE), copyright
+2026 Qiulin Fan. It permits commercial use, modification and redistribution
+without an attribution condition. Bundled third-party code retains its original
+licenses, including Cytoscape.js under MIT; its complete notice is embedded in
+the plugin bundle and documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Core reference
 
 `kgdistiller` compiles registered Markdown, Typst, and LaTeX identity
 authorities plus Markdown atomic entries into a deterministic, source-backed

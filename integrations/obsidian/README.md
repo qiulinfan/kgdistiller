@@ -14,7 +14,22 @@ The plugin is read-only. It reads the public
 reads kgdistiller's internal JSONL files and never edits authorities or graph
 state.
 
-## Install in a vault
+## Install from a release
+
+Requires Obsidian **1.13.7 or newer**. Download `main.js`, `manifest.json`, and
+`styles.css` from https://github.com/qiulinfan/kgdistiller/releases, place them
+under `<vault>/.obsidian/plugins/kgdistiller/`, reload Obsidian and enable the
+plugin. Community-directory installation follows Obsidian's review and listing.
+
+The viewer reads an existing in-vault projection without Python, a server,
+network requests, telemetry or files outside the vault. Generating/regenerating
+that projection requires the separate kgdistiller CLI (Python >=3.9). The
+viewer neither installs/updates software nor runs the CLI. Mobile users may
+consume an export generated on another device. Original code is MIT-0;
+Cytoscape.js retains its MIT license and bundled notices (see
+[third-party notices](../../THIRD_PARTY_NOTICES.md)).
+
+## CLI installation and projection generation
 
 Install the plugin bundled with the global kgdistiller command into a registered
 Obsidian vault from any directory:
@@ -74,12 +89,10 @@ the semantic graph file and reloads open graph views when that artifact changes.
 
 ## Roadmap
 
-- [ ] After the knowledge system and graph interaction model have matured,
-  extract the Obsidian integration into a standalone, community-publishable
-  plugin repository with root-level release metadata, dedicated release
-  automation, policy disclosures, and Obsidian directory submission. Keep the
-  in-product bundled installer as the development and self-hosted path until
-  that boundary is ready.
+- [x] Publish through the existing monorepo's guarded root metadata and
+  version-checked GitHub release assets. The canonical plugin sources and
+  Python bundled installer remain in this directory.
+- [ ] Complete Obsidian Community directory review and listing.
 - [ ] Add an explicit opt-in, desktop-only hot-update pipeline. Registered
   authority changes should trigger a debounced `kgdistiller sync` followed by
   `kgdistiller export obsidian --replace`; generated graph/build paths must be

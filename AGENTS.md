@@ -15,6 +15,15 @@
 - Run the complete unit test suite and package build for implementation changes.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
   this repository.
+- The Community directory entry stays in this monorepo: root manifest/versions
+  mirror the canonical `integrations/obsidian` metadata, guarded by
+  `scripts/build-obsidian-plugin.mjs`. Root `npm run build` installs/builds that
+  integration and copies only ignored root main.js/styles.css; the Python
+  bundled installer still consumes the original integration paths.
+  Plugin tags have no `v` prefix and match manifest.version exactly; the Python
+  core's version is independent. Keep the release workflow's tag guard and
+  the full Cytoscape MIT notice in the actual bundle. Original project code is
+  MIT-0; upstream licenses remain unchanged.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by
   `workflows/claude-manifest.json`, installs Skills, Claude Code agent presets

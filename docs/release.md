@@ -160,3 +160,31 @@ Use short-lived or trusted publishing credentials and never commit tokens. Tag
 only after all gates pass; do not move a published tag. Keep the previous
 release available for authority recovery, while treating 0.4 data/API changes
 as intentionally incompatible.
+
+
+## Obsidian Community release entry
+
+The existing monorepo publishes the plugin through root `manifest.json` and
+`versions.json`, exactly mirrored from `integrations/obsidian`. Plugin version
+0.1.0 and Python core version 0.4.0 are independent. A plugin release tag must
+be the manifest's exact `x.y.z` version, without `v`.
+
+```sh
+npm ci
+npm run build
+npm test
+node scripts/build-obsidian-plugin.mjs --verify-only --tag 0.1.0
+```
+
+The root build delegates installation and build to the existing integration,
+checks the embedded Cytoscape notice, and copies ignored root `main.js` and
+`styles.css` for directory tooling. Python wheels/sdists and the explicit CLI
+installer continue consuming `integrations/obsidian/{main.js,manifest.json,styles.css}`.
+The version-checked release workflow builds from the tagged checkout, tests
+metadata and contracts, attests the three assets and publishes a GitHub release.
+Do not replace a published version's tag or assets; increment the plugin version
+in both manifests/packages and compatibility maps before a new release.
+
+Original project code uses MIT-0. The embedded Cytoscape.js MIT license and other
+upstream notices must remain present in the actual bundle. Obsidian review and
+listing are a separate step after GitHub publication.

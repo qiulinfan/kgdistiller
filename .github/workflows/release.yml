@@ -1,0 +1,50 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags: ["[0-9]*.[0-9]*.[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing tag matching manifest.version, without a v prefix"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      PLUGIN_VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.version || github.ref_name }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: integrations/obsidian/package-lock.json
+      - run: node scripts/build-obsidian-plugin.mjs --verify-only --tag "$PLUGIN_VERSION"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+      - name: Publish versioned plugin assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("manifest.json","utf8")); fs.writeFileSync("release-notes.md", `kgdistiller Obsidian plugin ${m.version}\n\nRequires Obsidian ${m.minAppVersion} or newer. Reads the in-vault kgdistiller graph projection; the separate Python core remains version 0.4.0.\n\nOriginal project code is MIT-0. The bundled Cytoscape.js retains its MIT notices.\n\nInstall assets: main.js, manifest.json, styles.css.\n`);'
+          gh release create "$PLUGIN_VERSION" main.js manifest.json styles.css \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "kgdistiller Obsidian $PLUGIN_VERSION" --notes-file release-notes.md

@@ -14,12 +14,13 @@ jobs:
       run:
         working-directory: integrations/obsidian
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: integrations/obsidian/package-lock.json
+      - run: node ../../scripts/build-obsidian-plugin.mjs --verify-only
       - run: npm ci
       - run: npm run check
       - name: Validate installable plugin files
@@ -27,7 +28,7 @@ jobs:
       - name: Upload plugin bundle
         uses: actions/upload-artifact@v4
         with:
-          name: kgdistiller-obsidian-0.1.0
+          name: kgdistiller-obsidian
           path: |
             integrations/obsidian/main.js
             integrations/obsidian/manifest.json
@@ -42,11 +43,11 @@ jobs:
         python-version: ["3.9", "3.11", "3.13"]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download built Obsidian plugin
         uses: actions/download-artifact@v4
         with:
-          name: kgdistiller-obsidian-0.1.0
+          name: kgdistiller-obsidian
           path: integrations/obsidian
       - uses: astral-sh/setup-uv@v6
         with:
@@ -71,11 +72,11 @@ jobs:
     needs: obsidian-plugin
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download built Obsidian plugin
         uses: actions/download-artifact@v4
         with:
-          name: kgdistiller-obsidian-0.1.0
+          name: kgdistiller-obsidian
           path: integrations/obsidian
       - uses: astral-sh/setup-uv@v6
         with:
@@ -102,11 +103,11 @@ jobs:
     needs: obsidian-plugin
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download built Obsidian plugin
         uses: actions/download-artifact@v4
         with:
-          name: kgdistiller-obsidian-0.1.0
+          name: kgdistiller-obsidian
           path: integrations/obsidian
       - uses: astral-sh/setup-uv@v6
         with:
