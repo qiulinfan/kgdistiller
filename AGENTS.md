@@ -25,7 +25,8 @@
   the full Cytoscape MIT notice in the actual bundle. Original project code is
   MIT-0; upstream licenses remain unchanged.
 - Plugin unload leaves workspace layout restoration to Obsidian; never detach graph
-  leaves in `onunload`. Settings headings use `Setting.setHeading`. The root clean
+  leaves in `onunload`. Settings headings use `Setting.setHeading` and omit the
+  plugin name. The root clean
   builder explicitly installs integration devDependencies, including when the
   caller sets `NODE_ENV=production`; this is required to reproduce release assets.
 - Claude Code has the full product integration: the transactional

@@ -24,10 +24,11 @@ repository contains both, with one shared source/projection contract.
 
 ## Obsidian plugin
 
-Install the three assets from the [plugin release](https://github.com/qiulinfan/kgdistiller/releases)
+Open the [kgdistiller community listing](https://community.obsidian.md/plugins/kgdistiller), choose **Add to Obsidian**, then enable **kgdistiller**.
+
+For manual installation, download the three assets from the [plugin release](https://github.com/qiulinfan/kgdistiller/releases)
 into `<vault>/.obsidian/plugins/kgdistiller/`, reload Obsidian, then enable
-**kgdistiller**. Community-directory installation will be available after
-Obsidian's review and listing. Obsidian **1.13.7 or newer** is required.
+**kgdistiller**. Obsidian **1.13.7 or newer** is required.
 
 The plugin displays a local `kgdistiller-obsidian-graph-v1` projection, generated
 separately with the Python CLI:

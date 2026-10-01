@@ -24,10 +24,12 @@ Obsidian 投影是可重新生成的产物。
 
 ## 安装 Obsidian 插件
 
-从 [GitHub Release](https://github.com/qiulinfan/kgdistiller/releases) 下载
+打开 [kgdistiller 社区页面](https://community.obsidian.md/plugins/kgdistiller)，点击 **Add to Obsidian**，然后启用 **kgdistiller**。
+
+手动安装时，从 [GitHub Release](https://github.com/qiulinfan/kgdistiller/releases) 下载
 `main.js`、`manifest.json`、`styles.css`，放入
 `<vault>/.obsidian/plugins/kgdistiller/`，重载 Obsidian 并启用 **kgdistiller**。
-社区目录安装将在 Obsidian 完成审查与上架后提供。最低版本为 **1.13.7**。
+最低版本为 **1.13.7**。
 
 插件读取 vault 内的 `kgdistiller-obsidian-graph-v1` 投影。已安装 CLI、注册
 知识仓库的用户可以生成投影：

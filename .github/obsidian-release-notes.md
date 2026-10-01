@@ -1,4 +1,4 @@
-kgdistiller Obsidian 0.1.1 preserves the graph panel's chosen workspace location when the plugin unloads. Settings headings now use Obsidian's native Setting API.
+kgdistiller Obsidian 0.1.2 uses a concise "Graph data" settings heading without repeating the plugin name. The graph panel keeps its chosen workspace location when the plugin unloads, and settings use Obsidian's native Setting API.
 
 The clean root builder explicitly installs the integration's development tools even when NODE_ENV=production, so the published bundle can be reproduced from source.
 

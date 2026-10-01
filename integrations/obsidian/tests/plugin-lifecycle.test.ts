@@ -35,6 +35,6 @@ describe("community lifecycle conventions", () => {
     const tab = new KgdistillerSettingTab({} as never, { settings: DEFAULT_SETTINGS } as never);
     tab.containerEl = { empty: vi.fn(), createEl: vi.fn(() => { throw new Error("direct HTML heading"); }) } as unknown as typeof tab.containerEl;
     tab.display();
-    expect(controls.headings).toEqual(["kgdistiller graph"]);
+    expect(controls.headings).toEqual(["Graph data"]);
   });
 });
