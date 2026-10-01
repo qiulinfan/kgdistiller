@@ -1,9 +1,9 @@
 {
   "name": "kgdistiller-obsidian-publication",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Root publication entry for the kgdistiller Obsidian plugin; the Python core remains in this repository.",
-  "license": "MIT-0",
+  "license": "MIT",
   "scripts": {
     "build": "node scripts/build-obsidian-plugin.mjs",
     "check:metadata": "node scripts/build-obsidian-plugin.mjs --verify-only",

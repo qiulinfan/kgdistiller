@@ -25,7 +25,7 @@ The viewer reads an existing in-vault projection without Python, a server,
 network requests, telemetry or files outside the vault. Generating/regenerating
 that projection requires the separate kgdistiller CLI (Python >=3.9). The
 viewer neither installs/updates software nor runs the CLI. Mobile users may
-consume an export generated on another device. Original code is MIT-0;
+consume an export generated on another device. Original code is MIT;
 Cytoscape.js retains its MIT license and bundled notices (see
 [third-party notices](../../THIRD_PARTY_NOTICES.md)).
 

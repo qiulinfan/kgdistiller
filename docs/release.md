@@ -185,6 +185,6 @@ metadata and contracts, attests the three assets and publishes a GitHub release.
 Do not replace a published version's tag or assets; increment the plugin version
 in both manifests/packages and compatibility maps before a new release.
 
-Original project code uses MIT-0. The embedded Cytoscape.js MIT license and other
+Original project code uses MIT. The embedded Cytoscape.js MIT license and other
 upstream notices must remain present in the actual bundle. Obsidian review and
 listing are a separate step after GitHub publication.

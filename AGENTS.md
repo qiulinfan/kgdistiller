@@ -23,7 +23,7 @@
   Plugin tags have no `v` prefix and match manifest.version exactly; the Python
   core's version is independent. Keep the release workflow's tag guard and
   the full Cytoscape MIT notice in the actual bundle. Original project code is
-  MIT-0; upstream licenses remain unchanged.
+  MIT; upstream licenses remain unchanged.
 - Plugin unload leaves workspace layout restoration to Obsidian; never detach graph
   leaves in `onunload`. Settings headings use `Setting.setHeading` and omit the
   plugin name. The root clean

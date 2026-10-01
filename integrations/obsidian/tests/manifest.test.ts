@@ -18,7 +18,7 @@ describe("Obsidian plugin metadata", () => {
     expect(await readJson("../../versions.json")).toEqual(versions);
     const rootPackage = await readJson("../../package.json");
     expect(rootPackage.version).toBe(manifest.version);
-    expect(rootPackage.license).toBe("MIT-0");
-    expect(packageJson.license).toBe("MIT-0");
+    expect(rootPackage.license).toBe("MIT");
+    expect(packageJson.license).toBe("MIT");
   });
 });

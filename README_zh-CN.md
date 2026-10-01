@@ -3,7 +3,7 @@
 <h1>kgdistiller</h1>
 <p><strong>从笔记与研究材料构建有来源的知识图谱。</strong></p>
 
-[![License: MIT-0](https://img.shields.io/badge/license-MIT--0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Obsidian 1.13.7+](https://img.shields.io/badge/Obsidian-1.13.7%2B-7c3aed)](manifest.json)
 [![Plugin release](https://img.shields.io/github/v/release/qiulinfan/kgdistiller?label=Obsidian%20plugin)](https://github.com/qiulinfan/kgdistiller/releases)
 
@@ -100,8 +100,8 @@ Obsidian 插件只通过 vault API 读取选定投影和打开笔记，不发送
 
 ## 开源许可
 
-kgdistiller 原创代码采用 [MIT-0](LICENSE)，版权为 2026 Qiulin Fan；
-允许商业使用、修改和再分发，没有署名条件。第三方组件保留原许可证。
+kgdistiller 原创代码采用 [MIT](LICENSE)，版权为 2026 Qiulin Fan；
+允许商业使用、修改和再分发，须保留版权与许可声明。第三方组件保留原许可证。
 Cytoscape.js 的完整 MIT 通知已嵌入实际插件产物，见
 [第三方通知](THIRD_PARTY_NOTICES.md)。
 

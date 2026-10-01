@@ -1,6 +1,6 @@
 {
   "name": "kgdistiller-obsidian",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Typed, source-backed kgdistiller graph view for Obsidian.",
   "main": "main.js",
   "type": "module",
@@ -16,7 +16,7 @@
     "kgdistiller"
   ],
   "author": "Qiulin Fan",
-  "license": "MIT-0",
+  "license": "MIT",
   "dependencies": {
     "cytoscape": "3.34.1"
   },

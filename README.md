@@ -3,7 +3,7 @@
 <h1>kgdistiller</h1>
 <p><strong>Source-backed knowledge graphs for your notes and research.</strong></p>
 
-[![License: MIT-0](https://img.shields.io/badge/license-MIT--0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Obsidian 1.13.7+](https://img.shields.io/badge/Obsidian-1.13.7%2B-7c3aed)](manifest.json)
 [![Plugin release](https://img.shields.io/github/v/release/qiulinfan/kgdistiller?label=Obsidian%20plugin)](https://github.com/qiulinfan/kgdistiller/releases)
 [![CI](https://github.com/qiulinfan/kgdistiller/actions/workflows/ci.yml/badge.svg)](https://github.com/qiulinfan/kgdistiller/actions/workflows/ci.yml)
@@ -66,9 +66,9 @@ repository.
 
 ## License
 
-Original kgdistiller code is [MIT No Attribution (MIT-0)](LICENSE), copyright
+Original kgdistiller code is [MIT](LICENSE), copyright
 2026 Qiulin Fan. It permits commercial use, modification and redistribution
-without an attribution condition. Bundled third-party code retains its original
+with the copyright and permission notices retained. Bundled third-party code retains its original
 licenses, including Cytoscape.js under MIT; its complete notice is embedded in
 the plugin bundle and documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

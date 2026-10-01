@@ -1,6 +1,6 @@
 # Third-party notices
 
-kgdistiller's original code is licensed under MIT-0. Upstream components retain
+kgdistiller's original code is licensed under MIT. Upstream components retain
 their own licenses; this file does not relicense them.
 
 ## Cytoscape.js 3.34.1 — MIT
