@@ -47,10 +47,6 @@ export default class KgdistillerPlugin extends Plugin {
     );
   }
 
-  onunload(): void {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH);
-  }
-
   async activateGraphView(): Promise<void> {
     let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH)[0];
     if (!leaf) {

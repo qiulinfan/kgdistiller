@@ -28,7 +28,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "kgdistiller graph" });
+    new Setting(containerEl).setName("kgdistiller graph").setHeading();
 
     new Setting(containerEl)
       .setName("Semantic graph path")

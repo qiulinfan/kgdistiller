@@ -44,7 +44,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("manifest.json","utf8")); fs.writeFileSync("release-notes.md", `kgdistiller Obsidian plugin ${m.version}\n\nRequires Obsidian ${m.minAppVersion} or newer. Reads the in-vault kgdistiller graph projection; the separate Python core remains version 0.4.0.\n\nOriginal project code is MIT-0. The bundled Cytoscape.js retains its MIT notices.\n\nInstall assets: main.js, manifest.json, styles.css.\n`);'
+          node --input-type=module -e 'import fs from "node:fs"; const m=JSON.parse(fs.readFileSync("manifest.json","utf8")); fs.writeFileSync("release-notes.md", fs.readFileSync(".github/obsidian-release-notes.md", "utf8") + `\nRequires Obsidian ${m.minAppVersion} or newer. Install assets: main.js, manifest.json, styles.css.\n`);'
           gh release create "$PLUGIN_VERSION" main.js manifest.json styles.css \
             --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "kgdistiller Obsidian $PLUGIN_VERSION" --notes-file release-notes.md

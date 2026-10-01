@@ -1,6 +1,6 @@
 {
   "name": "kgdistiller-obsidian-publication",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Root publication entry for the kgdistiller Obsidian plugin; the Python core remains in this repository.",
   "license": "MIT-0",

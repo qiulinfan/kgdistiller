@@ -28,7 +28,9 @@ assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
 if (tagAt >= 0) assert.equal(tag, manifest.version, "Release tag must exactly match manifest.version (no v prefix)");
 if (!verifyOnly) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  for (const command of [["ci"], ["run", "build"]]) {
+  // The directory's clean builder may set NODE_ENV=production. Build tools are
+  // devDependencies, so include them explicitly without changing runtime deps.
+  for (const command of [["ci", "--include=dev"], ["run", "build"]]) {
     const run = spawnSync(npm, command, { cwd: integration, stdio: "inherit", shell: process.platform === "win32" });
     if (run.error) throw run.error;
     if (run.status !== 0) process.exit(run.status ?? 1);
