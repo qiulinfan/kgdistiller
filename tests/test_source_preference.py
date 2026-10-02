@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import tempfile
 import unittest
@@ -198,6 +199,65 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         self.assertEqual(state.manifest["source_hashes"], _current_authority_hashes(self.root, self.registry))
         documents, _ = _document_inventory(self.root, self.registry, state)
         self.assertEqual(["notes/chapter.tex"], [item["authority"] for item in documents])
+
+    def test_paired_typst_names_survive_in_registry_without_becoming_graph_authorities(self) -> None:
+        typst = self.write("chapter.typ", "#kn[$sigma$-algebra]\n#ref[#strong[$sigma$-algebra]]\n")
+        self.write("chapter.tex", "\\kn{$\\sigma$-algebra}\n\\knref{$\\sigma$-algebra}\n")
+        original_typst = typst.read_bytes()
+        state, _, _ = self.sync()
+        original_state = copy.deepcopy(state)
+        names = knowledge.typst_rendering_names(self.root, [self.spec()], state)
+        self.assertEqual({"sigma-algebra": ["$sigma$-algebra", "#strong[$sigma$-algebra]"]}, names)
+        registry = self.generated.read_text(encoding="utf-8")
+        self.assertIn("name: [$sigma$-algebra]", registry)
+        self.assertIn("[#strong[$sigma$-algebra]]", registry)
+        self.assertEqual(registry, knowledge.typst_registry_text(state, names))
+        self.assertEqual(original_state, state)
+        self.assertEqual(original_typst, typst.read_bytes())
+        self.assertEqual({"notes/chapter.tex"}, set(state.manifest["source_hashes"]))
+        self.assertNotIn("typst_name", state.nodes["sigma-algebra"]["properties"])
+        self.assertEqual({"latex"}, {reference["source_format"] for reference in state.references})
+
+    def test_typst_rendering_names_require_explicit_identity_even_for_matching_generated_slug(self) -> None:
+        self.write("chapter.typ", "#kn[alpha+beta]\n#ref[alpha+beta]\n")
+        self.write("chapter.tex", "\\kn{alpha beta}\n")
+        state, _, _ = self.sync()
+        self.assertEqual({"alpha-beta"}, self.knowledge_ids(state))
+        self.assertEqual({}, knowledge.typst_rendering_names(self.root, [self.spec()], state))
+        self.assertNotIn("alpha+beta", self.generated.read_text(encoding="utf-8"))
+
+    def test_typst_rendering_definition_must_belong_to_paired_tex_but_known_refs_can_cross_files(self) -> None:
+        self.write("chapter.typ", "#kn[#strong[elsewhere]]\n#ref[#emph[elsewhere]]\n")
+        self.write("chapter.tex", "\\kn{here}\n")
+        self.write("other.tex", "\\kn{elsewhere}\n")
+        state, _, _ = self.sync()
+        self.assertEqual(
+            {"elsewhere": ["#emph[elsewhere]"]},
+            knowledge.typst_rendering_names(self.root, [self.spec()], state),
+        )
+        state.nodes["elsewhere"]["provenance"]["active"] = False
+        self.assertEqual({}, knowledge.typst_rendering_names(self.root, [self.spec()], state))
+
+    def test_unregistered_typst_is_not_read_for_rendering_names(self) -> None:
+        self.write("chapter.typ", "#kn[unclosed")
+        self.write("chapter.tex", "\\kn{registered}\n")
+        self.write_registry(["**/*.tex"])
+        state, _, _ = self.sync()
+        self.assertEqual({}, knowledge.typst_rendering_names(self.root, [self.spec()], state))
+        self.assertEqual({"notes/chapter.tex"}, set(state.manifest["source_hashes"]))
+
+    def test_paired_rendering_parse_failure_does_not_install_new_graph_generation(self) -> None:
+        typst = self.write("chapter.typ", "#kn[shared]\n")
+        latex = self.write("chapter.tex", "\\kn{shared}\n")
+        self.sync()
+        before = {path.relative_to(self.graph): path.read_bytes() for path in self.graph.rglob("*") if path.is_file()}
+        registry_before = self.generated.read_bytes()
+        typst.write_text("#kn[unclosed", encoding="utf-8")
+        latex.write_text("\\kn{shared} revised definition.\n", encoding="utf-8")
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "paired Typst rendering"):
+            self.sync()
+        self.assertEqual(before, {path.relative_to(self.graph): path.read_bytes() for path in self.graph.rglob("*") if path.is_file()})
+        self.assertEqual(registry_before, self.generated.read_bytes())
 
     def test_exports_reject_old_typst_generation_until_pair_is_synchronized(self) -> None:
         self.write("chapter.typ", "#kn[shared]\n#ref[shared]\n")

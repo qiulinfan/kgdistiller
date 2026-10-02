@@ -21,13 +21,16 @@ from .cli import (
     KnowledgeError,
     atomic_write,
     identity_registry_sha256,
+    load_identity_registry,
     load_sources,
     load_state,
     make_agent_snapshot,
     pretty_json,
+    paired_typst_rendering_sources,
     sha256_authority_file,
     source_registry_sha256,
     typst_registry_text,
+    typst_rendering_names,
     unique_source_for_path,
     validate_state,
 )
@@ -1098,6 +1101,16 @@ def export_site_bundle(
     graph_payload, filtered_state, published_hashes, published_ids, source_count = (
         build_site_graph(repo_root, registry, state)
     )
+    published_specs = [spec for spec in load_sources(repo_root, registry) if spec.id in published_ids]
+    try:
+        rendering_names = typst_rendering_names(
+            repo_root, published_specs, state, load_identity_registry(identities)
+        )
+        rendering_inputs = [
+            path for _, path in paired_typst_rendering_sources(repo_root, published_specs, state)
+        ]
+    except (KnowledgeError, OSError, UnicodeError, ValueError) as error:
+        raise StaticExportError(f"cannot build Typst rendering names: {error}") from error
 
     raw_source_hashes = state.manifest.get("source_hashes") or {}
     if not isinstance(raw_source_hashes, dict):
@@ -1113,7 +1126,7 @@ def export_site_bundle(
             state.manifest,
             raw_source_hashes,
             state,
-        ),
+        ) + rendering_inputs,
     )
     private_counts_raw = state.manifest.get("counts") or {}
     private_counts = {
@@ -1129,7 +1142,7 @@ def export_site_bundle(
         graph_path = staging / "graph.json"
         atomic_write(graph_path, pretty_json(graph_payload))
         registry_path = staging / "knowledge-registry.typ"
-        atomic_write(registry_path, typst_registry_text(filtered_state))
+        atomic_write(registry_path, typst_registry_text(filtered_state, rendering_names))
         verifier_source = Path(__file__).with_name("static_export_verifier.py")
         verifier_path = staging / "verify_export.py"
         shutil.copyfile(verifier_source, verifier_path)

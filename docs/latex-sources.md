@@ -41,6 +41,16 @@ name as an alias. Sync refuses to write a generation if an old active definition
 cannot resolve to the same ID in its TeX sibling, rather than retaining an old
 entry and creating another. Filenames and marker order establish no identity.
 
+The generated Typst registry preserves the original rendering spellings from an
+admitted Typst companion. This is a read-only projection: only explicit markers
+that already resolve to existing IDs contribute names, and a definition must
+belong to the paired TeX authority. References may contribute an authored spelling
+for an already resolved active target. These names create no nodes, graph
+properties or Typst authority hashes. Sync and static-site export use the same
+mapping; static export reads only published companions and requires them to be
+tracked source inputs. The node's primary authority, source format and graph
+labels remain native TeX.
+
 ## Mathematical names
 
 Plain names receive escaped text labels without installing a renderer. Rich

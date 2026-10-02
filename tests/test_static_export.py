@@ -18,6 +18,7 @@ from kgdistiller.cli import (
     sha256_authority_file,
     sha256_file,
     source_registry_sha256,
+    synchronize,
     write_artifacts,
 )
 from kgdistiller.contracts import ContractError, finalize_self_digest, validate_contract
@@ -205,6 +206,54 @@ class StaticSiteExportTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_tex_authority_exports_published_typst_rendering_names_and_tracks_only_public_companions(self) -> None:
+        tex = self.public_source.with_suffix(".tex")
+        typst = self.public_source.with_suffix(".typ")
+        tex.write_text("\\kn{Public concept}\n", encoding="utf-8")
+        typst.write_text("#kn[#strong[Public concept]]\n#ref[#emph[Public concept]]\n", encoding="utf-8")
+        self.public_source.unlink()
+        private_tex = self.private_source.with_name("references.tex")
+        private_typst = private_tex.with_suffix(".typ")
+        private_tex.write_text("\\knref{Public concept}\n", encoding="utf-8")
+        private_typst.write_text("#ref[#text[Public concept]]\n", encoding="utf-8")
+        payload = json.loads(self.registry.read_text(encoding="utf-8"))
+        payload["sources"][0]["files"] = ["*.tex", "*.typ"]
+        payload["sources"][1]["files"] = ["*.md", "*.tex", "*.typ"]
+        self.registry.write_text(json.dumps(payload), encoding="utf-8")
+        generated = self.repo / "knowledge/build/knowledge-registry.typ"
+        def render_labels(state, _root):
+            for node in state.nodes.values():
+                if node["type"] == "knowledge":
+                    node["properties"]["label_html"] = "<span>Fixture label</span>"
+        with patch("kgdistiller.cli.render_source_labels", side_effect=render_labels):
+            state, _, _ = synchronize(
+                self.repo, self.registry, self.graph, generated,
+                files=[], course=None, subject=None, write=True,
+            )
+        self.assertNotIn("notes/public/public.typ", state.manifest["source_hashes"])
+        self.assertIn("notes/public/public.tex", state.manifest["source_hashes"])
+        self.assertIn("[#text[Public concept]]", generated.read_text(encoding="utf-8"))
+        output = self.repo / "knowledge/export/paired"
+        with (
+            patch("kgdistiller.static_export._source_checkout_commit", return_value=None),
+            patch("kgdistiller.static_export._distribution_commit", return_value=None),
+            patch("kgdistiller.static_export._source_checkout_revision", return_value=self.SOURCE_REVISION) as revision,
+        ):
+            export_site_bundle(
+                self.repo, output, registry=self.registry, graph_dir=self.graph,
+                identities=self.identities, product_commit="b" * 40,
+                source_repository="https://github.com/example/notes",
+            )
+        registry = (output / "knowledge-registry.typ").read_text(encoding="utf-8")
+        self.assertIn("name: [#strong[Public concept]]", registry)
+        self.assertIn("[#emph[Public concept]]", registry)
+        self.assertNotIn("[#text[Public concept]]", registry)
+        self.assertNotIn("Private concept", registry)
+        inputs = {path.resolve() for path in revision.call_args.args[1]}
+        self.assertIn(typst.resolve(), inputs)
+        self.assertNotIn(private_typst.resolve(), inputs)
+        self.assertEqual("ok", verify_export(output)["status"])
 
     def export(
         self,
