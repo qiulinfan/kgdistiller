@@ -1,9 +1,11 @@
 """Native Skill linking stays product-owned and does not install agents."""
 
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -68,6 +70,12 @@ class SkillLinkingTests(unittest.TestCase):
                 repo, homes, env = self.fixture(Path(tmp))
                 for runtime in RUNTIMES:
                     self.run_linker(kind, repo, env, runtime)
+                # A copied directory can pass the initial install, but cannot
+                # track source updates or survive a repeated install.
+                for home in homes.values():
+                    self.assertEqual((home / "skills/alpha").resolve(), (repo / "skills/alpha").resolve())
+                    if os.name == "nt" and hasattr(Path, "is_junction"):
+                        self.assertTrue((home / "skills/alpha").is_junction())
                 self.run_linker(kind, repo, env, "claude", legacy=True)
                 manifest = repo / "skills/alpha/SKILL.md"
                 manifest.write_text(manifest.read_text().replace("Original", "Updated"))
@@ -106,6 +114,83 @@ class SkillLinkingTests(unittest.TestCase):
                 self.run_linker(kind, repo, env, "omp", success=False)
                 self.assertEqual((skills / "zeta").resolve(), foreign.resolve())
                 self.assertTrue((skills / "stale").is_symlink())
+
+    def test_foreign_relative_links_survive_owned_stale_cleanup(self):
+        for kind in self.linkers:
+            with self.subTest(linker=kind), tempfile.TemporaryDirectory() as tmp:
+                repo, homes, env = self.fixture(Path(tmp))
+                skills = homes["omp"] / "skills"
+                foreign_target = skills / "skills/deleted"
+                foreign_target.mkdir(parents=True)
+                marker = foreign_target / "keep.txt"
+                marker.write_text("preserve")
+                foreign = skills / "foreign"
+                foreign.symlink_to(Path("skills/deleted"), target_is_directory=True)
+                owned_stale = skills / "owned-stale"
+                owned_stale.symlink_to(repo / "skills/deleted", target_is_directory=True)
+                self.run_linker(kind, repo, env, "omp")
+                self.assertTrue(foreign.is_symlink())
+                self.assertEqual(foreign.resolve(), foreign_target.resolve())
+                self.assertEqual(marker.read_text(), "preserve")
+                self.assertFalse(os.path.lexists(owned_stale))
+
+    def test_wanted_relative_foreign_link_is_rejected_before_stale_cleanup(self):
+        for kind in self.linkers:
+            with self.subTest(linker=kind), tempfile.TemporaryDirectory() as tmp:
+                repo, homes, env = self.fixture(Path(tmp))
+                skills = homes["omp"] / "skills"
+                foreign_target = skills / "skills/alpha"
+                foreign_target.mkdir(parents=True)
+                destination = skills / "alpha"
+                destination.symlink_to(Path("skills/alpha"), target_is_directory=True)
+                stale = skills / "stale"
+                stale.symlink_to(repo / "skills/deleted", target_is_directory=True)
+                self.run_linker(kind, repo, env, "omp", success=False)
+                self.assertEqual(destination.resolve(), foreign_target.resolve())
+                self.assertTrue(stale.is_symlink())
+
+    @unittest.skipIf(os.name == "nt", "Native Windows is covered by the real linker lifecycle tests")
+    def test_windows_shell_dispatch_uses_native_paths_and_preserves_exit_status(self):
+        for system in ("MINGW64_NT-10.0", "MSYS_NT-10.0", "CYGWIN_NT-10.0"):
+            with self.subTest(system=system), tempfile.TemporaryDirectory() as tmp:
+                repo, homes, env = self.fixture(Path(tmp))
+                bin_dir = Path(tmp) / "dispatch-bin"
+                bin_dir.mkdir()
+                log = Path(tmp) / "dispatch.json"
+                self.stub(bin_dir / "uname", '#!/bin/sh\nprintf "%s\\n" "$KG_TEST_SYSTEM"\n')
+                self.stub(bin_dir / "cygpath", '#!/bin/sh\n[ "$1" = "-aw" ] || exit 9\nprintf "native:%s\\n" "$2"\n')
+                self.stub(bin_dir / "pwsh", '#!/bin/sh\nexec "$KG_TEST_PYTHON" -c '
+                          + '\'import json, os, sys; assert os.environ["MSYS2_ARG_CONV_EXCL"] == "*"; open(os.environ["KG_TEST_LOG"], "w").write(json.dumps(sys.argv[1:])); sys.exit(17)\' "$@"\n')
+                env.update(PATH=str(bin_dir) + os.pathsep + env["PATH"], KG_TEST_SYSTEM=system,
+                           KG_TEST_LOG=str(log), KG_TEST_PYTHON=sys.executable)
+                result = subprocess.run(["sh", str(repo / "scripts/link-skills.sh"), "opencode"],
+                                        cwd=repo, env=env, text=True, capture_output=True, timeout=30)
+                self.assertEqual(17, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(["-NoLogo", "-NoProfile", "-File",
+                                  "native:" + str(repo / "scripts/link-skills.ps1"),
+                                  "-Runtime", "opencode", "-RuntimeHome", "native:" + str(homes["opencode"])],
+                                 json.loads(log.read_text()))
+                self.assertFalse(homes["opencode"].exists())
+
+    @unittest.skipIf(os.name == "nt", "Dependency injection uses POSIX executable stubs")
+    def test_windows_missing_powershell_fails_before_creating_runtime_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, homes, env = self.fixture(Path(tmp))
+            bin_dir = Path(tmp) / "dispatch-bin"
+            bin_dir.mkdir()
+            self.stub(bin_dir / "uname", '#!/bin/sh\nprintf "MINGW64_NT-10.0\\n"\n')
+            (bin_dir / "dirname").symlink_to(shutil.which("dirname"))
+            env["PATH"] = str(bin_dir)
+            result = subprocess.run([shutil.which("sh"), str(repo / "scripts/link-skills.sh"), "codex"],
+                                    cwd=repo, env=env, text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("PowerShell 7", result.stderr)
+            self.assertFalse(homes["codex"].exists())
+
+    @staticmethod
+    def stub(path, content):
+        path.write_text(content)
+        path.chmod(0o755)
 
 
 @unittest.skipUnless(PWSH_READY, "PowerShell 7 is absent or its runtime cannot initialize")

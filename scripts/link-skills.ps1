@@ -9,6 +9,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Resolve-LinkTarget {
+    param($Item)
+    # Relative symlink targets belong to the link's directory, never the caller's cwd.
+    $linkDirectory = [System.IO.Path]::GetDirectoryName($Item.FullName)
+    return [System.IO.Path]::GetFullPath($Item.LinkTarget, $linkDirectory)
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $repositorySkills = Join-Path $repoRoot 'skills'
 if (-not (Test-Path -LiteralPath $repositorySkills -PathType Container)) {
@@ -45,7 +52,7 @@ foreach ($skill in (Get-ChildItem -LiteralPath $repositorySkills -Directory)) {
     $existing = Get-Item -Force -LiteralPath $destination -ErrorAction SilentlyContinue
     if ($null -eq $existing) { continue }
     if (-not $existing.LinkType -or -not $existing.LinkTarget -or
-        -not [string]::Equals([System.IO.Path]::GetFullPath($existing.LinkTarget), $skill.FullName, $comparison)) {
+        -not [string]::Equals((Resolve-LinkTarget $existing), $skill.FullName, $comparison)) {
         throw "Conflicting Skill entry: $destination"
     }
 }
@@ -55,7 +62,7 @@ foreach ($skill in (Get-ChildItem -LiteralPath $repositorySkills -Directory)) {
 Get-ChildItem -Force -LiteralPath $runtimeSkills | ForEach-Object {
     if (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return }
     if ([string]::IsNullOrEmpty($_.LinkTarget)) { return }
-    $target = [System.IO.Path]::GetFullPath($_.LinkTarget)
+    $target = Resolve-LinkTarget $_
     if (-not $target.StartsWith($repositoryPrefix, $comparison)) { return }
     if ((Test-Path -LiteralPath (Join-Path $target 'SKILL.md') -PathType Leaf) -and
         ([System.IO.Path]::GetFileName($target) -eq $_.Name)) { return }
@@ -73,7 +80,7 @@ foreach ($skillDirectory in (Get-ChildItem -LiteralPath $repositorySkills -Direc
             throw "Refusing to replace a real file or directory: $destination"
         }
         if ([string]::IsNullOrEmpty($existing.LinkTarget) -or
-            [System.IO.Path]::GetFullPath($existing.LinkTarget) -ne [System.IO.Path]::GetFullPath($skillDirectory.FullName)) {
+            (Resolve-LinkTarget $existing) -ne [System.IO.Path]::GetFullPath($skillDirectory.FullName)) {
             throw "Conflicting link exists: $destination"
         }
     } else {

@@ -17,6 +17,26 @@ case "$runtime" in
 esac
 runtime_skills_dir="$runtime_root/skills"
 
+# Git Bash/MSYS can turn `ln -s` into a directory copy. Use the existing
+# Windows linker so updates stay live and junction ownership stays explicit.
+# WSL reports Linux and keeps using the POSIX implementation below.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    command -v pwsh >/dev/null 2>&1 || {
+      printf 'PowerShell 7 (pwsh) is required to link Skills on Windows.\n' >&2
+      exit 1
+    }
+    command -v cygpath >/dev/null 2>&1 || {
+      printf 'cygpath is required to pass native Windows paths to PowerShell.\n' >&2
+      exit 1
+    }
+    native_script=$(cygpath -aw "$script_dir/link-skills.ps1")
+    native_runtime_root=$(cygpath -aw "$runtime_root")
+    MSYS2_ARG_CONV_EXCL='*' exec pwsh -NoLogo -NoProfile -File "$native_script" \
+      -Runtime "$runtime" -RuntimeHome "$native_runtime_root"
+    ;;
+esac
+
 [ -d "$skills_repo_dir" ] || {
   printf 'missing product skills directory: %s\n' "$skills_repo_dir" >&2
   exit 1
