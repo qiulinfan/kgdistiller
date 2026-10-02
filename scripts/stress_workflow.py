@@ -141,14 +141,15 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
             by_format["latex"].append(ids[index])
             latex.extend([rf"\begin{{definition}}\kn{{{label}}} Fixture {index}.\end{{definition}}", ""])
     (notes / "concepts.md").write_text("\n".join(markdown), encoding="utf-8")
-    (notes / "concepts.typ").write_text("\n".join(typst), encoding="utf-8")
-    (notes / "concepts.tex").write_text("\n".join(latex), encoding="utf-8")
+    # These hold independent concepts, rather than paired formats of one source.
+    (notes / "concepts-typst.typ").write_text("\n".join(typst), encoding="utf-8")
+    (notes / "concepts-latex.tex").write_text("\n".join(latex), encoding="utf-8")
     derived = root / "knowledge/derived/by-source/notes/stress"
     derived.mkdir(parents=True)
-    (derived / "concepts.typ.md").write_text(
+    (derived / "concepts-typst.typ.md").write_text(
         "# Converted Typst stress authority\n", encoding="utf-8"
     )
-    (derived / "concepts.tex.md").write_text(
+    (derived / "concepts-latex.tex.md").write_text(
         "# Converted LaTeX stress authority\n", encoding="utf-8"
     )
 

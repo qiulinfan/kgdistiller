@@ -437,7 +437,10 @@ def expand_source(spec: SourceSpec) -> list[Path]:
             for path in spec.root.glob(pattern)
             if path.is_file() and not _is_managed_build_path(path)
         )
-    return sorted(files, key=lambda item: item.as_posix())
+    return sorted(
+        {preferred_source_path(spec, path) for path in files},
+        key=lambda item: item.as_posix(),
+    )
 
 
 def glob_matches_path(relative: Path, pattern: str) -> bool:
@@ -463,8 +466,8 @@ def glob_matches_path(relative: Path, pattern: str) -> bool:
     return matches(0, 0)
 
 
-def source_matches_path(spec: SourceSpec, path: Path) -> bool:
-    """Return whether a file path is admitted by a source's bounded patterns."""
+def _source_admits_path(spec: SourceSpec, path: Path) -> bool:
+    """Check registry bounds independently of paired source preference."""
     if _is_managed_build_path(path):
         return False
     try:
@@ -474,18 +477,56 @@ def source_matches_path(spec: SourceSpec, path: Path) -> bool:
     return any(glob_matches_path(relative, pattern) for pattern in spec.patterns)
 
 
+def preferred_source_path(spec: SourceSpec, path: Path) -> Path:
+    """Choose an admitted TeX sibling over Typst in the same directory."""
+    path = path.resolve()
+    if path.suffix.lower() == ".typ":
+        sibling = path.with_suffix(".tex")
+    elif path.suffix.lower() == ".tex" and not path.is_file():
+        # A deleted TeX authority exposes its still-registered Typst sibling.
+        sibling = path.with_suffix(".typ")
+    else:
+        return path
+    if sibling.is_file() and _source_admits_path(spec, sibling):
+        return sibling.resolve()
+    return path
+
+
+def source_matches_path(spec: SourceSpec, path: Path) -> bool:
+    """Return whether a path is an admitted, currently selected authority."""
+    return (
+        _source_admits_path(spec, path)
+        and preferred_source_path(spec, path) == path.resolve()
+    )
+
+
 def matching_sources(specs: list[SourceSpec], path: Path) -> list[SourceSpec]:
     return [spec for spec in specs if source_matches_path(spec, path)]
 
 
-def unique_source_for_path(specs: list[SourceSpec], path: Path) -> SourceSpec:
-    owners = matching_sources(specs, path)
+def unique_source_for_path(
+    specs: list[SourceSpec], path: Path, *, include_shadowed: bool = False
+) -> SourceSpec:
+    owners = (
+        [spec for spec in specs if _source_admits_path(spec, path)]
+        if include_shadowed
+        else matching_sources(specs, path)
+    )
     if len(owners) == 1:
         return owners[0]
     if len(owners) > 1:
         raise KnowledgeError(
             f"source file matches multiple registry sources: {path} "
             f"({', '.join(sorted(spec.id for spec in owners))})"
+        )
+    admitted = [spec for spec in specs if _source_admits_path(spec, path)]
+    if admitted:
+        siblings = sorted(
+            {preferred_source_path(spec, path).as_posix() for spec in admitted}
+        )
+        raise KnowledgeError(
+            f"source file is superseded by its registered sibling: {path}; "
+            f"use {', '.join(siblings)}"
         )
     roots = [spec.id for spec in specs if path == spec.root or spec.root in path.parents]
     if roots:
@@ -633,6 +674,9 @@ def latex_name_key(value: str) -> str:
 
 
 def strip_latex_name(value: str) -> str:
+    # An empty circumflex accent typesets a literal caret. Preserve its
+    # adjacency so a plain Typst name such as "R^n" keeps the same identity.
+    value = value.replace(r"\^{}", "^")
     formatting = {
         "text", "mathrm", "mathbf", "mathbb", "mathcal", "operatorname",
         "textbf", "textit", "textup", "textsf", "texttt", "emph", "boldsymbol",
@@ -1267,7 +1311,9 @@ def select_scope(
         for raw in files:
             path = (repo_root / raw).resolve() if not raw.is_absolute() else raw.resolve()
             if path.is_file():
-                pairs.append((unique_source_for_path(specs, path), path))
+                owner = unique_source_for_path(specs, path, include_shadowed=True)
+                preferred = preferred_source_path(owner, path)
+                pairs.append((unique_source_for_path(specs, preferred), preferred))
             elif path.is_dir():
                 selected: list[tuple[SourceSpec, Path]] = []
                 for spec in specs:
@@ -1287,7 +1333,9 @@ def select_scope(
             elif path.exists():
                 raise KnowledgeError(f"scope path is not a file or directory: {raw}")
             else:
-                pairs.append((unique_source_for_path(specs, path), path))
+                owner = unique_source_for_path(specs, path, include_shadowed=True)
+                preferred = preferred_source_path(owner, path)
+                pairs.append((unique_source_for_path(specs, preferred), preferred))
     else:
         for spec in selected_specs:
             pairs.extend((spec, path) for path in expand_source(spec))
@@ -1449,7 +1497,15 @@ def include_previous_authorities(
         owner = source_owner(repo_root, specs, authority)
         if owner is None:
             continue
-        if full or ((course or subject) and owner.id in selected_specs) or requested_path(authority):
+        preferred = relative_path(
+            repo_root, preferred_source_path(owner, repo_root / authority)
+        )
+        if (
+            full
+            or ((course or subject) and owner.id in selected_specs)
+            or requested_path(authority)
+            or preferred in selected_keys
+        ):
             candidates.add(authority)
 
     if files:
@@ -1479,7 +1535,8 @@ def include_previous_authorities(
         if owner is None:
             continue
         path = (repo_root / authority).resolve()
-        unique.setdefault(authority, (owner, path))
+        if preferred_source_path(owner, path) == path:
+            unique.setdefault(authority, (owner, path))
         selected_keys.add(authority)
     return list(unique.values()), selected_keys
 
@@ -2501,13 +2558,48 @@ def synchronize(
         full=full,
     )
     state = copy.deepcopy(previous)
+    identity_index = build_identity_index(previous, registered_identities)
     scan = scan_scope(
         repo_root,
         pairs,
-        build_identity_index(previous, registered_identities),
+        dict(identity_index),
     )
     if scan.errors:
         raise KnowledgeError("\n".join(item["message"] for item in scan.errors))
+    definitions_by_authority: dict[str, list[DefinitionOccurrence]] = defaultdict(list)
+    for definition in scan.definitions:
+        definitions_by_authority[definition.authority].append(definition)
+    for node_id, node in previous.nodes.items():
+        provenance = node.get("provenance") or {}
+        authority = str(provenance.get("authority", ""))
+        if (
+            node.get("type") != "knowledge"
+            or not provenance.get("active")
+            or authority not in selected_keys
+            or Path(authority).suffix.lower() != ".typ"
+        ):
+            continue
+        owner = source_owner(repo_root, specs, authority)
+        if owner is None:
+            continue
+        preferred = preferred_source_path(owner, repo_root / authority)
+        if preferred.suffix.lower() != ".tex" or not preferred.is_file():
+            continue
+        preferred_key = relative_path(repo_root, preferred)
+        if not any(
+            definition.id == node_id
+            and (
+                identity_index.get(latex_name_key(definition.label_markup))
+                or identity_index.get(identity_key(definition.label))
+            ) == node_id
+            for definition in definitions_by_authority[preferred_key]
+        ):
+            raise KnowledgeError(
+                f"paired source identity needs an explicit alias: {authority} "
+                f"defines {node.get('label')!r} ({node_id}), but {preferred_key} "
+                "does not resolve a definition to that ID; register the converted "
+                "marker name in the identity registry before switching authorities"
+            )
     outside = {
         node_id: node
         for node_id, node in state.nodes.items()
@@ -2545,6 +2637,8 @@ def synchronize(
     source_hashes = dict(previous_source_hashes)
     if full:
         source_hashes = {}
+    for key in selected_keys:
+        source_hashes.pop(key, None)
     for _, path in pairs:
         key = relative_path(repo_root, path)
         if path.is_file():
