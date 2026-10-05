@@ -3493,6 +3493,101 @@ def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--subject")
 
 
+def add_model_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--embedding", action="store_true",
+        help="explicitly enable local embedding candidates (requires the retrieval extra)",
+    )
+    parser.add_argument("--model-device", choices=("cpu", "mps", "cuda"), default="cpu")
+    parser.add_argument("--model-batch-size", type=int, default=4)
+    parser.add_argument("--model-max-length", type=int, default=8192)
+    parser.add_argument("--embedding-model", help="embedding model; defaults to the adapter's pinned BAAI/bge-m3")
+    parser.add_argument("--embedding-revision", help="immutable revision; defaults to the adapter's pinned revision")
+    parser.add_argument("--rerank", action="store_true", help="rerank embedding and lexical candidates with the pinned local cross-encoder; requires --embedding")
+    parser.add_argument("--rerank-candidates", type=int, default=50, help="maximum candidates sent to the reranker (1 to 500)")
+    parser.add_argument("--reranker-model", help="reranker model; defaults to the adapter's pinned BAAI/bge-reranker-v2-m3")
+    parser.add_argument("--reranker-revision", help="immutable reranker revision; defaults to the adapter's pinned revision")
+    parser.add_argument("--model-cache-dir", type=Path, help="derived vector cache; defaults to knowledge/build/retrieval")
+    parser.add_argument("--models-offline", action="store_true", help="load only already downloaded local model files")
+
+
+def add_graph_retrieval_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--graph-retrieval", action="store_true",
+        help="explicitly explore source-backed graph edges from ranked candidate roots",
+    )
+    parser.add_argument("--graph-seed-candidates", type=int, default=5, help="maximum ranked candidate roots (1 to 32)")
+    parser.add_argument("--graph-edge-policy", choices=("high-confidence", "current"), default="high-confidence", help="edge gate; high-confidence uses declared confidence and evidence, not independent review")
+
+
+def make_graph_retrieval_policy(args: argparse.Namespace):
+    """Keep graph exploration opt-in independently of optional model inference."""
+    if not args.graph_retrieval:
+        return None
+    from .graph_retrieval import GraphRetrievalPolicy
+    from .retrieval import RetrievalError
+
+    try:
+        return GraphRetrievalPolicy(candidate_limit=args.graph_seed_candidates, edge_policy=args.graph_edge_policy)
+    except ValueError as error:
+        raise RetrievalError("invalid-graph-settings", str(error)) from error
+
+
+def load_support_selection(path: Path, repo_root: Path) -> dict[str, Any]:
+    from .contracts import ContractError, parse_contract_json, validate_contract
+    from .retrieval import RetrievalError, _read_bounded_regular_file
+
+    resolved = path.resolve() if path.is_absolute() else (repo_root / path).resolve()
+    try:
+        value = parse_contract_json(_read_bounded_regular_file(resolved).decode("utf-8"))
+        if not isinstance(value, dict) or value.get("schema") != "kgdistiller-support-selection-v1":
+            raise ContractError("expected support-selection-v1")
+        return validate_contract(value)
+    except (OSError, UnicodeError, ContractError, RetrievalError) as error:
+        raise RetrievalError("invalid-support-selection", "support selection file is invalid or unreadable") from error
+
+
+def make_ranking_service(args: argparse.Namespace, *, graph_dir: Path, repo_root: Path):
+    """Keep optional model dependencies out of every non-model operation."""
+    if args.rerank and not args.embedding:
+        from .retrieval import RetrievalError
+        raise RetrievalError("invalid-model-settings", "--rerank requires --embedding")
+    if not args.embedding:
+        return None
+    from .adapters.sentence_transformers import (
+        DEFAULT_EMBEDDING_MODEL,
+        DEFAULT_EMBEDDING_REVISION,
+        SentenceTransformersAdapter,
+    )
+    from .retrieval import RetrievalError
+    from .semantic_retrieval import SemanticRankingService, SemanticRetrievalError
+
+    cache_dir = args.model_cache_dir or graph_dir.parent / "build" / "retrieval"
+    if not cache_dir.is_absolute():
+        cache_dir = repo_root / cache_dir
+    try:
+        adapter_options = {
+            "model": args.embedding_model if args.embedding_model is not None else DEFAULT_EMBEDDING_MODEL,
+            "revision": args.embedding_revision if args.embedding_revision is not None else DEFAULT_EMBEDDING_REVISION,
+            "device": args.model_device,
+            "batch_size": args.model_batch_size,
+            "max_length": args.model_max_length,
+            "local_files_only": args.models_offline,
+        }
+        service_options = {}
+        if args.rerank:
+            from .adapters.sentence_transformers import DEFAULT_RERANKER_MODEL, DEFAULT_RERANKER_REVISION
+            adapter_options.update({
+                "reranker_model": args.reranker_model if args.reranker_model is not None else DEFAULT_RERANKER_MODEL,
+                "reranker_revision": args.reranker_revision if args.reranker_revision is not None else DEFAULT_RERANKER_REVISION,
+            })
+            service_options = {"rerank": True, "candidate_limit": args.rerank_candidates}
+        adapter = SentenceTransformersAdapter(**adapter_options)
+        return SemanticRankingService(adapter, cache_dir=cache_dir.resolve(), **service_options)
+    except SemanticRetrievalError as error:
+        raise RetrievalError(error.code, error.message) from error
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group()
@@ -3662,6 +3757,16 @@ def parse_args() -> argparse.Namespace:
     agent_command = commands.add_parser("agent")
     agent_commands = agent_command.add_subparsers(dest="agent_command", required=True)
     agent_commands.add_parser("status")
+    evidence_command = agent_commands.add_parser("evidence", help="retrieve exact raw-source evidence spans without creating graph identities")
+    evidence_command.add_argument("query")
+    evidence_command.add_argument("--manifest", type=Path, required=True)
+    evidence_command.add_argument("--doc-id", action="append", dest="doc_ids")
+    evidence_command.add_argument("--limit", type=int, default=10)
+    evidence_command.add_argument("--budget", type=int, default=12000, help="canonical UTF-8 response byte budget")
+    evidence_command.add_argument("--context-projection", choices=("full", "compact"), default="full", help="compact shares source and heading records while preserving exact fragment text")
+    evidence_resolve = agent_commands.add_parser("evidence-resolve", help="resolve registered source document references, including exact declared versions")
+    evidence_resolve.add_argument("reference", nargs="+")
+    evidence_resolve.add_argument("--manifest", type=Path, required=True)
     resolve_command = agent_commands.add_parser("resolve")
     resolve_command.add_argument("concept", nargs="+")
     resolve_command.add_argument("--namespace", default="personal")
@@ -3686,6 +3791,8 @@ def parse_args() -> argparse.Namespace:
     agent_search_command.add_argument(
         "--graph-strategy", choices=("bfs", "ppr", "hybrid")
     )
+    add_model_arguments(agent_search_command)
+    add_graph_retrieval_arguments(agent_search_command)
     get_command = agent_commands.add_parser("get")
     get_command.add_argument("id")
     get_command.add_argument("--namespace", default="personal")
@@ -3727,6 +3834,8 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument("--namespace")
     context_command.add_argument("--type", action="append", dest="node_types")
     context_command.add_argument("--budget", type=int, default=6000)
+    context_command.add_argument("--context-projection", choices=("full", "compact"), default="full", help="source context projection; compact retains definitions and conditions and stores path evidence once")
+    context_command.add_argument("--support-selection", type=Path, help="source-bound caller-selected evidence support manifest; does not change answer ranking or identity")
     context_command.add_argument("--limit", type=int)
     context_command.add_argument("--depth", type=int)
     context_command.add_argument(
@@ -3739,6 +3848,8 @@ def parse_args() -> argparse.Namespace:
     context_command.add_argument(
         "--graph-strategy", choices=("bfs", "ppr", "hybrid")
     )
+    add_model_arguments(context_command)
+    add_graph_retrieval_arguments(context_command)
     align_command = agent_commands.add_parser("align")
     align_command.add_argument("candidate", type=Path)
     align_command.add_argument("--target-namespace", default="personal")
@@ -3852,12 +3963,69 @@ def parse_args() -> argparse.Namespace:
     claude_doctor = claude_commands.add_parser("doctor")
     claude_doctor.add_argument("--claude-home", type=Path)
     claude_doctor.add_argument("--source-only", action="store_true")
-    commands.add_parser("mcp")
+    mcp_command = commands.add_parser("mcp")
+    add_model_arguments(mcp_command)
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--host", default="127.0.0.1")
     serve_command.add_argument("--port", type=int, default=8765)
     serve_command.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
+    if hasattr(args, "graph_retrieval"):
+        graph_options = {"--graph-seed-candidates", "--graph-edge-policy"}
+        supplied_graph_options = set()
+        for argument in sys.argv[1:]:
+            if argument == "--":
+                break
+            if not argument.startswith("--"):
+                continue
+            name = argument.split("=", 1)[0]
+            if name in graph_options:
+                supplied_graph_options.add(name)
+            else:
+                matches = [option for option in graph_options if option.startswith(name)]
+                if len(matches) == 1:
+                    supplied_graph_options.add(matches[0])
+        if supplied_graph_options and not args.graph_retrieval:
+            parser.error("graph options require --graph-retrieval: " + ", ".join(sorted(supplied_graph_options)))
+        if not 1 <= args.graph_seed_candidates <= 32:
+            parser.error("--graph-seed-candidates must be between 1 and 32")
+    if hasattr(args, "embedding"):
+        model_options = {
+            "--model-device", "--model-batch-size", "--model-max-length",
+            "--embedding-model", "--embedding-revision", "--model-cache-dir",
+            "--models-offline", "--rerank", "--rerank-candidates",
+            "--reranker-model", "--reranker-revision",
+        }
+        supplied_options = set()
+        for argument in sys.argv[1:]:
+            if argument == "--":
+                break
+            if not argument.startswith("--"):
+                continue
+            name = argument.split("=", 1)[0]
+            if name in model_options:
+                supplied_options.add(name)
+            else:
+                # argparse accepts unambiguous option abbreviations too.
+                matches = [option for option in model_options if option.startswith(name)]
+                if len(matches) == 1:
+                    supplied_options.add(matches[0])
+        if args.rerank and not args.embedding:
+            parser.error("--rerank requires --embedding")
+        if supplied_options and not args.embedding:
+            parser.error("model options require --embedding: " + ", ".join(sorted(supplied_options)))
+        if not 1 <= args.model_batch_size <= 64:
+            parser.error("--model-batch-size must be between 1 and 64")
+        if not 1 <= args.model_max_length <= 8192:
+            parser.error("--model-max-length must be between 1 and 8192")
+        if args.embedding_model is not None and args.embedding_revision is None:
+            parser.error("--embedding-model requires an explicit immutable --embedding-revision")
+        if not 1 <= args.rerank_candidates <= 500:
+            parser.error("--rerank-candidates must be between 1 and 500")
+        if args.reranker_model is not None and args.reranker_revision is None:
+            parser.error("--reranker-model requires an explicit immutable --reranker-revision")
+        if not args.rerank and supplied_options.intersection({"--rerank-candidates", "--reranker-model", "--reranker-revision"}):
+            parser.error("reranker settings require --rerank")
     if args.command == "vault" and (args.repo_root is not None or args.vault is not None):
         parser.error("vault registry commands cannot be combined with --repo-root or --vault")
     if (
@@ -4547,11 +4715,14 @@ def main() -> int:
             return 0
         if args.command == "mcp":
             from kgdistiller.mcp import serve_stdio
+            from kgdistiller.retrieval import RetrievalError
 
-            serve_stdio(
-                graph_dir,
-                alignments=alignments,
-            )
+            try:
+                ranking_service = make_ranking_service(args, graph_dir=graph_dir, repo_root=repo_root)
+            except RetrievalError as error:
+                print(pretty_json(error.to_payload()), end="", file=sys.stderr)
+                return 1
+            serve_stdio(graph_dir, alignments=alignments, ranking_service=ranking_service)
             return 0
         if args.command == "agent":
             from kgdistiller.query import (
@@ -4580,7 +4751,31 @@ def main() -> int:
                     raise KnowledgeError("authority graph has no valid graph_sha256")
                 return digest
 
-            if args.agent_command == "status":
+            if args.agent_command == "evidence":
+                from .source_evidence import SourceEvidenceError, SourceEvidenceIndex
+                manifest_path = args.manifest if args.manifest.is_absolute() else repo_root / args.manifest
+                try:
+                    if not 1 <= args.budget <= 200000:
+                        raise SourceEvidenceError("invalid-source-query", "source result byte budget must be between 1 and 200000")
+                    index = SourceEvidenceIndex.from_manifest(manifest_path)
+                    result = index.search(args.query, doc_ids=args.doc_ids, limit=args.limit, byte_budget=200000 if args.context_projection == "compact" else args.budget)
+                    if args.context_projection == "compact":
+                        from .source_context import build_source_context
+                        result = build_source_context([result], byte_budget=args.budget)
+                        index._check_sources()
+                except SourceEvidenceError as error:
+                    print(pretty_json(error.to_payload()), end="", file=sys.stderr)
+                    return 1
+            elif args.agent_command == "evidence-resolve":
+                from .source_evidence import SourceEvidenceError, SourceEvidenceIndex
+                from .source_references import resolve_source_references
+                manifest_path = args.manifest if args.manifest.is_absolute() else repo_root / args.manifest
+                try:
+                    result = resolve_source_references(SourceEvidenceIndex.from_manifest(manifest_path), list(args.reference))
+                except SourceEvidenceError as error:
+                    print(pretty_json(error.to_payload()), end="", file=sys.stderr)
+                    return 1
+            elif args.agent_command == "status":
                 result = query_status(graph_dir, alignments=alignments)
             elif args.agent_command == "resolve":
                 result = resolve_concepts(
@@ -4622,6 +4817,8 @@ def main() -> int:
                         plan_mode=plan_mode,
                         namespace=execution_namespace_argument,
                         expected_graph_sha256=expected_graph_sha256,
+                        ranking_service=make_ranking_service(args, graph_dir=graph_dir, repo_root=repo_root),
+                        graph_policy=make_graph_retrieval_policy(args),
                     )
                 except RetrievalError as error:
                     print(pretty_json(error.to_payload()), end="", file=sys.stderr)
@@ -4696,6 +4893,8 @@ def main() -> int:
                         plan_mode=plan_mode,
                         namespace=execution_namespace_argument,
                         expected_graph_sha256=expected_graph_sha256,
+                        ranking_service=make_ranking_service(args, graph_dir=graph_dir, repo_root=repo_root),
+                        graph_policy=make_graph_retrieval_policy(args),
                     )
                     result = build_context_from_execution(
                         graph_dir,
@@ -4704,6 +4903,8 @@ def main() -> int:
                         plan=plan,
                         token_budget=args.budget,
                         namespace=execution_namespace,
+                        context_projection=args.context_projection,
+                        support_selection=load_support_selection(args.support_selection, repo_root) if args.support_selection else None,
                     )
                 except RetrievalError as error:
                     print(pretty_json(error.to_payload()), end="", file=sys.stderr)

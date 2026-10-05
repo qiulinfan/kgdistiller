@@ -13,7 +13,7 @@ import json
 import math
 import re
 import unicodedata
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -71,7 +71,13 @@ _NAMESPACE_RE = re.compile(
     rf"(?=.{{1,{MAX_NAMESPACE_LENGTH}}}\Z)[a-z0-9][a-z0-9._-]*"
     r"(?::[a-z0-9][a-z0-9._-]*)*"
 )
-_WORD_RE = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
+_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_BM25_K1 = 1.2
+_BM25_B = 0.75
+_SEARCH_ENTRY_FIELDS = (
+    "summary", "context", "role", "prerequisites", "common_confusions",
+    "open_questions", "sources",
+)
 
 
 class QueryError(ValueError):
@@ -602,7 +608,33 @@ def _allowed(node: Mapping[str, Any], *, include_stale: bool, include_orphaned: 
     )
 
 
-def _edge_allowed(edge: Mapping[str, Any], *, include_stale: bool) -> bool:
+def _edge_policy(value: str) -> str:
+    if not isinstance(value, str) or value not in {"current", "high-confidence"}:
+        raise QueryError("edge_policy must be current or high-confidence")
+    return value
+
+
+def _finite_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _edge_allowed(
+    edge: Mapping[str, Any], *, include_stale: bool, edge_policy: str = "current"
+) -> bool:
+    if edge_policy == "high-confidence":
+        # Confidence is authored metadata, not proof of independent review.
+        evidence = edge.get("evidence")
+        return (
+            edge.get("curation_status") == "current"
+            and edge.get("confidence") == "high"
+            and isinstance(evidence, str)
+            and bool(evidence.strip())
+        )
     return include_stale or edge.get("curation_status") != "needs-review"
 
 
@@ -698,18 +730,46 @@ def resolve_concepts(
 
 
 def _tokens(text: str) -> list[str]:
+    """Tokenize complete text; only callers handling queries impose a bound."""
     normalized = unicodedata.normalize("NFKC", text).casefold()
-    return [normalize_text(token) for token in _WORD_RE.findall(normalized)][:MAX_QUERY_TERMS]
+    return _WORD_RE.findall(normalized)
+
+
+def _distinct_search_text(values: Iterable[str]) -> str:
+    """Avoid indexing identical rendered and structured text twice."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = normalize_text(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(value)
+    return "\n".join(result)
 
 
 def _node_search_fields(node: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Project explicit retrieval text without granting it identity authority."""
     properties = node.get("properties")
     properties = properties if isinstance(properties, Mapping) else {}
-    aliases = " ".join(str(item) for item in properties.get("aliases", []))
-    body = " ".join(
-        [str(node.get("text", "")), *list(_strings(node.get("entry") or {}))]
+    display_name = properties.get("display_name")
+    names = (
+        display_name if isinstance(display_name, str) and display_name.strip()
+        else str(node.get("label", ""))
     )
-    return str(node.get("label", "")), aliases, body
+    aliases = _distinct_search_text(
+        [*_strings(properties.get("aliases", [])),
+         *_strings(properties.get("paper_local_aliases", []))]
+    )
+    entry = node.get("entry")
+    entry = entry if isinstance(entry, Mapping) else {}
+    # Group conditions as entry.context commonly renders the same list.
+    conditions = "\n".join(_strings(properties.get("conditions", [])))
+    body = _distinct_search_text(
+        [str(node.get("text", "")), conditions,
+         *(text for field in _SEARCH_ENTRY_FIELDS for text in _strings(entry.get(field))),
+         *_strings(properties.get("paper_key"))]
+    )
+    return names, aliases, body
 
 
 def search(
@@ -728,38 +788,52 @@ def search(
     limit = _limit(limit)
     if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
         raise QueryError(f"query must contain 1 to {MAX_QUERY_LENGTH} characters")
-    terms = set(_tokens(query))
+    terms = set(_tokens(query)[:MAX_QUERY_TERMS])
     if not terms:
         return []
     allowed_types = set(node_types or [])
-    normalized_query = normalize_text(query)
     ranked: list[tuple[float, str, list[dict[str, Any]]]] = []
-    scoped_ids = {
-        str(record["node_id"])
-        for record in view.scoped_aliases.get(normalized_query, ())
-    }
+    scoped_by_node: dict[str, list[str]] = defaultdict(list)
+    for surface, records in view.scoped_aliases.items():
+        for record in records:
+            scoped_by_node[str(record["node_id"])].append(surface)
+    documents: dict[str, Counter[str]] = {}
     for node_id, node in view.nodes.items():
         if allowed_types and node.get("type") not in allowed_types:
             continue
         if not _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned):
             continue
         label, aliases, body = _node_search_fields(node)
-        label_tokens = set(_tokens(label))
-        alias_tokens = set(_tokens(aliases))
-        body_tokens = set(_tokens(body))
-        overlap = 8 * len(terms & label_tokens) + 6 * len(terms & alias_tokens) + len(terms & body_tokens)
-        phrase = (
-            8 if normalized_query and normalized_query in normalize_text(label) else 0
-        ) + (6 if normalized_query and normalized_query in normalize_text(aliases) else 0)
-        scoped_bonus = 4 if node_id in scoped_ids else 0
-        score = float(overlap + phrase + scoped_bonus)
+        aliases = _distinct_search_text([aliases, *scoped_by_node.get(node_id, ())])
+        # Fixed field repetition gives names and aliases more weight while
+        # retaining standard BM25 saturation and length normalization.
+        documents[node_id] = Counter(
+            _tokens(label) * 3 + _tokens(aliases) * 2 + _tokens(body)
+        )
+    if not documents:
+        return []
+    count = len(documents)
+    lengths = {node_id: sum(words.values()) for node_id, words in documents.items()}
+    average_length = sum(lengths.values()) / count or 1.0
+    frequencies = Counter(term for words in documents.values() for term in words)
+    for node_id, words in documents.items():
+        normalization = _BM25_K1 * (
+            1 - _BM25_B + _BM25_B * lengths[node_id] / average_length
+        )
+        score = 0.0
+        for term in sorted(terms):
+            frequency = words.get(term, 0)
+            if not frequency:
+                continue
+            inverse_frequency = math.log1p(
+                (count - frequencies[term] + 0.5) / (frequencies[term] + 0.5)
+            )
+            score += inverse_frequency * frequency * (_BM25_K1 + 1) / (
+                frequency + normalization
+            )
         if score <= 0:
             continue
         reasons = [{"method": "lexical", "score": score, "identity_authority": False}]
-        if scoped_bonus:
-            reasons.append(
-                {"method": "scoped-alias", "score": float(scoped_bonus), "identity_authority": False}
-            )
         ranked.append((score, node_id, reasons))
     ranked.sort(key=lambda item: (-item[0], normalize_text(str(view.nodes[item[1]].get("label", ""))), item[1]))
     return [
@@ -814,11 +888,13 @@ def expand(
     include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
+    edge_policy: str = "current",
     alignments: Path | None = None,
 ) -> dict[str, Any]:
     view = _view(source, alignments)
     _namespace(view, namespace)
     normalized_direction = _direction(direction)
+    edge_policy = _edge_policy(edge_policy)
     limit = _limit(limit)
     if isinstance(max_depth, bool) or not isinstance(max_depth, int) or not 0 <= max_depth <= MAX_GRAPH_DEPTH:
         raise QueryError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH}")
@@ -855,9 +931,15 @@ def expand(
             candidates.extend((edge, str(edge["target"]), "outgoing") for edge in view.outgoing.get(current, ()))
         if normalized_direction in {"incoming", "both"}:
             candidates.extend((edge, str(edge["source"]), "incoming") for edge in view.incoming.get(current, ()))
+        # Contrasts are symmetric for traversal while each path step still
+        # records the authored edge orientation.
+        if normalized_direction == "outgoing":
+            candidates.extend((edge, str(edge["source"]), "incoming") for edge in view.incoming.get(current, ()) if edge.get("relation") == "contrasts-with")
+        elif normalized_direction == "incoming":
+            candidates.extend((edge, str(edge["target"]), "outgoing") for edge in view.outgoing.get(current, ()) if edge.get("relation") == "contrasts-with")
         candidates.sort(key=lambda item: (str(item[0]["relation"]), item[1], item[2]))
         for edge, neighbor, edge_direction in candidates:
-            if edge.get("relation") not in relations or not _edge_allowed(edge, include_stale=include_stale):
+            if edge.get("relation") not in relations or not _edge_allowed(edge, include_stale=include_stale, edge_policy=edge_policy):
                 continue
             node = view.nodes[neighbor]
             if allowed_types and node.get("type") not in allowed_types:
@@ -897,9 +979,12 @@ def expand(
             "include_taxonomy": include_taxonomy,
             "include_stale": include_stale,
             "include_orphaned": include_orphaned,
+            "edge_policy": edge_policy,
+            "confidence_gate": "declared-high-with-evidence" if edge_policy == "high-confidence" else "none",
         },
         "nodes": rows,
         "edges": [copy.deepcopy(traversed[key]) for key in sorted(traversed)],
+        "allowed_edge_count": len(traversed),
     }
 
 
@@ -914,27 +999,51 @@ def personalized_pagerank(
     include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
+    edge_policy: str = "current",
+    max_depth: int | None = None,
     damping: float = 0.85,
-    max_iterations: int = 60,
+    max_iterations: int = 256,
     tolerance: float = 1e-10,
     limit: int = 50,
     alignments: Path | None = None,
 ) -> dict[str, Any]:
+    """Rank the policy-valid seed-reachable induced graph.
+
+    Approximate scores remain available for diagnostics when convergence fails.
+    The residual is measured on the returned full vector (before result limits
+    and rounding). For the stochastic transition with restart, its L1 distance
+    from the stationary vector is bounded by residual / (1 - damping).
+    """
     view = _view(source, alignments)
     _namespace(view, namespace)
     normalized_direction = _direction(direction)
+    edge_policy = _edge_policy(edge_policy)
     limit = _limit(limit)
     if not isinstance(seeds, Mapping) or not 1 <= len(seeds) <= MAX_GRAPH_SEEDS:
         raise QueryError(f"PPR seed batch must contain 1 to {MAX_GRAPH_SEEDS} IDs")
     if any(not isinstance(node_id, str) or not ID_RE.fullmatch(node_id) for node_id in seeds):
         raise QueryError("PPR seed IDs must be bounded lowercase ASCII kebab-case strings")
-    if not 0 < damping < 1 or not 1 <= max_iterations <= 1000 or tolerance <= 0:
+    if (
+        not _finite_number(damping)
+        or not 0 < damping < 1
+        or isinstance(max_iterations, bool)
+        or not isinstance(max_iterations, int)
+        or not 1 <= max_iterations <= 1000
+        or not _finite_number(tolerance)
+        or tolerance <= 0
+    ):
         raise QueryError("invalid PPR convergence policy")
+    if max_depth is not None and (
+        isinstance(max_depth, bool)
+        or not isinstance(max_depth, int)
+        or not 0 <= max_depth <= MAX_GRAPH_DEPTH
+    ):
+        raise QueryError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH} or None")
     relations = set(edge_types) if edge_types is not None else set(DEFAULT_SEMANTIC_RELATIONS)
     if edge_types is None and include_taxonomy:
         relations.add("contains")
     allowed_types = set(node_types or [])
-    nodes = {
+    valid_nodes = {
         node_id: node
         for node_id, node in view.nodes.items()
         if (not allowed_types or node.get("type") in allowed_types)
@@ -942,22 +1051,34 @@ def personalized_pagerank(
     }
     positive: dict[str, float] = {}
     for node_id, raw_weight in seeds.items():
+        if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
+            raise QueryError("PPR seed weights must be finite non-boolean numbers")
         try:
             weight = float(raw_weight)
-        except (TypeError, ValueError):
-            continue
-        if node_id in nodes and math.isfinite(weight) and weight > 0:
-            positive[str(node_id)] = weight
+        except (ValueError, OverflowError) as error:
+            raise QueryError("PPR seed weights must be finite non-boolean numbers") from error
+        if not math.isfinite(weight):
+            raise QueryError("PPR seed weights must be finite non-boolean numbers")
+        if node_id in valid_nodes and weight > 0:
+            positive[node_id] = weight
     if not positive:
         raise QueryError("PPR requires at least one positive graph seed")
-    total = sum(positive.values())
-    reset = {node_id: positive.get(node_id, 0.0) / total for node_id in nodes}
-    adjacency: dict[str, dict[str, float]] = {node_id: {} for node_id in nodes}
+    # Scaling first avoids overflow when several finite weights approach
+    # float's maximum; normalized seed probability always has finite mass.
+    weight_scale = max(positive.values())
+    scaled = {node_id: weight / weight_scale for node_id, weight in positive.items()}
+    scaled_total = math.fsum(scaled.values())
+    valid_adjacency: dict[str, dict[str, float]] = {node_id: {} for node_id in valid_nodes}
     weights = {"prerequisite-for": 1.0, "implies": 1.0, "generalizes": 0.9, "derived-from": 0.9, "contrasts-with": 0.7, "contains": 0.3}
-    edge_count = 0
+    valid_edges: list[dict[str, Any]] = []
     for edge in view.edges:
         source_id, target_id, relation = str(edge["source"]), str(edge["target"]), str(edge["relation"])
-        if source_id not in nodes or target_id not in nodes or relation not in relations or not _edge_allowed(edge, include_stale=include_stale):
+        if (
+            source_id not in valid_nodes
+            or target_id not in valid_nodes
+            or relation not in relations
+            or not _edge_allowed(edge, include_stale=include_stale, edge_policy=edge_policy)
+        ):
             continue
         pairs: set[tuple[str, str]] = set()
         if normalized_direction in {"outgoing", "both"}:
@@ -967,44 +1088,68 @@ def personalized_pagerank(
         if relation == "contrasts-with":
             pairs.update({(source_id, target_id), (target_id, source_id)})
         for left, right in pairs:
-            adjacency[left][right] = adjacency[left].get(right, 0.0) + weights.get(
-                relation, 1.0
-            )
-        edge_count += 1
+            valid_adjacency[left][right] = valid_adjacency[left].get(right, 0.0) + weights.get(relation, 1.0)
+        valid_edges.append(edge)
     reachable_seed: dict[str, str] = {}
+    depths: dict[str, int] = {}
     reachability: deque[str] = deque()
     for seed_id in sorted(positive):
         reachable_seed[seed_id] = seed_id
+        depths[seed_id] = 0
         reachability.append(seed_id)
     while reachability:
         current = reachability.popleft()
-        for neighbor in sorted(adjacency[current]):
+        if max_depth is not None and depths[current] >= max_depth:
+            continue
+        for neighbor in sorted(valid_adjacency[current]):
             if neighbor in reachable_seed:
                 continue
             reachable_seed[neighbor] = reachable_seed[current]
+            depths[neighbor] = depths[current] + 1
             reachability.append(neighbor)
-    scores = dict(reset)
-    iterations = 0
-    converged = False
-    for iterations in range(1, max_iterations + 1):
-        next_scores = {node_id: (1 - damping) * reset[node_id] for node_id in nodes}
-        dangling = 0.0
+    nodes = {node_id: valid_nodes[node_id] for node_id in sorted(reachable_seed)}
+    reset = {node_id: scaled.get(node_id, 0.0) / scaled_total for node_id in nodes}
+    adjacency = {
+        node_id: {neighbor: weight for neighbor, weight in valid_adjacency[node_id].items() if neighbor in nodes}
+        for node_id in nodes
+    }
+    transitions: dict[str, dict[str, float]] = {}
+    for node_id, outgoing in adjacency.items():
+        outgoing_total = math.fsum(outgoing.values())
+        transitions[node_id] = {
+            neighbor: weight / outgoing_total for neighbor, weight in outgoing.items()
+        }
+    edge_count = sum(
+        edge["source"] in nodes and edge["target"] in nodes for edge in valid_edges
+    )
+
+    def transition(scores: Mapping[str, float]) -> dict[str, float]:
+        next_scores = {node_id: (1 - damping) * reset_weight for node_id, reset_weight in reset.items()}
+        dangling = math.fsum(scores[node_id] for node_id in nodes if not transitions[node_id])
         for source_id, score in scores.items():
-            outgoing = adjacency[source_id]
-            if not outgoing:
-                dangling += score
-                continue
-            weight_total = sum(outgoing.values())
-            for target_id, weight in outgoing.items():
-                next_scores[target_id] += damping * score * weight / weight_total
+            for target_id, probability in transitions[source_id].items():
+                next_scores[target_id] += damping * score * probability
         if dangling:
             for node_id, reset_weight in reset.items():
                 next_scores[node_id] += damping * dangling * reset_weight
-        delta = sum(abs(next_scores[node_id] - scores.get(node_id, 0.0)) for node_id in nodes)
+        return next_scores
+
+    scores = dict(reset)
+    converged = False
+    iterations = 0
+    for iterations in range(1, max_iterations + 1):
+        next_scores = transition(scores)
+        delta = math.fsum(abs(next_scores[node_id] - scores[node_id]) for node_id in nodes)
         scores = next_scores
         if delta <= tolerance:
             converged = True
             break
+    next_scores = transition(scores)
+    residual = math.fsum(abs(next_scores[node_id] - scores[node_id]) for node_id in nodes)
+    error_bound = residual / (1 - damping)
+    probability_mass = math.fsum(scores.values())
+    if any(not math.isfinite(value) for value in (residual, error_bound, probability_mass)):
+        raise QueryError("PPR numerical result is not finite")
     ranked = sorted(
         ((node_id, score) for node_id, score in scores.items() if score > 0.0),
         key=lambda item: (-item[1], item[0]),
@@ -1019,10 +1164,22 @@ def personalized_pagerank(
             "edge_types": sorted(relations),
             "direction": direction,
             "include_taxonomy": include_taxonomy,
+            "edge_policy": edge_policy,
+            "confidence_gate": "declared-high-with-evidence" if edge_policy == "high-confidence" else "none",
+            "max_depth": max_depth,
+            "depth_boundary": "induced-subgraph-dangling-to-seeds",
         },
         "iterations": iterations,
+        "used_iterations": iterations,
         "converged": converged,
+        "l1_residual": residual,
+        "stationary_error_bound": error_bound,
+        "probability_mass": probability_mass,
+        "reachable_node_count": len(nodes),
+        # Legacy key retained; this counts allowed reachable edges, not
+        # independently verified or reviewed scientific assertions.
         "trusted_edge_count": edge_count,
+        "allowed_edge_count": edge_count,
         "results": [
             {
                 "rank": rank,

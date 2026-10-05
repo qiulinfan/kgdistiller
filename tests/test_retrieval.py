@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.contracts import sha256_json  # noqa: E402
-from kgdistiller.query import GraphView, estimate_tokens  # noqa: E402
+from kgdistiller.query import GraphView, context, estimate_tokens  # noqa: E402
 from kgdistiller.retrieval import (  # noqa: E402
     CONTEXT_SCHEMA,
     RETRIEVAL_PLAN_SCHEMA,
@@ -76,10 +76,8 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual("alias", execution["identity_resolutions"][0]["status"])
         self.assertTrue(execution["identity_resolutions"][0]["identity_authority"])
         self.assertNotIn("semantic", execution["result"]["lanes"])
-        self.assertEqual("degraded", execution["result"]["lanes"]["ppr"]["status"])
-        self.assertEqual(
-            "not-converged", execution["result"]["lanes"]["ppr"]["reason"]
-        )
+        self.assertEqual("enabled", execution["result"]["lanes"]["ppr"]["status"])
+        self.assertNotIn("reason", execution["result"]["lanes"]["ppr"])
         self.assertEqual("sigma-algebra", execution["result"]["results"][0]["node_id"])
         measure = next(row for row in execution["result"]["results"] if row["node_id"] == "measure")
         self.assertIn("lexical", measure["lanes"])
@@ -319,6 +317,141 @@ class RetrievalTest(unittest.TestCase):
         )
         self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
         self.assertLessEqual(bundle["budget"]["estimated_tokens"], 1049)
+
+    def test_context_metadata_preserves_complete_node_over_omission_details(self) -> None:
+        selected = copy.deepcopy(fixture_nodes()[1])
+        selected.update({"id": "selected-node", "label": "Shared selected"})
+        selected["text"] = "A complete definition. " + "x" * 3200
+        selected["entry"] = {
+            "conditions": ["The domain is a sigma algebra.", "The function is countably additive."],
+            "summary": "The conditions must remain complete.",
+        }
+        nodes = [selected]
+        for index in range(24):
+            omitted = copy.deepcopy(selected)
+            omitted.update({"id": f"oversized-{index:02d}", "label": f"Shared omitted {index}"})
+            omitted["text"] = "y" * 7000
+            nodes.append(omitted)
+        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+        plan = retrieval_plan()
+        plan["question"] = "What exact conditions apply? " + "q" * 600
+        plan["identity_queries"] = ["selected-node"]
+        plan["lexical_queries"] = ["Shared"]
+        plan["graph"].update(edge_types=[], max_depth=0, strategy="bfs")
+        plan["limit"] = 25
+        execution = execute_retrieval_plan(view, plan)
+        before_metadata = context(view, [row["node_id"] for row in execution["result"]["results"]], token_budget=6000)
+        self.assertEqual(["selected-node"], [node["id"] for node in before_metadata["nodes"]])
+        self.assertGreater(len(before_metadata["omissions"]), 10)
+
+        bundle = build_context_from_execution(view, execution, plan=plan, token_budget=6000)
+
+        self.assertEqual([selected], bundle["nodes"])
+        self.assertEqual(selected["entry"]["conditions"], bundle["nodes"][0]["entry"]["conditions"])
+        self.assertEqual(plan["question"], bundle["question"])
+        self.assertEqual(sha256_json(plan), bundle["plan_sha256"])
+        self.assertEqual(view.snapshot["snapshot_sha256"], bundle["snapshot_sha256"])
+        self.assertEqual(view.snapshot["graph"]["sha256"], bundle["graph_sha256"])
+        self.assertEqual(SEARCH_EXECUTION_SCHEMA, bundle["search_execution_schema"])
+        self.assertEqual(SEARCH_RESULT_SCHEMA, bundle["search_result_schema"])
+        self.assertTrue(bundle["omissions"])
+        self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
+        self.assertLessEqual(estimate_tokens(bundle), 6000)
+
+    def test_context_skips_node_that_cannot_fit_with_required_bindings(self) -> None:
+        large = copy.deepcopy(fixture_nodes()[1])
+        large.update({"id": "large-node", "text": "x" * 5300})
+        small = copy.deepcopy(fixture_nodes()[1])
+        small.update({"id": "small-node", "text": "A complete smaller definition."})
+        small["entry"] = {"conditions": ["Finite measure.", "Same measurable domain."]}
+        view = GraphView.from_snapshot(snapshot_with([large, small], []))
+        plan = retrieval_plan()
+        plan["question"] = "Preserve every condition. " + "q" * 700
+        plan["identity_queries"] = ["large-node", "small-node"]
+        plan["lexical_queries"] = []
+        plan["graph"].update(edge_types=[], max_depth=0, strategy="bfs")
+        execution = execute_retrieval_plan(view, plan)
+        self.assertEqual(["large-node"], [node["id"] for node in context(view, ["large-node", "small-node"], token_budget=6000)["nodes"]])
+
+        bundle = build_context_from_execution(view, execution, plan=plan, token_budget=6000)
+
+        self.assertEqual([small], bundle["nodes"])
+        self.assertIn({"kind": "node", "id": "large-node", "reason": "token-budget"}, bundle["omissions"])
+        self.assertEqual(plan["question"], bundle["question"])
+        self.assertLessEqual(estimate_tokens(bundle), 6000)
+
+    def test_context_omission_details_do_not_block_later_fitting_node(self) -> None:
+        small = copy.deepcopy(fixture_nodes()[1])
+        small.update({"id": "late-fitting-node", "text": "x" * 3700})
+        small["entry"] = {"conditions": ["Finite measure.", "Same measurable domain."]}
+        nodes = []
+        for index in range(20):
+            large = copy.deepcopy(small)
+            large.update({"id": f"oversized-{index:02d}", "text": "y" * 7000})
+            nodes.append(large)
+        nodes.append(small)
+        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+        plan = retrieval_plan()
+        plan["question"] = "Preserve the late candidate's conditions. " + "q" * 600
+        plan["identity_queries"] = [node["id"] for node in nodes]
+        plan["lexical_queries"] = []
+        plan["graph"].update(edge_types=[], max_depth=0, strategy="bfs")
+        plan["limit"] = len(nodes)
+        execution = execute_retrieval_plan(view, plan)
+
+        bundle = build_context_from_execution(view, execution, plan=plan, token_budget=6000)
+
+        self.assertEqual([small], bundle["nodes"])
+        self.assertTrue(bundle["omissions"])
+        self.assertEqual(plan["question"], bundle["question"])
+        self.assertLessEqual(estimate_tokens(bundle), 6000)
+
+    def test_context_impossible_content_keeps_omission_or_fails_explicitly(self) -> None:
+        oversized = copy.deepcopy(fixture_nodes()[1])
+        oversized.update({"id": "oversized-node", "text": "x" * 8000})
+        oversized["entry"] = {"conditions": ["Do not truncate this condition."]}
+        view = GraphView.from_snapshot(snapshot_with([oversized], []))
+        plan = retrieval_plan()
+        plan["identity_queries"] = ["oversized-node"]
+        plan["lexical_queries"] = []
+        plan["graph"].update(edge_types=[], max_depth=0, strategy="bfs")
+        execution = execute_retrieval_plan(view, plan)
+        bundle = build_context_from_execution(view, execution, plan=plan, token_budget=1000)
+        self.assertEqual([], bundle["nodes"])
+        self.assertIn({"kind": "node", "id": "oversized-node", "reason": "token-budget"}, bundle["omissions"])
+        self.assertLessEqual(estimate_tokens(bundle), 1000)
+
+        empty_plan = copy.deepcopy(plan)
+        empty_plan["identity_queries"] = []
+        empty_execution = execute_retrieval_plan(view, empty_plan)
+        header = build_context_from_execution(view, empty_execution, plan=empty_plan, token_budget=1000)
+        while True:
+            size = estimate_tokens(header)
+            if header["budget"] == {"token_budget": size, "estimated_tokens": size}:
+                break
+            header["budget"] = {"token_budget": size, "estimated_tokens": size}
+        with self.assertRaisesRegex(RetrievalError, "budget-too-small"):
+            build_context_from_execution(view, execution, plan=plan, token_budget=size)
+
+    def test_context_metadata_budget_is_utf8_bounded_at_decimal_boundaries(self) -> None:
+        plan = retrieval_plan()
+        plan["question"] = "哪些定义条件必须完整保留？" * 8
+        execution = execute_retrieval_plan(self.view, plan)
+        for budget in (99, 100, 999, 1000, 1001, 1999, 2000, 9999, 10000, 10001):
+            with self.subTest(budget=budget):
+                try:
+                    bundle = build_context_from_execution(self.view, execution, plan=plan, token_budget=budget)
+                except RetrievalError as error:
+                    self.assertEqual("context-failed", error.code)
+                    self.assertIn("budget-too-small", str(error))
+                    continue
+                self.assertEqual(budget, bundle["budget"]["token_budget"])
+                self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
+                self.assertLessEqual(estimate_tokens(bundle), budget)
+                self.assertEqual(plan["question"], bundle["question"])
+                self.assertEqual(sha256_json(plan), bundle["plan_sha256"])
+                for node in bundle["nodes"]:
+                    self.assertEqual(self.view.nodes[node["id"]], node)
 
     def test_context_obeys_plan_edge_types_and_stale_policy(self) -> None:
         snapshot = fixture_snapshot()

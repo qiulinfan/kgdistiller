@@ -1,0 +1,549 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-search-result-v2.schema.json",
+  "title": "kgdistiller search result with explicit embedding provenance v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "plan_sha256",
+    "lanes",
+    "results",
+    "ranking"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kgdistiller-search-result-v2"
+    },
+    "plan_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "lanes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "lexical",
+        "graph",
+        "ppr",
+        "embedding"
+      ],
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/queryLane"
+        },
+        "lexical": {
+          "$ref": "#/$defs/queryLane"
+        },
+        "graph": {
+          "$ref": "#/$defs/seedLane"
+        },
+        "ppr": {
+          "$ref": "#/$defs/seedLane"
+        },
+        "embedding": {
+          "$ref": "#/$defs/queryLane"
+        },
+        "reranker": {
+          "$ref": "#/$defs/queryLane"
+        }
+      }
+    },
+    "results": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/result"
+      }
+    },
+    "ranking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "embedding"
+      ],
+      "properties": {
+        "embedding": {
+          "$ref": "#/$defs/embeddingProvenance"
+        },
+        "reranker": {
+          "$ref": "#/$defs/rerankerProvenance"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "edgeType": {
+      "enum": [
+        "contains",
+        "prerequisite-for",
+        "implies",
+        "generalizes",
+        "contrasts-with",
+        "derived-from"
+      ]
+    },
+    "status": {
+      "enum": [
+        "enabled",
+        "disabled",
+        "degraded",
+        "error"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "queryLane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "queries",
+        "results"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "queries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "results": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "enabled"
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ]
+    },
+    "seedLane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "seeds",
+        "results"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "seeds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "results": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "enabled"
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ]
+    },
+    "laneEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rank",
+        "score"
+      ],
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "score": {
+          "type": "number"
+        }
+      }
+    },
+    "resultLanes": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 6,
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/laneEvidence"
+        },
+        "lexical": {
+          "$ref": "#/$defs/laneEvidence"
+        },
+        "graph": {
+          "$ref": "#/$defs/laneEvidence"
+        },
+        "ppr": {
+          "$ref": "#/$defs/laneEvidence"
+        },
+        "embedding": {
+          "$ref": "#/$defs/laneEvidence"
+        },
+        "reranker": {
+          "$ref": "#/$defs/laneEvidence"
+        }
+      }
+    },
+    "seedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "seed_id"
+      ],
+      "properties": {
+        "lane": {
+          "enum": [
+            "graph",
+            "ppr"
+          ]
+        },
+        "seed_id": {
+          "$ref": "#/$defs/nodeId"
+        }
+      }
+    },
+    "pathEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "nodes",
+        "edge_types"
+      ],
+      "properties": {
+        "lane": {
+          "enum": [
+            "graph",
+            "ppr"
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/nodeId"
+          }
+        },
+        "edge_types": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "$ref": "#/$defs/edgeType"
+          }
+        }
+      }
+    },
+    "fusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "score",
+        "explanation"
+      ],
+      "properties": {
+        "method": {
+          "enum": [
+            "rrf",
+            "weighted",
+            "single-lane"
+          ]
+        },
+        "score": {
+          "type": "number"
+        },
+        "explanation": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "node_type",
+        "label",
+        "lanes",
+        "seed_evidence",
+        "path_evidence",
+        "fusion"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "#/$defs/nodeId"
+        },
+        "node_type": {
+          "enum": [
+            "knowledge",
+            "field",
+            "topic"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "lanes": {
+          "$ref": "#/$defs/resultLanes"
+        },
+        "seed_evidence": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/seedEvidence"
+          }
+        },
+        "path_evidence": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/pathEvidence"
+          }
+        },
+        "fusion": {
+          "$ref": "#/$defs/fusion"
+        }
+      }
+    },
+    "modelDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "revision",
+        "inference"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "inference": {
+          "type": "object"
+        }
+      }
+    },
+    "embeddingProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "projection",
+        "namespace",
+        "snapshot_sha256",
+        "graph_sha256",
+        "index_sha256",
+        "document_count",
+        "dimensions",
+        "cache_status",
+        "query_source",
+        "query_sha256",
+        "cache_sha256"
+      ],
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/modelDescriptor"
+        },
+        "projection": {
+          "const": "kgdistiller-search-document-v1"
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "snapshot_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "graph_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "index_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "document_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "dimensions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "cache_status": {
+          "enum": [
+            "hit",
+            "miss",
+            "empty"
+          ]
+        },
+        "query_source": {
+          "const": "plan.question"
+        },
+        "query_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "cache_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "rerankerCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "node_sha256",
+        "document_sha256",
+        "score"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "#/$defs/nodeId"
+        },
+        "node_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "document_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "score": {
+          "type": "number"
+        }
+      }
+    },
+    "rerankerProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "projection",
+        "namespace",
+        "snapshot_sha256",
+        "graph_sha256",
+        "query_source",
+        "query_sha256",
+        "candidate_limit",
+        "candidates",
+        "fusion"
+      ],
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/modelDescriptor"
+        },
+        "projection": {
+          "const": "kgdistiller-search-document-v1"
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "snapshot_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "graph_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "query_source": {
+          "const": "plan.question"
+        },
+        "query_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "candidate_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/rerankerCandidate"
+          }
+        },
+        "fusion": {
+          "const": "rrf-base-reranker"
+        }
+      }
+    }
+  }
+}

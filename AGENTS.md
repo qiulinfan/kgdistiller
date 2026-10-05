@@ -2,6 +2,8 @@
 
 - Keep the deterministic core provider-neutral. Model-specific behavior belongs
   in Agent skills or adapters.
+- Text BM25, optional local embedding/reranker adapters, versioned search results
+  and derived vector-cache boundaries follow [docs/retrieval.md](docs/retrieval.md).
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

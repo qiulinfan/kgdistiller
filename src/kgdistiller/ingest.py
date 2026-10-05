@@ -1887,8 +1887,23 @@ def _install_staged(
             seen.add(key)
             unique_targets.append(target)
     records: list[dict[str, Any]] = []
+    directory_targets = {
+        paths.graph_dir.resolve(strict=False),
+        (paths.repo_root / "knowledge/entries").resolve(strict=False),
+    }
     for target in unique_targets:
-        records.append(_backup_target(paths.repo_root, target, backup_root))
+        records.append(
+            _backup_target(
+                paths.repo_root,
+                target,
+                backup_root,
+                kind=(
+                    "directory"
+                    if target.resolve(strict=False) in directory_targets
+                    else None
+                ),
+            )
+        )
     journal = {
         "schema": JOURNAL_SCHEMA,
         "request_sha256": staged.request_sha256,

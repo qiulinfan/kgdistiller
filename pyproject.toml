@@ -18,6 +18,9 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
+[project.optional-dependencies]
+retrieval = ["sentence-transformers==6.1.0"]
+
 [project.urls]
 Homepage = "https://github.com/qiulinfan/kgdistiller"
 Repository = "https://github.com/qiulinfan/kgdistiller"

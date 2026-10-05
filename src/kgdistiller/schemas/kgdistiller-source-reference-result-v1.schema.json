@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-source-reference-result-v1.schema.json",
+  "title": "Registered source document reference result v1",
+  "description": "Syntactic source document selectors only; no canonical concept identity, aliases or semantic relations. Standalone validation proves projection/declaration closure; index validation additionally proves current full-manifest replay and source freshness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "selector_policy", "reference_kind", "identity_authority", "correspondence_claim", "manifest_sha256", "manifest_file_sha256", "hash_mode", "document_count", "hints", "hints_sha256", "hint_count", "resolutions", "matched_count", "ambiguous_count", "unmatched_count", "matched_doc_ids", "result_sha256"],
+  "properties": {
+    "schema": {"const": "kgdistiller-source-reference-result-v1"},
+    "selector_policy": {"const": "registered-source-reference-selectors-v1"},
+    "reference_kind": {"const": "registered-source-document"},
+    "identity_authority": {"type": "boolean", "const": false},
+    "correspondence_claim": {"const": "standalone-projection-closure-only; current-manifest-and-files-require-index"},
+    "manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "manifest_file_sha256": {"$ref": "#/$defs/sha256"},
+    "hash_mode": {"enum": ["raw-utf8", "normalized-utf8"]},
+    "document_count": {"type": "integer", "minimum": 1, "maximum": 128},
+    "hints": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"$ref": "#/$defs/hint"}},
+    "hints_sha256": {"$ref": "#/$defs/sha256"},
+    "hint_count": {"type": "integer", "minimum": 1, "maximum": 128},
+    "resolutions": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"$ref": "#/$defs/resolution"}},
+    "matched_count": {"$ref": "#/$defs/count"},
+    "ambiguous_count": {"$ref": "#/$defs/count"},
+    "unmatched_count": {"$ref": "#/$defs/count"},
+    "matched_doc_ids": {"type": "array", "minItems": 0, "maxItems": 128, "uniqueItems": true, "items": {"$ref": "#/$defs/docId"}},
+    "result_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "docId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"},
+    "hint": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "count": {"type": "integer", "minimum": 0, "maximum": 128},
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["doc_id", "source_version", "source_url", "expected_sha256", "match_type", "identity_authority"],
+      "properties": {
+        "doc_id": {"$ref": "#/$defs/docId"},
+        "source_version": {"type": "string", "minLength": 1, "maxLength": 256},
+        "source_url": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "expected_sha256": {"$ref": "#/$defs/sha256"},
+        "match_type": {"enum": ["exact-normalized-doc-id", "exact-declared-source-version", "qualified-doc-id-version"]},
+        "identity_authority": {"type": "boolean", "const": false}
+      }
+    },
+    "resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hint_index", "hint", "hint_sha256", "status", "candidate_count", "candidates", "identity_authority"],
+      "properties": {
+        "hint_index": {"type": "integer", "minimum": 0, "maximum": 127},
+        "hint": {"$ref": "#/$defs/hint"},
+        "hint_sha256": {"$ref": "#/$defs/sha256"},
+        "status": {"enum": ["matched", "ambiguous", "unmatched"]},
+        "candidate_count": {"$ref": "#/$defs/count"},
+        "candidates": {"type": "array", "minItems": 0, "maxItems": 128, "items": {"$ref": "#/$defs/candidate"}},
+        "identity_authority": {"type": "boolean", "const": false}
+      }
+    }
+  }
+}

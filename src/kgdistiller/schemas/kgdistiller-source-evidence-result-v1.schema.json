@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-source-evidence-result-v1.schema.json",
+  "title": "kgdistiller exact raw-source evidence fragments v1",
+  "description": "Heading context is navigation data, never concept identity. fragment_id is a content address distinct from graph node IDs. All text spans are exact original UTF-8 bytes; split fragments declare partial and never claim complete definitions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "projection",
+    "query",
+    "query_sha256",
+    "manifest_sha256",
+    "manifest_file_sha256",
+    "source_kind",
+    "identity_authority",
+    "complete_definition",
+    "doc_ids",
+    "fragment_count",
+    "matched_fragments",
+    "fragments",
+    "omitted_fragments",
+    "diagnostics_truncated",
+    "omissions",
+    "budget",
+    "scoring",
+    "requested_limit"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kgdistiller-source-evidence-result-v1"
+    },
+    "projection": {
+      "const": "kgdistiller-source-evidence-bm25-v1"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "query_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "manifest_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "manifest_file_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "source_kind": {
+      "const": "raw-source-evidence"
+    },
+    "identity_authority": {
+      "const": false,
+      "type": "boolean"
+    },
+    "complete_definition": {
+      "const": false,
+      "type": "boolean"
+    },
+    "doc_ids": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/docId"
+      }
+    },
+    "fragment_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50000
+    },
+    "matched_fragments": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50000
+    },
+    "fragments": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/fragment"
+      }
+    },
+    "omitted_fragments": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "diagnostics_truncated": {
+      "type": "boolean"
+    },
+    "omissions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fragment_id",
+          "reason"
+        ],
+        "properties": {
+          "fragment_id": {
+            "$ref": "#/$defs/fragmentId"
+          },
+          "reason": {
+            "const": "fragment-exceeds-byte-budget"
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "byte_budget",
+        "used_bytes"
+      ],
+      "properties": {
+        "byte_budget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        },
+        "used_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        }
+      }
+    },
+    "scoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "k1",
+        "b",
+        "heading_weight",
+        "identity_authority"
+      ],
+      "properties": {
+        "method": {
+          "const": "bm25"
+        },
+        "k1": {
+          "const": 1.2
+        },
+        "b": {
+          "const": 0.75
+        },
+        "heading_weight": {
+          "const": 2
+        },
+        "identity_authority": {
+          "const": false,
+          "type": "boolean"
+        }
+      }
+    },
+    "requested_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "docId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "fragmentId": {
+      "type": "string",
+      "pattern": "^evidence:sha256:[0-9a-f]{64}$"
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        }
+      }
+    },
+    "heading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "text",
+        "byte_start",
+        "byte_end",
+        "identity_authority"
+      ],
+      "properties": {
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "byte_start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        },
+        "byte_end": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        },
+        "identity_authority": {
+          "const": false,
+          "type": "boolean"
+        }
+      }
+    },
+    "fragment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "doc_id",
+        "source_url",
+        "source_version",
+        "source_type",
+        "source_kind",
+        "identity_authority",
+        "complete_definition",
+        "hash_mode",
+        "source_sha256",
+        "raw_source_sha256",
+        "normalized_source_sha256",
+        "content_sha256",
+        "projection_sha256",
+        "byte_span",
+        "block_byte_span",
+        "fragment_type",
+        "partial",
+        "heading_context",
+        "text",
+        "fragment_id",
+        "rank",
+        "score"
+      ],
+      "properties": {
+        "doc_id": {
+          "$ref": "#/$defs/docId"
+        },
+        "source_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "source_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "source_kind": {
+          "const": "raw-source-evidence"
+        },
+        "identity_authority": {
+          "const": false,
+          "type": "boolean"
+        },
+        "complete_definition": {
+          "const": false,
+          "type": "boolean"
+        },
+        "hash_mode": {
+          "enum": [
+            "raw-utf8",
+            "normalized-utf8"
+          ]
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "raw_source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "normalized_source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "content_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "projection_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "byte_span": {
+          "$ref": "#/$defs/span"
+        },
+        "block_byte_span": {
+          "$ref": "#/$defs/span"
+        },
+        "fragment_type": {
+          "enum": [
+            "paragraph",
+            "heading",
+            "table",
+            "algorithm",
+            "code"
+          ]
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "heading_context": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/heading"
+          }
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6144
+        },
+        "fragment_id": {
+          "$ref": "#/$defs/fragmentId"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "score": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  }
+}

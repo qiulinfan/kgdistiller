@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import sys
 import tempfile
 import unittest
@@ -354,6 +355,95 @@ class QueryTest(unittest.TestCase):
         self.assertFalse(lexical["identity_authority"])
         self.assertEqual("measure", search(self.view, "countably additive")[0]["node"]["id"])
         self.assertFalse(search(self.view, "countably additive")[0]["reasons"][0]["identity_authority"])
+
+    def test_search_indexes_late_body_and_conditions_without_unbounding_query(self) -> None:
+        node = copy.deepcopy(fixture_nodes()[1])
+        node["text"] = "background " * 160 + "latecondition"
+        node["properties"]["conditions"] = ["Only under boundedvariance."]
+        view = GraphView.from_snapshot(snapshot_with([node], []))
+
+        for query in ("latecondition", "boundedvariance"):
+            with self.subTest(query=query):
+                self.assertEqual("measure", search(view, query)[0]["node"]["id"])
+        self.assertEqual([], search(view, "absent " * 128 + "boundedvariance"))
+
+    def test_search_scientific_fields_are_candidates_without_identity(self) -> None:
+        node = copy.deepcopy(fixture_nodes()[1])
+        node.update({"label": "Authored machine handle", "text": "Definition."})
+        node["properties"].update({
+            "aliases": [],
+            "display_name": "Scientific display title",
+            "paper_local_aliases": ["Local acronym"],
+            "conditions": ["A special domain restriction."],
+            "paper_key": "paperidentifier",
+            "irrelevant_metadata": "notsearchablehash",
+        })
+        node["entry"] = {"common_confusions": ["Distinct from an estimator."]}
+        view = GraphView.from_snapshot(snapshot_with([node], []))
+
+        for query in ("Scientific display title", "Local acronym", "restriction",
+                      "estimator", "paperidentifier"):
+            with self.subTest(query=query):
+                result = search(view, query)[0]
+                self.assertEqual("measure", result["node"]["id"])
+                self.assertEqual("lexical", result["reasons"][0]["method"])
+                self.assertFalse(result["reasons"][0]["identity_authority"])
+                self.assertEqual("missing", resolve_concepts(view, [query])[0]["status"])
+        self.assertEqual([], search(view, "notsearchablehash"))
+
+    def test_search_bm25_prefers_rare_terms_to_common_terms(self) -> None:
+        nodes = []
+        for index in range(4):
+            node = copy.deepcopy(fixture_nodes()[1])
+            node.update({"id": f"term-{index}", "label": "Equal label",
+                         "text": "common " + ("rare" if index == 3 else "filler")})
+            node["properties"]["aliases"] = []
+            nodes.append(node)
+        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+
+        results = search(view, "common rare")
+
+        self.assertEqual("term-3", results[0]["node"]["id"])
+        rare_score = search(view, "rare")[0]["reasons"][0]["score"]
+        common_score = search(view, "common")[0]["reasons"][0]["score"]
+        self.assertGreater(rare_score, common_score)
+
+    def test_search_bm25_normalizes_length_and_saturates_repetition(self) -> None:
+        nodes = []
+        for node_id, text in (
+            ("short", "target " + "filler " * 19),
+            ("long", "target " + "filler " * 99),
+            ("repeated", "target " * 10 + "filler " * 10),
+        ):
+            node = copy.deepcopy(fixture_nodes()[1])
+            node.update({"id": node_id, "label": "Equal label", "text": text})
+            node["properties"]["aliases"] = []
+            nodes.append(node)
+        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+
+        results = search(view, "target")
+        scores = {row["node"]["id"]: row["reasons"][0]["score"] for row in results}
+
+        self.assertGreater(scores["short"], scores["long"])
+        self.assertGreater(scores["repeated"], scores["short"])
+        self.assertLess(scores["repeated"], 3 * scores["short"])
+        self.assertEqual(["repeated", "short", "long"],
+                         [row["node"]["id"] for row in results])
+
+    def test_search_normalizes_unicode_and_compound_words_with_stable_ties(self) -> None:
+        nodes = []
+        for node_id in ("tie-b", "tie-a"):
+            node = copy.deepcopy(fixture_nodes()[1])
+            node.update({"id": node_id, "label": "Equal label",
+                         "text": "Ｃｒｏｓｓ-entropy σ-algebra"})
+            node["properties"]["aliases"] = []
+            nodes.append(node)
+        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+
+        for query in ("cross entropy", "cross-entropy", "σ algebra"):
+            with self.subTest(query=query):
+                self.assertEqual(["tie-a", "tie-b"],
+                                 [row["node"]["id"] for row in search(view, query)])
 
     def test_candidate_aliases_retrieve_but_never_establish_identity(self) -> None:
         candidate = copy.deepcopy(fixture_nodes()[1])
@@ -720,6 +810,149 @@ class QueryTest(unittest.TestCase):
             {"seed-one", "node-one"},
             {row["node"]["id"] for row in ranking["results"]},
         )
+
+    def test_ppr_default_converges_on_two_cycle_with_error_certificate(self) -> None:
+        nodes = fixture_nodes()[:2]
+        edges = [fixture_edges()[0], {
+            "source": "measure", "relation": "implies", "target": "sigma-algebra",
+            "evidence": "Cycle fixture only.", "curation_status": "current",
+        }]
+        view = GraphView.from_snapshot(snapshot_with(nodes, edges))
+        ranking = personalized_pagerank(view, {"sigma-algebra": 1.0})
+        scores = {row["node"]["id"]: row["score"] for row in ranking["results"]}
+        actual_error = abs(scores["sigma-algebra"] - 1 / 1.85) + abs(scores["measure"] - .85 / 1.85)
+
+        self.assertTrue(ranking["converged"])
+        self.assertGreater(ranking["iterations"], 60)
+        self.assertLessEqual(ranking["iterations"], 256)
+        self.assertEqual(ranking["iterations"], ranking["used_iterations"])
+        self.assertLessEqual(ranking["l1_residual"], 1e-10)
+        self.assertLessEqual(actual_error, ranking["stationary_error_bound"] + 1e-14)
+        self.assertAlmostEqual(1.0, ranking["probability_mass"], places=14)
+        self.assertEqual(2, ranking["allowed_edge_count"])
+        self.assertEqual(ranking["allowed_edge_count"], ranking["trusted_edge_count"])
+
+        approximate = personalized_pagerank(view, {"sigma-algebra": 1.0}, max_iterations=1)
+        self.assertFalse(approximate["converged"])
+        self.assertEqual(1, approximate["used_iterations"])
+        self.assertGreater(approximate["l1_residual"], 1e-10)
+        self.assertTrue(math.isfinite(approximate["stationary_error_bound"]))
+        self.assertEqual(2, len(approximate["results"]))
+
+    def test_ppr_dangling_and_disconnected_nodes_preserve_seed_mass(self) -> None:
+        nodes = fixture_nodes()
+        edges = [fixture_edges()[0]]
+        view = GraphView.from_snapshot(snapshot_with(nodes, edges))
+        ranking = personalized_pagerank(view, {"sigma-algebra": 1.0})
+        scores = {row["node"]["id"]: row["score"] for row in ranking["results"]}
+
+        self.assertEqual({"sigma-algebra", "measure"}, set(scores))
+        self.assertEqual(2, ranking["reachable_node_count"])
+        self.assertEqual(1, ranking["allowed_edge_count"])
+        self.assertAlmostEqual(1.0, sum(scores.values()), places=14)
+        self.assertAlmostEqual(1 / 1.85, scores["sigma-algebra"], places=9)
+        self.assertAlmostEqual(.85 / 1.85, scores["measure"], places=9)
+        isolated = personalized_pagerank(view, {"absolute-continuity": 1.0})
+        self.assertEqual(1, isolated["reachable_node_count"])
+        self.assertEqual(0, isolated["allowed_edge_count"])
+        self.assertEqual(1.0, isolated["results"][0]["score"])
+        self.assertEqual(0.0, isolated["l1_residual"])
+
+    def test_ppr_seed_weight_scaling_avoids_overflow_and_underflow(self) -> None:
+        view = GraphView.from_snapshot(snapshot_with(fixture_nodes()[:2], []))
+        for weight in (1e308, 5e-324):
+            with self.subTest(weight=weight):
+                ranking = personalized_pagerank(view, {"sigma-algebra": weight, "measure": weight})
+                self.assertEqual([.5, .5], [row["score"] for row in ranking["results"]])
+                self.assertEqual(1.0, ranking["probability_mass"])
+                self.assertTrue(ranking["converged"])
+                self.assertEqual(0.0, ranking["l1_residual"])
+        for damping in (5e-324, math.nextafter(1.0, 0.0)):
+            ranking = personalized_pagerank(view, {"sigma-algebra": 1e308, "measure": 1e-308}, damping=damping)
+            self.assertEqual(1.0, ranking["probability_mass"])
+            self.assertTrue(math.isfinite(ranking["stationary_error_bound"]))
+
+    def test_ppr_rejects_nonfinite_and_boolean_numeric_parameters(self) -> None:
+        invalid = (
+            {"damping": float("nan")}, {"damping": float("inf")}, {"damping": True},
+            {"damping": 0.0}, {"damping": 1.0}, {"damping": 10 ** 1000},
+            {"tolerance": float("nan")}, {"tolerance": float("inf")}, {"tolerance": True},
+            {"tolerance": 0.0}, {"tolerance": 10 ** 1000},
+            {"max_iterations": True}, {"max_iterations": 1.5}, {"max_iterations": 0},
+            {"max_depth": True}, {"max_depth": -1}, {"max_depth": 9},
+            {"edge_policy": "reviewed"},
+        )
+        for policy in invalid:
+            with self.subTest(policy=policy), self.assertRaises(QueryError):
+                personalized_pagerank(self.view, {"sigma-algebra": 1.0}, **policy)
+        for weight in (True, False, float("nan"), float("inf"), "1", 10 ** 1000):
+            with self.subTest(weight=weight), self.assertRaisesRegex(QueryError, "finite non-boolean"):
+                personalized_pagerank(self.view, {"sigma-algebra": weight})
+
+    def test_ppr_max_depth_bounds_the_induced_graph_and_boundary_mass(self) -> None:
+        zero = personalized_pagerank(self.view, {"sigma-algebra": 1.0}, max_depth=0)
+        one = personalized_pagerank(self.view, {"sigma-algebra": 1.0}, max_depth=1)
+        full = personalized_pagerank(self.view, {"sigma-algebra": 1.0})
+        reverse = personalized_pagerank(self.view, {"absolute-continuity": 1.0}, max_depth=1, direction="in")
+
+        self.assertEqual(["sigma-algebra"], [row["node"]["id"] for row in zero["results"]])
+        self.assertEqual(0, zero["allowed_edge_count"])
+        self.assertEqual(1.0, zero["results"][0]["score"])
+        self.assertEqual({"sigma-algebra", "measure"}, {row["node"]["id"] for row in one["results"]})
+        self.assertEqual(1, one["allowed_edge_count"])
+        self.assertEqual(3, full["reachable_node_count"])
+        self.assertEqual({"absolute-continuity", "measure"}, {row["node"]["id"] for row in reverse["results"]})
+        self.assertEqual("induced-subgraph-dangling-to-seeds", one["policy"]["depth_boundary"])
+        for ranking in (zero, one, full, reverse):
+            self.assertAlmostEqual(1.0, ranking["probability_mass"], places=14)
+            self.assertTrue(ranking["converged"])
+
+    def test_graph_high_confidence_gate_is_distinct_from_source_freshness(self) -> None:
+        nodes = []
+        for node_id in ("seed", "high", "unverified", "stale", "pending"):
+            node = copy.deepcopy(fixture_nodes()[0])
+            node.update(id=node_id, label=node_id)
+            node["properties"]["aliases"] = []
+            nodes.append(node)
+        edges = [{
+            "source": "seed", "relation": "implies", "target": target,
+            "evidence": "Fixture source statement.", "curation_status": status, "confidence": confidence,
+        } for target, status, confidence in (
+            ("high", "current", "high"), ("unverified", "current", "unverified"),
+            ("stale", "needs-review", "high"), ("pending", "pending", "high"),
+        )]
+        view = GraphView.from_snapshot(snapshot_with(nodes, edges))
+        current = expand(view, ["seed"], direction="out")
+        gated = expand(view, ["seed"], direction="out", edge_policy="high-confidence", include_stale=True)
+        ppr = personalized_pagerank(view, {"seed": 1.0}, edge_policy="high-confidence", include_stale=True)
+        self.assertEqual({"seed", "high", "unverified", "pending"}, {row["node"]["id"] for row in current["nodes"]})
+        self.assertEqual({"seed", "high"}, {row["node"]["id"] for row in gated["nodes"]})
+        self.assertEqual({"seed", "high"}, {row["node"]["id"] for row in ppr["results"]})
+        self.assertEqual("declared-high-with-evidence", gated["policy"]["confidence_gate"])
+        self.assertEqual(1, ppr["allowed_edge_count"])
+        # Taxonomy evidence is optional in the source contract, but an empty
+        # statement must not satisfy the declared high-confidence gate.
+        field = {"id": "field", "type": "field", "label": "Field", "properties": {}}
+        taxonomy = {"source": "field", "relation": "contains", "target": "high", "confidence": "high", "curation_status": "current", "evidence": " "}
+        tax_view = GraphView.from_snapshot(snapshot_with([field, nodes[1]], [taxonomy]))
+        self.assertEqual(2, len(expand(tax_view, ["field"], include_taxonomy=True)["nodes"]))
+        self.assertEqual(1, len(expand(tax_view, ["field"], include_taxonomy=True, edge_policy="high-confidence")["nodes"]))
+
+    def test_contrasts_are_symmetric_and_paths_preserve_authored_direction(self) -> None:
+        edge = {"source": "sigma-algebra", "relation": "contrasts-with", "target": "measure", "evidence": "Fixture comparison.", "curation_status": "current"}
+        view = GraphView.from_snapshot(snapshot_with(fixture_nodes()[:2], [edge]))
+        for seed, direction, traversal in (("measure", "out", "incoming"), ("sigma-algebra", "in", "outgoing")):
+            with self.subTest(seed=seed, direction=direction):
+                result = expand(view, [seed], direction=direction)
+                other = next(row for row in result["nodes"] if not row["seed"])
+                self.assertEqual(2, len(result["nodes"]))
+                self.assertEqual([edge], result["edges"])
+                self.assertEqual([{"source": "sigma-algebra", "relation": "contrasts-with", "target": "measure", "direction": traversal}], other["path"])
+                ppr = personalized_pagerank(view, {seed: 1.0}, direction=direction, max_depth=1)
+                self.assertEqual(2, ppr["reachable_node_count"])
+                self.assertEqual(1, ppr["allowed_edge_count"])
+        with self.assertRaisesRegex(QueryError, "edge_policy"):
+            expand(view, ["measure"], edge_policy="reviewed")
 
     def test_include_orphaned_is_explicit_across_query_lanes(self) -> None:
         orphan = copy.deepcopy(fixture_nodes()[0])

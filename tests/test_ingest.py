@@ -516,6 +516,64 @@ class TransactionalIngestTest(unittest.TestCase):
             self.assertEqual(baseline, self.material_hashes(), failure_stage)
             self.assertNotIn("beta", load_state(self.graph).nodes)
 
+    def prepare_first_ingest(self, mode: str) -> dict:
+        self.authority.write_text("# Fresh notes\n", encoding="utf-8")
+        shutil.rmtree(self.graph)
+        shutil.rmtree(self.repo / "knowledge/entries")
+        synchronize(
+            self.repo,
+            self.registry,
+            self.graph,
+            self.typst_registry,
+            identities=self.identities,
+            alignments=self.alignments,
+            files=[],
+            course=None,
+            subject=None,
+            write=True,
+        )
+        self.assertFalse((self.repo / "knowledge/entries").exists())
+        snapshot = make_agent_snapshot(load_state(self.graph))
+        self.query_report["target"] = {
+            "namespace": "personal",
+            "snapshot_sha256": snapshot["snapshot_sha256"],
+            "graph_sha256": snapshot["graph"]["sha256"],
+        }
+        self.query_path.write_text(json.dumps(self.query_report), encoding="utf-8")
+        request = self.request(mode, request_id="first-beta")
+        request["authority_patches"][0]["expected_markers"]["definitions"] = ["beta"]
+        return finalize_request(request)
+
+    def test_first_ingest_creates_entry_directory_and_valid_receipt(self) -> None:
+        request = self.prepare_first_ingest("apply")
+        receipt = apply_ingest(self.paths, request)
+
+        self.assertEqual("committed", receipt["status"])
+        self.assertTrue((self.repo / "knowledge/entries/beta.md").is_file())
+        recover_ingest(self.paths)
+        view = GraphView.load(self.graph, self.alignments)
+        self.assertEqual(
+            "beta", resolve_concepts(view, ["Beta"])[0]["matches"][0]["id"]
+        )
+        self.assertEqual(receipt, apply_ingest(self.paths, request))
+
+    def test_first_ingest_failure_restores_absent_entry_directory(self) -> None:
+        request = self.prepare_first_ingest("apply")
+        before = self.material_hashes()
+
+        def inject(stage: str) -> None:
+            if stage == "installed-graph":
+                raise IngestError("injected-failure", stage, stage=stage)
+
+        with self.assertRaises(IngestError) as failure:
+            apply_ingest(self.paths, request, failure_injector=inject)
+
+        self.assertEqual("injected-failure", failure.exception.code)
+        recover_ingest(self.paths)
+        self.assertEqual(before, self.material_hashes())
+        self.assertFalse((self.repo / "knowledge/entries").exists())
+        self.assertNotIn("beta", load_state(self.graph).nodes)
+
     def test_recovery_restores_only_declared_repository_targets(self) -> None:
         request_sha256 = "a" * 64
         backup_root = (

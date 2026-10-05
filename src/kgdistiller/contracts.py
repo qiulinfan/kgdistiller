@@ -20,6 +20,17 @@ CONTRACT_SCHEMAS = {
         "kgdistiller-retrieval-plan-v1",
         "kgdistiller-search-result-v1",
         "kgdistiller-search-execution-v1",
+        "kgdistiller-search-result-v2",
+        "kgdistiller-search-execution-v2",
+        "kgdistiller-search-result-v3",
+        "kgdistiller-search-execution-v3",
+        "kgdistiller-context-bundle-v2",
+        "kgdistiller-context-bundle-v3",
+        "kgdistiller-support-selection-v1",
+        "kgdistiller-source-evidence-manifest-v1",
+        "kgdistiller-source-evidence-result-v1",
+        "kgdistiller-source-evidence-context-v1",
+        "kgdistiller-source-reference-result-v1",
         "kgdistiller-document-record-v1",
         "kgdistiller-store-v1",
         "kgdistiller-store-report-v1",
@@ -132,7 +143,8 @@ def _validate_document_record(payload: dict[str, Any]) -> None:
 
 
 def _validate_search_execution(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "kgdistiller-search-execution-v1":
+    execution_schema = payload.get("schema")
+    if execution_schema not in {"kgdistiller-search-execution-v1", "kgdistiller-search-execution-v2", "kgdistiller-search-execution-v3"}:
         return
     resolutions = payload.get("identity_resolutions") or []
     indices = [resolution.get("query_index") for resolution in resolutions]
@@ -141,11 +153,192 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
             "identity resolution query_index values must be unique and contiguous"
         )
     result = payload.get("result")
-    if not isinstance(result, dict) or result.get("schema") != "kgdistiller-search-result-v1":
+    result_schema = execution_schema.replace("search-execution", "search-result")
+    if not isinstance(result, dict) or result.get("schema") != result_schema:
         raise ContractError(
-            "kgdistiller-search-execution-v1 must contain kgdistiller-search-result-v1"
+            f"{execution_schema} must contain {result_schema}"
         )
     validate_contract(result)
+    if "ranking" in result:
+        for kind, provenance in result["ranking"].items():
+            for key in ("namespace", "snapshot_sha256", "graph_sha256"):
+                if provenance[key] != payload[key]:
+                    raise ContractError(f"{kind} ranking {key} does not match execution")
+    if execution_schema.endswith("v3"):
+        for key in ("namespace", "snapshot_sha256", "graph_sha256"):
+            if result["graph_retrieval"]["binding"][key] != payload[key]:
+                raise ContractError(f"graph retrieval {key} does not match execution")
+        authoritative_ids = {node_id for resolution in resolutions if resolution["status"] in {"exact", "alias"} and resolution["identity_authority"] for node_id in resolution["candidate_ids"]}
+        if any(node_id not in authoritative_ids for node_id in result["graph_retrieval"]["seeds"]["identity"]):
+            raise ContractError("graph identity roots require authoritative exact or alias resolution")
+
+
+def _validate_model_search_result(payload: dict[str, Any]) -> None:
+    if payload.get("schema") not in {"kgdistiller-search-result-v2", "kgdistiller-search-result-v3"}:
+        return
+    if "ranking" not in payload:
+        if "embedding" in payload["lanes"] or "reranker" in payload["lanes"] or any(set(row["lanes"]) & {"embedding", "reranker"} for row in payload["results"]):
+            raise ContractError("model lanes require source-bound model provenance")
+        return
+    provenance = payload["ranking"]["embedding"]
+    for kind, record in payload["ranking"].items():
+        descriptor = record["model"]
+        if any(not descriptor[key].strip() for key in ("provider", "model", "revision")):
+            raise ContractError(f"{kind} model descriptor strings must be nonempty")
+        if len(canonical_json(descriptor["inference"]).encode("utf-8")) > 4096:
+            raise ContractError(f"{kind} model inference metadata exceeds the byte limit")
+    empty = provenance["document_count"] == 0
+    if empty != (provenance["dimensions"] == 0) or empty != (provenance["cache_status"] == "empty"):
+        raise ContractError("embedding empty-cache metadata is inconsistent")
+    if payload["lanes"]["embedding"]["status"] != "enabled" or payload["lanes"]["embedding"]["results"] > provenance["document_count"]:
+        raise ContractError("embedding lane status or count is inconsistent")
+    ids = [item["node_id"] for item in payload["results"]]
+    if len(ids) != len(set(ids)):
+        raise ContractError("search result contains duplicate node IDs")
+    reranker = payload["ranking"].get("reranker")
+    if (reranker is not None) != ("reranker" in payload["lanes"]):
+        raise ContractError("reranker lane and provenance must occur together")
+    if reranker is None:
+        if any("reranker" in row["lanes"] for row in payload["results"]):
+            raise ContractError("reranked result has no reranker provenance")
+        return
+    for key in ("namespace", "snapshot_sha256", "graph_sha256", "projection", "query_sha256"):
+        if reranker[key] != provenance[key]:
+            raise ContractError(f"reranker {key} does not match embedding retrieval")
+    candidates = reranker["candidates"]
+    candidate_ids = [candidate["node_id"] for candidate in candidates]
+    if len(candidate_ids) != len(set(candidate_ids)) or len(candidates) > reranker["candidate_limit"]:
+        raise ContractError("reranker candidate IDs must be unique and within the candidate limit")
+    if payload["lanes"]["reranker"]["status"] != "enabled" or payload["lanes"]["reranker"]["results"] != len(candidates):
+        raise ContractError("reranker lane status or count is inconsistent")
+    ordered = sorted(candidates, key=lambda item: (-item["score"], item["node_id"]))
+    by_id = {item["node_id"]: (rank, item["score"]) for rank, item in enumerate(ordered, start=1)}
+    base_ranks = {item["node_id"]: rank for rank, item in enumerate(candidates, start=1)}
+    for row in payload["results"]:
+        if row["node_id"] not in by_id:
+            raise ContractError("reranked result is outside the source-bound candidate pool")
+        rank, score = by_id[row["node_id"]]
+        fused_score = 1.0 / (60 + base_ranks[row["node_id"]]) + 1.0 / (60 + rank)
+        if row["lanes"].get("reranker") != {"rank": rank, "score": score} or row["fusion"]["method"] != "rrf" or row["fusion"]["score"] != fused_score:
+            raise ContractError("reranker scores and ranks do not match the source-bound candidate pool")
+
+
+def _validate_graph_path(path: dict[str, Any], node_id: str) -> None:
+    nodes, steps = path["nodes"], path["steps"]
+    if len(nodes) < 2 or nodes[-1] != node_id or len(steps) != len(nodes) - 1:
+        raise ContractError("graph path must connect a root to its result")
+    if [item["node_id"] for item in path["node_bindings"]] != nodes or path["edge_types"] != [step["relation"] for step in steps]:
+        raise ContractError("graph path bindings must match all nodes and edges")
+    purposes = {"prerequisite-for": "learning-prerequisite", "derived-from": "source-derivation", "contrasts-with": "comparison", "contains": "taxonomy-navigation"}
+    for index, step in enumerate(steps):
+        left, right = (step["source"], step["target"]) if step["direction"] == "outgoing" else (step["target"], step["source"])
+        if (left, right) != (nodes[index], nodes[index + 1]):
+            raise ContractError("graph path direction does not match its edge")
+        if step["purpose"] != purposes.get(step["relation"], "relation-navigation"):
+            raise ContractError("graph path purpose does not match its relation")
+
+
+def _validate_graph_search_result(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "kgdistiller-search-result-v3":
+        return
+    graph = payload["graph_retrieval"]
+    policy, seeds = graph["policy"], graph["seeds"]
+    if graph["binding"]["plan_sha256"] != payload["plan_sha256"]:
+        raise ContractError("graph exploration binding does not match retrieval plan")
+    expected_gate = "declared-high-with-evidence" if policy["edge_policy"] == "high-confidence" else "none"
+    if policy["confidence_gate"] != expected_gate:
+        raise ContractError("graph confidence gate does not match edge policy")
+    candidate_ids = [item["node_id"] for item in seeds["candidate"]]
+    for ids in [seeds["explicit"], seeds["identity"], candidate_ids, seeds["effective"]]:
+        if len(ids) != len(set(ids)):
+            raise ContractError("graph seeds must be unique within each origin")
+    if seeds["effective"] != list(dict.fromkeys([*seeds["explicit"], *seeds["identity"], *candidate_ids])):
+        raise ContractError("effective graph seeds must preserve declared seed origins")
+    if len(candidate_ids) > policy["candidate_limit"] or [item["base_rank"] for item in seeds["candidate"]] != list(range(1, len(candidate_ids) + 1)):
+        raise ContractError("graph candidate root ranks must be bounded and contiguous")
+    if any(not item["lanes"] for item in seeds["candidate"]):
+        raise ContractError("graph candidate roots require text or model ranking evidence")
+    for candidate in seeds["candidate"]:
+        if candidate["base_score"] != sum(1.0 / (60 + item["rank"]) for item in candidate["lanes"].values()):
+            raise ContractError("graph candidate root score does not match base ranking evidence")
+    if any(payload["lanes"][lane]["seeds"] != len(seeds["effective"]) for lane in ("graph", "ppr")):
+        raise ContractError("graph lane seed count does not match exploration provenance")
+    ppr = graph["ppr"]
+    if ppr["status"] == "degraded" and (ppr["converged"] or payload["lanes"]["ppr"]["status"] != "degraded" or payload["lanes"]["ppr"]["results"] != 0):
+        raise ContractError("nonconverged PPR must be degraded without fused results")
+    if ppr["status"] == "enabled" and not ppr["converged"]:
+        raise ContractError("enabled PPR must have converged")
+    ids = [row["node_id"] for row in payload["results"]]
+    if len(ids) != len(set(ids)):
+        raise ContractError("search result contains duplicate node IDs")
+    origins = {node_id: "explicit" for node_id in seeds["explicit"]}
+    origins.update({node_id: "identity" for node_id in seeds["identity"]})
+    for node_id in candidate_ids:
+        origins.setdefault(node_id, "candidate")
+    neighbors = graph["neighbors"]
+    if any(set(row["lanes"]) - {"graph", "ppr"} or not row["lanes"] or row["fusion"]["method"] != "navigation" or row["fusion"]["score"] != 0 for row in neighbors):
+        raise ContractError("graph support neighbors cannot claim query relevance scores")
+    neighbor_ids = [row["node_id"] for row in neighbors]
+    if len(neighbor_ids) != len(set(neighbor_ids)):
+        raise ContractError("graph support neighbors must have unique IDs")
+    for row in [*payload["results"], *neighbors]:
+        graph_lanes = set(row["lanes"]) & {"graph", "ppr"}
+        if graph_lanes and (set(row["lanes"]) - {"graph", "ppr"} or row["fusion"]["method"] != "navigation" or row["fusion"]["score"] != 0):
+            raise ContractError("graph navigation cannot boost query relevance ranking")
+        if graph_lanes and (not row["path_evidence"] or any(path["nodes"][0] == row["node_id"] for path in row["path_evidence"])):
+            raise ContractError("graph navigation requires a path from a distinct source root")
+        if ppr["status"] == "degraded" and "ppr" in graph_lanes:
+            raise ContractError("nonconverged PPR cannot contribute to fusion")
+        for path in row["path_evidence"]:
+            _validate_graph_path(path, row["node_id"])
+            if path["lane"] not in graph_lanes or path["nodes"][0] not in origins or len(path["steps"]) > policy["max_depth"]:
+                raise ContractError("graph path exceeds execution policy or declared roots")
+            if policy["edge_policy"] == "high-confidence" and any(step["confidence"] != "high" or step["curation_status"] != "current" or not step["evidence"].strip() for step in path["steps"]):
+                raise ContractError("graph path does not satisfy declared high-confidence gate")
+        for item in row["seed_evidence"]:
+            root = item["seed_id"]
+            if origins.get(root) != item["origin"] or item["identity_authority"] != (item["origin"] == "identity") or not any(path["lane"] == item["lane"] and path["nodes"][0] == root for path in row["path_evidence"]):
+                raise ContractError("graph seed evidence does not match its exploration origin")
+
+
+def _validate_graph_context(payload: dict[str, Any]) -> None:
+    if payload.get("schema") != "kgdistiller-context-bundle-v2":
+        return
+    from .alignment import node_fingerprint
+    from .semantic_retrieval import search_document
+
+    nodes = {node["id"]: node for node in payload["nodes"] if isinstance(node.get("id"), str)}
+    edges = {(edge.get("source"), edge.get("relation"), edge.get("target")): edge for edge in payload["edges"]}
+    if len(nodes) != len(payload["nodes"]) or len(edges) != len(payload["edges"]):
+        raise ContractError("graph context has duplicate or invalid node/edge records")
+    if any(source not in nodes or target not in nodes for source, _, target in edges):
+        raise ContractError("graph context has a disconnected edge proof")
+    if payload["omitted_support_packets"] < len(payload["gaps"]):
+        raise ContractError("graph context gap count exceeds omitted packets")
+    for packet in payload["support_packets"]:
+        path = packet["path"]
+        if any(node_id not in nodes for node_id in packet["nodes"]):
+            raise ContractError("graph support packet is missing complete path nodes")
+        if packet["kind"] == "direct-source":
+            if path is not None or packet["nodes"] != [packet["node_id"]]:
+                raise ContractError("direct source packet must contain its own node only")
+            continue
+        if path is None or packet["nodes"] != path["nodes"]:
+            raise ContractError("graph support packet requires its complete path")
+        _validate_graph_path(path, packet["node_id"])
+        for binding in path["node_bindings"]:
+            node = nodes[binding["node_id"]]
+            if binding["node_sha256"] != node_fingerprint(node) or binding["document_sha256"] != hashlib.sha256(search_document(node).encode("utf-8")).hexdigest():
+                raise ContractError("graph context node binding does not match its source")
+        for step in path["steps"]:
+            edge = edges.get((step["source"], step["relation"], step["target"]))
+            if edge is None or sha256_json(edge) != step["edge_sha256"]:
+                raise ContractError("graph support packet is missing its bound edge proof")
+            if any(step[key] != str(edge.get(key, default)) for key, default in (("confidence", "unverified"), ("curation_status", "unspecified"), ("evidence", ""))):
+                raise ContractError("graph path evidence and confidence do not match the source edge")
+    actual = len(canonical_json(payload).encode("utf-8"))
+    if actual != payload["budget"]["estimated_tokens"] or actual > payload["budget"]["token_budget"]:
+        raise ContractError("graph context budget does not match canonical byte size")
 
 
 def _validate_obsidian_graph(payload: dict[str, Any]) -> None:
@@ -231,6 +424,35 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         raise ContractError(_format_violation(errors[0]))
     _validate_document_record(payload)
     _validate_search_execution(payload)
+    _validate_model_search_result(payload)
+    _validate_graph_search_result(payload)
+    _validate_graph_context(payload)
+    if payload.get("schema") == "kgdistiller-context-bundle-v3":
+        from .context_projection import validate_compact_context
+        validate_compact_context(payload)
+    if payload.get("schema") in {"kgdistiller-source-evidence-manifest-v1", "kgdistiller-source-evidence-result-v1"}:
+        from .source_evidence import SourceEvidenceError, validate_source_evidence_manifest, validate_source_evidence_result
+        try:
+            if payload["schema"] == "kgdistiller-source-evidence-manifest-v1":
+                validate_source_evidence_manifest(payload)
+            else:
+                validate_source_evidence_result(payload)
+        except (SourceEvidenceError, UnicodeError, ValueError) as error:
+            raise ContractError("source evidence contract binding or byte closure is invalid") from error
+    if payload.get("schema") == "kgdistiller-source-evidence-context-v1":
+        from .source_context import validate_source_context
+        from .source_evidence import SourceEvidenceError
+        try:
+            validate_source_context(payload)
+        except (SourceEvidenceError, UnicodeError, ValueError) as error:
+            raise ContractError("source context binding or byte closure is invalid") from error
+    if payload.get("schema") == "kgdistiller-source-reference-result-v1":
+        from .source_references import validate_source_reference_result
+        from .source_evidence import SourceEvidenceError
+        try:
+            validate_source_reference_result(payload)
+        except (SourceEvidenceError, UnicodeError, ValueError) as error:
+            raise ContractError("source reference result binding is invalid") from error
     _validate_obsidian_graph(payload)
     digest_field = SELF_DIGEST_FIELDS.get(discriminator)
     if verify_digest and digest_field is not None:

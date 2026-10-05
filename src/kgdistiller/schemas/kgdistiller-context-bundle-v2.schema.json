@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-context-bundle-v2.schema.json",
+  "title": "kgdistiller complete graph support packets v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "namespace",
+    "snapshot_sha256",
+    "graph_sha256",
+    "question",
+    "plan_sha256",
+    "search_execution_schema",
+    "search_result_schema",
+    "edge_policy",
+    "nodes",
+    "edges",
+    "references",
+    "support_packets",
+    "gaps",
+    "omissions",
+    "omitted_support_packets",
+    "diagnostics_truncated",
+    "budget"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kgdistiller-context-bundle-v2"
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "snapshot_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "graph_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "question": {
+      "type": "string"
+    },
+    "plan_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "search_execution_schema": {
+      "const": "kgdistiller-search-execution-v3"
+    },
+    "search_result_schema": {
+      "const": "kgdistiller-search-result-v3"
+    },
+    "edge_policy": {
+      "enum": [
+        "current",
+        "high-confidence"
+      ]
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 4500,
+      "items": {
+        "type": "object"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 4000,
+      "items": {
+        "type": "object"
+      }
+    },
+    "references": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object"
+      }
+    },
+    "support_packets": {
+      "type": "array",
+      "maxItems": 532,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "kind",
+          "nodes",
+          "path",
+          "logical_entailment"
+        ],
+        "properties": {
+          "node_id": {
+            "$ref": "#/$defs/nodeId"
+          },
+          "kind": {
+            "enum": [
+              "graph-path",
+              "direct-source"
+            ]
+          },
+          "nodes": {
+            "type": "array",
+            "maxItems": 9,
+            "items": {
+              "$ref": "#/$defs/nodeId"
+            }
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/pathEvidence"
+              }
+            ]
+          },
+          "logical_entailment": {
+            "const": false
+          }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 532,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "reason"
+        ],
+        "properties": {
+          "node_id": {
+            "$ref": "#/$defs/nodeId"
+          },
+          "reason": {
+            "const": "support-packet-exceeds-budget"
+          }
+        }
+      }
+    },
+    "omissions": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object"
+      }
+    },
+    "omitted_support_packets": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 532
+    },
+    "diagnostics_truncated": {
+      "type": "boolean"
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token_budget",
+        "estimated_tokens"
+      ],
+      "properties": {
+        "token_budget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        },
+        "estimated_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200000
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "edgeType": {
+      "enum": [
+        "contains",
+        "prerequisite-for",
+        "implies",
+        "generalizes",
+        "contrasts-with",
+        "derived-from"
+      ]
+    },
+    "nodeBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "node_sha256",
+        "document_sha256"
+      ],
+      "properties": {
+        "node_id": {
+          "$ref": "#/$defs/nodeId"
+        },
+        "node_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "document_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "pathStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "relation",
+        "target",
+        "direction",
+        "confidence",
+        "curation_status",
+        "evidence",
+        "edge_sha256",
+        "purpose",
+        "logical_entailment"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/nodeId"
+        },
+        "relation": {
+          "$ref": "#/$defs/edgeType"
+        },
+        "target": {
+          "$ref": "#/$defs/nodeId"
+        },
+        "direction": {
+          "enum": [
+            "outgoing",
+            "incoming"
+          ]
+        },
+        "confidence": {
+          "type": "string"
+        },
+        "curation_status": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "edge_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "purpose": {
+          "enum": [
+            "learning-prerequisite",
+            "source-derivation",
+            "comparison",
+            "taxonomy-navigation",
+            "relation-navigation"
+          ]
+        },
+        "logical_entailment": {
+          "const": false
+        }
+      }
+    },
+    "pathEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lane",
+        "nodes",
+        "edge_types",
+        "node_bindings",
+        "steps",
+        "logical_entailment"
+      ],
+      "properties": {
+        "lane": {
+          "enum": [
+            "graph",
+            "ppr"
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/nodeId"
+          }
+        },
+        "edge_types": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "$ref": "#/$defs/edgeType"
+          }
+        },
+        "node_bindings": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "$ref": "#/$defs/nodeBinding"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/pathStep"
+          }
+        },
+        "logical_entailment": {
+          "const": false
+        }
+      }
+    }
+  }
+}

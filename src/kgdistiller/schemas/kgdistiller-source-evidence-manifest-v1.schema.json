@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-source-evidence-manifest-v1.schema.json",
+  "title": "kgdistiller explicit raw-source evidence manifest v1",
+  "description": "hash_mode raw-utf8 hashes original file bytes; normalized-utf8 hashes UTF-8 after CRLF/CR to LF only, without Unicode or whitespace normalization. Returned spans always address original raw bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "root",
+    "hash_mode",
+    "documents"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kgdistiller-source-evidence-manifest-v1"
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "hash_mode": {
+      "enum": [
+        "raw-utf8",
+        "normalized-utf8"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/document"
+      },
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "docId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "doc_id",
+        "source_url",
+        "source_version",
+        "source_type",
+        "path",
+        "expected_sha256"
+      ],
+      "properties": {
+        "doc_id": {
+          "$ref": "#/$defs/docId"
+        },
+        "source_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "source_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "expected_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

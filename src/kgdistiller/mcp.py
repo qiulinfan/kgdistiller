@@ -10,6 +10,7 @@ from typing import Any, TextIO
 
 from . import __version__
 from .contracts import canonical_json, load_contract_schema
+from .graph_retrieval import GraphRetrievalPolicy
 from .query import (
     QueryError,
     align,
@@ -57,6 +58,9 @@ COMMON_RETRIEVAL_PROPERTIES = {
     "include_stale": {"type": "boolean", "default": False},
     "include_orphaned": {"type": "boolean", "default": False},
     "graph_strategy": {"type": "string", "enum": ["bfs", "ppr", "hybrid"], "default": "hybrid"},
+    "graph_retrieval": {"type": "boolean", "default": False},
+    "graph_seed_candidates": {"type": "integer", "minimum": 1, "maximum": 32, "default": 5},
+    "graph_edge_policy": {"type": "string", "enum": ["high-confidence", "current"], "default": "high-confidence"},
 }
 
 
@@ -65,13 +69,15 @@ def _tool(name: str, title: str, description: str, schema: dict[str, Any]) -> di
 
 
 TOOL_DEFINITIONS = [
+    _tool("kg_resolve_source_references", "Resolve Source Documents", "Resolve registered document IDs and explicitly declared versions; these matches do not confer canonical concept identity.", _object_schema({"manifest_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}}, ["manifest_path", "references"])),
+    _tool("kg_search_source_evidence", "Search Raw Source Evidence", "Retrieve exact original text spans with source versions and hashes; fragments do not define graph identities.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 8192}, "manifest_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "doc_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 128}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 12000}, "context_projection": {"type": "string", "enum": ["full", "compact"], "default": "full"}}, ["query", "manifest_path"])),
     _tool("kg_status", "Knowledge Graph Status", "Inspect the fresh JSON-memory graph view and generation.", _object_schema()),
     _tool("kg_resolve_concepts", "Resolve Knowledge Concepts", "Resolve only explicit IDs, canonical labels, and global aliases as identity.", _object_schema({"concepts": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4096}, "minItems": 1, "maxItems": 512}, "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}}, ["concepts"])),
     _tool("kg_search", "Search Knowledge Graph", "Execute one bounded deterministic retrieval plan or legacy query.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 4096}, "plan": RETRIEVAL_PLAN_INPUT_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20}, **COMMON_RETRIEVAL_PROPERTIES})),
     _tool("kg_get_node", "Get Knowledge Node", "Read one node with direct typed edges and backlinks.", _object_schema({"id": {"type": "string", "minLength": 1, "maxLength": 256}, "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}}, ["id"])),
     _tool("kg_expand", "Expand Knowledge Subgraph", "Traverse a bounded typed neighborhood with explicit paths.", _object_schema({"ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "minItems": 1, "maxItems": 128}, "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}, "direction": {"type": "string", "enum": ["incoming", "outgoing", "both"], "default": "both"}, "edge_types": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 32}, "max_depth": {"type": "integer", "minimum": 0, "maximum": 8, "default": 1}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}, "include_taxonomy": {"type": "boolean", "default": False}, "include_stale": {"type": "boolean", "default": False}, "include_orphaned": {"type": "boolean", "default": False}}, ["ids"])),
-    _tool("kg_ppr", "Run Knowledge Graph PPR", "Run deterministic Personalized PageRank over trusted graph edges.", _object_schema({"ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "minItems": 1, "maxItems": 128}, "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}, "node_types": {"type": "array", "items": {"type": "string", "enum": ["knowledge", "field", "topic"]}, "maxItems": 16}, "edge_types": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 32}, "direction": {"type": "string", "enum": ["incoming", "outgoing", "both"], "default": "outgoing"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}, "include_taxonomy": {"type": "boolean", "default": False}, "include_stale": {"type": "boolean", "default": False}, "include_orphaned": {"type": "boolean", "default": False}}, ["ids"])),
-    _tool("kg_build_context", "Build Knowledge Context", "Pack deterministic source evidence from a bounded search execution.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 4096}, "plan": RETRIEVAL_PLAN_INPUT_SCHEMA, "token_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 6000}, "result_limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}, **COMMON_RETRIEVAL_PROPERTIES})),
+    _tool("kg_ppr", "Run Knowledge Graph PPR", "Run deterministic Personalized PageRank over permitted current graph edges; source freshness does not certify scientific review.", _object_schema({"ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "minItems": 1, "maxItems": 128}, "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}, "node_types": {"type": "array", "items": {"type": "string", "enum": ["knowledge", "field", "topic"]}, "maxItems": 16}, "edge_types": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 32}, "direction": {"type": "string", "enum": ["incoming", "outgoing", "both"], "default": "outgoing"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}, "include_taxonomy": {"type": "boolean", "default": False}, "include_stale": {"type": "boolean", "default": False}, "include_orphaned": {"type": "boolean", "default": False}}, ["ids"])),
+    _tool("kg_build_context", "Build Knowledge Context", "Pack deterministic source evidence from a bounded search execution.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 4096}, "plan": RETRIEVAL_PLAN_INPUT_SCHEMA, "token_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 6000}, "context_projection": {"type": "string", "enum": ["full", "compact"], "default": "full"}, "support_selection": {"type": "object"}, "result_limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}, **COMMON_RETRIEVAL_PROPERTIES})),
     _tool("kg_align_graph", "Align Candidate Knowledge Graph", "Rank conservative source-backed mappings without committing identity.", _object_schema({"candidate_snapshot": {"type": "object"}, "target_namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}, "limit_per_node": {"type": "integer", "minimum": 1, "maximum": 500, "default": 10}}, ["candidate_snapshot"])),
     _tool("kg_compare_graph", "Compare Candidate Knowledge Graph", "Compare an isolated candidate snapshot with the fresh authority view.", _object_schema({"candidate_snapshot": {"type": "object"}, "target_namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}}, ["candidate_snapshot"])),
     _tool("kg_create_proposal", "Create Knowledge Review Proposal", "Create a deterministic review package without writing authority data.", _object_schema({"candidate_snapshot": {"type": "object"}, "target_namespace": {"type": "string", "minLength": 1, "maxLength": 256, "default": "personal"}, "target_authority": {"type": "string", "maxLength": 4096}}, ["candidate_snapshot"])),
@@ -205,6 +211,10 @@ def _validate_arguments(name: str, arguments: Any) -> dict[str, Any]:
                 raise QueryError(f"tool argument {key} contains an invalid string length")
     if name in {"kg_search", "kg_build_context"} and (("query" in arguments) == ("plan" in arguments)):
         raise QueryError(f"tool {name} requires exactly one of query or plan")
+    if name in {"kg_search", "kg_build_context"} and not arguments.get("graph_retrieval", False):
+        unused = sorted({"graph_seed_candidates", "graph_edge_policy"}.intersection(arguments))
+        if unused:
+            raise QueryError("graph options require graph_retrieval: " + ", ".join(unused))
     if "plan" in arguments:
         controls = {"namespace", "node_types", "max_depth", "include_taxonomy", "include_stale", "include_orphaned", "graph_strategy", "limit" if name == "kg_search" else "result_limit"}
         conflict = sorted(controls.intersection(arguments))
@@ -219,11 +229,39 @@ def call_tool(
     raw_arguments: Any,
     *,
     alignments: Path | None = None,
+    ranking_service: Any = None,
 ) -> dict[str, Any]:
     """Execute one tool against exactly one complete, fresh GraphView."""
     if name not in TOOL_SCHEMAS:
         raise QueryError(f"unknown tool: {name}")
     arguments = _validate_arguments(name, raw_arguments)
+    if name == "kg_resolve_source_references":
+        from .source_evidence import SourceEvidenceError, SourceEvidenceIndex
+        from .source_references import resolve_source_references
+        manifest_path = Path(arguments["manifest_path"])
+        if not manifest_path.is_absolute():
+            raise QueryError("source reference manifest_path must be absolute")
+        try:
+            return resolve_source_references(SourceEvidenceIndex.from_manifest(manifest_path), arguments["references"])
+        except SourceEvidenceError as error:
+            raise RetrievalError(error.code, error.message) from error
+    if name == "kg_search_source_evidence":
+        from .source_evidence import SourceEvidenceError, SourceEvidenceIndex
+        manifest_path = Path(arguments["manifest_path"])
+        if not manifest_path.is_absolute():
+            raise QueryError("source evidence manifest_path must be absolute")
+        try:
+            projection = arguments.get("context_projection", "full")
+            byte_budget = int(arguments.get("byte_budget", 12000))
+            index = SourceEvidenceIndex.from_manifest(manifest_path)
+            result = index.search(str(arguments["query"]), doc_ids=arguments.get("doc_ids"), limit=int(arguments.get("limit", 10)), byte_budget=200000 if projection == "compact" else byte_budget)
+            if projection == "compact":
+                from .source_context import build_source_context
+                result = build_source_context([result], byte_budget=byte_budget)
+                index._check_sources()
+            return result
+        except SourceEvidenceError as error:
+            raise RetrievalError(error.code, error.message) from error
     view = load_graph_view(graph_dir, alignments)
     namespace = str(arguments.get("namespace", "personal"))
     if name == "kg_status":
@@ -253,10 +291,11 @@ def call_tool(
         plan_mode = "legacy"
         execution_namespace = namespace
         namespace_argument = namespace
-    execution = execute_retrieval_plan(view, plan, plan_mode=plan_mode, namespace=namespace_argument)
+    graph_policy = GraphRetrievalPolicy(candidate_limit=int(arguments.get("graph_seed_candidates", 5)), edge_policy=str(arguments.get("graph_edge_policy", "high-confidence"))) if arguments.get("graph_retrieval", False) else None
+    execution = execute_retrieval_plan(view, plan, plan_mode=plan_mode, namespace=namespace_argument, ranking_service=ranking_service, graph_policy=graph_policy)
     if name == "kg_search":
         return execution
-    return build_context_from_execution(view, execution, plan=plan, token_budget=int(arguments.get("token_budget", 6000)), namespace=execution_namespace)
+    return build_context_from_execution(view, execution, plan=plan, token_budget=int(arguments.get("token_budget", 6000)), namespace=execution_namespace, context_projection=str(arguments.get("context_projection", "full")), support_selection=arguments.get("support_selection"))
 
 
 def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
@@ -271,9 +310,10 @@ def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, 
 class MCPServer:
     """Small stateful MCP dispatcher for newline-delimited stdio transport."""
 
-    def __init__(self, graph_dir: Path, *, alignments: Path | None = None):
+    def __init__(self, graph_dir: Path, *, alignments: Path | None = None, ranking_service: Any = None):
         self.graph_dir = Path(graph_dir)
         self.alignments = Path(alignments) if alignments is not None else None
+        self.ranking_service = ranking_service
         self.initialized = False
         self.protocol_version = MCP_PROTOCOL_VERSION
 
@@ -311,7 +351,10 @@ class MCPServer:
                 return _protocol_error(request_id, -32602, "Invalid params")
             name = str(params.get("name", ""))
             try:
-                value = call_tool(self.graph_dir, name, params.get("arguments"), alignments=self.alignments)
+                options = {"alignments": self.alignments}
+                if name in {"kg_search", "kg_build_context"}:
+                    options["ranking_service"] = self.ranking_service
+                value = call_tool(self.graph_dir, name, params.get("arguments"), **options)
                 return _result(request_id, _tool_result(value))
             except RetrievalError as error:
                 return _result(request_id, _tool_result({"error": error.to_payload()}, is_error=True))
@@ -326,12 +369,13 @@ def serve_stdio(
     graph_dir: Path,
     *,
     alignments: Path | None = None,
+    ranking_service: Any = None,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
     source = input_stream or sys.stdin
     destination = output_stream or sys.stdout
-    server = MCPServer(graph_dir, alignments=alignments)
+    server = MCPServer(graph_dir, alignments=alignments, ranking_service=ranking_service)
     for raw_line, oversized in _bounded_input_lines(source):
         if oversized:
             destination.write(canonical_json(_protocol_error(None, -32700, "Parse error")) + "\n")
