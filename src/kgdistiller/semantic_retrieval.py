@@ -20,7 +20,8 @@ from typing import Any, Callable, Protocol, cast
 
 from .alignment import node_fingerprint
 from .contracts import canonical_json, sha256_json
-from .derived_cache import DerivedCacheError, ExactInputCache, file_signature
+from .derived_cache import DerivedCacheError, ExactInputCache
+from .file_io import descriptor_signature, path_signature
 from .query import GraphView, _node_search_fields, load_graph_view
 
 
@@ -144,7 +145,7 @@ def _source_state(view: GraphView, *, verify_filesystem: bool = False,
             info = manifest_path.lstat()
             if not stat.S_ISREG(info.st_mode):
                 raise ValueError("manifest is not a regular file")
-            manifest_signature = file_signature(info)
+            manifest_signature = path_signature(manifest_path, info)
             if cached is not None and cached["manifest_signature"] == manifest_signature:
                 current_manifest = cached["manifest"]
             else:
@@ -161,7 +162,7 @@ def _source_state(view: GraphView, *, verify_filesystem: bool = False,
                 info = (view.graph_dir / relative).lstat()
                 if not stat.S_ISREG(info.st_mode):
                     raise ValueError("source artifact is not regular")
-                signatures.append((name, file_signature(info)))
+                signatures.append((name, path_signature(view.graph_dir / relative, info)))
             reusable = cached is not None and cached["signatures"] == signatures
             if reusable and (not verify_filesystem or cached["verified"]):
                 files = cached["files"]
@@ -174,11 +175,11 @@ def _source_state(view: GraphView, *, verify_filesystem: bool = False,
                 for name, signature in signatures:
                     digest = hashlib.sha256()
                     with os.fdopen(os.open(view.graph_dir / name, flags), "rb") as handle:
-                        if file_signature(os.fstat(handle.fileno())) != signature:
+                        if descriptor_signature(handle.fileno()) != signature:
                             raise ValueError("source artifact changed while opening")
                         for chunk in iter(lambda: handle.read(65536), b""):
                             digest.update(chunk)
-                        if file_signature(os.fstat(handle.fileno())) != signature:
+                        if descriptor_signature(handle.fileno()) != signature:
                             raise ValueError("source artifact changed while hashing")
                     files[name] = digest.hexdigest()
                 if filesystem_cache is not None:
@@ -328,7 +329,7 @@ class SemanticRankingService:
                 info = path.lstat()
                 if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_CACHE_BYTES:
                     raise ValueError("cache file size/type")
-                signature = file_signature(info)
+                signature = path_signature(path, info)
                 remembered = self._generation_vectors.get(index_sha256)
                 if remembered is not None and remembered["signature"] == signature:
                     self._generation_vectors.move_to_end(index_sha256)
@@ -337,10 +338,10 @@ class SemanticRankingService:
                     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
                     with os.fdopen(os.open(path, flags), "rb") as handle:
                         opened = os.fstat(handle.fileno())
-                        if not stat.S_ISREG(opened.st_mode) or file_signature(opened) != signature:
+                        if not stat.S_ISREG(opened.st_mode) or descriptor_signature(handle.fileno()) != signature:
                             raise ValueError("cache file changed while opening")
                         raw = handle.read(MAX_CACHE_BYTES + 1)
-                        if file_signature(os.fstat(handle.fileno())) != signature:
+                        if descriptor_signature(handle.fileno()) != signature:
                             raise ValueError("cache file changed while reading")
                     if len(raw) > MAX_CACHE_BYTES:
                         raise ValueError("cache file size")
@@ -380,7 +381,7 @@ class SemanticRankingService:
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
             temporary = None
-            signature = file_signature(path.lstat())
+            signature = path_signature(path, path.lstat())
         except OSError as error:
             raise SemanticRetrievalError("vector-cache-unwritable", "embedding cache could not be written atomically") from error
         finally:

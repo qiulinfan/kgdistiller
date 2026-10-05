@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .contracts import canonical_json, sha256_json
+from .file_io import file_signature, same_file_metadata
 from .json_schema import validate_json_schema
 from .query import _BM25_B, _BM25_K1, MAX_QUERY_LENGTH, MAX_QUERY_TERMS, _tokens
 
@@ -90,13 +91,18 @@ def validate_source_evidence_manifest(payload: dict[str, Any]) -> None:
 
 
 def _read_regular(path: Path, limit: int) -> bytes:
-    flags = os.O_RDONLY | getattr(os,"O_CLOEXEC",0) | getattr(os,"O_NONBLOCK",0) | getattr(os,"O_NOFOLLOW",0)
+    flags = os.O_RDONLY | getattr(os,"O_BINARY",0) | getattr(os,"O_CLOEXEC",0) | getattr(os,"O_NONBLOCK",0) | getattr(os,"O_NOFOLLOW",0)
     descriptor = None
     try:
+        path_info = path.lstat()
+        if not stat.S_ISREG(path_info.st_mode):
+            raise SourceEvidenceError("invalid-source-file", "source evidence requires regular files")
         descriptor = os.open(path, flags)
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise SourceEvidenceError("invalid-source-file", "source evidence requires regular files")
+        if not same_file_metadata(path_info, before):
+            raise SourceEvidenceError("stale-source", "source evidence changed while opening")
         if before.st_size > limit:
             raise SourceEvidenceError("source-too-large", "source evidence file exceeds the byte bound")
         data = bytearray()
@@ -108,7 +114,7 @@ def _read_regular(path: Path, limit: int) -> bytes:
         if len(data) > limit:
             raise SourceEvidenceError("source-too-large", "source evidence file exceeds the byte bound")
         after = os.fstat(descriptor)
-        if (before.st_size,before.st_mtime_ns,before.st_ino) != (after.st_size,after.st_mtime_ns,after.st_ino):
+        if file_signature(before) != file_signature(after) or not same_file_metadata(path_info, path.lstat()):
             raise SourceEvidenceError("stale-source", "source evidence changed while reading")
         return bytes(data)
     except SourceEvidenceError:
