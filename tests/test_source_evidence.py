@@ -62,6 +62,50 @@ class SourceEvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(SourceEvidenceError,"stale-source"):
             index.search("数学")
 
+    def test_binary_descriptor_preserves_crlf_and_ctrl_z_on_windows(self) -> None:
+        from kgdistiller.source_evidence import _read_regular
+        path = self.root / "binary.txt"
+        raw = "α\r\nβ\x1aγ\r\n".encode("utf-8")
+        path.write_bytes(raw)
+        actual_open, actual_read = os.open, os.read
+        binary_flag = getattr(os, "O_BINARY", 0x8000)
+        binary_descriptors = set()
+
+        def windows_open(path, flags):
+            descriptor = actual_open(path, flags & ~binary_flag if os.name != "nt" else flags)
+            if flags & binary_flag:
+                binary_descriptors.add(descriptor)
+            return descriptor
+
+        def windows_read(descriptor, count):
+            data = actual_read(descriptor, count)
+            return data if descriptor in binary_descriptors else data.replace(b"\r\n", b"\n").split(b"\x1a")[0]
+
+        with patch("kgdistiller.source_evidence.os.O_BINARY", binary_flag, create=True), \
+                patch("kgdistiller.source_evidence.os.open", side_effect=windows_open), \
+                patch("kgdistiller.source_evidence.os.read", side_effect=windows_read):
+            self.assertEqual(raw, _read_regular(path, 1000))
+
+    def test_directory_is_rejected_before_platform_specific_open(self) -> None:
+        from kgdistiller.source_evidence import _read_regular
+        with patch("kgdistiller.source_evidence.os.open", side_effect=AssertionError("directory must not be opened")):
+            with self.assertRaisesRegex(SourceEvidenceError, "regular files"):
+                _read_regular(self.root, 1000)
+
+    def test_replacement_between_stat_and_open_is_rejected(self) -> None:
+        from kgdistiller.source_evidence import _read_regular
+        source, replacement = self.root / "source.txt", self.root / "replacement.txt"
+        source.write_bytes(b"expected\n")
+        replacement.write_bytes(b"replaced\n")
+        actual_open = os.open
+
+        def changed_open(path, flags):
+            return actual_open(replacement, flags)
+
+        with patch("kgdistiller.source_evidence.os.open", side_effect=changed_open):
+            with self.assertRaisesRegex(SourceEvidenceError, "stale-source"):
+                _read_regular(source, 1000)
+
     def test_content_addresses_do_not_promote_headings_to_graph_identity(self) -> None:
         index=self.make_index({"scope":b"# --[[Invented canonical identity]]--\n\ncanonical evidence only\n"})
         result=index.search("canonical",byte_budget=20000)

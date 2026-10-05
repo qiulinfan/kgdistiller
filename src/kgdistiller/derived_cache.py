@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import canonical_json, sha256_json
+from .file_io import descriptor_signature, path_signature
 
 
 EXACT_INPUT_CACHE_SCHEMA = "kgdistiller-exact-input-cache-v1"
@@ -49,11 +50,6 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError("duplicate cache field")
         result[key] = value
     return result
-
-
-def file_signature(info: os.stat_result) -> tuple[int, int, int, int, int]:
-    """Include ctime so restoring mtime after an edit cannot retain a hit."""
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 class ExactInputCache:
@@ -158,7 +154,7 @@ class ExactInputCache:
                     return None
                 if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_RECORD_BYTES:
                     raise ValueError("cache record size/type")
-                signature = file_signature(info)
+                signature = path_signature(path, info)
                 remembered = self._memory.get(filename)
                 if remembered is not None and remembered[0] == signature:
                     self._memory.move_to_end(filename)
@@ -172,10 +168,10 @@ class ExactInputCache:
                     opened = os.fstat(handle.fileno())
                     if not stat.S_ISREG(opened.st_mode) or opened.st_size > MAX_RECORD_BYTES:
                         raise ValueError("cache record size/type")
-                    if file_signature(opened) != signature:
+                    if descriptor_signature(handle.fileno()) != signature:
                         raise ValueError("cache record changed while opening")
                     raw = handle.read(MAX_RECORD_BYTES + 1)
-                    if file_signature(os.fstat(handle.fileno())) != signature:
+                    if descriptor_signature(handle.fileno()) != signature:
                         raise ValueError("cache record changed while reading")
                 if len(raw) > MAX_RECORD_BYTES:
                     raise ValueError("cache record size")
@@ -228,7 +224,7 @@ class ExactInputCache:
                 else:
                     os.replace(self.directory / temporary, self.directory / filename)
                 info = os.stat(filename, dir_fd=descriptor, follow_symlinks=False) if descriptor is not False else (self.directory / filename).lstat()
-                self._remember(filename, file_signature(info), value, len(raw))
+                self._remember(filename, path_signature(self.directory / filename, info), value, len(raw))
                 return True
             except OSError as error:
                 raise DerivedCacheError("exact-input-cache-unwritable", "exact-input cache could not be written atomically") from error

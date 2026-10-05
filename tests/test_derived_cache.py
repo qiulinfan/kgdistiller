@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from kgdistiller.contracts import sha256_json
@@ -109,6 +110,68 @@ class ExactInputCacheTest(unittest.TestCase):
         with patch("kgdistiller.derived_cache.MAX_MEMORY_BYTES", 1):
             self.cache.put(binding("query-vector"), [1.0, 2.0])
         self.assertNotIn(self.cache._filename(binding("query-vector")), self.cache._memory)
+
+    def test_windows_stat_times_preserve_hits_and_detect_restored_mtime_tampering(self) -> None:
+        actual_lstat, actual_fstat = Path.lstat, os.fstat
+        for change_time_available in (False, True):
+            with self.subTest(change_time_available=change_time_available):
+                births = {}
+                cache = ExactInputCache(self.root / str(change_time_available))
+
+                def metadata(info, *, descriptor=False):
+                    fields = {name: getattr(info, name) for name in (
+                        "st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")}
+                    birth = births.setdefault((info.st_dev, info.st_ino), info.st_ctime_ns)
+                    if change_time_available:
+                        fields["st_birthtime_ns"] = birth
+                    if not descriptor or not change_time_available:
+                        fields["st_ctime_ns"] = birth
+                    return SimpleNamespace(**fields)
+
+                with patch("kgdistiller.file_io._WINDOWS", True), \
+                        patch("kgdistiller.derived_cache.os.supports_dir_fd", set()), \
+                        patch.object(Path, "lstat", lambda path: metadata(actual_lstat(path))), \
+                        patch("kgdistiller.file_io.os.fstat", lambda fd: metadata(actual_fstat(fd), descriptor=True)):
+                    cache.put(binding("pair-score"), 1.0)
+                    self.assertEqual(1.0, ExactInputCache(cache.cache_dir).get(binding("pair-score")))
+                    with patch("kgdistiller.derived_cache.json.loads", side_effect=AssertionError("unchanged record should not reparse")):
+                        self.assertEqual(1.0, cache.get(binding("pair-score")))
+                    path = next(cache.directory.glob("*.json"))
+                    info = path.stat()
+                    raw = path.read_bytes()
+                    changed = raw.replace(b'"value":1.0', b'"value":2.0')
+                    self.assertEqual(len(raw), len(changed))
+                    self.assertNotEqual(raw, changed)
+                    path.write_bytes(changed)
+                    os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+                    with self.assertRaisesRegex(DerivedCacheError, "invalid-exact-input-cache"):
+                        cache.get(binding("pair-score"))
+
+    def test_windows_unchanged_change_time_and_birthtime_do_not_hide_tampering(self) -> None:
+        actual_lstat, actual_fstat = Path.lstat, os.fstat
+
+        def unchanged_times(info):
+            fields = {name: getattr(info, name) for name in (
+                "st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns")}
+            return SimpleNamespace(**fields, st_ctime_ns=0, st_birthtime_ns=0)
+
+        with patch("kgdistiller.file_io._WINDOWS", True), \
+                patch("kgdistiller.derived_cache.os.supports_dir_fd", set()), \
+                patch.object(Path, "lstat", lambda path: unchanged_times(actual_lstat(path))), \
+                patch("kgdistiller.file_io.os.fstat", lambda fd: unchanged_times(actual_fstat(fd))):
+            self.cache.put(binding("pair-score"), 1.0)
+            with patch("kgdistiller.derived_cache.json.loads", side_effect=AssertionError("unchanged record should not reparse")):
+                self.assertEqual(1.0, self.cache.get(binding("pair-score")))
+            path = next(self.cache.directory.glob("*.json"))
+            info = path.stat()
+            raw = path.read_bytes()
+            changed = raw.replace(b'"value":1.0', b'"value":2.0')
+            self.assertNotEqual(raw, changed)
+            self.assertEqual(len(raw), len(changed))
+            path.write_bytes(changed)
+            os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+            with self.assertRaisesRegex(DerivedCacheError, "invalid-exact-input-cache"):
+                self.cache.get(binding("pair-score"))
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX filesystem objects")
     def test_symlink_fifo_and_directory_records_never_follow_or_block(self) -> None:
