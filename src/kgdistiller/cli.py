@@ -3757,6 +3757,21 @@ def parse_args() -> argparse.Namespace:
     agent_command = commands.add_parser("agent")
     agent_commands = agent_command.add_subparsers(dest="agent_command", required=True)
     agent_commands.add_parser("status")
+    compiled_command = agent_commands.add_parser(
+        "compiled", help="search, navigate and read an explicitly supplied compiled knowledge library"
+    )
+    compiled_command.add_argument("--library", type=Path, required=True)
+    compiled_operations = compiled_command.add_subparsers(dest="compiled_operation", required=True)
+    compiled_search = compiled_operations.add_parser("search")
+    compiled_search.add_argument("query")
+    compiled_search.add_argument("--limit", type=int, default=40)
+    compiled_browse = compiled_operations.add_parser("browse")
+    compiled_browse.add_argument("reference", nargs="?")
+    compiled_get = compiled_operations.add_parser("get")
+    compiled_get.add_argument("reference", nargs="+")
+    compiled_pack = compiled_operations.add_parser("pack")
+    compiled_pack.add_argument("reference", nargs="+")
+    compiled_pack.add_argument("--budget", type=int, default=24000, help="complete UTF-8 response byte budget")
     evidence_command = agent_commands.add_parser("evidence", help="retrieve exact raw-source evidence spans without creating graph identities")
     evidence_command.add_argument("query")
     evidence_command.add_argument("--manifest", type=Path, required=True)
@@ -4066,6 +4081,27 @@ def main() -> int:
     configure_console_streams()
     args = parse_args()
     try:
+        if args.command == "agent" and args.agent_command == "compiled":
+            from .compiled_retrieval import CompiledLibrary, CompiledRetrievalError
+
+            try:
+                library = CompiledLibrary.from_path(args.library)
+                if args.compiled_operation == "search":
+                    result = {"candidates": library.search(args.query, limit=args.limit)}
+                elif args.compiled_operation == "browse":
+                    result = library.browse(args.reference)
+                elif args.compiled_operation == "get":
+                    result = {"entries": [library.get(reference) for reference in args.reference]}
+                else:
+                    result = library.pack(args.reference, byte_budget=args.budget)
+            except (CompiledRetrievalError, OSError) as error:
+                print(pretty_json({"error": str(error)}), end="", file=sys.stderr)
+                return 1
+            if args.compiled_operation == "pack":
+                print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False), end="")
+            else:
+                print(pretty_json(result), end="")
+            return 0
         if args.command == "vault":
             from kgdistiller.vault_registry import (
                 doctor_vaults,
