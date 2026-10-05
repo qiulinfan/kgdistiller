@@ -49,6 +49,7 @@ class MCPTest(unittest.TestCase):
         names = {tool["name"] for tool in TOOL_DEFINITIONS}
         self.assertEqual(
             {
+                "kg_compiled_knowledge",
                 "kg_status",
                 "kg_resolve_concepts",
                 "kg_search",

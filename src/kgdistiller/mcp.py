@@ -69,6 +69,7 @@ def _tool(name: str, title: str, description: str, schema: dict[str, Any]) -> di
 
 
 TOOL_DEFINITIONS = [
+    _tool("kg_compiled_knowledge", "Compiled Knowledge", "Search compiled meanings, browse explicit dependencies and claims, read complete definitions, or pack selected evidence. Search candidates and packed records do not certify scientific truth.", _object_schema({"library_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "operation": {"type": "string", "enum": ["search", "browse", "get", "pack"]}, "query": {"type": "string", "minLength": 1, "maxLength": 8192}, "reference": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 40}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 24000}}, ["library_path", "operation"])),
     _tool("kg_resolve_source_references", "Resolve Source Documents", "Resolve registered document IDs and explicitly declared versions; these matches do not confer canonical concept identity.", _object_schema({"manifest_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}}, ["manifest_path", "references"])),
     _tool("kg_search_source_evidence", "Search Raw Source Evidence", "Retrieve exact original text spans with source versions and hashes; fragments do not define graph identities.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 8192}, "manifest_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "doc_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 128}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 12000}, "context_projection": {"type": "string", "enum": ["full", "compact"], "default": "full"}}, ["query", "manifest_path"])),
     _tool("kg_status", "Knowledge Graph Status", "Inspect the fresh JSON-memory graph view and generation.", _object_schema()),
@@ -235,6 +236,30 @@ def call_tool(
     if name not in TOOL_SCHEMAS:
         raise QueryError(f"unknown tool: {name}")
     arguments = _validate_arguments(name, raw_arguments)
+    if name == "kg_compiled_knowledge":
+        from .compiled_retrieval import CompiledLibrary, CompiledRetrievalError
+
+        library_path = Path(arguments["library_path"])
+        if not library_path.is_absolute():
+            raise QueryError("compiled library_path must be absolute")
+        operation = arguments["operation"]
+        if operation == "search" and "query" not in arguments:
+            raise QueryError("compiled search requires query")
+        if operation == "get" and "reference" not in arguments:
+            raise QueryError("compiled get requires reference")
+        if operation == "pack" and "references" not in arguments:
+            raise QueryError("compiled pack requires references")
+        try:
+            library = CompiledLibrary.from_path(library_path)
+            if operation == "search":
+                return {"candidates": library.search(arguments["query"], limit=arguments.get("limit", 40))}
+            if operation == "browse":
+                return library.browse(arguments.get("reference"))
+            if operation == "get":
+                return library.get(arguments["reference"])
+            return library.pack(arguments["references"], byte_budget=arguments.get("byte_budget", 24000))
+        except (CompiledRetrievalError, OSError) as error:
+            raise QueryError(str(error)) from error
     if name == "kg_resolve_source_references":
         from .source_evidence import SourceEvidenceError, SourceEvidenceIndex
         from .source_references import resolve_source_references
