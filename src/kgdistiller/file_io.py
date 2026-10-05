@@ -26,10 +26,10 @@ def same_file_metadata(left: os.stat_result, right: os.stat_result) -> bool:
 def descriptor_signature(descriptor: int) -> tuple[int, ...]:
     info = os.fstat(descriptor)
     signature = file_signature(info)
-    if not _WINDOWS or hasattr(info, "st_birthtime_ns"):
+    if not _WINDOWS:
         return signature
-    # Older Windows Python exposes creation time through both APIs. Content
-    # must be checked to detect same-size writes with a restored mtime.
+    # Windows timestamps do not prove content equality, even when descriptor
+    # stat exposes ChangeTime. Check content before reusing a parsed record.
     position = os.lseek(descriptor, 0, os.SEEK_CUR)
     digest = hashlib.sha256()
     try:
