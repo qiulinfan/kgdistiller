@@ -126,6 +126,10 @@ def _json_bytes(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
+def _term_key(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
 class _BM25:
     def __init__(self, documents: Mapping[str, list[str]]) -> None:
         self.counts = {ref: Counter(tokens) for ref, tokens in documents.items()}
@@ -385,6 +389,54 @@ class CompiledLibrary:
                 {"reference": layer, "name": layer, "entries": sum(n.get("layer") == layer for n in self._nodes.values())}
                 for layer in dict.fromkeys(n["layer"] for n in self._nodes.values() if n.get("layer"))
             ],
+        }
+
+    def inventory(self, term: str) -> dict[str, Any]:
+        """Enumerate explicit compiled declarations, without ranking or merging."""
+        if not isinstance(term, str) or not _term_key(term):
+            raise CompiledRetrievalError("term must be nonempty text")
+        key = _term_key(term)
+
+        def member(reference: str) -> dict[str, Any]:
+            if reference in self._entries:
+                return {"available": True, **self.get(reference)}
+            return self._target(reference)
+
+        groups = []
+        rows = []
+        for reference, declaration in self._terms.items():
+            field = f"terms[{reference}]"
+            name = _text(declaration, "term", field)
+            if key not in {_term_key(reference), _term_key(name)}:
+                continue
+            senses = []
+            for raw in _list(declaration.get("senses"), f"{field}.senses"):
+                sense = _mapping(raw, f"{field}.sense")
+                item = member(_text(sense, "id", f"{field}.sense"))
+                item["declaration"] = _fields(sense, ("gloss", "context"), f"{field}.sense")
+                senses.append(item)
+            groups.append({
+                "reference": reference, "term": name,
+                "disambiguation": _texts(declaration, "disambiguation", field),
+                "senses": senses,
+            })
+            rows.extend(senses)
+        uses = [
+            member(reference)
+            for reference, entry in self._entries.items()
+            if any(_term_key(head) == key for head in entry["surfaces"].get("head_terms", []))
+        ]
+        rows.extend(uses)
+        gaps = self._unresolved(groups + uses)
+        for row in rows:
+            gaps.extend(row.get("gaps", []))
+        if not groups and not uses:
+            gaps.append({"term": term, "reason": "unmatched-term"})
+        return {
+            "term": term, "scope": "compiled declarations", "matched": bool(groups or uses),
+            "groups": groups, "uses": uses,
+            "gaps": list({tuple(sorted(gap.items())): gap for gap in gaps}.values()),
+            "source_corpus_completeness": "not-certified",
         }
 
     def browse(self, reference: Optional[str] = None, *, kind: Optional[str] = None) -> dict[str, Any]:

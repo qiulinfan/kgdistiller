@@ -69,7 +69,7 @@ def _tool(name: str, title: str, description: str, schema: dict[str, Any]) -> di
 
 
 TOOL_DEFINITIONS = [
-    _tool("kg_compiled_knowledge", "Compiled Knowledge", "Search compiled meanings, browse explicit dependencies and claims, read complete definitions, or pack selected evidence. Search candidates and packed records do not certify scientific truth.", _object_schema({"library_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "operation": {"type": "string", "enum": ["search", "browse", "get", "pack"]}, "query": {"type": "string", "minLength": 1, "maxLength": 8192}, "reference": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 40}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 24000}}, ["library_path", "operation"])),
+    _tool("kg_compiled_knowledge", "Compiled Knowledge", "Search compiled meanings, inventory exact authored term declarations, browse explicit dependencies and claims, read complete definitions, or pack selected evidence. Inventories do not certify source-corpus completeness; search candidates and packed records do not certify scientific truth.", _object_schema({"library_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "operation": {"type": "string", "enum": ["search", "browse", "get", "inventory", "pack"]}, "query": {"type": "string", "minLength": 1, "maxLength": 8192}, "term": {"type": "string", "minLength": 1, "maxLength": 8192}, "reference": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 40}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 24000}}, ["library_path", "operation"])),
     _tool("kg_resolve_source_references", "Resolve Source Documents", "Resolve registered document IDs and explicitly declared versions; these matches do not confer canonical concept identity.", _object_schema({"manifest_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}}, ["manifest_path", "references"])),
     _tool("kg_search_source_evidence", "Search Raw Source Evidence", "Retrieve exact original text spans with source versions and hashes; fragments do not define graph identities.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 8192}, "manifest_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "doc_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 128}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 12000}, "context_projection": {"type": "string", "enum": ["full", "compact"], "default": "full"}}, ["query", "manifest_path"])),
     _tool("kg_status", "Knowledge Graph Status", "Inspect the fresh JSON-memory graph view and generation.", _object_schema()),
@@ -247,6 +247,10 @@ def call_tool(
             raise QueryError("compiled search requires query")
         if operation == "get" and "reference" not in arguments:
             raise QueryError("compiled get requires reference")
+        if operation == "inventory" and "term" not in arguments:
+            raise QueryError("compiled inventory requires term")
+        if operation == "inventory" and any(key in arguments for key in ("limit", "byte_budget")):
+            raise QueryError("compiled inventory does not rank or truncate declarations")
         if operation == "pack" and "references" not in arguments:
             raise QueryError("compiled pack requires references")
         try:
@@ -257,6 +261,8 @@ def call_tool(
                 return library.browse(arguments.get("reference"))
             if operation == "get":
                 return library.get(arguments["reference"])
+            if operation == "inventory":
+                return library.inventory(arguments["term"])
             return library.pack(arguments["references"], byte_budget=arguments.get("byte_budget", 24000))
         except (CompiledRetrievalError, OSError) as error:
             raise QueryError(str(error)) from error

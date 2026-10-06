@@ -3769,6 +3769,8 @@ def parse_args() -> argparse.Namespace:
     compiled_browse.add_argument("reference", nargs="?")
     compiled_get = compiled_operations.add_parser("get")
     compiled_get.add_argument("reference", nargs="+")
+    compiled_inventory = compiled_operations.add_parser("inventory", help="list all exact authored term declarations")
+    compiled_inventory.add_argument("term")
     compiled_pack = compiled_operations.add_parser("pack")
     compiled_pack.add_argument("reference", nargs="+")
     compiled_pack.add_argument("--budget", type=int, default=24000, help="complete UTF-8 response byte budget")
@@ -4090,6 +4092,8 @@ def main() -> int:
                     result = {"candidates": library.search(args.query, limit=args.limit)}
                 elif args.compiled_operation == "browse":
                     result = library.browse(args.reference)
+                elif args.compiled_operation == "inventory":
+                    result = library.inventory(args.term)
                 elif args.compiled_operation == "get":
                     result = {"entries": [library.get(reference) for reference in args.reference]}
                 else:

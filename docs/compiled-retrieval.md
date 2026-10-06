@@ -25,12 +25,33 @@ kgdistiller agent compiled --library library.json search 'What does this definit
 kgdistiller agent compiled --library library.json browse
 kgdistiller agent compiled --library library.json browse 'an existing source or sense reference'
 kgdistiller agent compiled --library library.json get 'an existing knowledge reference'
+kgdistiller agent compiled --library library.json inventory 'an authored term or group name'
 kgdistiller agent compiled --library library.json pack 'first reference' 'second reference' --budget 24000
 ```
 
 Paths are supplied by the caller. These commands do not require vault
 registration. MCP exposes the same operations through `kg_compiled_knowledge`
-with an absolute `library_path` and `operation: search|browse|get|pack`.
+with an absolute `library_path` and `operation: search|browse|get|inventory|pack`.
+The inventory operation requires `term` and accepts no ranking limit or packing
+budget.
+
+`inventory(term)` enumerates all explicitly declared members of matching term
+groups and all nodes whose authored `surfaces.head_terms` contain an exact match.
+Name comparison applies Unicode NFKC, case folding and whitespace normalization;
+it does not infer aliases, equivalence or additional uses from names, prose,
+embeddings or search rankings. A group may match its authored name or existing
+navigation handle. Matching groups and declared uses remain separate, and every
+available member preserves the complete `get` entry with its source context.
+Missing references remain `available: false` with gaps; missing sources and
+dependency targets in available entries also remain visible. Group disambiguation
+is authored navigation data and supplies no proof of distinct concept meanings.
+
+The result declares `scope: "compiled declarations"` and
+`source_corpus_completeness: "not-certified"`. `matched` describes a declaration
+name or handle match, not concept identity or definition equivalence. An unmatched
+name produces an explicit gap and does not establish absence from original
+sources. The operation neither counts meanings nor certifies a complete census
+of the source corpus.
 
 Packing preserves whole scientific entries, including definitions, conditions,
 formulas, input/output contracts, evidence and epistemic qualifications, within
