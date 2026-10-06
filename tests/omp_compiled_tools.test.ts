@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,12 +57,19 @@ class FakeChild extends EventEmitter {
 
 type SpawnCall = { command: string; args: string[]; options: object; child: FakeChild };
 const spawned: SpawnCall[] = [];
-let launch: (child: FakeChild) => void = child => {
-  queueMicrotask(() => {
-    child.stdout.emit("data", Buffer.from('{"ok":true,"result":{}}\n'));
+function successfulBridge(child: FakeChild) {
+  queueMicrotask(async () => {
+    const request = JSON.parse(child.input);
+    if (request.operation === "submit_selection") {
+      await writeFile("submitted-selection.json", JSON.stringify(request.selections), { flag: "wx" });
+    }
+    const result = request.operation === "pack"
+      ? { entries: request.references.map((reference: string) => ({ reference })), gaps: [] } : {};
+    child.stdout.emit("data", Buffer.from(JSON.stringify({ ok: true, result }) + "\n"));
     child.emit("close", 0);
   });
-};
+}
+let launch: (child: FakeChild) => void = successfulBridge;
 const spawn = mock((command: string, args: string[], options: object) => {
   const child = new FakeChild();
   spawned.push({ command, args, options, child });
@@ -109,12 +116,7 @@ async function withRun(
   const tools: Tool[] = [];
   spawned.length = 0;
   spawn.mockClear();
-  launch = child => {
-    queueMicrotask(() => {
-      child.stdout.emit("data", Buffer.from('{"ok":true,"result":{}}\n'));
-      child.emit("close", 0);
-    });
-  };
+  launch = successfulBridge;
   try {
     await writeFile(join(run, "compiled-tools-config.json"), JSON.stringify(config));
     await writeFile(join(run, "questions.json"), JSON.stringify(options.questions ?? questions));
@@ -191,6 +193,7 @@ describe("OMP compiled tools source registration", () => {
         ["kgd_get", { references: ["meaning-a", "condition-b"] }, "get"],
         ["kgd_inventory", { term: "有界映射" }, "inventory"],
         ["kgd_pack", { references: ["meaning-a"] }, "pack"],
+        ["kgd_pack", { references: [] }, "pack"],
         ["submit_selection", { selections: [
           { qid: "first", ranked: ["meaning-a"], abstain: false },
           { qid: "second", ranked: [], abstain: true },
@@ -201,6 +204,136 @@ describe("OMP compiled tools source registration", () => {
         expect(JSON.parse(spawned.at(-1)!.child.input)).toEqual({ ...params, operation });
       }
       expect(JSON.parse(spawned[2].child.input)).not.toHaveProperty("byte_budget");
+    });
+  });
+
+  test("submission without any successful preview never calls the writer or creates an artifact", async () => {
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [
+        { qid: "first", ranked: ["meaning-a"], abstain: false },
+        { qid: "second", ranked: [], abstain: true },
+      ] });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("earlier successful kgd_pack preview");
+      expect(spawn).not.toHaveBeenCalled();
+      await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+    });
+  });
+
+  test("earlier previews support multiple questions without inferring a question from a pack", async () => {
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      const pack = toolNamed(tools, "kgd_pack");
+      await pack.execute("preview-a", { references: ["meaning-a", "condition-b"] });
+      await pack.execute("preview-b", { references: ["meaning-c"] });
+      const selections = [
+        { qid: "first", ranked: ["meaning-c"], abstain: false },
+        { qid: "second", ranked: ["meaning-a", "condition-b"], abstain: false },
+      ];
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections });
+      expect(result.isError).toBe(false);
+      expect(JSON.parse(await readFile(join(run, "submitted-selection.json"), "utf8"))).toEqual(selections);
+      expect(JSON.parse(spawned.at(-1)!.child.input)).toEqual({ selections, operation: "submit_selection" });
+    });
+  });
+
+  test("reordered, narrowed or changed final references cannot reuse a different preview", async () => {
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a", "condition-b"] });
+      await toolNamed(tools, "kgd_pack").execute("empty", { references: [] });
+      const calls = spawned.length;
+      for (const ranked of [["condition-b", "meaning-a"], ["meaning-a"], ["meaning-c"], ["MEANING-A", "condition-b"]]) {
+        const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [
+          { qid: "first", ranked, abstain: false }, { qid: "second", ranked: [], abstain: true },
+        ] });
+        expect(result.isError).toBe(true);
+        expect(spawned).toHaveLength(calls);
+      }
+      await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+    });
+  });
+
+  test("failed, malformed, omitted or misordered packets do not qualify a selected list", async () => {
+    const responses = [
+      { ok: false, error: { code: "failed", message: "No whole response" } },
+      { ok: true, result: {} },
+      { ok: true, result: { entries: [null] } },
+      { ok: true, result: { entries: [{ reference: "meaning-a" }], gaps: [{ reference: "condition-b", reason: "byte-budget" }] } },
+      { ok: true, result: { entries: [{ reference: "condition-b" }, { reference: "meaning-a" }], gaps: [] } },
+    ];
+    for (const response of responses) {
+      await withRun(async (run, _config, tools) => {
+        await registered(tools);
+        launch = child => queueMicrotask(() => {
+          child.stdout.emit("data", Buffer.from(JSON.stringify(response) + "\n"));
+          child.emit("close", 0);
+        });
+        const preview = await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a", "condition-b"] });
+        expect(JSON.parse(preview.content[0].text)).toEqual(response);
+        const calls = spawned.length;
+        const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [
+          { qid: "first", ranked: ["meaning-a", "condition-b"], abstain: false },
+          { qid: "second", ranked: ["meaning-a", "condition-b"], abstain: false },
+        ] });
+        expect(result.isError).toBe(true);
+        expect(spawned).toHaveLength(calls);
+        await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+      });
+    }
+  });
+
+  test("matching complete entries qualify despite scientific gaps and can be reused by multiple questions", async () => {
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      const response = { ok: true, result: {
+        entries: [{ reference: "meaning-a", conditions: ["Qualified condition"] }],
+        gaps: [{ reason: "unresolved-source" }, { reference: "dependency", reason: "dependency-not-packed" }],
+      } };
+      launch = child => queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from(JSON.stringify(response) + "\n"));
+        child.emit("close", 0);
+      });
+      const preview = await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+      expect(JSON.parse(preview.content[0].text)).toEqual(response);
+      launch = successfulBridge;
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [
+        { qid: "first", ranked: ["meaning-a"], abstain: false },
+        { qid: "second", ranked: ["meaning-a"], abstain: false },
+      ] });
+      expect(result.isError).toBe(false);
+      expect(JSON.parse(await readFile(join(run, "submitted-selection.json"), "utf8"))).toHaveLength(2);
+    });
+  });
+
+  test("empty lists also require an empty preview before abstained submission", async () => {
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      const selections = questions.map(row => ({ qid: row.qid, ranked: [], abstain: true }));
+      const submit = toolNamed(tools, "submit_selection");
+      expect((await submit.execute("no-preview", { selections })).isError).toBe(true);
+      expect(spawn).not.toHaveBeenCalled();
+      await toolNamed(tools, "kgd_pack").execute("empty-preview", { references: [] });
+      expect((await submit.execute("submit", { selections })).isError).toBe(false);
+      expect(JSON.parse(await readFile(join(run, "submitted-selection.json"), "utf8"))).toEqual(selections);
+    });
+  });
+
+  test("eligible previews are isolated to the current adapter run", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+    });
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [
+        { qid: "first", ranked: ["meaning-a"], abstain: false },
+        { qid: "second", ranked: ["meaning-a"], abstain: false },
+      ] });
+      expect(result.isError).toBe(true);
+      expect(spawn).not.toHaveBeenCalled();
+      await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
     });
   });
 

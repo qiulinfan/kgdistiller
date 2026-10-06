@@ -54,11 +54,20 @@ export default async function (pi: ExtensionAPI) {
     child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify(request));
   });
+  const packPreviews = new Set<string>();
   const register = (name: string, description: string, parameters: any, operation: string, approval: "read" | "write") => {
     pi.registerTool({ name, label: name, description, parameters, loadMode: "essential", approval, strict: true,
       async execute(_id, params, signal) {
         try {
+          if (operation === "submit_selection" && params.selections.some((row: any) => !packPreviews.has(JSON.stringify(row.ranked)))) {
+            throw new Error("Each ordered ranked list requires an earlier successful kgd_pack preview delivering every selected reference");
+          }
+          const previewKey = operation === "pack" ? JSON.stringify(params.references) : undefined;
           const response = await call({ ...params, operation }, signal);
+          if (response.ok === true && previewKey !== undefined && Array.isArray(response.result?.entries) &&
+              JSON.stringify(response.result.entries.map((entry: any) => entry?.reference)) === previewKey) {
+            packPreviews.add(previewKey);
+          }
           return { content: [{ type: "text", text: JSON.stringify(response) }],
             details: { ok: response.ok === true }, isError: response.ok !== true };
         } catch (error) {
@@ -79,6 +88,6 @@ export default async function (pi: ExtensionAPI) {
   register("kgd_pack", "Build a whole-entry scientific packet using this run's fixed byte budget. Omissions are explicit gaps, not task-success judgments.",
     t({ "+": "reject", references: refs }), "pack", "read");
   const selection = t({ "+": "reject", qid: t.enumerated(...questions.map(row => row.qid)), ranked: refs, abstain: "boolean" });
-  register("submit_selection", "Submit exact existing references for every current question in order. One immutable submission; abstention requires an empty list.",
+  register("submit_selection", "Submit exact existing references for every current question in order. Each ordered ranked list needs an earlier successful kgd_pack preview delivering all selected references, including an empty list for abstention. One immutable submission.",
     t({ "+": "reject", selections: selection.array() }), "submit_selection", "write");
 }
