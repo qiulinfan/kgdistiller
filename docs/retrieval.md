@@ -312,12 +312,32 @@ global candidates, or both; resolution does not rewrite search filters silently.
 
 ## Evaluation
 
-Keep original sources, question IDs, relevant units and mappings fixed during
-ranking comparison. Separate document truncation, field/tokenization projection,
-BM25 scoring, embedding fusion and reranking; do not tune with heldout gold.
-Candidate ranking and packed evidence completeness require separate metrics.
+The primary metric is complete-evidence task success: the fraction of declared
+tasks whose actual returned evidence jointly supports every necessary fact,
+condition, intended sense and source scope, without unsupported scientific
+assertions. Its theoretical ceiling is 100%, independent of a fixed ranking
+cutoff. Check source availability and evidence-budget feasibility before
+freezing a benchmark. Keep failed tasks in the declared denominator; report
+unsupported requests, ambiguity and source limitations explicitly rather than
+silently dropping or relabelling cases after evaluation.
 
-The Oct4 twenty-paper set has1–4 relevant units per positive query, so its fixed
-P@5 has a ceiling115/(42*5)=54.76%. Retain its historical scoring rather than
-claiming95% by redefining the denominator. Report Recall@5 and complete support
-packets, including missing/partial units and negative controls.
+Derive and freeze necessary facts and conditions from the question and original
+sources before inspecting the selected packet or system answer. Source-selection
+hints do not establish an exhaustive source scope. Alternative witnesses may
+satisfy the same requirement only when meaning, conditions, source scope, units
+and conventions agree. Node references, declared graph links and storage
+metadata do not establish scientific coverage or definition equivalence.
+A correctly stated scientific limitation can satisfy a request for qualifications;
+unsettled support actually required by the question remains an evidence gap.
+
+Use development cases for iteration and keep heldout questions and requirements
+out of compilation and tuning. Report ranking, candidate coverage, packing gaps,
+answer correctness, latency and model cost separately. Negative controls and
+false abstention remain separate checks. Whole entries and complete declared
+inventory membership do not by themselves certify question-level completeness.
+Keep sources, questions, relevant units and mappings fixed across comparisons.
+
+Preserve the historical Oct4 twenty-paper P@5 report and its original denominator:
+its 1–4 relevant units per positive query give a fixed-set ceiling of
+115/(42*5)=54.76%. This is a ranking diagnostic; use complete-evidence task
+success to evaluate whether the required evidence was actually delivered.

@@ -60,9 +60,13 @@ at the top level, preserving all positions, timelines, endpoints and evidence.
 Retrieval expressions stay in the search index; sense and confusion guards
 remain in the evidence. Entries that cannot fit produce gaps; external
 dependencies and dependencies absent from the selection remain visible.
-Fitting all selected entries does not establish that the selection satisfies
-every requirement of a research question. Complete-evidence task success is
-evaluated separately against source-backed requirements.
+Evaluate the actual packed text, formulas and qualifications against necessary
+facts, conditions, intended senses and source scopes derived independently from
+the question and original sources. Alternative witnesses must support the same
+fact under agreeing conditions, scopes, units and conventions. Whole entries
+and declared inventory membership supply no completeness certificate.
+The [evaluation protocol](retrieval.md#evaluation) defines complete-evidence
+task success separately from retrieval and packing diagnostics.
 
 Implementation provenance: the input shape and posting-list retrieval pattern
 come from `qiulinfan/kgdistiller-experiment`, commit `2876f19`. The product module
