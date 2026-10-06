@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kgdistiller.cli import main
-from kgdistiller.mcp import TOOL_DEFINITIONS, call_tool
+from kgdistiller.mcp import MCPServer, TOOL_DEFINITIONS, call_tool
 from kgdistiller.query import QueryError
 from tests.test_compiled_retrieval import library_payload
 
@@ -72,11 +72,61 @@ class CompiledEndpointsTest(unittest.TestCase):
         self.assertFalse(any(gap["reason"] == "dependency-not-packed" for gap in packed["gaps"]))
 
     def test_mcp_rejects_missing_operation_inputs_and_relative_paths(self):
-        for operation in ("search", "get", "pack"):
+        for operation in ("search", "get", "inventory", "pack"):
             with self.subTest(operation=operation), self.assertRaises(QueryError):
                 self.mcp(operation)
         with self.assertRaisesRegex(QueryError, "must be absolute"):
             call_tool(self.root, "kg_compiled_knowledge", {"library_path": "library.json", "operation": "browse"})
+
+    def test_inventory_cli_and_mcp_preserve_every_declaration_without_writes(self):
+        payload = library_payload()
+        payload["terms"]["bounded map"]["senses"].append({"id": "unregistered-use", "context": "Declared tail"})
+        for index in range(57):
+            payload["nodes"][f"use-{index}"] = {
+                "name": "An authored use", "paper": "source-analysis", "statement": str(index),
+                "surfaces": {"head_terms": ["Bounded map"]},
+            }
+        self.library.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        before = {path.relative_to(self.root): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        code, stdout, stderr = self.cli("inventory", "Ｂｏｕｎｄｅｄ　ｍａｐ")
+        self.assertEqual((0, ""), (code, stderr))
+        result = json.loads(stdout)
+        self.assertEqual(57, len(result["uses"]))
+        self.assertEqual("use-56", result["uses"][-1]["reference"])
+        self.assertFalse(result["groups"][0]["senses"][-1]["available"])
+        self.assertEqual("not-certified", result["source_corpus_completeness"])
+        self.assertEqual(result, self.mcp("inventory", term="Ｂｏｕｎｄｅｄ　ｍａｐ"))
+        server = MCPServer(self.root / "nonexistent-graph", ranking_service=object())
+        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        with patch("kgdistiller.mcp.load_graph_view", side_effect=AssertionError("inventory must not load a graph")):
+            response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": "kg_compiled_knowledge", "arguments": {
+                    "library_path": str(self.library), "operation": "inventory", "term": "Ｂｏｕｎｄｅｄ　ｍａｐ",
+                },
+            }})
+        self.assertFalse(response["result"]["isError"])
+        self.assertEqual(result, response["result"]["structuredContent"])
+        self.assertEqual(before, {path.relative_to(self.root): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
+
+    def test_inventory_unknown_terms_are_explicit_without_source_absence_claims(self):
+        code, stdout, stderr = self.cli("inventory", "unregistered term")
+        self.assertEqual((0, ""), (code, stderr))
+        result = json.loads(stdout)
+        self.assertFalse(result["matched"])
+        self.assertEqual([{"term": "unregistered term", "reason": "unmatched-term"}], result["gaps"])
+        self.assertEqual("not-certified", result["source_corpus_completeness"])
+        self.assertEqual(result, self.mcp("inventory", term="unregistered term"))
+
+    def test_inventory_rejects_missing_terms_invalid_values_and_ranking_controls(self):
+        for invalid in (None, False, [], {}, "", "  "):
+            with self.subTest(term=invalid), self.assertRaises(QueryError):
+                self.mcp("inventory", term=invalid)
+        for options in ({"limit": 1}, {"byte_budget": 1}):
+            with self.subTest(options=options), self.assertRaisesRegex(QueryError, "does not rank or truncate"):
+                self.mcp("inventory", term="Bounded map", **options)
+        code, stdout, stderr = self.cli("inventory", "  ")
+        self.assertEqual((1, ""), (code, stdout))
+        self.assertIn("nonempty text", json.loads(stderr)["error"])
 
     def test_compiled_tool_is_read_only(self):
         tool = next(tool for tool in TOOL_DEFINITIONS if tool["name"] == "kg_compiled_knowledge")

@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from kgdistiller.compiled_retrieval import CompiledLibrary, CompiledRetrievalError
 
@@ -162,6 +163,106 @@ class CompiledLibraryTest(unittest.TestCase):
         self.assertEqual(["map-continuous", "map-finite-image"], [sense["reference"] for sense in senses["senses"]])
         self.assertEqual(root, self.library.tree())
         self.assertEqual(3, len(self.library.browse("definitions")["entries"]))
+
+    def test_inventory_keeps_senses_and_exact_uses_separate_with_full_entries(self) -> None:
+        payload = library_payload()
+        payload["nodes"]["map-continuous"]["surfaces"]["head_terms"] = ["Bounded map"]
+        payload["nodes"]["map-use"] = {
+            "name": "An application", "paper": "source-image",
+            "statement": "An argument uses bounded maps under explicit conditions.",
+            "conditions": ["Use the declared metric."], "surfaces": {"head_terms": ["Bounded map"]},
+        }
+        payload["nodes"]["name-only"] = {
+            "name": "Bounded map", "aliases": ["Bounded map"],
+            "statement": "Bounded map", "surfaces": {"query_forms": ["Bounded map"], "zh": ["Bounded map"]},
+        }
+        library = CompiledLibrary.from_payload(payload)
+        inventory = library.inventory("Bounded map")
+        self.assertTrue(inventory["matched"])
+        self.assertEqual("compiled declarations", inventory["scope"])
+        self.assertEqual("not-certified", inventory["source_corpus_completeness"])
+        self.assertEqual(["map-continuous", "map-finite-image"], [row["reference"] for row in inventory["groups"][0]["senses"]])
+        self.assertEqual(["map-continuous", "map-use"], [row["reference"] for row in inventory["uses"]])
+        for row in inventory["groups"][0]["senses"] + inventory["uses"]:
+            self.assertTrue(row["available"])
+            for field, value in library.get(row["reference"]).items():
+                self.assertEqual(value, row[field], field)
+        self.assertNotEqual(inventory["groups"][0]["senses"][0]["statement"], inventory["groups"][0]["senses"][1]["statement"])
+        self.assertEqual(payload["terms"]["bounded map"]["disambiguation"], inventory["groups"][0]["disambiguation"])
+        self.assertEqual("Linear analysis", inventory["groups"][0]["senses"][0]["declaration"]["context"])
+        self.assertNotIn("meaning_count", inventory)
+
+    def test_inventory_normalizes_whole_declared_names_without_merging_groups(self) -> None:
+        payload = library_payload()
+        payload["terms"]["another handle"] = {
+            "term": "Ｂｏｕｎｄｅｄ　ｍａｐ", "senses": [{"id": "map-finite-image"}],
+        }
+        payload["nodes"]["map-continuous"]["surfaces"]["head_terms"] = ["ＢＯＵＮＤＥＤ\t MAP"]
+        payload["nodes"]["map-finite-image"]["surfaces"]["head_terms"] = ["Bounded maps"]
+        library = CompiledLibrary.from_payload(payload)
+        inventory = library.inventory("  bounded\nmap  ")
+        self.assertEqual(["bounded map", "another handle"], [group["reference"] for group in inventory["groups"]])
+        self.assertEqual(["map-continuous"], [row["reference"] for row in inventory["uses"]])
+        self.assertEqual(["map-finite-image"], [row["reference"] for row in library.inventory("another handle")["groups"][0]["senses"]])
+        for name in ("boundedmap", "bounded mapper", "map-continuous", "Norm"):
+            with self.subTest(name=name):
+                result = library.inventory(name)
+                self.assertFalse(result["matched"])
+                self.assertEqual([], result["groups"])
+                self.assertEqual([], result["uses"])
+                self.assertEqual([{"term": name, "reason": "unmatched-term"}], result["gaps"])
+
+    def test_inventory_has_no_top_k_and_retains_unregistered_tail_declarations(self) -> None:
+        references = [f"entry-{index}" for index in range(600)]
+        payload = {
+            "nodes": {reference: {"name": "Shared heading", "statement": reference,
+                                  "surfaces": {"head_terms": ["Shared heading"]}} for reference in references},
+            "terms": {"Shared heading": {"term": "Shared heading", "senses": [
+                *[{"id": reference} for reference in references],
+                {"id": "unregistered-tail", "gloss": "A declared missing member", "context": "Last declaration"},
+            ]}},
+        }
+        library = CompiledLibrary.from_payload(payload)
+        with patch.object(library, "search", side_effect=AssertionError("inventory must not rank")):
+            result = library.inventory("Shared heading")
+        self.assertEqual(references, [row["reference"] for row in result["uses"]])
+        self.assertEqual(references + ["unregistered-tail"], [row["reference"] for row in result["groups"][0]["senses"]])
+        tail = result["groups"][0]["senses"][-1]
+        self.assertFalse(tail["available"])
+        self.assertEqual("Last declaration", tail["declaration"]["context"])
+        self.assertIn({"reference": "unregistered-tail", "reason": "unresolved-reference"}, result["gaps"])
+
+    def test_inventory_aggregates_missing_sources_and_dependencies_without_guessing(self) -> None:
+        payload = library_payload()
+        payload["nodes"]["map-continuous"]["paper"] = "unregistered-source"
+        payload["nodes"]["map-continuous"]["depends_on"].append({"target": "unregistered-premise"})
+        payload["nodes"]["map-continuous"]["surfaces"]["head_terms"] = ["Bounded map"]
+        payload["terms"]["bounded map"]["senses"].append({"id": "Bounded map", "gloss": "This is an unregistered reference"})
+        result = CompiledLibrary.from_payload(payload).inventory("Bounded map")
+        self.assertFalse(result["groups"][0]["senses"][-1]["available"])
+        for gap in (
+            {"reference": "unregistered-source", "reason": "unresolved-source"},
+            {"reference": "unregistered-premise", "reason": "unresolved-reference"},
+            {"reference": "Bounded map", "reason": "unresolved-reference"},
+        ):
+            self.assertEqual(1, result["gaps"].count(gap))
+
+    def test_inventory_input_and_result_are_detached_and_invalid_terms_are_explicit(self) -> None:
+        payload = library_payload()
+        payload["nodes"]["map-continuous"]["surfaces"]["head_terms"] = ["Bounded map"]
+        library = CompiledLibrary.from_payload(payload)
+        expected = library.inventory("Bounded map")
+        changed = library.inventory("Bounded map")
+        changed["groups"][0]["disambiguation"].clear()
+        changed["groups"][0]["senses"][0]["statement"] = "Invented replacement"
+        changed["uses"][0]["conditions"].clear()
+        changed["gaps"].append({"reason": "invented gap"})
+        payload["terms"]["bounded map"]["senses"].clear()
+        payload["nodes"]["map-continuous"]["conditions"].clear()
+        self.assertEqual(expected, library.inventory("Bounded map"))
+        for invalid in (None, False, 1, [], {}, "", " \t\u3000"):
+            with self.subTest(term=invalid), self.assertRaisesRegex(CompiledRetrievalError, "nonempty text"):
+                library.inventory(invalid)
 
     def test_navigation_never_guesses_between_colliding_handles(self) -> None:
         payload = library_payload()

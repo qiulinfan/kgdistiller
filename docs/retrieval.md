@@ -4,6 +4,11 @@ The deterministic core ranks candidates and validates graph-generation bindings.
 Model inference is optional and belongs to adapters. None of these scores creates
 an identity, alias, knowledge node, or semantic edge.
 
+For exact enumeration of authored sense groups and head-term uses, the read-only
+[compiled inventory](compiled-retrieval.md) returns complete entries without
+ranking or a result limit. Its scope is compiled declarations, and source-corpus
+completeness is not certified.
+
 ## BM25 text entry
 
 `kgdistiller agent search` uses BM25 with fixed `k1=1.2`, `b=0.75`. Scientific
