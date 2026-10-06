@@ -66,6 +66,8 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
     ]
     files.append(REPO_ROOT / "docs" / "product-workflows.md")
     files.append(REPO_ROOT / "docs" / "latex-sources.md")
+    files.append(REPO_ROOT / "docs" / "omp-compiled-tools.md")
+    files.append(REPO_ROOT / "integrations" / "omp" / "compiled_tools.ts")
     files.extend(
         (
             REPO_ROOT / "scripts" / "link-codex-product.sh",

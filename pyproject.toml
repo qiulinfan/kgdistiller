@@ -40,6 +40,7 @@ packages = ["src/kgdistiller"]
 ".claude/agents" = "kgdistiller/product/.claude/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
 "docs/latex-sources.md" = "kgdistiller/product/docs/latex-sources.md"
+"docs/omp-compiled-tools.md" = "kgdistiller/product/docs/omp-compiled-tools.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
 "scripts/link-claude-product.sh" = "kgdistiller/product/scripts/link-claude-product.sh"
@@ -47,6 +48,7 @@ packages = ["src/kgdistiller"]
 "integrations/obsidian/main.js" = "kgdistiller/obsidian_plugin/main.js"
 "integrations/obsidian/manifest.json" = "kgdistiller/obsidian_plugin/manifest.json"
 "integrations/obsidian/styles.css" = "kgdistiller/obsidian_plugin/styles.css"
+"integrations/omp/compiled_tools.ts" = "kgdistiller/product/integrations/omp/compiled_tools.ts"
 
 [tool.hatch.build]
 include = [
@@ -59,6 +61,7 @@ include = [
   ".claude/agents/*.md",
   "docs/product-workflows.md",
   "docs/latex-sources.md",
+  "docs/omp-compiled-tools.md",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",
   "scripts/link-claude-product.sh",
@@ -66,4 +69,5 @@ include = [
   "integrations/obsidian/main.js",
   "integrations/obsidian/manifest.json",
   "integrations/obsidian/styles.css",
+  "integrations/omp/compiled_tools.ts",
 ]

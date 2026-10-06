@@ -10,6 +10,13 @@ CHECKER = runpy.run_path(str(REPO_ROOT / "scripts" / "check_distribution.py"))
 
 
 class DistributionInventoryTest(unittest.TestCase):
+    def test_installed_product_contains_the_omp_extension_and_instructions(self) -> None:
+        wheel, sdist = CHECKER["_expected_product_files"]()
+        self.assertIn("kgdistiller/product/integrations/omp/compiled_tools.ts", wheel)
+        self.assertIn("kgdistiller/product/docs/omp-compiled-tools.md", wheel)
+        self.assertIn("integrations/omp/compiled_tools.ts", sdist)
+        self.assertIn("docs/omp-compiled-tools.md", sdist)
+
     def test_installed_product_contains_the_linked_latex_instructions(self) -> None:
         wheel, sdist = CHECKER["_expected_product_files"]()
         self.assertIn("kgdistiller/product/docs/latex-sources.md", wheel)
