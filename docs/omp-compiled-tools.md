@@ -57,6 +57,17 @@ its original order. Each `ranked` array has the same exact-reference and count
 checks; `abstain` is Boolean and requires an empty array when true. Unknown
 question addresses, duplicate entries and extra fields fail before any write.
 
+In the OMP adapter, each ordered `ranked` array must have an earlier successful
+`kgd_pack` preview in the current run. A preview qualifies only when the whole
+response succeeds and its complete entries deliver every requested reference in
+the same order. A budget omission remains visible in the returned packet but
+does not qualify the omitted selection. Source, dependency and semantic gaps do
+not invalidate this transport prerequisite or certify scientific completeness.
+An empty or abstained selection also needs an empty-list preview. Multiple
+questions may reuse one matching preview; packs do not acquire a question address.
+This run-local check uses exact arrays, and does not change the neutral Python
+core or direct bridge semantics.
+
 The complete selection is created as `submitted-selection.json` using exclusive
 creation. A second submission cannot replace the first. This artifact records
 selected addresses; scientific support is evaluated separately against original
