@@ -142,6 +142,99 @@ class CompiledLibraryTest(unittest.TestCase):
         self.assertEqual("map-continuous", self.library.search("线性映射笔记", 1)[0]["reference"])
         self.assertEqual({"title": "Notes on linear maps", "year": 2000}, self.library.get("map-continuous")["source"])
 
+    def test_scientific_json_qualifications_survive_get_index_and_pack(self) -> None:
+        payload = library_payload()
+        node = payload["nodes"]["map-continuous"]
+        evidence = {"section": "Support", "quote": "An authored support statement.",
+                    "source_title": "Support source title", "conditions": ["EvidenceDomainRestriction"],
+                    "units": {"scale": "AuthoredUnitConvention"},
+                    "qualifiers": {"id": "ScientificIdentity", "path": "ScientificTrajectory", "hash": "ScientificHashFamily",
+                                   "reference": "ScientificReferenceQuantity", "available": False,
+                                   "provenance": "ScientificProvenanceStatement"}}
+        node["evidence"] = [evidence]
+        node["epistemic"] = {"status": "provisional", "note": "Review is pending.",
+                             "conditions": ["EpistemicApplicability"], "confidence_interval": [0.1, 0.4]}
+        node["notation"] = [{"symbol": "x", "meaning": "An input", "units": "NotationUnits", "domain": {"finite": False}}]
+        library = CompiledLibrary.from_payload(payload)
+        entry = library.get("map-continuous")
+        packet = library.pack(["map-continuous"], 20000)["entries"][0]
+        for field in ("evidence", "epistemic", "notation"):
+            self.assertEqual(node[field], entry[field])
+            self.assertEqual(node[field], packet[field])
+        for text in ("Support source title", "EvidenceDomainRestriction", "AuthoredUnitConvention", "ScientificIdentity",
+                     "ScientificTrajectory", "ScientificHashFamily", "ScientificReferenceQuantity", "ScientificProvenanceStatement",
+                     "EpistemicApplicability", "NotationUnits"):
+            self.assertIn(text, library.semantic_text("map-continuous"))
+        self.assertEqual([], entry["gaps"])
+        entry["evidence"][0]["conditions"].clear()
+        payload["nodes"]["map-continuous"]["evidence"][0]["units"].clear()
+        self.assertEqual(["EvidenceDomainRestriction"], library.get("map-continuous")["evidence"][0]["conditions"])
+
+    def test_authored_relationship_sources_conditions_and_units_stay_at_their_scope(self) -> None:
+        payload = library_payload()
+        relation = payload["nodes"]["map-continuous"]["relations"][0]
+        relation.update(source={"title": "Authored relation source"}, year=2012,
+                        conditions=["RelationDomainQualifier"], units={"norm": "RelationUnits"},
+                        qualifiers={"scope": "RelationSupportScope"})
+        dependency = payload["nodes"]["map-continuous"]["depends_on"][0]
+        dependency["conditions"] = ["DependencySpecificCondition"]
+        library = CompiledLibrary.from_payload(payload)
+        entry = library.get("map-continuous")
+        packet = library.pack(["map-continuous", "norm"], 20000)["entries"][0]
+        self.assertEqual("map-finite-image", packet["relations"][0]["reference"])
+        for key in ("source", "year", "conditions", "units", "qualifiers"):
+            self.assertEqual(relation[key], entry["relations"][0][key])
+            self.assertEqual(relation[key], packet["relations"][0][key])
+        self.assertEqual(["DependencySpecificCondition"], packet["depends_on"][0]["conditions"])
+        self.assertNotIn("source", packet["depends_on"][0])
+        for text in ("Authored relation source", "RelationDomainQualifier", "RelationUnits", "RelationSupportScope", "DependencySpecificCondition"):
+            self.assertIn(text, library.semantic_text("map-continuous"))
+
+    def test_acquisition_metadata_is_preserved_but_does_not_enter_semantic_index(self) -> None:
+        payload = library_payload()
+        provenance = {"file": "AcquisitionPathSentinel", "sha256": "AcquisitionHashSentinel"}
+        payload["nodes"]["map-continuous"]["evidence"][0]["provenance"] = provenance
+        payload["nodes"]["map-continuous"]["evidence"][0]["qualifiers"] = {"provenance": "ScientificProvenanceSentinel"}
+        payload["edges"][0]["origin"] = "AcquisitionOriginSentinel"
+        library = CompiledLibrary.from_payload(payload)
+        entry = library.get("map-continuous")
+        packet = library.pack(["map-continuous", "map-finite-image"], 20000)
+        self.assertEqual(provenance, entry["evidence"][0]["provenance"])
+        self.assertEqual(provenance, packet["entries"][0]["evidence"][0]["provenance"])
+        self.assertEqual("AcquisitionOriginSentinel", entry["edges"][0]["origin"])
+        self.assertNotIn("origin", packet["edges"][0])
+        for text in ("AcquisitionPathSentinel", "AcquisitionHashSentinel", "AcquisitionOriginSentinel"):
+            self.assertNotIn(text, library.semantic_text("map-continuous"))
+            self.assertEqual([], library.search(text))
+        self.assertIn("ScientificProvenanceSentinel", library.semantic_text("map-continuous"))
+
+    def test_scientific_claim_and_edge_sharing_distinguishes_booleans_from_numbers(self) -> None:
+        payload = library_payload()
+        claim, edge = copy.deepcopy(payload["claims"][0]), copy.deepcopy(payload["edges"][0])
+        payload["claims"] = [{**copy.deepcopy(claim), "qualifiers": {"annotation": value}} for value in (False, 0, 1, 1.0)]
+        payload["edges"] = [{**copy.deepcopy(edge), "qualifiers": {"annotation": value},
+                              "conditions": ["EdgeApplicability"]} for value in (False, 0, 1, 1.0)]
+        library = CompiledLibrary.from_payload(payload)
+        packet = library.pack(["map-continuous", "map-finite-image"], 20000)
+        self.assertEqual(4, len(library.get("map-continuous")["claims"]))
+        self.assertEqual(3, len(packet["claims"]))
+        self.assertEqual(3, len(packet["edges"]))
+        self.assertEqual(3, len(library.browse("definitions")["claims"]))
+        self.assertIs(False, packet["claims"][0]["qualifiers"]["annotation"])
+        self.assertIs(type(packet["claims"][1]["qualifiers"]["annotation"]), int)
+        self.assertEqual(["EdgeApplicability"], packet["edges"][0]["conditions"])
+
+    def test_invalid_json_scientific_attributes_and_existing_field_types_fail_explicitly(self) -> None:
+        for value in ({"not-a-json-set"}, ("not-a-json-array",), b"not-json-bytes", float("nan"), float("inf"), {1: "not-a-string-key"}):
+            payload = library_payload()
+            payload["nodes"]["map-continuous"]["evidence"][0]["qualifiers"] = value
+            with self.subTest(value=type(value).__name__), self.assertRaisesRegex(CompiledRetrievalError, "evidence|JSON|string keys"):
+                CompiledLibrary.from_payload(payload)
+        payload = library_payload()
+        payload["nodes"]["map-continuous"]["evidence"][0]["quote"] = 7
+        with self.assertRaisesRegex(CompiledRetrievalError, "quote must be text"):
+            CompiledLibrary.from_payload(payload)
+
     def test_unresolved_references_stay_gaps_without_name_inference(self) -> None:
         payload = library_payload()
         payload["nodes"]["map-continuous"]["depends_on"].append({"target": "Norm", "note": "Unresolved authored target"})
