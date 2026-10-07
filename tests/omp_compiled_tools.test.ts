@@ -87,6 +87,23 @@ const spawn = mock((command: string, args: string[], options: object) => {
   return child;
 });
 mock.module("node:child_process", () => ({ spawn }));
+const activeScope = {};
+let spillKilobytes: unknown = 50;
+let spillSettingAvailable = true;
+let activeScopeAvailable = true;
+const getSpillSetting = mock((scope: unknown) => {
+  expect(scope).toBe(activeScope);
+  return spillKilobytes;
+});
+mock.module("@oh-my-pi/pi-coding-agent/config/registry", () => ({
+  lookup: (id: string) => {
+    expect(id).toBe("tools.artifactSpillThreshold");
+    return spillSettingAvailable ? { get: getSpillSetting } : undefined;
+  },
+}));
+mock.module("@oh-my-pi/pi-coding-agent/config/settings", () => ({
+  findScopedSettings: () => activeScopeAvailable ? activeScope : undefined,
+}));
 
 const source = await readFile(new URL("../integrations/omp/compiled_tools.ts", import.meta.url), "utf8");
 const javascript = new Bun.Transpiler({ loader: "ts", target: "bun" }).transformSync(source);
@@ -127,6 +144,10 @@ async function withRun(
   spawned.length = 0;
   spawn.mockClear();
   launch = successfulBridge;
+  spillKilobytes = 50;
+  spillSettingAvailable = true;
+  activeScopeAvailable = true;
+  getSpillSetting.mockClear();
   try {
     await writeFile(join(run, "compiled-tools-config.json"), JSON.stringify(config));
     await writeFile(join(run, "questions.json"), JSON.stringify(options.questions ?? questions));
@@ -155,7 +176,9 @@ async function observe(tools: Tool[], qid: string, reference?: string, kind?: st
 
 describe("OMP compiled tools source registration", () => {
   test("erases the SDK type import and registers exactly six tools with declared approvals", async () => {
-    expect(javascript).not.toContain("@oh-my-pi/pi-coding-agent");
+    expect(javascript).not.toContain('from "@oh-my-pi/pi-coding-agent"');
+    expect(javascript).toContain('from "@oh-my-pi/pi-coding-agent/config/registry"');
+    expect(javascript).toContain('from "@oh-my-pi/pi-coding-agent/config/settings"');
     await withRun(async (_run, config, tools) => {
       await registered(tools);
       expect(tools.map(tool => [tool.name, tool.approval])).toEqual([
@@ -591,6 +614,106 @@ describe("OMP compiled tools source registration", () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("successful kgd_search");
     }, { questions: questions.slice(0, 1) });
+  });
+
+  test("fails before launching when the actual session spill setting is unavailable or invalid", async () => {
+    for (const missing of ["scope", "setting"]) {
+      await withRun(async (_run, _config, tools) => {
+        await registered(tools);
+        activeScopeAvailable = missing !== "scope";
+        spillSettingAvailable = missing !== "setting";
+        const result = await toolNamed(tools, "kgd_get").execute("read", { references: ["meaning-a"] });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("spill limit is unavailable");
+        expect(spawn).not.toHaveBeenCalled();
+      });
+    }
+    for (const value of [0, -1, "50", true, NaN, Infinity, Number.MAX_VALUE]) {
+      await withRun(async (_run, _config, tools) => {
+        await registered(tools);
+        spillKilobytes = value;
+        const result = await toolNamed(tools, "kgd_get").execute("read", { references: ["meaning-a"] });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("finite positive number");
+        expect(spawn).not.toHaveBeenCalled();
+      });
+    }
+  });
+
+  test("a large complete Unicode packet at the actual spill byte limit is delivered and qualifies", async () => {
+    const response = { ok: true, result: {
+      entries: [{ reference: "meaning-a", prefix: "科学条件".repeat(6000),
+        middle: { formula: "∀x ∈ X, ‖T(x)‖ ≤ C‖x‖" }, tail: "末尾条件".repeat(6000), final_condition: "λ > 0" }], gaps: [],
+    } };
+    const text = JSON.stringify(response);
+    const bytes = Buffer.byteLength(text, "utf8");
+    expect(bytes).toBeGreaterThan(50 * 1024);
+    expect(bytes).toBeGreaterThan(text.length);
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await observe(tools, "first", "source-a", "source");
+      spillKilobytes = bytes / 1024;
+      launch = child => queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from(text + "\n"));
+        child.emit("close", 0);
+      });
+      const result = await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toBe(text);
+      expect(JSON.parse(result.content[0].text).result.entries[0].middle).toEqual(response.result.entries[0].middle);
+      expect(JSON.parse(result.content[0].text).result.entries[0].final_condition).toBe("λ > 0");
+      launch = successfulBridge;
+      expect((await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] })).isError).toBe(false);
+    }, { questions: questions.slice(0, 1), config: { max_response_bytes: bytes } });
+  });
+
+  test("responses one UTF-8 byte above the live spill limit never qualify search, branch or pack", async () => {
+    for (const operation of ["search", "browse", "pack"]) {
+      const entry = { reference: "meaning-a", prefix: "科学条件".repeat(6000), middle: "Complete declaration", tail: "末尾条件".repeat(6000) };
+      const response = { ok: true, result: operation === "search" ? [entry] : { entries: [entry], gaps: [] } };
+      const text = JSON.stringify(response);
+      const bytes = Buffer.byteLength(text, "utf8");
+      await withRun(async (run, _config, tools) => {
+        await registered(tools);
+        if (operation !== "search") await toolNamed(tools, "kgd_search").execute("search", { query: "Invented definition" });
+        if (operation !== "browse") await toolNamed(tools, "kgd_browse").execute("branch", { reference: "source-a", kind: "source" });
+        if (operation !== "pack") await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+        launch = child => queueMicrotask(() => {
+          // A live cap change during execution must be checked at delivery, too.
+          spillKilobytes = (bytes - 1) / 1024;
+          child.stdout.emit("data", Buffer.from(text + "\n"));
+          child.emit("close", 0);
+        });
+        const params = operation === "search" ? { query: "Invented definition" }
+          : operation === "browse" ? { reference: "source-a", kind: "source" } : { references: ["meaning-a"] };
+        const result = await toolNamed(tools, `kgd_${operation}`).execute("overspill", params);
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("run-local --config overlay");
+        expect(result.content[0].text).not.toContain('"ok":true');
+        launch = successfulBridge;
+        const calls = spawned.length;
+        expect((await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] })).isError).toBe(true);
+        expect(spawned).toHaveLength(calls);
+        await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+      }, { questions: questions.slice(0, 1), config: { max_response_bytes: bytes } });
+    }
+  });
+
+  test("large get and inventory output also fails whole rather than being delivered for harness spilling", async () => {
+    const response = { ok: true, result: { content: "科学条件".repeat(6000) } };
+    for (const name of ["kgd_get", "kgd_inventory"]) {
+      await withRun(async (_run, _config, tools) => {
+        await registered(tools);
+        launch = child => queueMicrotask(() => {
+          child.stdout.emit("data", Buffer.from(JSON.stringify(response) + "\n"));
+          child.emit("close", 0);
+        });
+        const params = name === "kgd_get" ? { references: ["meaning-a"] } : { term: "Invented meaning" };
+        const result = await toolNamed(tools, name).execute("overspill", params);
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("active tool output spill limit");
+      }, { config: { max_response_bytes: 100000 } });
+    }
   });
 
   test("returns complete nested Unicode and late scientific fields across byte chunks", async () => {

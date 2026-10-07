@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { lookup } from "@oh-my-pi/pi-coding-agent/config/registry";
+import { findScopedSettings } from "@oh-my-pi/pi-coding-agent/config/settings";
 
 export default async function (pi: ExtensionAPI) {
   const run = process.cwd();
@@ -55,6 +57,16 @@ export default async function (pi: ExtensionAPI) {
     child.stdin.end(JSON.stringify(request));
   });
   const packPreviews = new Set<string>();
+  const inlineByteLimit = () => {
+    const scope = findScopedSettings();
+    const setting = lookup("tools.artifactSpillThreshold");
+    if (!scope || !setting) throw new Error("OMP's active tool output spill limit is unavailable; complete delivery cannot be verified");
+    const kilobytes = setting.get(scope);
+    if (typeof kilobytes !== "number" || !Number.isFinite(kilobytes * 1024) || kilobytes <= 0) {
+      throw new Error("OMP's active tool output spill limit must be a finite positive number");
+    }
+    return kilobytes * 1024;
+  };
   const observations = new Map<string, { searched: boolean; candidates: Set<string>; overview: boolean; branches: Set<string> }>(
     questions.map(row => [row.qid, { searched: false, candidates: new Set<string>(), overview: false, branches: new Set<string>() }]),
   );
@@ -69,6 +81,7 @@ export default async function (pi: ExtensionAPI) {
     pi.registerTool({ name, label: name, description, parameters, loadMode: "essential", approval, strict: true,
       async execute(_id, params, signal) {
         try {
+          inlineByteLimit();
           if (operation === "submit_selection" && params.selections.some((row: any) => !packPreviews.has(JSON.stringify(row.ranked)))) {
             throw new Error("Each ordered ranked list requires an earlier successful kgd_pack preview delivering every selected reference");
           }
@@ -91,6 +104,10 @@ export default async function (pi: ExtensionAPI) {
           const qid = operation === "search" || operation === "browse" ? questionAddress(params) : undefined;
           const previewKey = operation === "pack" ? JSON.stringify(params.references) : undefined;
           const response = await call({ ...params, ...(qid === undefined ? {} : { qid }), operation }, signal);
+          const responseText = JSON.stringify(response);
+          if (Buffer.byteLength(responseText, "utf8") > inlineByteLimit()) {
+            throw new Error("Whole response exceeds OMP's active tool output spill limit. Use a run-local --config overlay with tools.artifactSpillThreshold at least max_response_bytes / 1024; no observation or preview qualified");
+          }
           if (response.ok === true && qid !== undefined) {
             const seen = observations.get(qid)!;
             if (operation === "search" && Array.isArray(response.result)) {
@@ -111,7 +128,7 @@ export default async function (pi: ExtensionAPI) {
               JSON.stringify(response.result.entries.map((entry: any) => entry?.reference)) === previewKey) {
             packPreviews.add(previewKey);
           }
-          return { content: [{ type: "text", text: JSON.stringify(response) }],
+          return { content: [{ type: "text", text: responseText }],
             details: { ok: response.ok === true }, isError: response.ok !== true };
         } catch (error) {
           return { content: [{ type: "text", text: error instanceof Error ? error.message : "Compiled knowledge operation failed" }],

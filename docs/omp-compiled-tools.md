@@ -46,6 +46,44 @@ The extension passes that exact lexical address to the process launcher, includi
 when it is a virtual-environment entry. It does not resolve the entry to its
 underlying interpreter, install packages or switch interpreters on failure.
 
+OMP also applies its own output spill limit after an extension tool returns.
+The adapter reads the effective `tools.artifactSpillThreshold` setting in the
+active session through the existing OMP SDK. It checks the exact UTF-8 byte
+length of the complete serialized response against that setting multiplied by
+1024, before recording any successful observation or pack preview. A response
+at the limit is delivered whole; one above it fails explicitly. Missing session
+scope, an unavailable setting, or a nonpositive/nonfinite limit also fails.
+The adapter never raises or writes the harness setting, and re-reads it at
+delivery so a live setting change cannot silently qualify an oversized result.
+
+The caller can supply a separate run-local OMP `--config` overlay whose
+`tools.artifactSpillThreshold` is at least `max_response_bytes / 1024`. For a
+response bound of 1048576 bytes, the overlay is:
+
+```yaml
+tools:
+  artifactSpillThreshold: 1024
+```
+
+Pass that file with `omp --config /absolute/run/omp-output.yml` when launching
+the run. It is an OMP overlay for that process, not an additional field in
+`compiled-tools-config.json` or a change to global OMP configuration.
+
+This boundary was verified against official OMP `v18.4.3`, commit
+`fc671eba383f2a7208500836673b485c0dc7073d`. Its
+[extension guide](https://github.com/can1357/oh-my-pi/blob/v18.4.3/docs/extensions.md#L205)
+documents `lookup` and setting handles. The package exports the config
+subpaths; the adapter uses the source-exported
+[findScopedSettings](https://github.com/can1357/oh-my-pi/blob/v18.4.3/packages/coding-agent/src/config/settings.ts#L3810)
+inside tool execution to read the current session rather than the global
+singleton. OMP establishes that scope in its
+[extension wrapper](https://github.com/can1357/oh-my-pi/blob/v18.4.3/packages/coding-agent/src/extensibility/extensions/wrapper.ts#L426).
+Its centralized
+[output processing](https://github.com/can1357/oh-my-pi/blob/v18.4.3/packages/coding-agent/src/tools/output-meta.ts#L445)
+converts the configured KB to bytes and preserves complete text at or below the
+threshold; larger text is replaced with a partial view and artifact reference.
+Such a partial view cannot satisfy this adapter's complete-delivery prerequisite.
+
 The bridge is invoked as `PYTHON -m kgdistiller.omp_compiled_tools --config CONFIG
 --output RUN_DIRECTORY`, with one UTF-8 JSON request on stdin. There is no shell
 command interpolation. The extension source is also shipped at
