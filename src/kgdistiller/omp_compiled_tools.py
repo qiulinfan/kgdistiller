@@ -76,6 +76,8 @@ def public_payload(value: Any, operation: str) -> tuple[Any, bool]:
     """Hide only paper-key addresses at known unavailable-source gap locations."""
     result, changed = copy.deepcopy(value), False
     scopes = result if operation == 'get' else []
+    if operation == 'browse':
+        scopes = [result]
     if operation == 'inventory':
         scopes = [result, *result['uses'], *(member for group in result['groups'] for member in group['senses'])]
     elif operation == 'pack':
@@ -113,9 +115,22 @@ def current_questions(output: Path) -> list[str]:
     return qids
 
 
+def question_address(request: dict[str, Any], output: Path) -> str:
+    """Validate routing only; question addresses never enter library retrieval."""
+    qids = current_questions(output)
+    qid = request.get('qid') if 'qid' in request else (qids[0] if len(qids) == 1 else None)
+    if not isinstance(qid, str) or qid not in qids:
+        raise BridgeError('invalid_question', 'Search and browse require a current qid; it is optional only for a single question.')
+    return qid
+
+
 def execute(request: Any, config: dict[str, Any], output: Path) -> dict[str, Any]:
     if not isinstance(request, dict) or not isinstance(request.get('operation'), str):
         raise BridgeError('invalid_request', 'A declared operation is required.')
+    operation = request['operation']
+    if operation in {'search', 'browse'}:
+        question_address(request, output)
+        request = {key: value for key, value in request.items() if key != 'qid'}
     try:
         from kgdistiller.compiled_retrieval import CompiledLibrary
         payload = json.loads(Path(config['library_path']).read_text(encoding='utf-8'))
@@ -123,13 +138,23 @@ def execute(request: Any, config: dict[str, Any], output: Path) -> dict[str, Any
         registry = set(payload['nodes'])
     except (ImportError, OSError, ValueError, TypeError, KeyError) as error:
         raise BridgeError('invalid_library', 'Configured compiled library could not be loaded.') from error
-    operation = request['operation']
     if operation == 'search':
         exact_keys(request, {'operation', 'query'}, {'limit'})
         query, limit = request['query'], request.get('limit', config['search_limit'])
         if not isinstance(query, str) or not query.strip() or not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= config['search_limit']:
             raise BridgeError('invalid_search', 'Search requires text and a limit within this run bound.')
         return bounded_result(library.search(query, limit=limit), config, operation)
+    if operation == 'browse':
+        exact_keys(request, {'operation'}, {'reference', 'kind'})
+        reference, kind = request.get('reference'), request.get('kind')
+        if ('reference' in request and (not isinstance(reference, str) or not reference)) or \
+                ('kind' in request and (not isinstance(kind, str) or kind not in {'source', 'layer', 'term', 'node'} or reference is None)):
+            raise BridgeError('invalid_browse', 'Browse requires an exact navigation reference and optional source, layer, term or node kind.')
+        try:
+            result = library.browse(reference, kind=kind)
+        except ValueError as error:
+            raise BridgeError('invalid_browse', 'Navigation reference is unknown or ambiguous; supply its exact handle and kind.') from error
+        return bounded_result(result, config, operation)
     if operation in {'get', 'pack'}:
         exact_keys(request, {'operation', 'references'})
         selected = references(request['references'], registry, config['reference_limit'])

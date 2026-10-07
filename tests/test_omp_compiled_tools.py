@@ -70,7 +70,12 @@ class OMPCompiledToolsTest(unittest.TestCase):
 
     def test_read_operations_return_complete_core_content_without_writes(self):
         before = self.files()
-        self.assertEqual(self.library.search("continuous", 3), self.call({"operation": "search", "query": "continuous"})["result"])
+        self.assertEqual(self.library.search("continuous", 3), self.call({"operation": "search", "qid": "question-a", "query": "continuous"})["result"])
+        for reference, kind in ((None, None), ("source-analysis", "source"), ("definitions", "layer"), ("bounded map", "term"), ("norm", "node")):
+            request = {"operation": "browse", "qid": "question-a"}
+            if reference is not None:
+                request.update(reference=reference, kind=kind)
+            self.assertEqual(self.library.browse(reference, kind=kind), self.call(request)["result"])
         self.assertEqual([self.library.get("map-continuous")], self.call({"operation": "get", "references": ["map-continuous"]})["result"])
         self.assertEqual(self.library.inventory("Bounded map"), self.call({"operation": "inventory", "term": "Bounded map"})["result"])
         packed = self.call({"operation": "pack", "references": ["map-continuous", "norm"]})["result"]
@@ -78,12 +83,51 @@ class OMPCompiledToolsTest(unittest.TestCase):
         self.assertIn("末尾条件：λ > 0。", packed["entries"][0]["conditions"])
         self.assertEqual(before, self.files())
 
+    def test_query_addresses_are_required_for_multiple_questions_and_never_enter_retrieval(self):
+        for operation, fields in (("search", {"query": "continuous"}), ("browse", {})):
+            for qid in (None, "unknown", 1, ""):
+                request = {"operation": operation, **fields}
+                if qid is not None:
+                    request["qid"] = qid
+                with self.subTest(request=request), self.assertRaises(BridgeError) as raised:
+                    self.call(request)
+                self.assertEqual("invalid_question", raised.exception.code)
+            first = self.call({"operation": operation, "qid": "question-a", **fields})
+            self.assertEqual(first, self.call({"operation": operation, "qid": "question-b", **fields}))
+        with patch.object(CompiledLibrary, "search", return_value=[]) as search:
+            self.call({"operation": "search", "qid": "question-a", "query": "continuous"})
+            search.assert_called_once_with("continuous", limit=3)
+        (self.root / "questions.json").write_text(json.dumps(self.questions[:1]), encoding="utf-8")
+        for operation, fields in (("search", {"query": "continuous"}), ("browse", {})):
+            self.assertEqual(self.call({"operation": operation, "qid": "question-a", **fields}), self.call({"operation": operation, **fields}))
+            with self.assertRaises(BridgeError):
+                self.call({"operation": operation, "qid": None, **fields})
+
+    def test_browse_rejects_unknown_ambiguous_or_invalid_handles_and_whole_oversized_response(self):
+        self.payload["papers"]["norm"] = {"title": "An ambiguous handle"}
+        self.library_path.write_text(json.dumps(self.payload), encoding="utf-8")
+        invalid = [{"reference": "unknown"}, {"reference": "norm"}, {"kind": "source"},
+                   {"reference": None}, {"reference": ""}, {"reference": "norm", "kind": []},
+                   {"reference": "norm", "kind": "invalid"}, {"reference": "norm", "limit": 1}]
+        before = self.files()
+        for fields in invalid:
+            with self.subTest(fields=fields), self.assertRaises(BridgeError):
+                self.call({"operation": "browse", "qid": "question-a", **fields})
+        self.assertEqual("norm", self.call({"operation": "browse", "qid": "question-a", "reference": "norm", "kind": "node"})["result"]["reference"])
+        self.config["max_response_bytes"] = 160
+        self.save_config()
+        with self.assertRaises(BridgeError) as raised:
+            self.call({"operation": "browse", "qid": "question-a"})
+        self.assertEqual("response_too_large", raised.exception.code)
+        self.assertEqual(before.keys(), self.files().keys())
+
     def test_source_gap_projection_preserves_scientific_fields_and_gap_reasons(self):
         self.payload["nodes"]["map-continuous"]["paper"] = "opaque-unregistered-source"
         self.payload["nodes"]["map-continuous"]["surfaces"]["head_terms"] = ["Bounded map"]
         self.library_path.write_text(json.dumps(self.payload, ensure_ascii=False), encoding="utf-8")
         for request in (
             {"operation": "get", "references": ["map-continuous"]},
+            {"operation": "browse", "qid": "question-a", "reference": "map-continuous", "kind": "node"},
             {"operation": "inventory", "term": "Bounded map"},
             {"operation": "pack", "references": ["map-continuous"]},
         ):
@@ -107,8 +151,8 @@ class OMPCompiledToolsTest(unittest.TestCase):
             {"operation": "get", "references": ["Bounded map"]},
             {"operation": "get", "references": ["norm", "norm"]},
             {"operation": "get", "references": ["norm"] * 5},
-            {"operation": "search", "query": "norm", "limit": 4},
-            {"operation": "search", "query": "norm", "limit": True},
+            {"operation": "search", "qid": "question-a", "query": "norm", "limit": 4},
+            {"operation": "search", "qid": "question-a", "query": "norm", "limit": True},
             {"operation": "inventory", "term": "Bounded map", "limit": 1},
             {"operation": "inventory", "term": "  "},
         ]
@@ -184,7 +228,7 @@ class OMPCompiledToolsTest(unittest.TestCase):
             load_config(self.config_path, outside)
 
     def test_module_utf8_and_bounded_bad_requests_do_not_leak_paths(self):
-        response, _ = self.module_call(encoded({"operation": "search", "query": "有界线性算子如何判定连续"}))
+        response, _ = self.module_call(encoded({"operation": "search", "qid": "question-a", "query": "有界线性算子如何判定连续"}))
         self.assertTrue(response["ok"])
         self.assertEqual("map-continuous", response["result"][0]["reference"])
         self.config["max_response_bytes"] = 240

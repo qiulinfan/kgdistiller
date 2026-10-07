@@ -12,6 +12,16 @@ complete evidence set. Search scores do not establish concept identity or
 scientific truth. Missing authored targets remain visible; names do not silently
 resolve them.
 
+Review initial evidence by retaining it and adding relevant context first.
+Inspect source, sense and claim branches before removing a reference. Remove
+confirmed wrong senses, out-of-scope content or duplicate support under the same
+conditions and source scope; broader applicable conditions, exceptions and
+counterexamples may remain when they fit the caller's limits. An explicit budget
+can require pruning, but a shorter list is not itself a retrieval-quality goal.
+The [OMP adapter](omp-compiled-tools.md) checks actual question-scoped candidate
+search and branch observations before submission, separately from scientific
+completeness.
+
 The input is an explicitly supplied JSON library containing a `nodes` mapping.
 Node records contain `name`, `statement`, `conditions` and, when available,
 `formal`, `inputs_outputs`, `notation`, `evidence`, `epistemic`, `depends_on`,

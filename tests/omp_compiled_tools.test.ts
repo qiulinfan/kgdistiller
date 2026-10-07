@@ -63,8 +63,18 @@ function successfulBridge(child: FakeChild) {
     if (request.operation === "submit_selection") {
       await writeFile("submitted-selection.json", JSON.stringify(request.selections), { flag: "wx" });
     }
-    const result = request.operation === "pack"
-      ? { entries: request.references.map((reference: string) => ({ reference })), gaps: [] } : {};
+    const members = ["meaning-a", "condition-b", "meaning-c"].map(reference => ({ reference }));
+    let result: unknown = {};
+    if (request.operation === "pack") result = { entries: request.references.map((reference: string) => ({ reference })), gaps: [] };
+    if (request.operation === "search") result = request.query === "no matches" ? [] : request.query === "only c" ? [members[2]] : members;
+    if (request.operation === "inventory") result = { groups: [{ senses: members }], uses: members };
+    if (request.operation === "browse") {
+      result = request.reference === undefined ? { sources: [{ reference: "source-a" }], layers: [{ reference: "definitions" }], terms: [{ reference: "meanings" }] }
+        : request.kind === "node" || request.reference === "meaning-a" ? { reference: request.reference, statement: "Invented meaning" }
+        : request.reference === "meanings" ? { reference: request.reference, senses: members }
+        : { reference: request.reference, entries: request.reference === "unrelated" ? [{ reference: "other" }]
+          : request.reference === "source-a" ? members.slice(0, 2) : members };
+    }
     child.stdout.emit("data", Buffer.from(JSON.stringify({ ok: true, result }) + "\n"));
     child.emit("close", 0);
   });
@@ -138,13 +148,18 @@ function toolNamed(tools: Tool[], name: string): Tool {
   return tool;
 }
 
+async function observe(tools: Tool[], qid: string, reference?: string, kind?: string) {
+  expect((await toolNamed(tools, "kgd_search").execute("search", { qid, query: "Invented definitions" })).isError).toBe(false);
+  expect((await toolNamed(tools, "kgd_browse").execute("browse", { qid, ...(reference === undefined ? {} : { reference, kind }) })).isError).toBe(false);
+}
+
 describe("OMP compiled tools source registration", () => {
-  test("erases the SDK type import and registers exactly five tools with declared approvals", async () => {
+  test("erases the SDK type import and registers exactly six tools with declared approvals", async () => {
     expect(javascript).not.toContain("@oh-my-pi/pi-coding-agent");
     await withRun(async (_run, config, tools) => {
       await registered(tools);
       expect(tools.map(tool => [tool.name, tool.approval])).toEqual([
-        ["kgd_search", "read"], ["kgd_get", "read"], ["kgd_inventory", "read"],
+        ["kgd_search", "read"], ["kgd_browse", "read"], ["kgd_get", "read"], ["kgd_inventory", "read"],
         ["kgd_pack", "read"], ["submit_selection", "write"],
       ]);
       for (const tool of tools) {
@@ -156,6 +171,10 @@ describe("OMP compiled tools source registration", () => {
       const search = toolNamed(tools, "kgd_search").parameters.declaration as { "limit?": Schema };
       expect(search["limit?"].declaration).toBe("number.integer");
       expect(search["limit?"].bounds).toEqual({ atLeast: 1, atMost: config.search_limit });
+      const browse = toolNamed(tools, "kgd_browse").parameters.declaration as Record<string, Schema>;
+      expect(browse.qid.declaration).toEqual({ enumerated: questions.map(row => row.qid) });
+      expect(browse["reference?"]).toBe("string");
+      expect(browse["kind?"].declaration).toEqual({ enumerated: ["source", "layer", "term", "node"] });
       const pack = toolNamed(tools, "kgd_pack").parameters.declaration as { references: Schema };
       expect(Object.keys(pack).sort()).toEqual(["+", "references"]);
       expect(pack.references.declaration).toBe("string[]");
@@ -174,7 +193,7 @@ describe("OMP compiled tools source registration", () => {
   test("preserves the lexical interpreter and launches the installed bridge without a shell", async () => {
     await withRun(async (run, config, tools) => {
       await registered(tools);
-      const result = await toolNamed(tools, "kgd_search").execute("call", { query: "有界映射", limit: 2 });
+      const result = await toolNamed(tools, "kgd_search").execute("call", { qid: "first", query: "有界映射", limit: 2 });
       expect(result.isError).toBe(false);
       expect(spawned).toHaveLength(1);
       expect(spawned[0].command).toBe(config.python_interpreter);
@@ -182,14 +201,17 @@ describe("OMP compiled tools source registration", () => {
         "-m", "kgdistiller.omp_compiled_tools", "--config", join(run, "compiled-tools-config.json"), "--output", run,
       ]);
       expect(spawned[0].options).toEqual({ cwd: run, shell: false, stdio: ["pipe", "pipe", "pipe"] });
-      expect(JSON.parse(spawned[0].child.input)).toEqual({ query: "有界映射", limit: 2, operation: "search" });
+      expect(JSON.parse(spawned[0].child.input)).toEqual({ qid: "first", query: "有界映射", limit: 2, operation: "search" });
     });
   });
 
   test("routes each declared operation and keeps pack budget run-local", async () => {
     await withRun(async (_run, _config, tools) => {
       await registered(tools);
+      await observe(tools, "first", "definitions", "layer");
+      await observe(tools, "second");
       const calls = [
+        ["kgd_browse", { qid: "first", reference: "source-a", kind: "source" }, "browse"],
         ["kgd_get", { references: ["meaning-a", "condition-b"] }, "get"],
         ["kgd_inventory", { term: "有界映射" }, "inventory"],
         ["kgd_pack", { references: ["meaning-a"] }, "pack"],
@@ -203,7 +225,222 @@ describe("OMP compiled tools source registration", () => {
         await toolNamed(tools, name).execute("call", params);
         expect(JSON.parse(spawned.at(-1)!.child.input)).toEqual({ ...params, operation });
       }
-      expect(JSON.parse(spawned[2].child.input)).not.toHaveProperty("byte_budget");
+      expect(JSON.parse(spawned.find(call => JSON.parse(call.child.input).operation === "pack")!.child.input)).not.toHaveProperty("byte_budget");
+    });
+  });
+
+  test("requires a valid explicit qid for multiple questions before starting retrieval", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      for (const [name, fields] of [["kgd_search", { query: "Invented definition" }], ["kgd_browse", {}]] as const) {
+        for (const params of [fields, { ...fields, qid: "unknown" }, { ...fields, qid: null }]) {
+          const result = await toolNamed(tools, name).execute("call", params);
+          expect(result.isError).toBe(true);
+          expect(result.content[0].text).toContain("current qid");
+        }
+      }
+      expect(spawn).not.toHaveBeenCalled();
+    });
+  });
+
+  test("resolves omitted qid only for a single question and declares it optional", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      for (const [name, fields] of [["kgd_search", { query: "Invented definition" }], ["kgd_browse", {}]] as const) {
+        const declaration = toolNamed(tools, name).parameters.declaration as Record<string, Schema>;
+        expect(declaration["qid?"].declaration).toEqual({ enumerated: ["first"] });
+        expect(declaration.qid).toBeUndefined();
+        expect((await toolNamed(tools, name).execute("call", fields)).isError).toBe(false);
+        expect(JSON.parse(spawned.at(-1)!.child.input).qid).toBe("first");
+      }
+    }, { questions: questions.slice(0, 1) });
+  });
+
+  test("a branch and complete pack cannot replace a successful search", async () => {
+    await withRun(async (run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_browse").execute("branch", { reference: "source-a", kind: "source" });
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+      const calls = spawned.length;
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("successful kgd_search");
+      expect(spawned).toHaveLength(calls);
+      await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+    }, { questions: questions.slice(0, 1) });
+  });
+
+  test("a selection needs an actual returned search candidate, even after an empty successful search", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_search").execute("search", { query: "only c" });
+      await toolNamed(tools, "kgd_search").execute("empty", { query: "no matches" });
+      await toolNamed(tools, "kgd_browse").execute("branch", { reference: "source-a", kind: "source" });
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("returned by that question's successful kgd_search");
+    }, { questions: questions.slice(0, 1) });
+  });
+
+  test("root overview, get, inventory and node browse do not qualify selected branch observations", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_search").execute("search", { query: "Invented definition" });
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+      const submit = () => toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] });
+      expect((await submit()).isError).toBe(true);
+      await toolNamed(tools, "kgd_browse").execute("root", {});
+      await toolNamed(tools, "kgd_get").execute("get", { references: ["meaning-a"] });
+      await toolNamed(tools, "kgd_inventory").execute("inventory", { term: "Invented meanings" });
+      for (const params of [{ reference: "meaning-a" }, { reference: "meaning-a", kind: "node" }]) {
+        await toolNamed(tools, "kgd_browse").execute("node", params);
+        const result = await submit();
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("source, layer or term kgd_browse branch");
+      }
+    }, { questions: questions.slice(0, 1) });
+  });
+
+  test("unrelated branches and a branch missing any selected reference do not qualify", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await observe(tools, "first", "unrelated", "source");
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a", "meaning-c"] });
+      const submit = () => toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a", "meaning-c"], abstain: false }] });
+      expect((await submit()).isError).toBe(true);
+      await toolNamed(tools, "kgd_browse").execute("partial", { reference: "source-a", kind: "source" });
+      expect((await submit()).isError).toBe(true);
+    }, { questions: questions.slice(0, 1) });
+  });
+
+  test("successful source, layer or term branches qualify every selected reference", async () => {
+    for (const [reference, kind] of [["source-a", "source"], ["definitions", "layer"], ["meanings", "term"], ["source-a", undefined]]) {
+      await withRun(async (_run, _config, tools) => {
+        await registered(tools);
+        await observe(tools, "first", reference, kind);
+        await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a", "condition-b"] });
+        const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a", "condition-b"], abstain: false }] });
+        expect(result.isError).toBe(false);
+      }, { questions: questions.slice(0, 1) });
+    }
+  });
+
+  test("tree expansion may add selections beyond search when at least one selected candidate was returned", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_search").execute("search", { query: "only c" });
+      await toolNamed(tools, "kgd_browse").execute("branch", { reference: "definitions", kind: "layer" });
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-c", "meaning-a"] });
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-c", "meaning-a"], abstain: false }] });
+      expect(result.isError).toBe(false);
+    }, { questions: questions.slice(0, 1) });
+  });
+
+  test("failed or oversized browse responses cannot qualify a branch", async () => {
+    for (const oversized of [false, true]) {
+      await withRun(async (run, _config, tools) => {
+        await registered(tools);
+        await toolNamed(tools, "kgd_search").execute("search", { query: "Invented definition" });
+        await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+        const response = oversized ? { ok: true, result: { entries: [{ reference: "meaning-a" }], padding: "x".repeat(1000) } }
+          : { ok: false, error: { code: "invalid_browse", message: "Unknown branch" } };
+        launch = child => queueMicrotask(() => {
+          child.stdout.emit("data", Buffer.from(JSON.stringify(response) + "\n"));
+          child.emit("close", 0);
+        });
+        expect((await toolNamed(tools, "kgd_browse").execute("failed", { reference: "source-a", kind: "source" })).isError).toBe(true);
+        launch = successfulBridge;
+        const calls = spawned.length;
+        const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] });
+        expect(result.isError).toBe(true);
+        expect(spawned).toHaveLength(calls);
+        await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+      }, { questions: questions.slice(0, 1), config: { max_response_bytes: 512 } });
+    }
+  });
+
+  test("failed or oversized searches cannot qualify search observations", async () => {
+    for (const oversized of [false, true]) {
+      await withRun(async (_run, _config, tools) => {
+        await registered(tools);
+        await toolNamed(tools, "kgd_browse").execute("branch", { reference: "source-a", kind: "source" });
+        await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+        const response = oversized ? { ok: true, result: [{ reference: "meaning-a", padding: "x".repeat(1000) }] }
+          : { ok: false, error: { code: "invalid_search", message: "No search result" } };
+        launch = child => queueMicrotask(() => {
+          child.stdout.emit("data", Buffer.from(JSON.stringify(response) + "\n"));
+          child.emit("close", 0);
+        });
+        expect((await toolNamed(tools, "kgd_search").execute("failed", { query: "Invented definition" })).isError).toBe(true);
+        launch = successfulBridge;
+        const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("successful kgd_search");
+      }, { questions: questions.slice(0, 1), config: { max_response_bytes: 512 } });
+    }
+  });
+
+  test("cancelled search, branch and root calls cannot become eligible through late success", async () => {
+    for (const operation of ["search", "branch", "root"]) {
+      await withRun(async (run, _config, tools) => {
+        await registered(tools);
+        const ranked = operation === "root" ? [] : ["meaning-a"];
+        await toolNamed(tools, "kgd_pack").execute("preview", { references: ranked });
+        if (operation === "search") await toolNamed(tools, "kgd_browse").execute("branch", { reference: "source-a", kind: "source" });
+        else await toolNamed(tools, "kgd_search").execute("search", { query: "Invented definition" });
+        launch = () => {};
+        const controller = new AbortController();
+        const params = operation === "search" ? { query: "Invented definition" }
+          : operation === "branch" ? { reference: "source-a", kind: "source" } : {};
+        const pending = toolNamed(tools, operation === "search" ? "kgd_search" : "kgd_browse").execute("cancelled", params, controller.signal);
+        controller.abort();
+        const child = spawned.at(-1)!.child;
+        const result = operation === "search" ? [{ reference: "meaning-a" }]
+          : operation === "branch" ? { entries: [{ reference: "meaning-a" }] } : { sources: [], layers: [], terms: [] };
+        child.stdout.emit("data", Buffer.from(JSON.stringify({ ok: true, result }) + "\n"));
+        child.emit("close", 0);
+        expect((await pending).isError).toBe(true);
+        expect(child.killed).toBe(true);
+        launch = successfulBridge;
+        const calls = spawned.length;
+        expect((await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked, abstain: operation === "root" }] })).isError).toBe(true);
+        expect(spawned).toHaveLength(calls);
+        await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
+      }, { questions: questions.slice(0, 1) });
+    }
+  });
+
+  test("search and branch observations remain isolated by question while pack previews can be shared", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await observe(tools, "first", "source-a", "source");
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: ["meaning-a"] });
+      const selections = questions.map(row => ({ qid: row.qid, ranked: ["meaning-a"], abstain: false }));
+      const submit = () => toolNamed(tools, "submit_selection").execute("submit", { selections });
+      expect((await submit()).content[0].text).toContain("successful kgd_search");
+      await toolNamed(tools, "kgd_search").execute("search-second", { qid: "second", query: "only c" });
+      expect((await submit()).content[0].text).toContain("returned by that question's successful kgd_search");
+      await toolNamed(tools, "kgd_search").execute("search-second-again", { qid: "second", query: "Invented definition" });
+      expect((await submit()).content[0].text).toContain("for that question");
+      await toolNamed(tools, "kgd_browse").execute("branch-second", { qid: "second", reference: "source-a", kind: "source" });
+      expect((await submit()).isError).toBe(false);
+    });
+  });
+
+  test("empty-search abstention requires a question's root overview and empty complete pack", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_pack").execute("preview", { references: [] });
+      const selections = questions.map(row => ({ qid: row.qid, ranked: [], abstain: true }));
+      const submit = () => toolNamed(tools, "submit_selection").execute("submit", { selections });
+      expect((await submit()).isError).toBe(true);
+      for (const row of questions) await toolNamed(tools, "kgd_search").execute("search", { qid: row.qid, query: "no matches" });
+      await toolNamed(tools, "kgd_browse").execute("root-first", { qid: "first" });
+      await toolNamed(tools, "kgd_browse").execute("branch-second", { qid: "second", reference: "definitions", kind: "layer" });
+      expect((await submit()).content[0].text).toContain("root overview for that question");
+      await toolNamed(tools, "kgd_browse").execute("root-second", { qid: "second" });
+      expect((await submit()).isError).toBe(false);
     });
   });
 
@@ -225,6 +462,8 @@ describe("OMP compiled tools source registration", () => {
     await withRun(async (run, _config, tools) => {
       await registered(tools);
       const pack = toolNamed(tools, "kgd_pack");
+      await observe(tools, "first", "definitions", "layer");
+      await observe(tools, "second", "definitions", "layer");
       await pack.execute("preview-a", { references: ["meaning-a", "condition-b"] });
       await pack.execute("preview-b", { references: ["meaning-c"] });
       const selections = [
@@ -287,6 +526,8 @@ describe("OMP compiled tools source registration", () => {
   test("matching complete entries qualify despite scientific gaps and can be reused by multiple questions", async () => {
     await withRun(async (run, _config, tools) => {
       await registered(tools);
+      await observe(tools, "first", "source-a", "source");
+      await observe(tools, "second", "source-a", "source");
       const response = { ok: true, result: {
         entries: [{ reference: "meaning-a", conditions: ["Qualified condition"] }],
         gaps: [{ reason: "unresolved-source" }, { reference: "dependency", reason: "dependency-not-packed" }],
@@ -315,6 +556,7 @@ describe("OMP compiled tools source registration", () => {
       expect((await submit.execute("no-preview", { selections })).isError).toBe(true);
       expect(spawn).not.toHaveBeenCalled();
       await toolNamed(tools, "kgd_pack").execute("empty-preview", { references: [] });
+      for (const question of questions) await observe(tools, question.qid);
       expect((await submit.execute("submit", { selections })).isError).toBe(false);
       expect(JSON.parse(await readFile(join(run, "submitted-selection.json"), "utf8"))).toEqual(selections);
     });
@@ -335,6 +577,20 @@ describe("OMP compiled tools source registration", () => {
       expect(spawn).not.toHaveBeenCalled();
       await expect(access(join(run, "submitted-selection.json"))).rejects.toThrow();
     });
+  });
+
+  test("eligible search and tree observations are isolated to the current adapter instance", async () => {
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await observe(tools, "first", "source-a", "source");
+    }, { questions: questions.slice(0, 1) });
+    await withRun(async (_run, _config, tools) => {
+      await registered(tools);
+      await toolNamed(tools, "kgd_pack").execute("new-preview", { references: ["meaning-a"] });
+      const result = await toolNamed(tools, "submit_selection").execute("submit", { selections: [{ qid: "first", ranked: ["meaning-a"], abstain: false }] });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("successful kgd_search");
+    }, { questions: questions.slice(0, 1) });
   });
 
   test("returns complete nested Unicode and late scientific fields across byte chunks", async () => {
