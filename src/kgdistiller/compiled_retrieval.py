@@ -91,6 +91,41 @@ def _fields(record: Mapping[str, Any], keys: Iterable[str], field: str) -> dict[
     return {key: _text(record, key, field) for key in keys if key in record and record[key] is not None}
 
 
+def _scientific_json(value: Any, field: str) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    if isinstance(value, list):
+        return [_scientific_json(item, f"{field}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, Mapping):
+        return {key: _scientific_json(item, f"{field}.{key}") for key, item in _mapping(value, field).items()}
+    raise CompiledRetrievalError(f"{field} must contain finite JSON scientific values")
+
+
+def _scientific_record(record: Mapping[str, Any], known_text: Iterable[str], field: str) -> dict[str, Any]:
+    _fields(record, known_text, field)
+    return _scientific_json(record, field)
+
+
+def _scientific_text(value: Any) -> str:
+    return _json_bytes(value).decode("utf-8")
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(_json_equal(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 def _year(record: Mapping[str, Any], field: str) -> dict[str, Any]:
     value = record.get("year")
     if value is None:
@@ -105,7 +140,7 @@ def _notation(value: Any, field: str) -> Any:
         return value
     if isinstance(value, list):
         return [_notation(item, field) for item in value]
-    return _fields(_mapping(value, field), ("symbol", "meaning"), field)
+    return _scientific_record(_mapping(value, field), ("symbol", "meaning"), field)
 
 
 def _semantic_values(value: Any) -> Iterable[str]:
@@ -196,7 +231,11 @@ class CompiledLibrary:
             edge = _mapping(raw, "edge")
             source = _text(edge, "source", "edge")
             target = _text(edge, "target", "edge")
-            detail = _fields(edge, ("type", "evidence", "basis", "confidence"), "edge")
+            detail = _scientific_record(edge, ("type", "evidence", "basis", "confidence"), "edge")
+            detail.pop("source", None)
+            detail.pop("target", None)
+            if "direction" in detail:
+                raise CompiledRetrievalError("edge.direction is reserved for explicit endpoint navigation")
             self._edges[source].append({"direction": "out", "target": target, **detail})
             self._edges[target].append({"direction": "in", "target": source, **detail})
         self._claims: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -207,7 +246,7 @@ class CompiledLibrary:
         self._entries = {ref: self._entry(ref) for ref in self._nodes}
         self._texts = {
             ref: self._semantic_text({
-                "entry": entry,
+                "entry": self._semantic_entry(ref),
                 "source_surfaces": self._sources.get(self._nodes[ref].get("paper"), {}),
             })
             for ref, entry in self._entries.items()
@@ -252,12 +291,16 @@ class CompiledLibrary:
         return result
 
     def _claim(self, claim: Mapping[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = _fields(claim, ("question", "relation", "note", "family"), "claim")
+        result: dict[str, Any] = _scientific_record(claim, ("question", "relation", "note", "family"), "claim")
         result["positions"] = []
         for raw in _list(claim.get("positions"), "claim.positions"):
             position = _mapping(raw, "claim.position")
             item = self._target(_text(position, "id", "claim.position"))
-            item.update(_fields(position, ("position",), "claim.position"))
+            detail = _scientific_record(position, ("position",), "claim.position")
+            detail.pop("id", None)
+            if "reference" in detail or "available" in detail:
+                raise CompiledRetrievalError("claim.position reference and availability are derived from id")
+            item.update(detail)
             item.update(_year(position, "claim.position"))
             result["positions"].append(item)
         result["timeline"] = [self._target(ref) for ref in _texts(claim, "timeline", "claim")]
@@ -285,11 +328,11 @@ class CompiledLibrary:
             ("evidence", ("section", "quote")),
         ):
             result[key] = [
-                _fields(_mapping(raw, f"{field}.{key}"), fields, f"{field}.{key}")
+                _scientific_record(_mapping(raw, f"{field}.{key}"), fields, f"{field}.{key}")
                 for raw in _list(node.get(key), f"{field}.{key}")
             ]
         status = _mapping({} if node.get("epistemic") is None else node["epistemic"], f"{field}.epistemic")
-        result["epistemic"] = _fields(status, ("status", "note"), f"{field}.epistemic")
+        result["epistemic"] = _scientific_record(status, ("status", "note"), f"{field}.epistemic")
         for key, detail in (
             ("depends_on", ("role", "note")),
             ("relations", ("type", "evidence")),
@@ -303,7 +346,11 @@ class CompiledLibrary:
                     record = _mapping(raw, f"{field}.{key}")
                 target_key = "id" if key == "instances" else "target"
                 item = self._target(_text(record, target_key, f"{field}.{key}"))
-                item.update(_fields(record, detail, f"{field}.{key}"))
+                attributes = _scientific_record(record, detail, f"{field}.{key}")
+                attributes.pop(target_key, None)
+                if "reference" in attributes or "available" in attributes:
+                    raise CompiledRetrievalError(f"{field}.{key} reference and availability are derived from {target_key}")
+                item.update(attributes)
                 result[key].append(item)
         result["edges"] = []
         for edge in self._edges.get(reference, []):
@@ -311,7 +358,9 @@ class CompiledLibrary:
             item.update({key: value for key, value in edge.items() if key != "target"})
             result["edges"].append(item)
         result["claims"] = copy.deepcopy(self._claims.get(reference, []))
-        result["gaps"] = self._unresolved(result)
+        endpoints = [item for key in ("depends_on", "relations", "instances", "edges") for item in result[key]]
+        endpoints.extend(item for claim in result["claims"] for key in ("positions", "timeline") for item in claim[key])
+        result["gaps"] = self._unresolved(endpoints)
         if source_ref and source_ref not in self._sources:
             result["gaps"].append({"reference": source_ref, "reason": "unresolved-source"})
         return result
@@ -322,11 +371,10 @@ class CompiledLibrary:
         if isinstance(value, dict):
             if value.get("available") is False:
                 gaps.append({"reference": value["reference"], "reason": "unresolved-reference"})
-            for item in value.values():
-                gaps.extend(CompiledLibrary._unresolved(item))
         elif isinstance(value, list):
             for item in value:
-                gaps.extend(CompiledLibrary._unresolved(item))
+                if isinstance(item, dict) and item.get("available") is False:
+                    gaps.append({"reference": item["reference"], "reason": "unresolved-reference"})
         return list({(gap["reference"], gap["reason"]): gap for gap in gaps}.values())
 
     @staticmethod
@@ -339,6 +387,39 @@ class CompiledLibrary:
                 seen.add(key)
                 texts.append(text)
         return "\n".join(texts)
+
+    def _semantic_entry(self, reference: str) -> dict[str, Any]:
+        """Index scientific JSON, excluding lookup addresses at their own locations."""
+        entry = self._entries[reference]
+        controls = {"reference", "gaps", "depends_on", "relations", "instances", "edges", "claims"}
+        result = {key: value for key, value in entry.items() if key not in controls}
+        for key in ("epistemic", "notation", "distinguish_from"):
+            result[key] = _scientific_text(entry[key])
+        # Only this declared acquisition container is metadata. A scientific
+        # qualifier named provenance, id, path or hash is not recursively hidden.
+        result["evidence"] = _scientific_text([
+            {key: value for key, value in record.items() if key != "provenance" or not isinstance(value, Mapping)}
+            for record in entry["evidence"]
+        ])
+        for key in ("depends_on", "relations", "instances"):
+            target_key = "id" if key == "instances" else "target"
+            records = []
+            for raw, endpoint in zip(_list(self._nodes[reference].get(key), key), entry[key]):
+                record = {} if isinstance(raw, str) else dict(raw)
+                record.pop(target_key, None)
+                records.append(_scientific_text(record))
+                records.append(endpoint.get("name", ""))
+            result[key] = records
+        result["edges"] = [_scientific_text({key: value for key, value in edge.items() if key not in {"target", "direction", "origin"}})
+                           for edge in self._edges.get(reference, [])]
+        result["claims"] = []
+        for claim in entry["claims"]:
+            value = {key: item for key, item in claim.items() if key not in {"positions", "timeline"}}
+            for key in ("positions", "timeline"):
+                value[key] = [{field: item for field, item in endpoint.items() if field not in {"reference", "available"}}
+                              for endpoint in claim[key]]
+            result["claims"].append(_scientific_text(value))
+        return result
 
     def semantic_text(self, reference: str) -> str:
         """Full compiled semantic text, without identifiers or storage metadata."""
@@ -427,7 +508,7 @@ class CompiledLibrary:
             if any(_term_key(head) == key for head in entry["surfaces"].get("head_terms", []))
         ]
         rows.extend(uses)
-        gaps = self._unresolved(groups + uses)
+        gaps = self._unresolved(rows)
         for row in rows:
             gaps.extend(row.get("gaps", []))
         if not groups and not uses:
@@ -477,7 +558,7 @@ class CompiledLibrary:
         claims: list[dict[str, Any]] = []
         for ref in references:
             for claim in self._claims.get(ref, []):
-                if claim not in claims:
+                if not any(_json_equal(claim, existing) for existing in claims):
                     claims.append(copy.deepcopy(claim))
         heading = copy.deepcopy(self._sources[reference]) if selected_kind == "source" else {"name": reference}
         return {"reference": reference, **heading, "entries": [self._preview(ref) for ref in references], "claims": claims}
@@ -500,25 +581,28 @@ class CompiledLibrary:
         if entry["surfaces"].get("not_this"):
             result["not_this"] = copy.deepcopy(entry["surfaces"]["not_this"])
         for field in ("depends_on", "relations", "instances"):
-            result[field] = [self._reference_content(item) for item in result[field]]
+            raw = _list(self._nodes[reference].get(field), field)
+            result[field] = [self._reference_content(item, authored=record if isinstance(record, Mapping) else {})
+                             for item, record in zip(result[field], raw)]
         return result
 
     @staticmethod
-    def _reference_content(item: Mapping[str, Any]) -> dict[str, Any]:
-        """Keep an endpoint and authored content without repeated bibliography."""
-        return {key: copy.deepcopy(value) for key, value in item.items() if key not in {"source", "year"}}
+    def _reference_content(item: Mapping[str, Any], *, authored: Mapping[str, Any] = {}) -> dict[str, Any]:
+        """Compact derived bibliography while keeping explicitly authored fields."""
+        return {key: copy.deepcopy(value) for key, value in item.items()
+                if key not in {"source", "year"} or key in authored}
 
     def _evidence_edges(self, reference: str) -> list[dict[str, Any]]:
         """Represent each authored directed edge once, with explicit endpoints."""
         edges = []
-        for edge in self._entries[reference]["edges"]:
+        for edge in self._edges.get(reference, []):
             owner = self._reference_content(self._target(reference))
-            neighbor = self._reference_content(self._target(edge["reference"]))
+            neighbor = self._reference_content(self._target(edge["target"]))
             source, target = (owner, neighbor) if edge["direction"] == "out" else (neighbor, owner)
             detail = {
                 key: copy.deepcopy(value)
                 for key, value in edge.items()
-                if key not in {"reference", "available", "name", "source", "year", "direction"}
+                if key not in {"target", "direction", "origin"}
             }
             edges.append({"source": source, "target": target, **detail})
         return edges
@@ -565,10 +649,10 @@ class CompiledLibrary:
             for ref in included:
                 for claim in self._entries[ref]["claims"]:
                     positions = {position["reference"] for position in claim["positions"]}
-                    if len(positions & included_refs) >= 2 and claim not in claims:
+                    if len(positions & included_refs) >= 2 and not any(_json_equal(claim, existing) for existing in claims):
                         claims.append(copy.deepcopy(claim))
                 for edge in edges_by_ref[ref]:
-                    if edge["source"]["reference"] in included_refs and edge["target"]["reference"] in included_refs and edge not in edges:
+                    if edge["source"]["reference"] in included_refs and edge["target"]["reference"] in included_refs and not any(_json_equal(edge, existing) for existing in edges):
                         edges.append(copy.deepcopy(edge))
             result = {"entries": [copy.deepcopy(entries[ref]) for ref in included], "claims": claims, "edges": edges, "gaps": gaps, "byte_budget": byte_budget, "bytes_used": 0}
             while True:

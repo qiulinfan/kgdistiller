@@ -20,6 +20,24 @@ Node records contain `name`, `statement`, `conditions` and, when available,
 comparisons. Existing references address records; this read-only view does not
 create identities or write the canonical graph.
 
+Scientific subrecords (`evidence`, `epistemic`, notation, distinctions,
+dependencies, relations, instances, claims and claim positions, and edges) retain
+additional authored finite JSON attributes. Existing text-field validation still
+applies. Conditions, support-specific source titles, units and qualifiers stay
+at their authored scope in `get` and packing; unsupported non-JSON values fail
+explicitly instead of being silently discarded. Structural `target`, position
+`id` and edge endpoints remain exact lookup declarations.
+
+The semantic projection excludes those lookup addresses at their declared
+locations and indexes scientific JSON, including meaningful nested fields named
+`id`, `path`, `hash`, `reference` or `provenance`. It does not recursively classify
+words as machine metadata. The explicit acquisition object at
+`evidence[].provenance` remains in `get` and packing but is excluded from the
+semantic index. Direct edge `origin` records acquisition/derivation metadata;
+it remains navigable in `get` and is excluded from evidence packing and indexing.
+Other node/source machine metadata remains outside the existing scientific
+projection.
+
 ```sh
 kgdistiller agent compiled --library library.json search 'What does this definition require?'
 kgdistiller agent compiled --library library.json browse
@@ -60,6 +78,10 @@ at the top level, preserving all positions, timelines, endpoints and evidence.
 Retrieval expressions stay in the search index; sense and confusion guards
 remain in the evidence. Entries that cannot fit produce gaps; external
 dependencies and dependencies absent from the selection remain visible.
+Derived endpoint bibliography stays compact; explicitly authored relationship
+source and year qualifications remain in the packet. Shared scientific records
+compare JSON structure with Booleans distinct from numbers, so different
+qualifications cannot merge through Python's Boolean/integer equality.
 Evaluate the actual packed text, formulas and qualifications against necessary
 facts, conditions, intended senses and source scopes derived independently from
 the question and original sources. Alternative witnesses must support the same
@@ -67,6 +89,15 @@ fact under agreeing conditions, scopes, units and conventions. Whole entries
 and declared inventory membership supply no completeness certificate.
 The [evaluation protocol](retrieval.md#evaluation) defines complete-evidence
 task success separately from retrieval and packing diagnostics.
+
+These stages have different failure boundaries. A known compiled entry absent
+from a candidate list is a retrieval/selection diagnostic. A selected entry
+omitted for size has an explicit `byte-budget` gap; missing declared targets or
+sources have unresolved-reference/source gaps. An authored fact absent from the
+compiled input cannot be identified from ranking results alone and requires
+comparison with independent original-source requirements. Reading an entry
+without selecting it is not projection loss, and a complete transport packet
+does not establish scientific completeness.
 
 Implementation provenance: the input shape and posting-list retrieval pattern
 come from `qiulinfan/kgdistiller-experiment`, commit `2876f19`. The product module
