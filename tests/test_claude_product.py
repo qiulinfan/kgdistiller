@@ -47,9 +47,9 @@ def copy_product_root(destination: Path) -> Path:
             target = destination / item["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-    guide = manifest["workflow_guide"]
-    (destination / guide).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(REPO_ROOT / guide, destination / guide)
+    for relative in [manifest["workflow_guide"], *manifest.get("workflow_resources", [])]:
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, destination / relative)
     return destination
 
 
@@ -61,13 +61,26 @@ def create_directory_link(source: Path, target: Path) -> None:
 
 
 class ClaudeProductTests(unittest.TestCase):
+    def setUp(self) -> None:
+        manifest = json.loads(
+            (REPO_ROOT / "workflows" / "claude-manifest.json").read_text(encoding="utf-8")
+        )
+        self.expected_skills = len(manifest["skills"])
+        self.expected_assets = self.expected_skills + len(manifest["agents"]) + 1
+
     def test_manifest_assets_are_portable_and_complete(self) -> None:
         root, manifest = load_claude_manifest(REPO_ROOT)
         self.assertEqual(REPO_ROOT, root)
-        self.assertEqual(7, len(manifest["skills"]))
+        self.assertEqual(
+            {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")},
+            {item["name"] for item in manifest["skills"]},
+        )
         self.assertEqual(4, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
-        self.assertEqual(7, len(manifest["workflows"]))
+        self.assertEqual(
+            len({item["id"] for item in manifest["workflows"]}),
+            len(manifest["workflows"]),
+        )
         for agent in manifest["agents"]:
             self.assertTrue(agent["install_as"].endswith(".md"))
         result = doctor_claude_product(source_only=True, source_root=REPO_ROOT)
@@ -80,6 +93,9 @@ class ClaudeProductTests(unittest.TestCase):
         _, codex_manifest = load_manifest(REPO_ROOT)
         self.assertEqual(codex_manifest["skills"], claude_manifest["skills"])
         self.assertEqual(codex_manifest["workflows"], claude_manifest["workflows"])
+        self.assertEqual(
+            codex_manifest["workflow_resources"], claude_manifest["workflow_resources"]
+        )
         self.assertEqual(
             codex_manifest["installation"], claude_manifest["installation"]
         )
@@ -127,7 +143,7 @@ class ClaudeProductTests(unittest.TestCase):
                 claude_home=home, mode="copy", source_root=REPO_ROOT
             )
             self.assertEqual("linked", linked["status"])
-            self.assertEqual(7, linked["skills"])
+            self.assertEqual(self.expected_skills, linked["skills"])
             self.assertEqual(4, linked["agents"])
             self.assertEqual([], linked["adopted"])
             self.assertEqual(str(home), linked["claude_home"])
@@ -179,10 +195,16 @@ class ClaudeProductTests(unittest.TestCase):
                 / "product-workflows.md"
             )
             self.assertTrue(canonical_guide.is_file())
+            _, manifest = load_claude_manifest(REPO_ROOT)
+            for relative in manifest["workflow_resources"]:
+                self.assertEqual(
+                    (REPO_ROOT / relative).read_bytes(),
+                    (canonical_manifest.parents[1] / relative).read_bytes(),
+                )
 
             checked = doctor_claude_product(claude_home=home, source_root=REPO_ROOT)
             self.assertEqual("ok", checked["status"])
-            self.assertEqual({"copy": 12}, checked["modes"])
+            self.assertEqual({"copy": self.expected_assets}, checked["modes"])
             self.assertFalse(checked["real_time"])
 
     def test_symlink_link_adopts_existing_skills_only_links(self) -> None:

@@ -62,6 +62,22 @@ XeLaTeX and explicitly rejects LuaLaTeX. Read the packaged
 [LaTeX source contract](latex-sources.md) for setup, provenance, protocol,
 marker placement and failure behavior.
 
+### Source-scoped knowledge sheets
+
+`$compile-knowledge-sheets` / `/compile-knowledge-sheets` creates or refreshes
+definition and pending link views for papers, mathematical notes, CS notes,
+blogs and project documents. Full knowledge content belongs in accepted
+`knowledge/` metadata; source sheets display names, types, locations and links.
+New or changed content first forms a reviewed metadata proposal and uses supported
+transactional ingest. Unsupported relations, applications or gap state remain
+unapplied proposals. Ordinary source reading does not activate this Skill.
+
+The [shared model](concepts-and-relations.md) defines nodes, relations and
+applications. [Paper sheet projections](paper-sheets-upstream.md) describe the
+paper use case and current adapter limitations. Both runtime manifests install
+the same generic Skill and bundled contracts. `knowledge/` remains visible for
+Obsidian; native source markers and atomic-entry authority remain intact.
+
 ### Independent paper workflows
 
 Ordinary paper reading and explanation need no Skill. The former `read-paper`
@@ -122,13 +138,14 @@ found in the queried store is not proof the user does not know it. A lookup erro
 is not a negative match. Preserve paper/version meaning; shared vocabulary does
 not merge identities. Store mutations remain separately authorized transactions.
 
-All paper Skills are explicit-command-only in both runtimes: `distill-paper`,
+The existing paper Skills are explicit-command-only in both runtimes: `distill-paper`,
 `harvest-paper` and `paper-related-work`. Invoke related-work research
 with `$paper-related-work` (Codex) or `/paper-related-work` (Claude Code).
 Natural-language requests for related papers, predecessors/successors, reviews or
 online discussion do not activate this Skill. Codex sets
 `allow_implicit_invocation: false`; Claude Code sets `disable-model-invocation: true`.
 General note curation, query, ingest and deployment keep their existing triggers.
+
 
 Related-work has no default wall-clock deadline. Dispatch the requested branches
 and let each complete its bounded research and explanation. Do not create countdown

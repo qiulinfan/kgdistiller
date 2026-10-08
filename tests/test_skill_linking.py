@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIMES = ("claude", "codex", "opencode", "omp")
@@ -16,12 +17,30 @@ RUNTIMES = ("claude", "codex", "opencode", "omp")
 def powershell_ready():
     if not shutil.which("pwsh"):
         return False
-    result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-Command", 'Write-Output "ready"'],
-                            capture_output=True, text=True, timeout=15)
+    try:
+        result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-Command", 'Write-Output "ready"'],
+                                capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        # This optional capability probe must not abort discovery of all tests.
+        # Ready runtimes still execute the real PowerShell linker test class.
+        return False
     return result.returncode == 0 and "ready" in result.stdout
 
 
 PWSH_READY = powershell_ready()
+
+
+class PowerShellReadinessTests(unittest.TestCase):
+    def test_unavailable_startup_does_not_abort_test_discovery(self):
+        for error in (OSError("runtime unavailable"), subprocess.TimeoutExpired("pwsh", 15)):
+            with self.subTest(error=type(error).__name__), patch.object(shutil, "which", return_value="pwsh"), \
+                    patch.object(subprocess, "run", side_effect=error):
+                self.assertFalse(powershell_ready())
+
+    def test_successful_startup_keeps_real_linker_tests_enabled(self):
+        with patch.object(shutil, "which", return_value="pwsh"), \
+                patch.object(subprocess, "run", return_value=subprocess.CompletedProcess("pwsh", 0, "ready\n", "")):
+            self.assertTrue(powershell_ready())
 
 
 class SkillLinkingTests(unittest.TestCase):

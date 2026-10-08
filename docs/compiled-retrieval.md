@@ -12,6 +12,22 @@ complete evidence set. Search scores do not establish concept identity or
 scientific truth. Missing authored targets remain visible; names do not silently
 resolve them.
 
+Compilation follows the [shared knowledge model](concepts-and-relations.md)
+across papers, mathematical notes, CS notes and other sources. Definitions,
+axioms, precise theorems, algorithms and architectures can be knowledge nodes.
+Propositions, remarks, observations and hypotheses express relations; examples
+and experiments express applications. Preserve existing explicit identities.
+Source-side def/pending sheets are link projections to accepted `knowledge/`
+metadata, not a second store of full definitions.
+
+A source must actually explain a local concept before it is admitted as a new
+node. A merely named, cited or used concept remains a dependency gap, with its
+use site and required meaning. Trace it to an applicable primary defining source
+before linking. Local accounts of inherited concepts preserve their scope and do
+not establish first origin. Shared names cannot close gaps or merge meanings.
+This admission review belongs to compilation; the deterministic retriever
+preserves the caller's reviewed nodes and dependencies.
+
 Review initial evidence by retaining it and adding relevant context first.
 Inspect source, sense and claim branches before removing a reference. Remove
 confirmed wrong senses, out-of-scope content or duplicate support under the same

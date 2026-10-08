@@ -1,0 +1,74 @@
+---
+name: compile-knowledge-sheets
+description: Create or refresh source-scoped definition and pending link sheets to accepted knowledge metadata, and prepare reviewed metadata updates when needed. Use for requested def-sheet or pending-sheet views of mathematical notes, computer-science notes, papers, blogs, or project documents; ordinary source reading does not require this Skill.
+---
+
+# Compile knowledge sheets
+
+Create source-scoped link views of the caller's canonical `knowledge/` metadata.
+Definitions, conditions, evidence, relations and applications belong in accepted
+knowledge records. A definition sheet shows names, types, source locators and
+links to those records; a pending sheet links their supported dependency-gap
+state. Papers are one use case of this general workflow.
+
+Match explanations, prompts and handoffs to the user's language unless another
+language is requested. Retain technical names, identifiers, structured values,
+formulas and raw errors.
+
+## Establish the source and target
+
+Read [references/sheet-contract.md](references/sheet-contract.md) before
+creating or refreshing a view. Establish the caller's source files, source
+version/locators, registered knowledge project, output location and requested
+coverage. Respect existing filenames; otherwise use `def-sheet.md` and
+`pending-sheet.md` beside the selected source or in its caller-selected folder.
+Do not assume a paper corpus, paper-reading vault or prior sheet layout.
+
+Use the smallest coherent source scope and read enough to preserve the complete
+meaning of its selected knowledge. For a requested complete source extraction,
+read substantive proofs, examples, appendices and experiments too. Report actual
+coverage and unavailable material; a partial reading cannot claim completeness.
+
+Use `$query-kgdistiller` to resolve existing identities and accepted records.
+Preserve native Markdown, Typst and LaTeX markers and atomic-entry authority.
+A heading, theorem wrapper, sheet row or navigation reference does not establish
+identity. Reclassification or removal of existing marked identities needs an
+explicit review.
+
+## Prepare metadata when needed
+
+If the selected source needs new or changed metadata, read
+[references/sync-contract.md](references/sync-contract.md). Prepare the complete
+source-grounded proposal in `knowledge/build/reviews/`, including meanings,
+conditions, formal content, evidence, factual relations, applications and
+unresolved decisions. Keep it distinct from committed metadata.
+
+The shared model admits mathematical definitions, axioms and theorems, and
+computer-science algorithms and architectures as knowledge nodes. Propositions
+and remarks express relations; examples and experiments express typed
+applications. The bundled sync contract provides the preservation rules.
+
+Use `$curate-kgdistiller-notes`, `$query-kgdistiller` and
+`$ingest-kgdistiller` within their current supported contracts. Compilation alone
+does not authorize live writes; apply only the concrete reviewed content and
+target already authorized by the user, or obtain confirmation for that scope.
+Do not bootstrap or migrate a knowledge project or edit raw graph files.
+
+Current graph-v1 ingest does not support the full n-ary/application or gap-state
+model. Keep unsupported proposals in the review area, report the exact adapter
+gap and defer them. Do not invent storage formats, commands, accepted entries or
+links to make a sheet look complete. A read-only compiled library is not a write
+API.
+
+## Generate and verify the link views
+
+Generate links only after the corresponding accepted records exist. Verify each
+link against committed metadata and the current source/identity binding. Keep
+sheet rows lightweight; do not copy full definitions or claims into a second
+editable knowledge store. Regenerate projections after a verified update,
+preserving unrelated user annotations and previously created source files.
+
+Return the sheet paths, coverage, linked records, review proposal/receipt paths
+when relevant, and unsupported or unapplied scope. A canonical update requires
+a committed ingest receipt and fresh target verification; a draft or successful
+projection refresh is not evidence of a metadata commit.

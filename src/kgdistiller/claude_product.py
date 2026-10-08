@@ -29,6 +29,7 @@ from .codex_product import (
     _validate_manifest_skills,
     _validate_skill_markdown,
     _validate_workflows,
+    _workflow_resources,
     product_root,
 )
 
@@ -82,7 +83,7 @@ def load_claude_manifest(
 ) -> tuple[Path, dict[str, Any]]:
     root = product_root(explicit_root, manifest_relative=MANIFEST_RELATIVE)
     manifest = _load_json(_join(root, MANIFEST_RELATIVE))
-    if set(manifest) != {
+    if set(manifest) - {"workflow_resources"} != {
         "schema",
         "product",
         "version",
@@ -122,6 +123,7 @@ def load_claude_manifest(
         raise ClaudeProductError(
             "workflow guide contains a host or machine-specific path"
         )
+    _workflow_resources(root, manifest.get("workflow_resources", []))
     _validate_linkers(
         root,
         manifest.get("linkers"),
