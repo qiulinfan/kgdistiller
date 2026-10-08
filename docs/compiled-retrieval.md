@@ -12,9 +12,13 @@ complete evidence set. Search scores do not establish concept identity or
 scientific truth. Missing authored targets remain visible; names do not silently
 resolve them.
 
-Compilation admits a paper-scoped node only when that paper actually states
-and substantively explains the concept, operation, interface, observation,
-claim or hypothesis. A concept merely named, cited or used remains an explicit
+Compilation admits a paper-scoped definition node only when that paper actually
+states and substantively explains a noun-like concept, operation or interface.
+Empirical observations, claims and hypotheses are factual relations, while a
+precise important theorem may be a definition node. The proposed separation,
+n-ary participants and self-relations follow
+[concepts and relations](concepts-and-relations.md). A concept merely named,
+cited or used remains an explicit
 dependency gap, with its use site and required meaning. The compiling agent
 traces that gap through web search and citations to a primary source containing
 the intended definition, formula and conditions, and reviews applicability
