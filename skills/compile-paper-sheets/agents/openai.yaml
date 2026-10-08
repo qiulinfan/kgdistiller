@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compile Paper Sheets"
+  short_description: "Compile upstream definitions and pending dependencies"
+  default_prompt: "Use $compile-paper-sheets to create or revise these paper definition and pending sheets with complete source-grounded factual relations."

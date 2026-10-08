@@ -19,6 +19,10 @@
   ],
   "skills": [
     {
+      "name": "compile-paper-sheets",
+      "path": "skills/compile-paper-sheets"
+    },
+    {
       "name": "curate-kgdistiller-notes",
       "path": "skills/curate-kgdistiller-notes"
     },
@@ -70,6 +74,18 @@
     }
   ],
   "workflows": [
+    {
+      "id": "compile-paper-sheets",
+      "description": "Compile source-scoped concept definitions, factual relations and pending dependencies into upstream paper sheets; prepare supported reviewed synchronization when requested.",
+      "steps": [
+        {
+          "id": "compile",
+          "skill": "compile-paper-sheets",
+          "agent": null,
+          "mode": "author"
+        }
+      ]
+    },
     {
       "id": "curate-notes",
       "description": "Extract a bounded registered note set, resolve identities, and apply one reviewed transaction.",

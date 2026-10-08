@@ -63,13 +63,26 @@ def create_directory_link(source: Path, target: Path) -> None:
 
 
 class CodexProductTests(unittest.TestCase):
+    def setUp(self) -> None:
+        manifest = json.loads(
+            (REPO_ROOT / "workflows" / "manifest.json").read_text(encoding="utf-8")
+        )
+        self.expected_skills = len(manifest["skills"])
+        self.expected_assets = self.expected_skills + len(manifest["agents"]) + 1
+
     def test_manifest_assets_are_portable_and_complete(self) -> None:
         root, manifest = load_manifest(REPO_ROOT)
         self.assertEqual(REPO_ROOT, root)
-        self.assertEqual(7, len(manifest["skills"]))
+        self.assertEqual(
+            {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")},
+            {item["name"] for item in manifest["skills"]},
+        )
         self.assertEqual(4, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
-        self.assertEqual(7, len(manifest["workflows"]))
+        self.assertEqual(
+            len({item["id"] for item in manifest["workflows"]}),
+            len(manifest["workflows"]),
+        )
         result = doctor_product(source_only=True, source_root=REPO_ROOT)
         self.assertEqual("ok", result["status"])
         self.assertEqual("not-checked", result["installation"])
@@ -104,7 +117,7 @@ class CodexProductTests(unittest.TestCase):
 
             linked = link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             self.assertEqual("linked", linked["status"])
-            self.assertEqual(7, linked["skills"])
+            self.assertEqual(self.expected_skills, linked["skills"])
             self.assertEqual(4, linked["agents"])
             self.assertEqual(
                 "user guidance\n", agents_guidance.read_text(encoding="utf-8")
@@ -118,7 +131,7 @@ class CodexProductTests(unittest.TestCase):
             )
 
             state = json.loads((home / STATE_NAME).read_text(encoding="utf-8"))
-            self.assertEqual(12, len(state["assets"]))
+            self.assertEqual(self.expected_assets, len(state["assets"]))
             self.assertTrue(all(item["mode"] == "copy" for item in state["assets"]))
             self.assertTrue(
                 all(
@@ -308,16 +321,16 @@ class CodexProductTests(unittest.TestCase):
             result = link_product(
                 codex_home=home, mode="symlink", source_root=REPO_ROOT
             )
-            self.assertEqual({"symlink": 12}, result["modes"])
+            self.assertEqual({"symlink": self.expected_assets}, result["modes"])
             self.assertTrue((home / "skills" / "query-kgdistiller").is_symlink())
             checked = doctor_product(codex_home=home, source_root=REPO_ROOT)
-            self.assertEqual({"symlink": 12}, checked["modes"])
+            self.assertEqual({"symlink": self.expected_assets}, checked["modes"])
 
     def test_auto_mode_selects_only_supported_link_strategies(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-codex-auto-") as temporary:
             home = Path(temporary) / ".codex"
             linked = link_product(codex_home=home, mode="auto", source_root=REPO_ROOT)
-            self.assertEqual(12, sum(linked["modes"].values()))
+            self.assertEqual(self.expected_assets, sum(linked["modes"].values()))
             self.assertLessEqual(
                 set(linked["modes"]), {"junction", "hardlink", "symlink"}
             )

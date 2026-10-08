@@ -7,6 +7,11 @@
 - Read-only compiled definitions, sense navigation and complete-entry packing
   follow [docs/compiled-retrieval.md](docs/compiled-retrieval.md). Keep all source
   and retrieval content caller-supplied; do not hardcode papers or benchmark answers.
+- Paper definition and pending sheets are upstream inputs; their data-format
+  evolution and canonical synchronization follow
+  [docs/paper-sheets-upstream.md](docs/paper-sheets-upstream.md). Keep `knowledge/`
+  as the visible product interaction root for Obsidian. Preserve complete
+  scientific content and report unsupported adapters instead of partial success.
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

@@ -71,6 +71,7 @@ delegate independent search directions:
 
 | Command (Codex / Claude Code) | Result |
 |---|---|
+| `$compile-paper-sheets` / `/compile-paper-sheets` | Upstream definition and pending sheets, complete factual relations, and a reviewed supported synchronization handoff when requested |
 | `$distill-paper` / `/distill-paper` | HTML-first reading, short section guide, existing links and knowledge candidates in `paper-notes.md` |
 | `$harvest-paper` / `/harvest-paper` | A static review note and native conversation choices, then import of confirmed candidates |
 | `$paper-related-work` / `/paper-related-work` | Parallel searches for cited predecessors, citing successors and bounded online discussion |
@@ -122,13 +123,22 @@ found in the queried store is not proof the user does not know it. A lookup erro
 is not a negative match. Preserve paper/version meaning; shared vocabulary does
 not merge identities. Store mutations remain separately authorized transactions.
 
-All paper Skills are explicit-command-only in both runtimes: `distill-paper`,
+The existing paper Skills are explicit-command-only in both runtimes: `distill-paper`,
 `harvest-paper` and `paper-related-work`. Invoke related-work research
 with `$paper-related-work` (Codex) or `/paper-related-work` (Claude Code).
 Natural-language requests for related papers, predecessors/successors, reviews or
 online discussion do not activate this Skill. Codex sets
 `allow_implicit_invocation: false`; Claude Code sets `disable-model-invocation: true`.
 General note curation, query, ingest and deployment keep their existing triggers.
+
+`compile-paper-sheets` is selected for requests to compile or revise definition
+and pending sheets; ordinary paper reading does not activate it. It preserves
+two authored upstream Markdown files rather than exporting the live graph.
+Both runtime manifests install its Skill and contracts. Its source-to-canonical
+flow and current lossless-adapter gap follow
+[paper sheets as upstream inputs](paper-sheets-upstream.md). The canonical
+interaction root remains `knowledge/` for Obsidian viewing; live writes still
+require supported reviewed transactions.
 
 Related-work has no default wall-clock deadline. Dispatch the requested branches
 and let each complete its bounded research and explanation. Do not create countdown
