@@ -12,6 +12,19 @@ complete evidence set. Search scores do not establish concept identity or
 scientific truth. Missing authored targets remain visible; names do not silently
 resolve them.
 
+Compilation admits a paper-scoped node only when that paper actually states
+and substantively explains the concept, operation, interface, observation,
+claim or hypothesis. A concept merely named, cited or used remains an explicit
+dependency gap, with its use site and required meaning. The compiling agent
+traces that gap through web search and citations to a primary source containing
+the intended definition, formula and conditions, and reviews applicability
+before linking. A locally explained use of an inherited concept may be a local
+node; its scope stays separate from the external canonical definition. External
+definitions must not be attributed to the using paper. An unavailable or
+ambiguous defining source remains a visible gap; a shared name alone cannot
+close it. This admission review belongs to compilation, while the deterministic
+retriever preserves the caller's reviewed nodes and dependencies.
+
 Review initial evidence by retaining it and adding relevant context first.
 Inspect source, sense and claim branches before removing a reference. Remove
 confirmed wrong senses, out-of-scope content or duplicate support under the same
