@@ -30,27 +30,28 @@ records the new canonical name and prior aliases in the optional
 
 ## Node selection
 
-A knowledge node should be independently teachable, searchable, reusable across
-documents, and specific enough to retain a stable identity. Definitions,
-axioms, theorems, propositions, lemmas, and corollaries are common candidates.
+The [shared authoring model](concepts-and-relations.md) applies to papers,
+mathematical notes, CS notes, blogs and other registered knowledge sources.
+Nodes denote independently meaningful definitions, axioms, precise theorems and
+lemmas, algorithms, architectures or other reusable knowledge objects.
+Propositions and remarks express relations; examples and experiments express
+uses/applications. Preserve complete assumptions, assertions and evidence.
 
-Sections, proofs, examples, exercises, equations, figures, and remarks are not
-nodes merely because they exist. An author or Agent must explicitly mark a
-genuinely reusable concept.
+Sections, proofs, exercises, equations and figures do not become nodes merely
+because they exist. A new concept requires explicit reviewed identity markers.
+Existing user-authored markers remain supported; this authoring policy does not
+automatically remove or reclassify legacy nodes.
 
-The paper-reading Skills apply a narrower admission policy: extract concrete
-methods, mechanisms and the specific prerequisite definitions/operators/theorems
-used by their actual steps, with paper-scoped uses and source provenance.
-Default read-only lookup links applicable personal entries; accurate matches are
-treated as mastered and are not retaught. Do not substitute broad subject labels
-for concrete dependencies or infer mastery of entire disciplines. Paper-specific
-method identities retain paper/version-qualified names.
-Keep experimental results, evaluation settings and paper assessments outside the
-knowledge nodes. Same-name terms across papers are retrieval candidates until
-their definitions and operations are compared; reviewed bridges retain separate
-scoped identities.
-This policy does not narrow the general note-authority formats or the engine's
-supported mathematical node types.
+A local entry requires the source to explain its meaning, not to be its first
+historical origin. Same-name source-scoped terms remain retrieval candidates
+until their definitions and conditions have been compared. Unexplained external
+terms remain pending dependencies. Paper extraction uses around twenty concepts
+as a diagnostic, not a general node limit.
+
+Accepted entries live in `knowledge/`; source def sheets are lightweight links
+to those entries. Rich n-ary relations, applications and complete gap-state
+records are authoring targets, not additional graph-v1 delta capabilities.
+Unsupported updates remain review proposals rather than invented graph data.
 
 `field` nodes form a flat overlapping facet layer. `topic` nodes are curated
 clusters. Subject names and directory names do not automatically become graph

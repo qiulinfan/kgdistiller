@@ -7,6 +7,11 @@
     "state": ".kgdistiller-product-links.json"
   },
   "workflow_guide": "docs/product-workflows.md",
+  "workflow_resources": [
+    "docs/concepts-and-relations.md",
+    "docs/paper-sheets-upstream.md",
+    "docs/latex-sources.md"
+  ],
   "linkers": [
     {
       "platform": "posix",
@@ -19,8 +24,8 @@
   ],
   "skills": [
     {
-      "name": "compile-paper-sheets",
-      "path": "skills/compile-paper-sheets"
+      "name": "compile-knowledge-sheets",
+      "path": "skills/compile-knowledge-sheets"
     },
     {
       "name": "curate-kgdistiller-notes",
@@ -75,12 +80,12 @@
   ],
   "workflows": [
     {
-      "id": "compile-paper-sheets",
-      "description": "Compile source-scoped concept definitions, factual relations and pending dependencies into upstream paper sheets; prepare supported reviewed synchronization when requested.",
+      "id": "compile-knowledge-sheets",
+      "description": "Prepare source-grounded knowledge metadata updates and source-scoped definition/pending link views for notes, papers, blogs and project documents; apply only supported reviewed transactions.",
       "steps": [
         {
           "id": "compile",
-          "skill": "compile-paper-sheets",
+          "skill": "compile-knowledge-sheets",
           "agent": null,
           "mode": "author"
         }

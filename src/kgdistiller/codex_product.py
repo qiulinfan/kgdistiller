@@ -96,6 +96,29 @@ def _join(root: Path, relative: PurePosixPath) -> Path:
     return root.joinpath(*relative.parts)
 
 
+def _workflow_resources(root: Path, value: Any) -> list[Path]:
+    if not isinstance(value, list):
+        raise CodexProductError("workflow resources must be an array of relative files")
+    resources: list[Path] = []
+    seen: set[PurePosixPath] = set()
+    for item in value:
+        relative = _safe_relative(item, "workflow resource")
+        if relative in seen:
+            raise CodexProductError(f"duplicate workflow resource: {relative}")
+        path = _join(root, relative)
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError as error:
+            raise CodexProductError(
+                f"workflow resource escapes the product root: {relative}"
+            ) from error
+        if not path.is_file():
+            raise CodexProductError(f"workflow resource is missing: {relative}")
+        seen.add(relative)
+        resources.append(path)
+    return resources
+
+
 def product_root(
     explicit: Path | None = None,
     *,
@@ -405,7 +428,7 @@ def _validate_workflows(
 def load_manifest(explicit_root: Path | None = None) -> tuple[Path, dict[str, Any]]:
     root = product_root(explicit_root)
     manifest = _load_json(root / "workflows" / "manifest.json")
-    if set(manifest) != {
+    if set(manifest) - {"workflow_resources"} != {
         "schema",
         "product",
         "version",
@@ -445,6 +468,7 @@ def load_manifest(explicit_root: Path | None = None) -> tuple[Path, dict[str, An
         raise CodexProductError(
             "workflow guide contains a host or machine-specific path"
         )
+    _workflow_resources(root, manifest.get("workflow_resources", []))
     _validate_linkers(
         root,
         manifest.get("linkers"),
@@ -588,6 +612,7 @@ def _product_inventory_files(
     for item in manifest["linkers"]:
         files.add(_join(root, _safe_relative(item["path"], "linker path")))
     files.add(_join(root, _safe_relative(manifest["workflow_guide"], "workflow guide")))
+    files.update(_workflow_resources(root, manifest.get("workflow_resources", [])))
     missing = [path for path in files if not path.is_file()]
     if missing:
         raise CodexProductError(f"product inventory contains missing files: {missing}")

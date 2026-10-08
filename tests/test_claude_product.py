@@ -47,9 +47,9 @@ def copy_product_root(destination: Path) -> Path:
             target = destination / item["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-    guide = manifest["workflow_guide"]
-    (destination / guide).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(REPO_ROOT / guide, destination / guide)
+    for relative in [manifest["workflow_guide"], *manifest.get("workflow_resources", [])]:
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, destination / relative)
     return destination
 
 
@@ -93,6 +93,9 @@ class ClaudeProductTests(unittest.TestCase):
         _, codex_manifest = load_manifest(REPO_ROOT)
         self.assertEqual(codex_manifest["skills"], claude_manifest["skills"])
         self.assertEqual(codex_manifest["workflows"], claude_manifest["workflows"])
+        self.assertEqual(
+            codex_manifest["workflow_resources"], claude_manifest["workflow_resources"]
+        )
         self.assertEqual(
             codex_manifest["installation"], claude_manifest["installation"]
         )
@@ -192,6 +195,12 @@ class ClaudeProductTests(unittest.TestCase):
                 / "product-workflows.md"
             )
             self.assertTrue(canonical_guide.is_file())
+            _, manifest = load_claude_manifest(REPO_ROOT)
+            for relative in manifest["workflow_resources"]:
+                self.assertEqual(
+                    (REPO_ROOT / relative).read_bytes(),
+                    (canonical_manifest.parents[1] / relative).read_bytes(),
+                )
 
             checked = doctor_claude_product(claude_home=home, source_root=REPO_ROOT)
             self.assertEqual("ok", checked["status"])

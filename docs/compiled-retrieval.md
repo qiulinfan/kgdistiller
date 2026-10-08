@@ -12,22 +12,21 @@ complete evidence set. Search scores do not establish concept identity or
 scientific truth. Missing authored targets remain visible; names do not silently
 resolve them.
 
-Compilation admits a paper-scoped definition node only when that paper actually
-states and substantively explains a noun-like concept, operation or interface.
-Empirical observations, claims and hypotheses are factual relations, while a
-precise important theorem may be a definition node. The proposed separation,
-n-ary participants and self-relations follow
-[concepts and relations](concepts-and-relations.md). A concept merely named,
-cited or used remains an explicit
-dependency gap, with its use site and required meaning. The compiling agent
-traces that gap through web search and citations to a primary source containing
-the intended definition, formula and conditions, and reviews applicability
-before linking. A locally explained use of an inherited concept may be a local
-node; its scope stays separate from the external canonical definition. External
-definitions must not be attributed to the using paper. An unavailable or
-ambiguous defining source remains a visible gap; a shared name alone cannot
-close it. This admission review belongs to compilation, while the deterministic
-retriever preserves the caller's reviewed nodes and dependencies.
+Compilation follows the [shared knowledge model](concepts-and-relations.md)
+across papers, mathematical notes, CS notes and other sources. Definitions,
+axioms, precise theorems, algorithms and architectures can be knowledge nodes.
+Propositions, remarks, observations and hypotheses express relations; examples
+and experiments express applications. Preserve existing explicit identities.
+Source-side def/pending sheets are link projections to accepted `knowledge/`
+metadata, not a second store of full definitions.
+
+A source must actually explain a local concept before it is admitted as a new
+node. A merely named, cited or used concept remains a dependency gap, with its
+use site and required meaning. Trace it to an applicable primary defining source
+before linking. Local accounts of inherited concepts preserve their scope and do
+not establish first origin. Shared names cannot close gaps or merge meanings.
+This admission review belongs to compilation; the deterministic retriever
+preserves the caller's reviewed nodes and dependencies.
 
 Review initial evidence by retaining it and adding relevant context first.
 Inspect source, sense and claim branches before removing a reference. Remove

@@ -7,11 +7,13 @@
 - Read-only compiled definitions, sense navigation and complete-entry packing
   follow [docs/compiled-retrieval.md](docs/compiled-retrieval.md). Keep all source
   and retrieval content caller-supplied; do not hardcode papers or benchmark answers.
-- Paper definition and pending sheets are upstream inputs; their data-format
-  evolution and canonical synchronization follow
-  [docs/paper-sheets-upstream.md](docs/paper-sheets-upstream.md). Keep `knowledge/`
-  as the visible product interaction root for Obsidian. Preserve complete
-  scientific content and report unsupported adapters instead of partial success.
+- The shared personal-research model follows
+  [docs/concepts-and-relations.md](docs/concepts-and-relations.md): knowledge
+  nodes and typed relations, including applications, live in visible `knowledge/`.
+  Source-scoped def/pending sheets are lightweight metadata link projections for
+  papers, notes, blogs and other knowledge files. Preserve native authority,
+  complete scientific content and existing identities; report unsupported
+  adapters instead of claiming partial synchronization is complete.
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

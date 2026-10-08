@@ -5,10 +5,14 @@ description: Extract and review source-grounded knowledge from registered Markdo
 
 # Curate kgdistiller notes
 
-Turn authored notes into a reviewed update. Treat registered markers as
-identity authority, source-grounded Markdown atomic entries as content
-authority, kgdistiller as the deterministic transaction boundary, and generated
-graphs as opaque derived data.
+Turn authored notes into a reviewed update to the caller's canonical
+`knowledge/`, which retains accepted content and semantic state. Treat
+registered native markers as identity authority, source-grounded Markdown
+atomic entries as content authority, and kgdistiller as the deterministic
+transaction boundary. Source-scoped review projections can inform an update;
+definition and pending sheets are lightweight links to committed metadata.
+Full proposals belong in `knowledge/build/reviews/` until accepted; sheets do
+not override these authorities. Generated graphs remain opaque derived data.
 
 Match user-facing explanations, prompts, and handoffs to the user's language
 unless the user requests another language. Keep commands, identifiers,
@@ -47,8 +51,11 @@ Read each selected authority completely. Preserve existing native markers:
 - LaTeX: `\kn{Concept}` and `\knref{Concept}`.
 
 Build one bounded candidate batch containing names, aliases, source locations,
-short evidence, and direct source-supported relations. Do not write entries or
-choose identity from similarity yet.
+short evidence, and supported direct relations. Preserve complete
+relation/application proposals alongside this batch in
+`knowledge/build/reviews/`, using the distinction in the curation contract.
+Preserve existing user-marked identities pending explicit review. Do not write
+entries or choose identity from similarity yet.
 
 Pass the whole batch to `$query-kgdistiller`. Require
 `kgdistiller-graph-comparison-v1` with one `matched`, `ambiguous`, or `unmatched`
@@ -64,6 +71,11 @@ unmatched identity. Any enrichment of a matched identity needs a separate,
 source-grounded human review because the v1 comparison contract does not identify a missing
 portion. Write a compact source-grounded entry for every active authority in
 the selected scope and add only direct semantic edges with concrete evidence.
+Retain complete role bindings, arity, states, conditions and evidence while
+reviewing assertions. Graph-v1 direct edges cannot represent full n-ary or
+application records: retain unsupported proposals in `knowledge/build/reviews/`,
+report the adapter gap and defer their persistence. Never flatten or omit them to
+make a smaller delta appear complete.
 
 Treat `kgdistiller-agent-proposal-v1` only as a digest-bound review package. Its
 `delta_ready` may be false, so build and review the required
@@ -107,5 +119,8 @@ Return the registered source scope, query digests, reviewed identities, source
 and delta paths, committed ingest receipt, validation results, and optional
 static-export receipt. Report deferred ambiguity and separately reviewed
 content conflicts explicitly.
+Identify unsupported relation/application records and any unapplied scope.
+Refresh source-scoped link sheets only from verified committed metadata; never
+fabricate accepted entries or links for deferred proposals.
 Do not claim publication, remote synchronization, or retrieval readiness unless
 the corresponding verified receipt proves it.

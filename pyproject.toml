@@ -39,6 +39,7 @@ packages = ["src/kgdistiller"]
 ".codex/agents" = "kgdistiller/product/.codex/agents"
 ".claude/agents" = "kgdistiller/product/.claude/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
+"docs/concepts-and-relations.md" = "kgdistiller/product/docs/concepts-and-relations.md"
 "docs/paper-sheets-upstream.md" = "kgdistiller/product/docs/paper-sheets-upstream.md"
 "docs/latex-sources.md" = "kgdistiller/product/docs/latex-sources.md"
 "docs/omp-compiled-tools.md" = "kgdistiller/product/docs/omp-compiled-tools.md"
@@ -61,6 +62,7 @@ include = [
   ".codex/agents/*.toml",
   ".claude/agents/*.md",
   "docs/product-workflows.md",
+  "docs/concepts-and-relations.md",
   "docs/paper-sheets-upstream.md",
   "docs/latex-sources.md",
   "docs/omp-compiled-tools.md",

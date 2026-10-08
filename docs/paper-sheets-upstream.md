@@ -1,63 +1,60 @@
-# Paper sheets as knowledge inputs
+# Paper sheets as source-scoped projections
 
-`compile-paper-sheets` establishes two upstream authoring artifacts:
-`paper-def-sheet.md` and `paper-pending-sheet.md`. Their contract is maintained
-with the product Skill and evolves with the consuming knowledge data format.
-
-The paper definition sheet preserves paper-scoped noun-like concepts and their
-definitions, plus a separate factual-relation section with complete roles,
-conditions, measurements, source evidence and epistemic qualifications. The
-pending sheet preserves unexplained terms, use sites, required meanings and
-reviewed external-definition resolutions. The sheets are reviewable source
-material, not a second current knowledge database.
+Papers are one use case of the [shared knowledge model](concepts-and-relations.md).
+`compile-knowledge-sheets` prepares source-grounded metadata updates and produces
+lightweight definition and pending views. Mathematical notes, CS notes, blogs
+and other knowledge files use the same workflow.
 
 ```mermaid
 flowchart LR
-  S[Original paper] --> D[Paper definition sheet]
-  S --> P[Paper pending sheet]
-  D --> R[Reviewed synchronization]
-  P --> R
-  R --> K[knowledge/]
-  K --> V[kgdistiller queries and Obsidian views]
+  S[Knowledge source] --> R[Extraction and identity review]
+  R --> K[knowledge/ metadata]
+  K --> D[Source def sheet: entry links]
+  K --> P[Source pending sheet: gap links]
+  K --> Q[RAG and knowledge views]
+  K --> S
 ```
+
+The diagram shows the intended reviewed flow, not a new synchronization API.
+The source's native markers remain identity authority and its passages remain
+evidence. Accepted entries and semantic state live in `knowledge/`. Source-side
+sheets link to those records; they do not hold another complete editable copy of
+the knowledge. An edit proposed through a sheet updates the metadata through a
+reviewed transaction before the view is regenerated.
 
 ## One visible interaction root
 
-Keep `knowledge/` as the canonical product interaction root so its content and
-views remain available in Obsidian. The sheets stay with the selected paper's
-source material. Do not create an independently edited parallel library under
-`.kgdistiller/` or an experiment output directory.
+Keep `knowledge/` visible for Obsidian. Its entries, registries and previously
+accepted semantic relationships are durable state, alongside generated artifacts.
+Graph generation preserves accepted semantic relationships; this state cannot
+be reconstructed from definition prose alone. Back it up according to the
+portable-store contract. `knowledge/build/` remains transient.
 
-`knowledge/` currently contains durable entries, registries and committed graph
-relationships as well as generated artifacts. Its graph generation preserves
-previously accepted semantic relationships; it is not wholly reconstructible
-from definition prose alone. Back up durable accepted state according to the
-portable-store contract. `knowledge/build/` retains its existing transient role.
+A paper definition view contains explained source-scoped concepts, types, exact
+locations and actual metadata links. Full definitions, formulas, conditions,
+factual assertions and experimental applications belong in knowledge records.
+The pending view identifies unexplained terms and required meanings. A locally
+explained inherited concept can have a scoped entry without claiming first origin.
+Unexplained terms require applicability review against a primary defining source.
 
-## Synchronization contract
+## Reviewed update and projection refresh
 
-Review a source-scoped update including edits, additions, resolved pending
-items and withdrawals. Preserve unrelated papers and user annotations, and
-identify owned contributions by explicit references rather than a name match.
-The target's current supported generation remains active until the reviewed
-update commits and validates. Mark upstream changes awaiting synchronization;
-do not silently serve old content as a completed new update.
+Stage complete new or changed metadata in `knowledge/build/reviews/`. Compare it
+against accepted content and explicit identities; review additions, edits,
+resolved gaps and withdrawals together. Preserve other sources and user
+annotations. Removing one source contribution does not authorize deleting a
+shared identity. A display-name match does not establish ownership.
 
-Use the product's supported write adapter and transactional ingest when it can
-preserve the complete reviewed payload. Keep definition content, formulas,
-conditions, scientific evidence, participant roles, relation scope and pending
-history together. A formatting change to the upstream contract must be paired
-with the consuming model/adapter and round-trip validation. Derived JSON or
-adapter projections are not independently edited source authorities.
+Use supported transactional ingest when it preserves the reviewed payload.
+After a committed receipt and fresh verification, refresh source views with
+links to the actual accepted records. Unsupported full n-ary assertions,
+applications and gap state remain explicit unapplied proposals. Do not fabricate
+entries or gap links, flatten assertions, or call a smaller transaction complete
+synchronization. Existing authored paper files are not automatically replaced.
 
-The caller-supplied compiled library currently provides read-only retrieval;
-it is not the canonical graph's write protocol. First-class n-ary relation
-selection and a lossless sheet-to-canonical adapter are not yet implemented.
-The Skill must preserve unsupported content and identify that adapter gap,
-rather than flattening facts or claiming a smaller transaction synchronized
-the entire sheet. This document establishes the direction and compatibility
-requirement, not an implemented `sheets sync` command.
-
-The detailed upstream records and safe synchronization behavior are in the
-Skill's [sheet contract](../skills/compile-paper-sheets/references/sheet-contract.md)
-and [sync contract](../skills/compile-paper-sheets/references/sync-contract.md).
+The caller-supplied compiled library is read-only retrieval input. A general
+lossless metadata adapter and automatic sheet synchronization are not yet
+implemented. The bundled Skill's
+[sheet contract](../skills/compile-knowledge-sheets/references/sheet-contract.md)
+and [update contract](../skills/compile-knowledge-sheets/references/sync-contract.md)
+state the supported handoff and projection boundary.

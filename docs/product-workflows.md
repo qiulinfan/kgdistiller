@@ -62,6 +62,22 @@ XeLaTeX and explicitly rejects LuaLaTeX. Read the packaged
 [LaTeX source contract](latex-sources.md) for setup, provenance, protocol,
 marker placement and failure behavior.
 
+### Source-scoped knowledge sheets
+
+`$compile-knowledge-sheets` / `/compile-knowledge-sheets` creates or refreshes
+definition and pending link views for papers, mathematical notes, CS notes,
+blogs and project documents. Full knowledge content belongs in accepted
+`knowledge/` metadata; source sheets display names, types, locations and links.
+New or changed content first forms a reviewed metadata proposal and uses supported
+transactional ingest. Unsupported relations, applications or gap state remain
+unapplied proposals. Ordinary source reading does not activate this Skill.
+
+The [shared model](concepts-and-relations.md) defines nodes, relations and
+applications. [Paper sheet projections](paper-sheets-upstream.md) describe the
+paper use case and current adapter limitations. Both runtime manifests install
+the same generic Skill and bundled contracts. `knowledge/` remains visible for
+Obsidian; native source markers and atomic-entry authority remain intact.
+
 ### Independent paper workflows
 
 Ordinary paper reading and explanation need no Skill. The former `read-paper`
@@ -71,7 +87,6 @@ delegate independent search directions:
 
 | Command (Codex / Claude Code) | Result |
 |---|---|
-| `$compile-paper-sheets` / `/compile-paper-sheets` | Upstream definition and pending sheets, complete factual relations, and a reviewed supported synchronization handoff when requested |
 | `$distill-paper` / `/distill-paper` | HTML-first reading, short section guide, existing links and knowledge candidates in `paper-notes.md` |
 | `$harvest-paper` / `/harvest-paper` | A static review note and native conversation choices, then import of confirmed candidates |
 | `$paper-related-work` / `/paper-related-work` | Parallel searches for cited predecessors, citing successors and bounded online discussion |
@@ -131,14 +146,6 @@ online discussion do not activate this Skill. Codex sets
 `allow_implicit_invocation: false`; Claude Code sets `disable-model-invocation: true`.
 General note curation, query, ingest and deployment keep their existing triggers.
 
-`compile-paper-sheets` is selected for requests to compile or revise definition
-and pending sheets; ordinary paper reading does not activate it. It preserves
-two authored upstream Markdown files rather than exporting the live graph.
-Both runtime manifests install its Skill and contracts. Its source-to-canonical
-flow and current lossless-adapter gap follow
-[paper sheets as upstream inputs](paper-sheets-upstream.md). The canonical
-interaction root remains `knowledge/` for Obsidian viewing; live writes still
-require supported reviewed transactions.
 
 Related-work has no default wall-clock deadline. Dispatch the requested branches
 and let each complete its bounded research and explanation. Do not create countdown
