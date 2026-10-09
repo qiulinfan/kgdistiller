@@ -115,6 +115,45 @@ class KnowledgeGraphTest(unittest.TestCase):
             write=True,
         )
 
+    def test_explicit_sheet_projection_preserves_source_discovery_and_frontmatter(self) -> None:
+        sheet = self.chapter.parent / "reading-view.md"
+        original = "---\r\ntitle: Reading\r\n---\r\n\r\n# My view  \r\n\r\n"
+        projected = knowledge.mark_definition_projection(original)
+        self.assertTrue(projected.startswith("---\r\ntitle: Reading\r\n---\r\n"))
+        self.assertEqual(original, projected.replace(knowledge.DEFINITION_SHEET_MARKER + "\r\n", "", 1))
+        sheet.write_bytes(projected.encode())
+        state, _, _ = self.sync()
+        self.assertNotIn(sheet.relative_to(self.repo).as_posix(), state.manifest["source_hashes"])
+        sample = self.chapter.parent / "projection-example.md"
+        sample.write_text("# Format example\n\n```markdown\n" + knowledge.DEFINITION_SHEET_MARKER + "\n```\n", encoding="utf-8")
+        state, _, _ = self.sync()
+        self.assertIn(sample.relative_to(self.repo).as_posix(), state.manifest["source_hashes"])
+        with self.assertRaises(knowledge.KnowledgeError):
+            knowledge.mark_definition_projection("--[[Real definition]]--\n")
+        with self.assertRaises(knowledge.KnowledgeError):
+            knowledge.mark_definition_projection("[[Existing reference]]\n")
+
+    def test_partial_sync_retires_only_empty_source_tracking_for_projection(self) -> None:
+        sheet = self.chapter.parent / "reading-view.md"
+        sheet.write_text("# Reading view\n", encoding="utf-8")
+        state, _, _ = self.sync()
+        key = sheet.relative_to(self.repo).as_posix()
+        self.assertIn(key, state.manifest["source_hashes"])
+        sheet.write_text(knowledge.mark_definition_projection(sheet.read_text()), encoding="utf-8")
+        state, _, _ = self.sync(files=[self.chapter])
+        self.assertNotIn(key, state.manifest["source_hashes"])
+        self.assertTrue(state.nodes["measure-space"]["provenance"]["active"])
+
+    def test_projection_declaration_cannot_hide_existing_knowledge_authority(self) -> None:
+        source = self.chapter.parent / "real.md"
+        source.write_text("--[[Tracked definition]]-- remains source-backed.\n", encoding="utf-8")
+        self.sync()
+        source.write_text(knowledge.mark_definition_projection("# Link view\n"), encoding="utf-8")
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "existing knowledge authority"):
+            self.sync(files=[self.chapter])
+        state = knowledge.load_state(self.graph)
+        self.assertTrue(state.nodes["tracked-definition"]["provenance"]["active"])
+
     def test_only_explicit_kn_becomes_knowledge_and_ref_is_backlink(self) -> None:
         state, _, report = self.sync()
         self.assertEqual(2, report["definitions"])

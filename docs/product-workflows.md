@@ -70,6 +70,10 @@ and supported transactional ingest. The deterministic preparation command builds
 the required transaction artifacts; the caller supplies source-backed content
 and reviewed identity intent. See [single-item capture](../skills/capture-kgdistiller/references/capture-contract.md).
 
+This is the usual writing path for a new article. Full-source distillation is
+separately requested, generally for the user's own notes or familiar material.
+Familiarity does not automatically establish any entry's understanding state.
+
 Entries preserve explicit `understanding` and one layer of
 `pending_prerequisites`. Full reading, successful retrieval and current curation
 do not establish personal mastery. A partial source remains partial and its
@@ -85,6 +89,9 @@ blogs and project documents. Full knowledge content belongs in accepted
 New or changed content first forms a reviewed metadata proposal and uses supported
 transactional ingest. Unsupported relations, applications or gap state remain
 unapplied proposals. Ordinary source reading does not activate this Skill.
+Prepared proposals may appear as clearly labeled draft links with Markdown task
+checkboxes. The user selects them directly in Obsidian, then explicitly requests
+harvest. Accepted rows link to real metadata; a draft link is visibly distinct.
 
 The [shared model](concepts-and-relations.md) defines nodes, relations and
 applications. [Paper sheet projections](paper-sheets-upstream.md) describe the
@@ -102,14 +109,15 @@ delegate independent search directions:
 | Command (Codex / Claude Code) | Result |
 |---|---|
 | `$distill-paper` / `/distill-paper` | HTML-first reading, short section guide, existing links and knowledge candidates in `paper-notes.md` |
-| `$harvest-paper` / `/harvest-paper` | A static review note and native conversation choices, then import of confirmed candidates |
+| `$harvest-paper` / `/harvest-paper` | Scripted synchronization of reviewed def-sheet candidates checked in Obsidian |
 | `$paper-related-work` / `/paper-related-work` | Parallel searches for cited predecessors, citing successors and bounded online discussion |
 
 These commands are independent. Distillation does not start a full explanation,
 translation, candidate graph or research survey. Related-work search needs no
 prepared archive and does not start knowledge lookup. Distillation and related-work
-search do not import knowledge. Harvesting is a separate explicit command with human selection in the
-current conversation; none of these commands repeats a long explanation through agent handoffs.
+search do not import knowledge. Harvesting requires an explicit request after
+human selection in the source def sheet; it does not repeat that selection in
+chat. None of these commands repeats a long explanation through agent handoffs.
 
 Distillation uses a deterministic HTML fetch/text helper (`read_html.py`) so the
 source is not first rewritten by a WebFetch model. The source copy preserves
@@ -155,7 +163,9 @@ is not a negative match. Preserve paper/version meaning; shared vocabulary does
 not merge identities. Store mutations remain separately authorized transactions.
 
 The existing paper Skills are explicit-command-only in both runtimes: `distill-paper`,
-`harvest-paper` and `paper-related-work`. Invoke related-work research
+`harvest-paper` and `paper-related-work`. A direct request to harvest the checked
+sheet is explicit harvest intent; ordinary reading or merely checking a box is
+not. Invoke related-work research
 with `$paper-related-work` (Codex) or `/paper-related-work` (Claude Code).
 Natural-language requests for related papers, predecessors/successors, reviews or
 online discussion do not activate this Skill. Codex sets
@@ -227,29 +237,40 @@ separate from original knowledge notes and short necessary excerpts.
 `distill-paper` produces paper/version-qualified candidates with definitions or
 mechanisms, essential conditions and source locations, in the same short note.
 They are not imported graph nodes; candidate status does not establish personal
-understanding. Distillation ends
-with saved candidates, without opening a review or prompting for import. Only
-`$harvest-paper` / `/harvest-paper` starts that later phase: inspect bounded existing
-matches, write `harvest-review.md`, and show the proposals in the current conversation.
-Use a native question/choice tool when available; otherwise ask in ordinary chat.
-The note holds detailed candidate text and before/after updates. Users can edit it
-or request edits conversationally, then confirm the specific content to import.
-Opening a file, preselected options, an edit timestamp or unanswered question is
-not confirmation. Preserve the actual user decision and exact reviewed revision.
+understanding. Distillation ends with saved candidates, without prompting for
+import. The source's partial or complete def sheet can link to clearly labeled
+review drafts under `knowledge/build/reviews/`. Each selectable draft has an
+ordinary Markdown task checkbox and records the complete proposal, source
+evidence, target and reviewed identity decision. Updates show the relevant
+before/after content. Full definitions remain in the linked metadata or draft,
+not copied into every sheet row.
 
-No custom web form, HTTP server, background listener or browser-specific receipt
-is part of harvesting. A static note survives a stopped agent turn. Headless runs
-without a human input channel should save the review and stop before import;
-`claude -p` does not by itself validate interactive harness UI behavior. The
-runtime's question panel is an optional interaction surface, not a custom node
-editor supplied by the Skill. Existing confirmed decisions need no second approval.
+The user reviews or edits those drafts in Obsidian, checks the desired rows and
+explicitly asks to harvest. That request authorizes the checked content and its
+stated target. Do not ask the user to repeat selection or confirmation in a
+conversation or native question panel. Preparing a sheet or checking a box alone
+does not initiate a transaction. A checked task means selected for import and
+never means `understood`; preserve the separate personal understanding field.
 
-After source/freshness checks, use transactional ingest and report its real receipt
-in conversation. Keep edited node text and structured entry content consistent.
-Changed or unsupported content requires a revised review, not silent rewriting.
+The harvest script parses the selection and prepared payloads, validates source
+and target freshness, applies supported transactional ingest and refreshes
+successful rows to real canonical links. It preserves unchecked rows, unrelated
+annotations and partial coverage. The usual path reuses reviewed content and
+identity decisions without a full source reread or another model extraction.
+The agent prepares reviewed `add`/`update` capture payloads with `harvest prepare`
+during candidate preparation; an explicit harvest runs `harvest apply` on the
+sheet. See the [checkbox contract](../skills/harvest-paper/references/checkbox-contract.md)
+for exact commands and generated task bindings. Ordinary todos are ignored.
+Draft text edits require a targeted re-review before the prepared payload is
+applied; the script rejects mismatches instead of importing stale content.
+The agent handles only actual ambiguity, invalid input, stale content or an
+unsupported operation. A metadata commit followed by a failed sheet refresh is
+recovered from its receipt before another write is attempted.
 
-Native input capabilities: [Codex app-server](https://learn.chatgpt.com/docs/app-server#api-overview)
-and [Claude Code AskUserQuestion](https://code.claude.com/docs/en/tools-reference#askuserquestion-tool-behavior).
+Report the real committed receipt, accepted entry links and any remaining
+unapplied items. Changed or unsupported content requires a revised review, not
+silent rewriting. Harvest requires no frontend, server, background listener or
+runtime-specific selection UI.
 
 Invocation controls follow [OpenAI's Skill metadata](https://learn.chatgpt.com/docs/build-skills#optional-metadata)
 and [Claude Code's invocation controls](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).

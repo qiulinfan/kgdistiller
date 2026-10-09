@@ -18,7 +18,10 @@
   adapters instead of claiming partial synchronization is complete. Source sheets
   may be partial; source coverage, definition availability and user understanding
   are independent. Capture only direct dependency gaps and expand another level
-  only when the user chooses to study it.
+  only when the user chooses to study it. New reading normally uses agile
+  capture; explicit whole-source distillation is typically for authored notes
+  or familiar material. Harvest uses Obsidian def-sheet task selections and
+  deterministic ingest; checking a task does not imply understanding.
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

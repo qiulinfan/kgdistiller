@@ -32,11 +32,32 @@ A row contains only:
 - A real link to the corresponding committed metadata record.
 - Optionally the entry's stated understanding; omission means unknown.
 
+A sheet can also present prepared review candidates as ordinary Markdown task
+items. Label their links as review drafts and point to the complete proposed
+metadata under `knowledge/build/reviews/`. These candidates are distinct from
+accepted rows; source coverage can stay partial in either state. The linked
+draft includes the target, source evidence and reviewed identity decision so
+the user can select the actual change rather than just a title.
+Generate the task bindings with the
+[harvest helper](../../harvest-paper/references/checkbox-contract.md); ordinary
+todos and arbitrary handwritten task rows do not authorize metadata changes.
+
+The user checks desired items in Obsidian and explicitly asks to harvest.
+That combination authorizes synchronization of those reviewed items. No native
+question UI or separate conversational selection is required. The deterministic
+harvest script reads the prepared selections and updates successful rows to real
+canonical metadata links. Preserve unchecked rows and unrelated annotations.
+A checkbox means selected for import, never understood, globally complete or
+already committed. The script's receipt establishes commit state.
+Edits to a linked draft require a targeted re-review and regenerated prepared
+item before apply; changed review text must not silently import an old payload.
+
 Reuse existing explicit references where navigation needs them. Sheet row
 references are navigation handles, not canonical node IDs. Resolve canonical
 identity through the registered native source and query contract; do not infer
 it from headings, row order, names or keyword overlap. Verify that the linked
-record exists and matches the reviewed identity/source binding. Use a relative
+accepted record exists and matches the reviewed identity/source binding; verify
+review links against their draft files instead. Use a relative
 link from the sheet or another caller-supported local link form.
 
 Keep full definitions, formulas, conditions, relation assertions and evidence in

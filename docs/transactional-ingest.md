@@ -66,6 +66,13 @@ nodes, not full-source reading or personal mastery. Entry `understanding` and
 `pending_prerequisites` are independent learning metadata. Omitted learning
 fields survive updates; a supplied empty pending list explicitly clears it.
 
+The checkbox harvest workflow uses a single selected batch with one comparison
+and this same transaction. Preparing the sheet is read-only with respect to
+accepted knowledge. After an explicit harvest request, the script rechecks the
+frozen drafts and selected source/entry state, commits, then refreshes links.
+An interrupted projection refresh is recovered using the original persisted
+request and committed receipt; it does not create a second import.
+
 The [capture preparation helper](../skills/capture-kgdistiller/references/capture-contract.md) constructs one candidate comparison
 and finalized plan/apply requests from a reviewed single-item selection. It uses
 this same transaction boundary and never applies its prepared request itself.

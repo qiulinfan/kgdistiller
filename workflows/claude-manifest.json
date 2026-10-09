@@ -151,7 +151,7 @@
     },
     {
       "id": "harvest-paper",
-      "description": "Explicit command: static candidate review, native conversation selection and editing, then transactional import of confirmed content.",
+      "description": "Explicit harvest request: synchronize reviewed def-sheet tasks checked in Obsidian through the deterministic harvest helper and transactional ingest; preserve unchecked content and understanding.",
       "steps": [
         {
           "id": "review-and-import",

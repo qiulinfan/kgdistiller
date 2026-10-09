@@ -31,6 +31,8 @@ enough local context to preserve the complete meaning of selected knowledge. For
 read substantive proofs, examples, appendices and experiments too. Full-source
 distillation requires an explicit request. Report actual coverage and unavailable
 material; a partial reading cannot claim completeness. Preserve unselected rows.
+Full distillation is usually appropriate for the user's own notes or familiar
+articles. New-article reading normally uses local `$capture-kgdistiller` updates.
 
 Use `$query-kgdistiller` to resolve existing identities and accepted records.
 Preserve native Markdown, Typst and LaTeX markers and atomic-entry authority.
@@ -74,8 +76,14 @@ API.
 
 ## Generate and verify the link views
 
-Generate links only after the corresponding accepted records exist. Verify each
-link against committed metadata and the current source/identity binding. Keep
+Accepted rows link only to records that exist. Verify each metadata link against
+the committed record and current source/identity binding. Review candidates may
+instead have explicitly labeled draft links and Markdown task checkboxes, using
+the `$harvest-paper` and its checkbox contract.
+The user can review those drafts in Obsidian, select
+items and explicitly request `$harvest-paper` for scripted synchronization. That
+request authorizes the selected reviewed content and target; no second chat
+selection is needed. A checkbox never establishes personal understanding. Keep
 sheet rows lightweight; do not copy full definitions or claims into a second
 editable knowledge store. Regenerate projections after a verified update,
 preserving unrelated user annotations and previously created source files.

@@ -429,13 +429,54 @@ def _is_managed_build_path(path: Path) -> bool:
     )
 
 
+DEFINITION_SHEET_MARKER = "<!-- kgdistiller-projection: definition-sheet -->"
+
+
+def _projection_header_offset(text: str) -> int:
+    """Find the first content line after optional Markdown frontmatter."""
+    lines = text.splitlines(keepends=True)
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and lines[index].strip() == "---":
+        end = next((i for i in range(index + 1, len(lines)) if lines[i].strip() in {"---", "..."}), None)
+        if end is not None:
+            index = end + 1
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+    return sum(len(line) for line in lines[:index])
+
+
+def mark_definition_projection(text: str) -> str:
+    """Declare a link view without replacing authored source markers."""
+    if MARKDOWN_WIKILINK_RE.search(text):
+        raise KnowledgeError("a definition sheet projection cannot contain native authority/reference markers")
+    offset = _projection_header_offset(text)
+    if text[offset:].splitlines()[:1] == [DEFINITION_SHEET_MARKER]:
+        return text
+    newline = "\r\n" if "\r\n" in text else "\n"
+    return text[:offset] + DEFINITION_SHEET_MARKER + newline + text[offset:]
+
+
+def is_source_projection(path: Path) -> bool:
+    if path.suffix.lower() != ".md" or not path.is_file():
+        return False
+    text = path.read_text(encoding="utf-8")
+    offset = _projection_header_offset(text)
+    if text[offset:].splitlines()[:1] != [DEFINITION_SHEET_MARKER]:
+        return False
+    if MARKDOWN_WIKILINK_RE.search(text):
+        raise KnowledgeError(f"projection contains native knowledge markers: {path}")
+    return True
+
+
 def expand_source(spec: SourceSpec) -> list[Path]:
     files: set[Path] = set()
     for pattern in spec.patterns:
         files.update(
             path.resolve()
             for path in spec.root.glob(pattern)
-            if path.is_file() and not _is_managed_build_path(path)
+            if path.is_file() and not _is_managed_build_path(path) and not is_source_projection(path)
         )
     return sorted(
         {preferred_source_path(spec, path) for path in files},
@@ -468,7 +509,7 @@ def glob_matches_path(relative: Path, pattern: str) -> bool:
 
 def _source_admits_path(spec: SourceSpec, path: Path) -> bool:
     """Check registry bounds independently of paired source preference."""
-    if _is_managed_build_path(path):
+    if _is_managed_build_path(path) or is_source_projection(path):
         return False
     try:
         relative = path.resolve().relative_to(spec.root)
@@ -1535,6 +1576,8 @@ def include_previous_authorities(
         if owner is None:
             continue
         path = (repo_root / authority).resolve()
+        if is_source_projection(path):
+            continue
         if preferred_source_path(owner, path) == path:
             unique.setdefault(authority, (owner, path))
         selected_keys.add(authority)
@@ -2711,6 +2754,15 @@ def synchronize(
     )
     previous_source_hashes = dict(previous.manifest.get("source_hashes") or {})
     source_hashes = dict(previous_source_hashes)
+    for authority in previous_source_hashes:
+        if is_source_projection(repo_root / authority):
+            if any(
+                (node.get("provenance") or {}).get("authority") == authority
+                and (node.get("provenance") or {}).get("active")
+                for node in previous.nodes.values()
+            ) or any(ref.get("authority") == authority for ref in previous.references):
+                raise KnowledgeError("cannot replace an existing knowledge authority with a sheet projection")
+            source_hashes.pop(authority, None)
     if full:
         source_hashes = {}
     for key in selected_keys:
@@ -3905,6 +3957,17 @@ def parse_args() -> argparse.Namespace:
     propose_command.add_argument("--target-authority")
     propose_command.add_argument("--output", type=Path)
     propose_command.add_argument("--delta-output", type=Path)
+    harvest_command = commands.add_parser("harvest")
+    harvest_commands = harvest_command.add_subparsers(
+        dest="harvest_command", required=True
+    )
+    harvest_prepare = harvest_commands.add_parser("prepare")
+    harvest_prepare.add_argument("input", type=Path)
+    harvest_prepare.add_argument("--sheet", type=Path, required=True)
+    harvest_prepare.add_argument("--output", type=Path, required=True)
+    harvest_apply = harvest_commands.add_parser("apply")
+    harvest_apply.add_argument("sheet", type=Path)
+    harvest_apply.add_argument("--output", type=Path, required=True)
     capture_command = commands.add_parser("capture")
     capture_commands = capture_command.add_subparsers(
         dest="capture_command", required=True
@@ -4452,6 +4515,27 @@ def main() -> int:
                     )
             else:
                 print(pretty_json(validate_agent_snapshot(payload)), end="")
+            return 0
+        if args.command == "harvest":
+            from .harvest import apply_harvest, prepare_harvest
+            from .ingest import IngestPaths
+
+            paths = IngestPaths(
+                repo_root=repo_root,
+                registry=registry,
+                graph_dir=graph_dir,
+                identities=identities,
+                alignments=alignments,
+                typst_registry=typst_registry,
+            )
+            sheet_path = defaults(repo_root, args.sheet)
+            output_path = defaults(repo_root, args.output)
+            if args.harvest_command == "prepare":
+                payload = read_json(defaults(repo_root, args.input), {})
+                result = prepare_harvest(paths, payload, sheet_path, output_path)
+            else:
+                result = apply_harvest(paths, sheet_path, output_path)
+            print(pretty_json(result), end="")
             return 0
         if args.command == "capture":
             from .capture import prepare_capture

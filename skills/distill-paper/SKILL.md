@@ -8,6 +8,11 @@ disable-model-invocation: true
 
 Run only for `$distill-paper` or `/distill-paper`. Ordinary paper explanation
 needs no Skill. Match the user's language; preserve identifiers and raw errors.
+Full distillation is generally for material the user already knows well; their
+own notes use the source-general `$compile-knowledge-sheets` workflow. While
+reading a new article, default to the requested local `$capture-kgdistiller`
+operation. Familiarity guides workflow choice and does not automatically set
+any entry's personal understanding to `understood`.
 Work in the current agent without subagents. Aim to finish within two minutes
 by avoiding duplicate source processing, batching lookups, and writing one concise
 note. Full-paper coverage and correct prerequisite tracing take priority over time.

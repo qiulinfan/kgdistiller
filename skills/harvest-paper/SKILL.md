@@ -1,62 +1,64 @@
 ---
 name: harvest-paper
-description: Explicit command only. Review paper knowledge in a static note, use the current conversation or native question UI to select and edit it, and import only the user's confirmed content.
+description: Explicit command only. Synchronize the user's checked def-sheet review items into accepted knowledge metadata through the deterministic harvest script; use Obsidian Markdown checkboxes for selection.
 disable-model-invocation: true
 ---
 
-# Harvest a paper
+# Harvest checked knowledge
 
-Run only for `$harvest-paper` or `/harvest-paper`, after the user chooses to
-harvest their reading. Distillation never starts harvesting. Match the user's
-language; preserve identifiers, commands and raw errors. Work in the current agent.
+Run for `$harvest-paper`, `/harvest-paper`, or a direct request to harvest the
+checked items. Reading, distillation and checking a box alone never start a
+write. Match the user's language; preserve identifiers, commands and raw errors.
 
-## Prepare a static review
+## Review in the source's def sheet
 
-Read the paper notes and later corrections. Resolve the target vault and native
-authority from context. Query plausible existing entries through bounded read-only
-APIs; inspect definitions and conditions, not raw graph/entry shards. Do not infer
-identity from a name match or a shared paper alone.
+Use the caller's existing partial or complete `def-sheet.md`. Each selectable
+candidate is an ordinary Markdown task item, usable directly in Obsidian. Link
+it to its clearly labeled review draft in `knowledge/build/reviews/`; the draft
+holds the complete proposed content, source evidence, target and reviewed
+add/update identity decision. Already accepted, reused knowledge remains a direct
+canonical link without a new capture payload. For updates, retain enough before/after
+content to make the change reviewable. Accepted rows link to real canonical
+metadata. A draft link never represents an accepted entry.
 
-Save `harvest-review.md` outside the live authority. Give candidates stable short
-labels such as C1/C2 while retaining their original paper/version-qualified IDs.
-For each, show its name, concise mechanism/definition, conditions, source location,
-and proposed add/reuse/update action. Link applicable existing knowledge. For an
-update, show the existing content and the proposed resulting content so the user
-can review what changes and what remains. Include the target at the top.
+When preparing new candidates, read only the requested source scope and compare
+plausible identities through the supported bounded API. Preserve native source
+markers and source-scoped meaning. Do not infer identity from the row label,
+heading, paper title or name match. New-paper reading normally uses
+`$capture-kgdistiller`; whole-source distillation is separately requested, usually
+for the user's own notes or already familiar material.
 
-Show a compact candidate table in the conversation and open the note in the
-runtime's file panel/editor when available. Markdown is the review surface; do
-not start an HTTP server, open a custom web form, or publish an HTML artifact.
-No special JSON review schema, listener or running process is needed.
+The user reviews the linked drafts, checks the desired task boxes,
+then explicitly asks to harvest. That request authorizes the checked content
+and its stated target. Do not repeat selection in chat or a native question UI,
+start a frontend, or ask for the same permission again. If the user only asks
+to prepare a sheet, save it for review and stop. Unchecked rows remain pending.
+The checkbox means selected for synchronization; it never means `understood`.
+If the user edits a draft, perform a targeted re-review and regenerate its
+prepared item before applying. The script detects draft/payload differences;
+never import the old payload while showing revised text.
 
-## Select and edit within the current conversation
+## Run the deterministic synchronization
 
-Use the harness's available native question/choice UI for concise decisions, or
-ordinary conversation when that UI is unavailable. Never assume a particular
-widget, multi-select feature or editable table exists. Long edits belong in the
-note or normal chat, not a series of forced per-node questions. For example:
-"Keep C1 and C3; add this condition to C3; skip C2."
+Read [the checkbox contract](references/checkbox-contract.md) for the exact
+prepare/apply commands. The agent prepares payloads during candidate capture;
+the user only reviews and checks the generated task rows. Let the script parse the checked
+items, load their prepared payloads, validate source and target freshness,
+perform supported transactional ingest and refresh successful metadata links.
+Reuse the prepared source content and identity decisions; do not reread the
+whole paper, regenerate definitions or run a new model extraction on the normal
+path. The agent handles only concrete invalid input, unresolved identity,
+unsupported operations or changed content that requires a new review.
 
-Apply the user's requested edits to the review note and show material changes.
-A user may edit the note directly and then ask to import those selections.
-Only an explicit user response confirming specific content and its target
-permits import. A displayed default, file opening/edit timestamp, timeout or
-silence is not confirmation. Do not ask twice when that exact content is already
-confirmed. If confirmation is pending, end the turn and continue on their reply;
-keep the static note, with no background polling.
+Keep `understanding` and direct `pending_prerequisites` independent of selection.
+Preserve existing understanding unless the user explicitly changed it in the
+reviewed content. Harvest only the prepared direct dependency layer; unresolved
+terms do not trigger recursive search. Apply only the supported reviewed scope.
 
-## Import the confirmed content
-
-Freeze the confirmed selection and exact edited text in local working files,
-including the relevant user decision, review revision and target digests. This is
-a record of actual confirmation, never a replacement for it. Recheck source
-support and target freshness. If a selected edit is unsupported, the target has
-changed materially or identity is unresolved, explain that item and revise its
-review; do not silently replace the user's wording or create a duplicate.
-
-Hand only confirmed native updates to `$ingest-kgdistiller` for plan, inspection
-and apply. Keep node text and structured entry content consistent. Preserve
-paper/version meaning, source provenance and unrelated existing content.
-Unselected candidates remain outside the graph. Report entry links and the real
-committed receipt after fresh status checks; distinguish drafts and plans from
-completed imports. No Git commit, push or publication is implied.
+After a committed receipt, replace each imported candidate's draft link with
+its real canonical entry link and record its synchronized state so rerunning
+does not duplicate it. Preserve unchecked items, unrelated annotations and
+partial source coverage. If a transaction succeeded but sheet refresh failed,
+recover its receipt before retrying the write. Report accepted links, the real
+receipt and any item still awaiting attention. No Git commit, push or publication
+is implied by harvesting knowledge.

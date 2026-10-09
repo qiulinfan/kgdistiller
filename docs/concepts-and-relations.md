@@ -26,6 +26,12 @@ can accompany any knowledge source, not only a paper. They do not create a
 second set of independently edited definitions. Proposed edits made through a
 view must be reviewed and applied to knowledge metadata before the view refreshes.
 
+Before acceptance, a sheet can also show clearly labeled review-draft links as
+Markdown tasks. The user selects those tasks in Obsidian and requests harvest.
+The script imports only the checked reviewed proposals and replaces their draft
+links with real metadata links. Unchecked rows and annotations remain. A
+selection checkbox never changes the separate understanding status.
+
 This preserves both directions: knowledge records link to their source evidence,
 and source sheets link to the knowledge they explain or use. Nodes and complete
 relations supply retrieval content; sheets provide source-based navigation.
@@ -59,10 +65,11 @@ links when a later task actually needs more context.
 
 ## Two writing scopes
 
-Full source distillation is explicitly requested and checks the selected source
+Full source distillation is explicitly requested, generally for the user's own
+notes or familiar material, and checks the selected source
 as a whole, while still allowing unresolved dependencies and incomplete personal
 understanding. `$capture-kgdistiller` saves or updates one selected knowledge item
-while reading. It uses just the local evidence and necessary nearby context,
+while reading new material. It uses just the local evidence and necessary nearby context,
 compares identity once, then hands one bounded transaction to ingest. Additional
 reading or lookup is justified only by a concrete ambiguity or missing defining
 condition. The transaction may leave unrelated sibling entries pending.

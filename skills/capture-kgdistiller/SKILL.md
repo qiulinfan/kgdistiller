@@ -9,6 +9,9 @@ Save the selected knowledge to the caller's established `knowledge/` through one
 bounded transaction. Use the current passage and just enough nearby context to
 preserve its definition and conditions. Do not turn this into a full-source read,
 a survey, a recursive prerequisite search or a new knowledge project.
+This is the usual writing path while reading a new article. Full-source
+distillation is separately requested, typically for the user's own notes or
+already familiar material.
 
 Match the user's language. Retain technical names, formulas, type/status labels,
 structured keys and raw errors.
@@ -77,3 +80,8 @@ committed receipt and return a link to the accepted entry plus its understanding
 and direct remaining gaps. If a source def/pending sheet exists or was requested,
 refresh only its affected rows and retain `partial` coverage. Preserve unrelated
 rows and annotations. A partial sheet need not be filled before capture ends.
+If the user wants to review several items before saving, keep complete proposals
+in the review area and put clearly labeled draft links in the source def sheet.
+They can select those items using Markdown task boxes and explicitly request
+`$harvest-paper` to synchronize them. A checkbox selects an import; it does not
+change understanding.

@@ -8,6 +8,15 @@ curated atomic entry is an Obsidian-compatible Markdown authority under
 `knowledge/entries/`. Generated graph artifacts, in-memory query views, HTML,
 static sites, and managed Obsidian projections never become another authority.
 
+Generated source-side definition sheets declare
+`<!-- kgdistiller-projection: definition-sheet -->` as the first nonblank content
+line after optional YAML frontmatter. Source discovery excludes these views, so
+checkbox edits and canonical-link refreshes do not change authority generations.
+The marker is explicit; filenames do not determine this boundary. Projection
+files cannot contain native identity/reference markers or replace an existing
+active knowledge authority. Existing plain sheets without knowledge occurrences
+can be adopted without treating their old source-file tracking as knowledge.
+
 One authored knowledge name has at most one active definition marker across the
 whole project:
 

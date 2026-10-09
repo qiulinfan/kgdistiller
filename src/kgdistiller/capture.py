@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import tempfile
 import uuid
 from dataclasses import replace
@@ -52,10 +53,10 @@ def _inside(root: Path, value: str | Path, field: str) -> Path:
     return path
 
 
-def prepare_capture(
+def _prepare_capture_record(
     paths: IngestPaths, payload: dict[str, Any], output_dir: Path
 ) -> dict[str, Any]:
-    """Write a candidate, comparison and plan request; never mutate knowledge.
+    """Validate one capture and return its independently reviewed source edit.
 
     ``payload`` selects ``name`` in one registered ``source``, supplies ``text``
     and optional ``entry``, and carries an explicit ``review`` with ``action``
@@ -176,31 +177,132 @@ def prepare_capture(
             "properties": (state.nodes.get(definition.id) or {}).get("properties", {}),
             "provenance": {"authority": relative.as_posix()},
         })
-    request_id = f"capture-{uuid.uuid4().hex}"
-    candidate_node: dict[str, Any] = {
-        "id": definition.id, "type": "knowledge", "label": definition.label,
-        "text": text, "entry": copy.deepcopy(entry),
-        "properties": {"target_id": target_id} if target_id else {},
-        "provenance": {
-            "authority": relative.as_posix(), "line": definition.line,
-            "source_format": definition.source_format,
-        },
+    return {
+        "definition": definition, "scan": scan,
+        "source": relative.as_posix(), "content": content,
+        "expected_source": expected_source,
+        "text": text, "entry": entry, "action": action,
+        "target_id": target_id, "reviewer": reviewer, "evidence": evidence,
+        "base_graph": state.manifest["graph_sha256"],
     }
+
+
+def _merge_source_content(original: str, contents: list[str]) -> str:
+    """Combine independent edits against one base; only EOF insertions may meet."""
+    base = original.splitlines(keepends=True)
+    edits: list[tuple[int, int, list[str]]] = []
+    for content in contents:
+        changed = content.splitlines(keepends=True)
+        for tag, start, end, other_start, other_end in difflib.SequenceMatcher(
+            a=base, b=changed, autojunk=False
+        ).get_opcodes():
+            if tag == "equal":
+                continue
+            replacement = changed[other_start:other_end]
+            for old_start, old_end, _ in edits:
+                shared_append = start == end == old_start == old_end == len(base)
+                intersects = max(start, old_start) < min(end, old_end)
+                touches_insert = (
+                    start == end and old_start <= start <= old_end
+                ) or (old_start == old_end and start <= old_start <= end)
+                if (intersects or touches_insert) and not shared_append:
+                    raise CaptureError("selected source edits overlap; review one unambiguous batch")
+            edits.append((start, end, replacement))
+    result: list[str] = []
+    cursor = 0
+    for start, end, replacement in sorted(edits, key=lambda edit: edit[0]):
+        result.extend(base[cursor:start])
+        result.extend(replacement)
+        cursor = end
+    result.extend(base[cursor:])
+    return "".join(result)
+
+
+def prepare_captures(
+    paths: IngestPaths, payloads: list[dict[str, Any]], output_dir: Path
+) -> dict[str, Any]:
+    """Prepare selected independently reviewed captures as one ingest transaction.
+
+    Every proposed source copy is based on the current source and changes only
+    its selected definition. Nonoverlapping edits combine; separate EOF additions
+    concatenate in caller order. Other overlaps require another review.
+    """
+    if not isinstance(payloads, list) or not payloads:
+        raise CaptureError("captures must be a non-empty array")
+    records = [_prepare_capture_record(paths, payload, output_dir) for payload in payloads]
+    root = paths.repo_root.resolve()
+    output = _inside(root, output_dir, "output_dir")
+    definitions = [record["definition"] for record in records]
+    if len({definition.id for definition in definitions}) != len(definitions):
+        raise CaptureError("selected captures contain duplicate native identities")
+    view = GraphView.load(paths.graph_dir, paths.alignments)
+    if any(record["base_graph"] != view.snapshot["graph"]["sha256"] for record in records):
+        raise CaptureError("knowledge changed while preparing; retry capture")
+    state = load_state(paths.graph_dir)
+    identities = build_identity_index(state, load_identity_registry(paths.identities))
+    specs = load_sources(root, paths.registry)
+    authority_patches = []
+    for source_name in dict.fromkeys(record["source"] for record in records):
+        group = [record for record in records if record["source"] == source_name]
+        source = root / source_name
+        actual = sha256_authority_file(source) if source.is_file() else None
+        if any(record["expected_source"] != actual for record in group):
+            raise CaptureError("source changed while preparing; retry capture")
+        if len(group) == 1:
+            content = group[0]["content"]
+        else:
+            original = source.read_text(encoding="utf-8") if source.is_file() else ""
+            content = _merge_source_content(original, [record["content"] for record in group])
+        owner = unique_source_for_path(specs, source)
+        with tempfile.TemporaryDirectory(prefix=".capture-", dir=output) as temporary:
+            shadow = Path(temporary)
+            staged_source = shadow / source_name
+            staged_source.parent.mkdir(parents=True, exist_ok=True)
+            staged_source.write_text(content, encoding="utf-8")
+            scan = scan_source(shadow, replace(owner, root=shadow / owner.root.relative_to(root)), staged_source, identities)
+        expected = {
+            item.id: item.definition_sha256
+            for item in (scan_source(root, owner, source, identities).definitions if source.is_file() else [])
+        }
+        expected.update({record["definition"].id: record["definition"].definition_sha256 for record in group})
+        found = {item.id: item.definition_sha256 for item in scan.definitions}
+        if scan.errors or found != expected or len(found) != len(scan.definitions):
+            raise CaptureError("combined source changes the reviewed definitions; review the source edits")
+        authority_patches.append({
+            "path": source_name, "operation": "write", "expected_sha256": actual,
+            "content": content, "content_sha256": sha256_text(content),
+            "expected_markers": {
+                "definitions": sorted(found),
+                "references": sorted(item.target for item in scan.references),
+            },
+        })
+    request_id = f"capture-{uuid.uuid4().hex}"
+    candidate_nodes = [{
+        "id": record["definition"].id, "type": "knowledge", "label": record["definition"].label,
+        "text": record["text"], "entry": copy.deepcopy(record["entry"]),
+        "properties": {"target_id": record["target_id"]} if record["target_id"] else {},
+        "provenance": {
+            "authority": record["source"], "line": record["definition"].line,
+            "source_format": record["definition"].source_format,
+        },
+    } for record in records]
     candidate = build_candidate_snapshot({
         "schema": CANDIDATE_SOURCE_SCHEMA, "namespace": request_id,
-        "nodes": [candidate_node], "edges": [], "references": [],
+        "nodes": candidate_nodes, "edges": [], "references": [],
         "diagnostics": {"errors": [], "warnings": []},
     })
     report = compare(view, candidate)
-    result = report["results"][0]
-    if result["status"] == "ambiguous":
-        raise CaptureError("identity is ambiguous; resolve it before capture")
-    if action == "add" and result["status"] != "unmatched":
-        raise CaptureError("identity already exists; review an update or a distinct scoped name")
-    if action == "update" and (
-        result["status"] != "matched" or result["identity_target_id"] != target_id
-    ):
-        raise CaptureError("comparison does not confirm the explicitly reviewed target")
+    results = {result["candidate"]["id"]: result for result in report["results"]}
+    for record in records:
+        result = results[record["definition"].id]
+        if result["status"] == "ambiguous":
+            raise CaptureError("identity is ambiguous; resolve it before capture")
+        if record["action"] == "add" and result["status"] != "unmatched":
+            raise CaptureError("identity already exists; review an update or a distinct scoped name")
+        if record["action"] == "update" and (
+            result["status"] != "matched" or result["identity_target_id"] != record["target_id"]
+        ):
+            raise CaptureError("comparison does not confirm the explicitly reviewed target")
     artifacts = {
         kind: output / f"{request_id}.{kind}.json"
         for kind in ("candidate", "comparison", "plan", "apply")
@@ -218,41 +320,38 @@ def prepare_capture(
             "path": artifacts["comparison"].relative_to(root).as_posix(),
             "sha256": sha256_json(report),
         },
-        "authority_patches": [{
-            "path": relative.as_posix(), "operation": "write",
-            "expected_sha256": expected_source, "content": content,
-            "content_sha256": sha256_text(content),
-            "expected_markers": {
-                "definitions": sorted(item.id for item in scan.definitions),
-                "references": sorted(item.target for item in scan.references),
-            },
-        }],
+        "authority_patches": authority_patches,
         "decisions": [{
-            "candidate_id": definition.id, "action": action,
-            "target_id": definition.id, "evidence": evidence,
-        }],
+            "candidate_id": record["definition"].id, "action": record["action"],
+            "target_id": record["definition"].id, "evidence": record["evidence"],
+        } for record in records],
         "delta": {
             "schema": DELTA_SCHEMA, "remove_nodes": [], "remove_edges": [],
-            "nodes": [{"id": definition.id, "text": text, "entry": entry}], "edges": [],
+            "nodes": [{"id": record["definition"].id, "text": record["text"], "entry": record["entry"]} for record in records],
+            "edges": [],
         },
         "alignment_decisions": [],
         "review": {
-            "status": "reviewed", "reviewer": reviewer, "evidence": [evidence],
-            "provenance": [{"path": relative.as_posix(), "line": definition.line, "kind": "authority"}],
+            "status": "reviewed", "reviewer": ", ".join(dict.fromkeys(record["reviewer"] for record in records)),
+            "evidence": [record["evidence"] for record in records],
+            "provenance": [{"path": record["source"], "line": record["definition"].line, "kind": "authority"} for record in records],
         },
     })
     validate_request(request, mode="plan")
     apply_request = finalize_request({**request, "mode": "apply"})
     validate_request(apply_request, mode="apply")
-    for kind, value in (
-        ("candidate", candidate), ("comparison", report),
-        ("plan", request), ("apply", apply_request),
-    ):
+    for kind, value in (("candidate", candidate), ("comparison", report), ("plan", request), ("apply", apply_request)):
         with artifacts[kind].open("x", encoding="utf-8") as handle:
             handle.write(pretty_json(value))
     return {
-        "status": "prepared", "mode": "plan", "name": definition.label,
-        "source": relative.as_posix(), "action": action,
+        "status": "prepared", "mode": "plan",
         "artifacts": {kind: str(path) for kind, path in artifacts.items()},
-        "counts": {"candidates": 1, "comparisons": 1, "entries": 1},
+        "counts": {"candidates": len(records), "comparisons": 1, "entries": len(records)},
     }
+
+
+def prepare_capture(paths: IngestPaths, payload: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    """Prepare one explicitly reviewed source-backed capture without applying it."""
+    result = prepare_captures(paths, [payload], output_dir)
+    result.update(name=payload["name"].strip(), source=_inside(paths.repo_root.resolve(), payload["source"], "source").relative_to(paths.repo_root.resolve()).as_posix(), action=payload["review"]["action"])
+    return result

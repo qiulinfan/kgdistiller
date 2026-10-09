@@ -1,6 +1,6 @@
 interface:
   display_name: "Harvest Paper"
-  short_description: "Review static candidates and confirm import in conversation"
-  default_prompt: "Use $harvest-paper to show a static candidate review, let me select and edit it in this conversation, and import only my confirmed choices."
+  short_description: "Sync checked Obsidian def-sheet items into knowledge"
+  default_prompt: "Use $harvest-paper to synchronize my checked def-sheet items into accepted knowledge metadata with the deterministic harvest script, preserving unchecked items and personal understanding."
 policy:
   allow_implicit_invocation: false
