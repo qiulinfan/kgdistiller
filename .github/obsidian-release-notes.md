@@ -1,24 +1,38 @@
-kgdistiller Obsidian 0.1.4 adds optional native indexing for a hidden knowledge
-folder. Enable **Index hidden knowledge folder** in settings to include the
-configured folder (default `.knowledge`) in desktop Obsidian's editing, links,
-backlinks, search and native graph. The option is off by default and applies only
-to that folder's subtree. **Rescan hidden knowledge folder** includes a folder
-created after startup.
+kgdistiller Obsidian 0.1.5 reads the hidden `.knowledge/` tree, which is now the
+only kgdistiller knowledge root.
 
-This feature does not move existing `knowledge/` data or change the semantic
-graph path. Hidden indexing uses private desktop adapter APIs and reports
-unsupported environments or a conflict with Hidden Folders Access. Existing
-mobile graph features remain available; hidden indexing is desktop-only.
+- The default **Semantic graph path** is
+  `.knowledge/build/obsidian/semantic-graph.json`. The view reads it through the
+  vault adapter, so it loads even when the path is excluded from native
+  indexing, hidden indexing is off, or the vault runs on mobile. The view
+  re-checks the file when Obsidian regains focus or the active leaf changes and
+  reloads only when it changed. Loads are serialized, so simultaneous focus and
+  leaf-change events reload once; **Reload typed graph** forces a reload.
+- Hidden-folder indexing always targets `.knowledge`; the **Hidden folder
+  path** setting is removed and a stored `hiddenKnowledgeFolder` value is
+  ignored.
+- A new **Excluded folders** setting lists folders under `.knowledge` that stay
+  out of native indexing. The default is `build`, which keeps the transient
+  `.knowledge/build/` tree out of search, links and the native graph. Remove
+  `build` to open review drafts there. Leading and trailing slashes are dropped
+  (`build/` means `build`). Changing the list rescans the folder without writing
+  or deleting any file.
+- The plugin accepts only `kgdistiller-graph-v2` graphs and rejects
+  `kgdistiller-graph-v1`. Re-export the projection from a graph-v2 project
+  with `kgdistiller export obsidian --replace`.
+- Open buttons target accepted entries (`.knowledge/entries/<node-id>.md`) for
+  concepts and the source authority file for sources, definitions and
+  references. Open targets exist only for a graph under the vault-root
+  `.knowledge/` folder. A target outside the vault index produces a notice;
+  enable hidden-folder indexing to open entries.
+- Stored settings are type-checked at load; a wrongly typed value falls back to
+  its default and is named in a notice.
+
+Hidden indexing remains optional, desktop-only and off by default. It uses
+private desktop adapter APIs and reports unsupported environments or a conflict
+with Hidden Folders Access.
 
 The source adapts Hidden Folders Access 2.1.1 at commit
 `de3734d36997a98b81a6a6644984748af1e6b3b0`. Its full original MIT license and
 source attribution ship in the JavaScript bundle alongside the Cytoscape.js
 notices and kgdistiller's own MIT license.
-
-This repository release also includes commit `189194a`: user-registered source
-document types guide knowledge extraction independently of file format or
-knowledge domain. Entries can link directly to native Markdown, Typst and LaTeX
-evidence without requiring a converted Markdown copy, and reviewed node kinds
-survive synchronization. These are Python core source changes in this
-repository; the core version remains 0.4.0. This Obsidian release does not
-publish a new Python package version.

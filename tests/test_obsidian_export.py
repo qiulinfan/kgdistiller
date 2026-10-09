@@ -10,31 +10,30 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import apply_delta, synchronize  # noqa: E402
-from kgdistiller.contracts import sha256_json, validate_contract  # noqa: E402
-from kgdistiller.obsidian_export import (  # noqa: E402
+from kgdistiller.cli import apply_delta, synchronize
+from kgdistiller.contracts import sha256_json, validate_contract
+from kgdistiller.obsidian_export import (
     ObsidianExportError,
     _concept_relatives,
     build_obsidian_projection,
     verify_obsidian_projection,
 )
-from kgdistiller.project import initialize_project  # noqa: E402
+from kgdistiller.project import initialize_project
 
 
 class ObsidianExportTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-obsidian-")
         self.repo = Path(self.temporary.name)
-        self.registry = self.repo / "knowledge/sources.json"
-        self.graph = self.repo / "knowledge/graph"
-        self.identities = self.repo / "knowledge/identities.json"
-        self.alignments = self.repo / "knowledge/alignments.json"
-        self.typst_registry = self.repo / "knowledge/build/knowledge-registry.typ"
-        self.output = self.repo / "knowledge/build/obsidian"
+        self.registry = self.repo / ".knowledge/sources.json"
+        self.graph = self.repo / ".knowledge/graph"
+        self.identities = self.repo / ".knowledge/identities.json"
+        self.alignments = self.repo / ".knowledge/alignments.json"
+        self.typst_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
+        self.output = self.repo / ".knowledge/build/obsidian"
         initialize_project(
             self.repo,
             self.registry,
@@ -517,7 +516,7 @@ class ObsidianExportTest(unittest.TestCase):
 
     def test_symlinked_managed_build_cannot_redirect_output_into_authority(self) -> None:
         authority_before = self.authority.read_bytes()
-        build_root = self.repo / "knowledge/build"
+        build_root = self.repo / ".knowledge/build"
         self.typst_registry.unlink()
         build_root.rmdir()
         try:
@@ -743,9 +742,8 @@ class ObsidianExportTest(unittest.TestCase):
                 obsidian_export,
                 "_render_source_proxy",
                 render_then_change,
-            ):
-                with self.assertRaisesRegex(ObsidianExportError, "out of sync"):
-                    self.build(replace=True)
+            ), self.assertRaisesRegex(ObsidianExportError, "out of sync"):
+                self.build(replace=True)
             current = {
                 path.relative_to(self.output).as_posix(): path.read_bytes()
                 for path in self.output.rglob("*")
@@ -776,9 +774,11 @@ class ObsidianExportTest(unittest.TestCase):
                 raise OSError("injected stage render failure")
             return original_render(node, **kwargs)  # type: ignore[arg-type]
 
-        with patch.object(obsidian_export, "_render_concept", fail_during_stage):
-            with self.assertRaisesRegex(OSError, "injected stage render failure"):
-                self.build(replace=True)
+        with (
+            patch.object(obsidian_export, "_render_concept", fail_during_stage),
+            self.assertRaisesRegex(OSError, "injected stage render failure"),
+        ):
+            self.build(replace=True)
 
         current = {
             path.relative_to(self.output).as_posix(): path.read_bytes()

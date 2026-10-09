@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import math
 import tempfile
 import unittest
@@ -22,13 +21,12 @@ from kgdistiller.contracts import (
 )
 from kgdistiller.json_schema import validate_json_schema
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "contracts"
 FIXTURE_CONTRACTS = (
     "kgdistiller-retrieval-plan-v1",
     "kgdistiller-search-result-v1",
     "kgdistiller-search-execution-v1",
-    "kgdistiller-document-record-v1",
+    "kgdistiller-document-record-v2",
     "kgdistiller-static-export-v1",
     "kgdistiller-site-graph-v1",
 )
@@ -48,12 +46,12 @@ def minimal_store() -> dict:
             "generator": "kgdistiller",
             "layout": "in-place",
             "paths": {
-                "vault": "knowledge/vault.json",
-                "registry": "knowledge/sources.json",
+                "vault": ".knowledge/vault.json",
+                "registry": ".knowledge/sources.json",
                 "identities": None,
-                "alignments": "knowledge/alignments.json",
-                "graph": "knowledge/graph",
-                "documents": "knowledge/documents.jsonl",
+                "alignments": ".knowledge/alignments.json",
+                "graph": ".knowledge/graph",
+                "documents": ".knowledge/documents.jsonl",
             },
             "documents": {
                 "count": 0,
@@ -62,14 +60,13 @@ def minimal_store() -> dict:
             },
             "graph_artifacts": [
                 {
-                    "path": "knowledge/graph/manifest.json",
+                    "path": ".knowledge/graph/manifest.json",
                     "bytes": 1,
                     "sha256": digest,
                 },
-                {"path": "knowledge/graph/nodes.jsonl", "bytes": 0, "sha256": digest},
-                {"path": "knowledge/graph/edges.jsonl", "bytes": 0, "sha256": digest},
-                {"path": "knowledge/graph/references.jsonl", "bytes": 0, "sha256": digest},
-                {"path": "knowledge/graph/diagnostics.json", "bytes": 1, "sha256": digest},
+                {"path": ".knowledge/graph/nodes.jsonl", "bytes": 0, "sha256": digest},
+                {"path": ".knowledge/graph/edges.jsonl", "bytes": 0, "sha256": digest},
+                {"path": ".knowledge/graph/references.jsonl", "bytes": 0, "sha256": digest},
             ],
             "vault_id": "00000000-0000-4000-8000-000000000000",
             "vault_sha256": digest,
@@ -78,7 +75,7 @@ def minimal_store() -> dict:
             "alignment_sha256": digest,
             "graph_sha256": digest,
             "store_generation_sha256": digest,
-            "managed_paths": ["knowledge/documents.jsonl", "knowledge/store.json"],
+            "managed_paths": [".knowledge/documents.jsonl", ".knowledge/store.json"],
         },
         "store_sha256",
     )
@@ -91,7 +88,7 @@ def minimal_query_status() -> dict:
         "snapshot_schema": "kgdistiller-agent-snapshot-v1",
         "namespace": "personal",
         "snapshot_sha256": digest,
-        "graph_schema": "kgdistiller-graph-v1",
+        "graph_schema": "kgdistiller-graph-v2",
         "graph_sha256": digest,
         "generation": digest,
         "counts": {"nodes": 0, "edges": 0, "references": 0},
@@ -111,7 +108,7 @@ def minimal_obsidian() -> dict:
             "schema": "kgdistiller-obsidian-projection-v1",
             "status": "ready",
             "source": {
-                "graph_schema": "kgdistiller-graph-v1",
+                "graph_schema": "kgdistiller-graph-v2",
                 "graph_sha256": digest,
                 "snapshot_sha256": digest,
                 "source_hashes_sha256": digest,
@@ -143,7 +140,7 @@ def minimal_obsidian_graph() -> dict:
         {
             "schema": "kgdistiller-obsidian-graph-v1",
             "source": {
-                "graph_schema": "kgdistiller-graph-v1",
+                "graph_schema": "kgdistiller-graph-v2",
                 "graph_sha256": digest,
                 "snapshot_sha256": digest,
                 "source_hashes_sha256": digest,
@@ -221,7 +218,7 @@ def minimal_obsidian_report() -> dict:
         "artifact_schema": "kgdistiller-obsidian-projection-v1",
         "projection_sha256": digest,
         "source": {
-            "graph_schema": "kgdistiller-graph-v1",
+            "graph_schema": "kgdistiller-graph-v2",
             "graph_sha256": digest,
             "snapshot_sha256": digest,
             "source_hashes_sha256": digest,
@@ -265,7 +262,7 @@ def minimal_static_report() -> dict:
             "published_digest": digest,
         },
         "graph": {
-            "private_schema": "kgdistiller-graph-v1",
+            "private_schema": "kgdistiller-graph-v2",
             "private_sha256": digest,
             "private_counts": counts,
             "public_schema": "kgdistiller-site-graph-v1",
@@ -301,7 +298,6 @@ class ContractTest(unittest.TestCase):
                 "kgdistiller-source-evidence-result-v1",
                 "kgdistiller-source-evidence-context-v1",
                 "kgdistiller-source-reference-result-v1",
-                "kgdistiller-document-record-v1",
                 "kgdistiller-document-record-v2",
                 "kgdistiller-store-v1",
                 "kgdistiller-store-report-v1",
@@ -339,9 +335,11 @@ class ContractTest(unittest.TestCase):
 
     def test_current_invalid_fixtures_fail_closed(self) -> None:
         for discriminator in FIXTURE_CONTRACTS:
-            with self.subTest(schema=discriminator):
-                with self.assertRaises(ContractError):
-                    validate_contract(fixture(discriminator, "invalid"))
+            with (
+                self.subTest(schema=discriminator),
+                self.assertRaises(ContractError),
+            ):
+                validate_contract(fixture(discriminator, "invalid"))
 
     def test_removed_runtime_contracts_are_explicitly_unsupported(self) -> None:
         for discriminator in (
@@ -353,10 +351,13 @@ class ContractTest(unittest.TestCase):
             "legacy-document-upsert-request-v0",
             "legacy-document-ingest-receipt-v0",
             "legacy-document-record-v0",
+            "kgdistiller-document-record-v1",
         ):
-            with self.subTest(schema=discriminator):
-                with self.assertRaisesRegex(ContractError, "unsupported contract schema"):
-                    validate_contract({"schema": discriminator})
+            with (
+                self.subTest(schema=discriminator),
+                self.assertRaisesRegex(ContractError, "unsupported contract schema"),
+            ):
+                validate_contract({"schema": discriminator})
 
     def test_current_wrapper_contracts_reject_unknown_graph_schema(self) -> None:
         cases = [
@@ -371,9 +372,12 @@ class ContractTest(unittest.TestCase):
             target = payload
             for key in path[:-1]:
                 target = target[key]
-            target[path[-1]] = "legacy-graph-v0"
-            with self.subTest(schema=payload["schema"]):
-                with self.assertRaises(ContractError):
+            for graph_schema in ("legacy-graph-v0", "kgdistiller-graph-v1"):
+                target[path[-1]] = graph_schema
+                with (
+                    self.subTest(schema=payload["schema"], graph_schema=graph_schema),
+                    self.assertRaises(ContractError),
+                ):
                     validate_contract(payload)
 
     def test_store_and_obsidian_self_digests_detect_tampering(self) -> None:
@@ -383,9 +387,11 @@ class ContractTest(unittest.TestCase):
             (minimal_obsidian_graph(), "bundle_sha256"),
         ):
             payload["status" if "status" in payload else "generator"] = "tampered"
-            with self.subTest(schema=payload["schema"]):
-                with self.assertRaises(ContractError):
-                    validate_contract(payload)
+            with (
+                self.subTest(schema=payload["schema"]),
+                self.assertRaises(ContractError),
+            ):
+                validate_contract(payload)
             self.assertNotEqual(payload[field], self_digest(payload, field))
 
     def test_obsidian_graph_requires_closed_endpoints_and_exact_counts(self) -> None:
@@ -429,7 +435,7 @@ class ContractTest(unittest.TestCase):
             validate_contract(result)
 
     def test_document_normalization_and_public_edge_privacy_are_enforced(self) -> None:
-        document = fixture("kgdistiller-document-record-v1")
+        document = fixture("kgdistiller-document-record-v2")
         document["format"] = "typst"
         with self.assertRaisesRegex(ContractError, "authority extension"):
             validate_contract(document)
@@ -453,10 +459,12 @@ class ContractTest(unittest.TestCase):
             validate_contract(graph)
 
     def test_schema_loading_and_json_parsing_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            with mock.patch("kgdistiller.contracts.resources.files", return_value=Path(temporary)):
-                with self.assertRaisesRegex(ContractError, "unavailable"):
-                    load_contract_schema("kgdistiller-store-v1")
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch("kgdistiller.contracts.resources.files", return_value=Path(temporary)),
+            self.assertRaisesRegex(ContractError, "unavailable"),
+        ):
+            load_contract_schema("kgdistiller-store-v1")
         with self.assertRaisesRegex(ContractError, "malformed contract JSON"):
             parse_contract_json("{")
         for constant in ("NaN", "Infinity", "-Infinity"):
@@ -477,9 +485,11 @@ class ContractTest(unittest.TestCase):
             ("#/$defs/missing", "unresolved JSON Schema reference"),
             ("https://example.invalid/remote", "unsupported non-local"),
         ):
-            with self.subTest(reference=reference):
-                with self.assertRaisesRegex(ValueError, message):
-                    validate_json_schema({}, {"$ref": reference})
+            with (
+                self.subTest(reference=reference),
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                validate_json_schema({}, {"$ref": reference})
 
 
 if __name__ == "__main__":

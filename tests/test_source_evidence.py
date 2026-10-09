@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import copy
 import hashlib
 import json
@@ -10,7 +11,9 @@ from unittest.mock import patch
 
 from kgdistiller.contracts import canonical_json, sha256_json
 from kgdistiller.source_evidence import (
-    SourceEvidenceError, SourceEvidenceIndex, validate_source_evidence_result,
+    SourceEvidenceError,
+    SourceEvidenceIndex,
+    validate_source_evidence_result,
 )
 
 
@@ -32,9 +35,9 @@ class SourceEvidenceTest(unittest.TestCase):
         return SourceEvidenceIndex.from_manifest(self.path)
 
     def test_table_rows_math_and_algorithm_order_are_preserved(self) -> None:
-        raw=("# Training protocol\n\n| Model | MSE |\n|---|---:|\n| RRR | 0.79 |\n| Semantic | 8.20 |\n\n"
-             "## Algorithm 1\n\n```python\ntarget = softmax((t - C) / tau)\nloss = sum((prediction - target)**2)\n```\n\n"
-             "The domain is $H\\in\\mathbb{R}^{p\\times CN}$.\n").encode()
+        raw=(b"# Training protocol\n\n| Model | MSE |\n|---|---:|\n| RRR | 0.79 |\n| Semantic | 8.20 |\n\n"
+             b"## Algorithm 1\n\n```python\ntarget = softmax((t - C) / tau)\nloss = sum((prediction - target)**2)\n```\n\n"
+             b"The domain is $H\\in\\mathbb{R}^{p\\times CN}$.\n")
         index=self.make_index({"paper":raw})
         tables=[fragment for fragment in index.fragments if fragment["fragment_type"]=="table"]
         algorithms=[fragment for fragment in index.fragments if fragment["fragment_type"]=="algorithm"]
@@ -65,7 +68,7 @@ class SourceEvidenceTest(unittest.TestCase):
     def test_binary_descriptor_preserves_crlf_and_ctrl_z_on_windows(self) -> None:
         from kgdistiller.source_evidence import _read_regular
         path = self.root / "binary.txt"
-        raw = "α\r\nβ\x1aγ\r\n".encode("utf-8")
+        raw = "α\r\nβ\x1aγ\r\n".encode()
         path.write_bytes(raw)
         actual_open, actual_read = os.open, os.read
         binary_flag = getattr(os, "O_BINARY", 0x8000)
@@ -88,9 +91,11 @@ class SourceEvidenceTest(unittest.TestCase):
 
     def test_directory_is_rejected_before_platform_specific_open(self) -> None:
         from kgdistiller.source_evidence import _read_regular
-        with patch("kgdistiller.source_evidence.os.open", side_effect=AssertionError("directory must not be opened")):
-            with self.assertRaisesRegex(SourceEvidenceError, "regular files"):
-                _read_regular(self.root, 1000)
+        with (
+            patch("kgdistiller.source_evidence.os.open", side_effect=AssertionError("directory must not be opened")),
+            self.assertRaisesRegex(SourceEvidenceError, "regular files"),
+        ):
+            _read_regular(self.root, 1000)
 
     def test_replacement_between_stat_and_open_is_rejected(self) -> None:
         from kgdistiller.source_evidence import _read_regular
@@ -102,9 +107,11 @@ class SourceEvidenceTest(unittest.TestCase):
         def changed_open(path, flags):
             return actual_open(replacement, flags)
 
-        with patch("kgdistiller.source_evidence.os.open", side_effect=changed_open):
-            with self.assertRaisesRegex(SourceEvidenceError, "stale-source"):
-                _read_regular(source, 1000)
+        with (
+            patch("kgdistiller.source_evidence.os.open", side_effect=changed_open),
+            self.assertRaisesRegex(SourceEvidenceError, "stale-source"),
+        ):
+            _read_regular(source, 1000)
 
     def test_content_addresses_do_not_promote_headings_to_graph_identity(self) -> None:
         index=self.make_index({"scope":b"# --[[Invented canonical identity]]--\n\ncanonical evidence only\n"})
@@ -151,7 +158,7 @@ class SourceEvidenceTest(unittest.TestCase):
         self.assertTrue(any(fragment["fragment_type"]=="algorithm"for fragment in result["fragments"]))
 
     def test_missing_corrupt_invalid_utf8_and_nonregular_files_fail_explicitly(self) -> None:
-        index=self.make_index({"source":b"alpha source\n"})
+        self.make_index({"source":b"alpha source\n"})
         (self.root/"source.txt").write_bytes(b"different source\n")
         with self.assertRaisesRegex(SourceEvidenceError,"stale-source"):
             SourceEvidenceIndex.from_manifest(self.path)
@@ -170,7 +177,7 @@ class SourceEvidenceTest(unittest.TestCase):
     def test_traversal_symlinks_and_graph_artifacts_are_rejected(self) -> None:
         self.make_index({"source":b"alpha\n"})
         manifest=json.loads(self.path.read_text())
-        for relative in ("../secret.txt","/secret.txt","C:/secret.txt","knowledge/graph/nodes.jsonl","source.txt/../source.txt","./source.txt"):
+        for relative in ("../secret.txt","/secret.txt","C:/secret.txt",".knowledge/graph/nodes.jsonl","source.txt/../source.txt","./source.txt"):
             invalid=copy.deepcopy(manifest);invalid["documents"][0]["path"]=relative;self.path.write_text(json.dumps(invalid))
             with self.assertRaisesRegex(SourceEvidenceError,"unsafe-source-path"):
                 SourceEvidenceIndex.from_manifest(self.path)

@@ -7,27 +7,36 @@ import os
 import sys
 import tempfile
 import unittest
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.contracts import ContractError, sha256_json, validate_contract  # noqa: E402
-from kgdistiller.query import GraphView, load_graph_view, search  # noqa: E402
-from kgdistiller.retrieval import (  # noqa: E402
+from kgdistiller.contracts import (
+    ContractError,
+    sha256_json,
+    validate_contract,
+)
+from kgdistiller.query import GraphView, load_graph_view, search
+from kgdistiller.retrieval import (
     RetrievalError,
     build_context_from_execution,
     execute_retrieval_plan,
 )
-from kgdistiller.semantic_retrieval import (  # noqa: E402
+from kgdistiller.semantic_retrieval import (
     SemanticRankingService,
     SemanticRetrievalError,
     search_document,
 )
-from tests.test_query import fixture_nodes, fixture_snapshot, snapshot_with, write_fixture_graph  # noqa: E402
-from tests.test_retrieval import retrieval_plan  # noqa: E402
+from tests.test_query import (
+    fixture_nodes,
+    fixture_snapshot,
+    snapshot_with,
+    write_fixture_graph,
+)
+from tests.test_retrieval import retrieval_plan
 
 
 class FakeEmbedding:
@@ -226,9 +235,11 @@ class SemanticRetrievalTest(RetrievalFixture):
             self.execute()
 
     def test_model_errors_and_unbound_metadata_do_not_silently_fall_back(self) -> None:
-        with patch.object(self.adapter, "encode_documents", side_effect=RuntimeError("provider private diagnostic")):
-            with self.assertRaisesRegex(RetrievalError, "embedding-model-failed") as caught:
-                self.execute()
+        with (
+            patch.object(self.adapter, "encode_documents", side_effect=RuntimeError("provider private diagnostic")),
+            self.assertRaisesRegex(RetrievalError, "embedding-model-failed") as caught,
+        ):
+            self.execute()
         self.assertNotIn("provider private diagnostic", str(caught.exception))
         self.adapter.descriptor["revision"] = ""
         with self.assertRaisesRegex(RetrievalError, "invalid-model-descriptor"):
@@ -244,9 +255,11 @@ class SemanticRetrievalTest(RetrievalFixture):
             result = encode(documents)
             self.adapter.descriptor["revision"] = "changed"
             return result
-        with patch.object(self.adapter, "encode_documents", side_effect=changing):
-            with self.assertRaisesRegex(RetrievalError, "model-descriptor-changed"):
-                self.execute()
+        with (
+            patch.object(self.adapter, "encode_documents", side_effect=changing),
+            self.assertRaisesRegex(RetrievalError, "model-descriptor-changed"),
+        ):
+            self.execute()
         self.assertEqual([], list(self.cache_dir.iterdir()))
 
     def test_filters_apply_before_fusion_and_namespace_does_not_cross(self) -> None:
@@ -335,9 +348,11 @@ class SemanticRetrievalTest(RetrievalFixture):
                 self.execute(plan, view)
 
     def test_atomic_write_failure_leaves_no_partial_cache(self) -> None:
-        with patch("kgdistiller.semantic_retrieval.os.replace", side_effect=OSError("disk unavailable")):
-            with self.assertRaisesRegex(RetrievalError, "vector-cache-unwritable"):
-                self.execute()
+        with (
+            patch("kgdistiller.semantic_retrieval.os.replace", side_effect=OSError("disk unavailable")),
+            self.assertRaisesRegex(RetrievalError, "vector-cache-unwritable"),
+        ):
+            self.execute()
         self.assertEqual([], [path for path in self.cache_dir.rglob("*") if path.is_file()])
 
     def test_cache_cannot_be_written_into_authority_graph_directory(self) -> None:
@@ -519,25 +534,31 @@ class ExactInputReuseTest(RetrievalFixture):
             value = getter(binding)
             self.adapter.descriptor["revision"] = "changed-during-cache-hit"
             return value
-        with patch.object(self.service._exact_cache, "get", side_effect=model_changes):
-            with self.assertRaisesRegex(SemanticRetrievalError, "model-descriptor-changed"):
-                self.rank()
+        with (
+            patch.object(self.service._exact_cache, "get", side_effect=model_changes),
+            self.assertRaisesRegex(SemanticRetrievalError, "model-descriptor-changed"),
+        ):
+            self.rank()
         self.adapter.descriptor["revision"] = "frozen-v1"
         def source_changes(binding):
             value = getter(binding)
             self.view.nodes["measure"]["text"] += " Changed while using cache."
             return value
-        with patch.object(self.service._exact_cache, "get", side_effect=source_changes):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                self.rank()
+        with (
+            patch.object(self.service._exact_cache, "get", side_effect=source_changes),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            self.rank()
         self.assertEqual([["question"]], self.adapter.query_calls)
 
     def test_stale_loaded_source_is_rejected_before_any_cache_or_inference(self) -> None:
         self.rank()
         self.view.nodes["measure"]["text"] += " Unbound source change."
-        with patch.object(self.service._exact_cache, "get", side_effect=AssertionError("must not read cache")):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                self.rank()
+        with (
+            patch.object(self.service._exact_cache, "get", side_effect=AssertionError("must not read cache")),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            self.rank()
         self.assertEqual(1, self.adapter.document_calls)
 
     def test_source_change_during_document_or_query_inference_is_rejected(self) -> None:
@@ -546,9 +567,11 @@ class ExactInputReuseTest(RetrievalFixture):
             values = encode(documents)
             self.view.nodes["measure"]["text"] += " Changed during document inference."
             return values
-        with patch.object(self.adapter, "encode_documents", side_effect=changes_documents):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                self.rank()
+        with (
+            patch.object(self.adapter, "encode_documents", side_effect=changes_documents),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            self.rank()
         self.assertEqual([], list(self.cache_dir.iterdir()))
         self.view = GraphView.from_snapshot(fixture_snapshot())
         encode_query = self.adapter.encode_queries
@@ -556,9 +579,11 @@ class ExactInputReuseTest(RetrievalFixture):
             values = encode_query(queries)
             self.view.edges[0]["evidence"] += " Changed during query inference."
             return values
-        with patch.object(self.adapter, "encode_queries", side_effect=changes_query):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                self.rank()
+        with (
+            patch.object(self.adapter, "encode_queries", side_effect=changes_query),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            self.rank()
         self.assertEqual([], list((self.cache_dir / "exact-inputs-v1").glob("query-vector-*.json")))
 
     def test_generation_memory_reuses_validation_but_detects_same_size_restored_mtime_edit(self) -> None:
@@ -621,14 +646,18 @@ class ExactInputReuseTest(RetrievalFixture):
             value = getter(binding)
             path.write_bytes(original.replace(b"A measure is defined on a sigma algebra.", b"A measure is redefined on a sigma algebra."))
             return value
-        with patch.object(service._exact_cache, "get", side_effect=changes_source):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                service.rank(view, **kwargs)
+        with (
+            patch.object(service._exact_cache, "get", side_effect=changes_source),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            service.rank(view, **kwargs)
         self.assertEqual(1, self.adapter.document_calls)
         self.assertEqual([["question"]], self.adapter.query_calls)
-        with patch.object(service._exact_cache, "get", side_effect=AssertionError("must not read stale-source cache")):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                service.rank(view, **kwargs)
+        with (
+            patch.object(service._exact_cache, "get", side_effect=AssertionError("must not read stale-source cache")),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            service.rank(view, **kwargs)
         path.write_bytes(original)
         service.rank(view, **kwargs)
         self.assertEqual(1, self.adapter.document_calls)
@@ -640,9 +669,11 @@ class ExactInputReuseTest(RetrievalFixture):
         getter = service._exact_cache.get
         def changes_source(binding):
             value = getter(binding); self.view.nodes["measure"]["text"] += " Changed while using pair cache."; return value
-        with patch.object(service._exact_cache, "get", side_effect=changes_source):
-            with self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"):
-                service.rerank(self.view, **kwargs)
+        with (
+            patch.object(service._exact_cache, "get", side_effect=changes_source),
+            self.assertRaisesRegex(SemanticRetrievalError, "stale-generation"),
+        ):
+            service.rerank(self.view, **kwargs)
         self.assertEqual(1, len(adapter.pair_calls))
 
     def test_pair_scores_persist_reorder_and_rebind_without_model_calls(self) -> None:
@@ -686,9 +717,11 @@ class ExactInputReuseTest(RetrievalFixture):
         getter = service._exact_cache.get
         def change(binding):
             value = getter(binding); adapter.reranker_descriptor["revision"] = "changed"; return value
-        with patch.object(service._exact_cache, "get", side_effect=change):
-            with self.assertRaisesRegex(SemanticRetrievalError, "model-descriptor-changed"):
-                service.rerank(self.view, namespace="personal", question="question", candidate_ids=ids)
+        with (
+            patch.object(service._exact_cache, "get", side_effect=change),
+            self.assertRaisesRegex(SemanticRetrievalError, "model-descriptor-changed"),
+        ):
+            service.rerank(self.view, namespace="personal", question="question", candidate_ids=ids)
         self.assertEqual(1, len(adapter.pair_calls))
 
 
@@ -811,9 +844,11 @@ class RerankerTest(RetrievalFixture):
             values = score(question, documents)
             self.adapter.reranker_descriptor["revision"] = "pair-v2"
             return values
-        with patch.object(self.adapter, "score_pairs", side_effect=changing):
-            with self.assertRaisesRegex(RetrievalError, "model-descriptor-changed"):
-                self.execute()
+        with (
+            patch.object(self.adapter, "score_pairs", side_effect=changing),
+            self.assertRaisesRegex(RetrievalError, "model-descriptor-changed"),
+        ):
+            self.execute()
 
     def test_reranker_candidate_ids_namespace_generation_and_constructor_are_bounded(self) -> None:
         self.enable(candidate_limit=2)
@@ -835,9 +870,11 @@ class RerankerTest(RetrievalFixture):
             values = score(question, documents)
             self.view.nodes["measure"]["text"] = "Changed source."
             return values
-        with patch.object(self.adapter, "score_pairs", side_effect=changing):
-            with self.assertRaisesRegex(RetrievalError, "stale-generation"):
-                self.execute()
+        with (
+            patch.object(self.adapter, "score_pairs", side_effect=changing),
+            self.assertRaisesRegex(RetrievalError, "stale-generation"),
+        ):
+            self.execute()
 
     def test_reranker_filters_and_legacy_mode_keep_original_question_and_candidates(self) -> None:
         nodes = fixture_nodes()

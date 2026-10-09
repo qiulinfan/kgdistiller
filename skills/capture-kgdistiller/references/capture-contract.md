@@ -7,7 +7,7 @@ look up prerequisites, or infer that the reader understands a concept.
 
 ```sh
 kgdistiller --repo-root PROJECT capture prepare CAPTURE.json \
-  --output knowledge/build/captures
+  --output .knowledge/build/captures
 ```
 
 The agent supplies the content and an explicit source-backed identity review:

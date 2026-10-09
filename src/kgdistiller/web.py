@@ -14,7 +14,6 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 from .cli import sha256_text
 from .query import GraphView, load_graph_view
 
-
 _STATIC_ASSETS = {"index.html", "app.js", "style.css"}
 
 
@@ -192,7 +191,7 @@ def create_graph_server(
                 status,
             )
 
-        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        def do_GET(self) -> None:
             host_headers = self.headers.get_all("Host", failobj=[])
             request_authority = (
                 _request_authority(host_headers[0], self.server.server_port)

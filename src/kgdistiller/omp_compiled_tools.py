@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run-local OMP bridge to compiled knowledge and immutable selection submission.
 
 The generic bridge originates in qiulinfan/kgdistiller-experiment at commit
@@ -11,10 +10,9 @@ import argparse
 import copy
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
-
 
 CONFIG_KEYS = {'python_interpreter', 'library_path', 'byte_budget', 'reference_limit', 'search_limit', 'max_response_bytes'}
 

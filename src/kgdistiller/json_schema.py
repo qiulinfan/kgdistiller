@@ -51,7 +51,7 @@ def _resolve_ref(root: dict[str, Any], reference: str) -> dict[str, Any]:
             raise ValueError(f"unresolved JSON Schema reference: {reference}")
         current = current[key]
     if not isinstance(current, dict):
-        raise ValueError(f"JSON Schema reference is not an object: {reference}")
+        raise ValueError(f"JSON Schema reference is not an object: {reference}")  # noqa: TRY004
     return current
 
 

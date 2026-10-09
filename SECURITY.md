@@ -9,7 +9,7 @@ explicit versioned schema and release boundary.
 ## Threat boundary
 
 kgdistiller is a local, single-user engine. It validates bounded registered
-paths, rejects traversal and unsafe graph entry shards, checks one complete
+paths, rejects traversal and unsafe entry authority paths, checks one complete
 JSON generation before exposing a `GraphView`, bounds MCP and query inputs, and
 serializes transactional writers. MCP is read-only. The packaged browser binds
 to `127.0.0.1` by default, rejects misdirected `Host`/`Origin` values, serves
@@ -29,7 +29,7 @@ source evidence or format semantics.
 The user-level vault registry is a machine-local locator, not authority. It
 contains absolute local paths and therefore may disclose directory names; do
 not commit, publish, or copy `~/.kgdistiller/vaults.json` as part of a portable
-store. The portable `knowledge/vault.json` contains only a schema discriminator
+store. The portable `.knowledge/vault.json` contains only a schema discriminator
 and random vault UUID. Registry resolution verifies that this UUID matches
 before a command uses a registered path.
 

@@ -10,15 +10,16 @@ engine code, schemas, frontend assets, Skills and workflow definitions.
 ```text
 personal-knowledge-project/
 ├── notes/                         # original native sources
-└── knowledge/
+└── .knowledge/
     ├── vault.json                 # stable vault identity
     ├── sources.json               # source registration; optional document types
     ├── entries/                   # sole persisted entry bodies, in Markdown
     └── graph/                     # manifest, nodes, edges, reference occurrences
 ```
 
+`.knowledge/` is the only knowledge root; `kgdistiller init` creates it.
 `kgdistiller-graph-v2` reads entry content directly from its bound Markdown
-authorities. It has no entry JSONL shards or persisted diagnostic report.
+authorities and persists no diagnostic report.
 Graph records preserve stable IDs, aliases, orphan state and accepted semantic
 edges; source prose cannot reconstruct all of that state. Keep the graph with
 the sources and entries, rather than deleting it as a cache.
@@ -51,7 +52,7 @@ kgdistiller vault register PROJECT --name research
 kgdistiller --vault research agent status
 ```
 
-The portable `knowledge/vault.json` stores the stable vault UUID and must travel
+The portable `.knowledge/vault.json` stores the stable vault UUID and must travel
 with the repository. The user-level `~/.kgdistiller/vaults.json` stores only
 machine-local name/UUID/absolute-path mappings and the optional default. On
 Windows, `~` is the current user's profile directory. Do not commit the
@@ -68,16 +69,8 @@ as a relocation.
 
 ## Existing graph generations
 
-The loader accepts current public `kgdistiller-graph-v1` and
-`kgdistiller-graph-v2` without changing files. Explicit synchronization or a
-reviewed writer produces v2, removes its own obsolete body shards/diagnostic
-artifact and preserves accepted identities, aliases, relations and source
-content. No manual graph replacement is needed for this transition.
-
-Pre-0.4 graphs and SQLite data remain unsupported. Recover their original
-sources and reviewed metadata with the earlier release, preserve a recoverable
-copy, then rebuild under current registries and review the retained semantics.
-Do not apply that pre-0.4 recovery procedure to a current public v1 graph.
+Only `kgdistiller-graph-v2` is read; every other graph schema, and any
+pre-0.4 graph or SQLite data, fails closed.
 
 ## Create or refresh a store
 
@@ -107,15 +100,11 @@ never contact a network service.
 
 `store verify` validates the manifest schema and digest, safe managed paths,
 canonical inventory, all authority and entry hashes, registries, graph and
-snapshot digests, and the combined store generation. Existing public graph-v1
-snapshots additionally validate their bound legacy shards. It recomputes the document
+snapshot digests, and the combined store generation. It recomputes the document
 inventory from the copied authorities, source registry, and graph rather than
 trusting inventory rows in isolation. Source roots must resolve inside the
 project, including when a registered glob currently matches no files.
-Pre-0.4 stores and graphs are not compatibility inputs. If an old store is the
-only surviving copy, use the earlier release to restore its native authorities
-and reviewed registries, commit that recovery point, then rebuild under the
-current contracts.
+Stores and graphs with other schemas fail closed.
 
 Graph artifact size/digest records use LF-normalized UTF-8 text, matching the
 graph loader and authority hash boundary. A Git checkout that materializes CRLF
@@ -128,16 +117,16 @@ Initialize a private Git repository, commit, add a remote, or push only when
 the user explicitly authorizes that action. Track:
 
 - every registered authority and required authored asset;
-- `knowledge/vault.json`;
-- `knowledge/sources.json`;
-- optional `knowledge/identities.json` and `knowledge/alignments.json`;
-- `knowledge/entries/` and all evidence files they reference, including any
-  explicitly retained older `knowledge/derived/` files;
-- `knowledge/graph/`;
-- `knowledge/documents.jsonl` and `knowledge/store.json` only when maintaining
+- `.knowledge/vault.json`;
+- `.knowledge/sources.json`;
+- optional `.knowledge/identities.json` and `.knowledge/alignments.json`;
+- `.knowledge/entries/` and all evidence files they reference, including any
+  explicitly retained older `.knowledge/derived/` files;
+- `.knowledge/graph/`;
+- `.knowledge/documents.jsonl` and `.knowledge/store.json` only when maintaining
   an actual portable snapshot.
 
-Ignore `knowledge/build/`, transaction staging and journals, plans, receipts,
+Ignore `.knowledge/build/`, transaction staging and journals, plans, receipts,
 credentials, query logs, and generated exports unless an export is deliberately
 adopted by a consumer. Verification proves local integrity, not that a commit
 or remote synchronization happened.
@@ -150,7 +139,7 @@ kgdistiller --repo-root PROJECT agent status
 kgdistiller --repo-root PROJECT agent resolve "KNOWN NAME"
 ```
 
-If `knowledge/store.json` exists and the checkout is used as a portable
+If `.knowledge/store.json` exists and the checkout is used as a portable
 snapshot, run `store verify` before accepting or restoring that snapshot.
 Do not generate a new snapshot merely to make an absent manifest pass a check.
 Do not run `sync` to hide a verification failure. Restore a known-good revision
@@ -181,11 +170,14 @@ upgrade. The installer manages only `main.js`, `manifest.json`, and `styles.css`
 preserves `data.json`, and can leave the enabled-plugin list untouched with
 `--no-enable`.
 Open the knowledge repository root as the editor vault; its registered Markdown
-files and `knowledge/entries/*.md` remain non-lossy authorities. Only the managed default subtree is
-a lossy projection. An external output is a browsing-only vault/projection and
-links back with `file:` URLs. Never register projected output as a source,
-rescan it, or use edits in it to update the graph. Replace the projection from
-the identity and entry authorities instead.
+files and `.knowledge/entries/*.md` remain non-lossy authorities. Only the
+managed default subtree is a lossy projection. The plugin's Open buttons resolve
+entries and authorities against the project that owns the configured graph
+path, so they work only when the graph lies inside that project's
+`.knowledge/` tree in the same vault. An external output links back with
+`file:` URLs and offers no Open targets. Never register projected output as a
+source, rescan it, or use edits in it to update the graph. Replace the
+projection from the identity and entry authorities instead.
 
 The projection contains `semantic-graph.json`, a validated
 `kgdistiller-obsidian-graph-v1` plugin boundary. Native Obsidian keeps using

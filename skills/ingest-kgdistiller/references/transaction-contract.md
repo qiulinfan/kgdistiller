@@ -30,23 +30,22 @@ content-addressed request only after review.
 
 Authority SHA-256 values use UTF-8 text with CRLF/CR normalized to LF. The
 writer holds one bounded lock, revalidates all preconditions, atomically
-installs identity authorities, `knowledge/entries/` Markdown, registries,
+installs identity authorities, `.knowledge/entries/` Markdown, registries,
 generated Typst registry, and the compact `kgdistiller-graph-v2` graph, then returns a canonical
 `kgdistiller-ingest-receipt-v1`.
 
-Reject unknown request, delta, registry, and graph discriminators. Existing
-public graph v1 remains readable; an explicit transaction writes graph v2 while
-preserving IDs, aliases and accepted relationships. Entry bodies persist once
-in Markdown and are hydrated by readers. For unsupported pre-0.4 graphs, use
-the deployment workflow to establish a rollback point and rebuild from native
-authorities and reviewed metadata before preparing a transaction.
+Reject unknown request, delta, registry, and graph discriminators. The writer
+requires `kgdistiller-graph-v2`; if the project reports any other graph schema,
+stop and report it instead of preparing a transaction. A transaction preserves
+IDs, aliases and accepted relationships. Entry bodies persist once in Markdown
+and are hydrated by readers.
 
 Accept success only when `status` is `committed` and after-digests match a fresh
 generation-checked `agent status`. Reusing the exact request is idempotent;
 changing it requires a new canonical digest and review.
 
 Do not compose `apply`, `sync`, or `reconcile` as a substitute, and do not edit
-graph JSON/JSONL, legacy entry shards, identities, or alignments directly.
+raw graph files, identities, or alignments directly.
 Atomic entry Markdown is changed only through the reviewed transaction. There is no
 secondary database, embedding, provider, or materialization boundary. Extraction
 profiles are source-registry data within the existing knowledge project.

@@ -11,7 +11,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-
 REQUEST_SCHEMA = "latex-live-html-request-v1"
 RESULT_SCHEMA = "latex-live-html-result-v1"
 COMMAND_ENV = "KGDISTILLER_LATEX_HTML_COMMAND"
@@ -219,7 +218,7 @@ def export_latex_document(
         request["engine"] = engine
     response = run_converter(request)
     document = response.get("html")
-    if not isinstance(document, str) or not re.search(r"<html(?:\s|>)", document, re.I):
+    if not isinstance(document, str) or not re.search(r"<html(?:\s|>)", document, re.IGNORECASE):
         raise LatexHtmlError("LaTeX HTML converter omitted the complete document")
     if sha256_authority_file(source) != source_hash:
         raise LatexHtmlError("LaTeX source changed during export; retry")

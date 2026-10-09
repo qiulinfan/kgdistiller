@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
-
+from .contracts import MAX_NAMESPACE_LENGTH, sha256_json
 
 ALIGNMENT_SCHEMA = "kgdistiller-alignments-v1"
 ALIGNMENT_REPORT_SCHEMA = "kgdistiller-alignment-report-v1"

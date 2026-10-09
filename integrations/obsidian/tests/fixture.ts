@@ -7,7 +7,7 @@ export async function graphFixture(): Promise<KgGraphContract> {
   const graph: Record<string, unknown> = {
     schema: "kgdistiller-obsidian-graph-v1",
     source: {
-      graph_schema: "kgdistiller-graph-v1",
+      graph_schema: "kgdistiller-graph-v2",
       graph_sha256: "a".repeat(64),
       snapshot_sha256: "b".repeat(64),
       source_hashes_sha256: "c".repeat(64),

@@ -1,6 +1,6 @@
 """Adapter boundaries are tested without importing or downloading model runtimes."""
-from types import SimpleNamespace
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from kgdistiller.adapters.sentence_transformers import SentenceTransformersAdapter

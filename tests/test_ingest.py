@@ -56,7 +56,7 @@ class TransactionalIngestTest(unittest.TestCase):
             "> Alpha is the baseline concept.\n",
             encoding="utf-8",
         )
-        self.registry = self.repo / "knowledge/sources.json"
+        self.registry = self.repo / ".knowledge/sources.json"
         self.registry.parent.mkdir(parents=True)
         self.registry.write_text(
             json.dumps(
@@ -82,13 +82,13 @@ class TransactionalIngestTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.graph = self.repo / "knowledge/graph"
-        self.identities = self.repo / "knowledge/identities.json"
-        self.alignments = self.repo / "knowledge/alignments.json"
+        self.graph = self.repo / ".knowledge/graph"
+        self.identities = self.repo / ".knowledge/identities.json"
+        self.alignments = self.repo / ".knowledge/alignments.json"
         self.alignments.write_text(
             json.dumps(empty_alignment_set()), encoding="utf-8"
         )
-        self.typst_registry = self.repo / "knowledge/build/knowledge-registry.typ"
+        self.typst_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
         self.paths = IngestPaths(
             repo_root=self.repo,
             registry=self.registry,
@@ -109,7 +109,7 @@ class TransactionalIngestTest(unittest.TestCase):
             subject=None,
             write=True,
         )
-        baseline_delta = self.repo / "knowledge/build/baseline.delta.json"
+        baseline_delta = self.repo / ".knowledge/build/baseline.delta.json"
         baseline_delta.parent.mkdir(parents=True, exist_ok=True)
         baseline_delta.write_text(
             json.dumps(
@@ -140,7 +140,7 @@ class TransactionalIngestTest(unittest.TestCase):
         )
 
         self.candidate = self._candidate_snapshot()
-        self.candidate_path = self.repo / "knowledge/build/beta.snapshot.json"
+        self.candidate_path = self.repo / ".knowledge/build/beta.snapshot.json"
         self.candidate_path.write_text(json.dumps(self.candidate), encoding="utf-8")
         target = make_agent_snapshot(load_state(self.graph))
         self.query_report = {
@@ -175,7 +175,7 @@ class TransactionalIngestTest(unittest.TestCase):
             },
             "alignment_report_sha256": "1" * 64,
         }
-        self.query_path = self.repo / "knowledge/build/beta.comparison.json"
+        self.query_path = self.repo / ".knowledge/build/beta.comparison.json"
         self.query_path.write_text(json.dumps(self.query_report), encoding="utf-8")
 
     def tearDown(self) -> None:
@@ -304,7 +304,7 @@ class TransactionalIngestTest(unittest.TestCase):
         backup_root: Path | None = None,
         targets: list[dict] | None = None,
     ) -> tuple[Path, Path]:
-        state_dir = self.repo / "knowledge/build/kgdistiller-ingest"
+        state_dir = self.repo / ".knowledge/build/kgdistiller-ingest"
         expected_backup_root = state_dir / "backups" / request_sha256
         journal_path = state_dir / "journal.json"
         journal_path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,10 +361,10 @@ class TransactionalIngestTest(unittest.TestCase):
         content = sources[suffix]
         self.authority.write_text(content, encoding="utf-8")
         shutil.rmtree(self.graph)
-        shutil.rmtree(self.repo / "knowledge/entries")
+        shutil.rmtree(self.repo / ".knowledge/entries")
         if suffix != ".md":
             evidence = (
-                self.repo / "knowledge/derived/by-source"
+                self.repo / ".knowledge/derived/by-source"
                 / self.authority.relative_to(self.repo).with_suffix(suffix + ".md")
             )
             evidence.parent.mkdir(parents=True, exist_ok=True)
@@ -414,7 +414,7 @@ class TransactionalIngestTest(unittest.TestCase):
         state = load_state(self.graph)
         self.assertEqual("current", state.nodes["alpha"]["properties"]["curation_status"])
         self.assertEqual("pending", state.nodes["beta"]["properties"]["curation_status"])
-        self.assertFalse((self.repo / "knowledge/entries/beta.md").exists())
+        self.assertFalse((self.repo / ".knowledge/entries/beta.md").exists())
         # The normal source-wide check must still report its coverage gap.
         report = curation_report(state, {self.authority.relative_to(self.repo).as_posix()})
         self.assertEqual(["beta"], [item["node"] for item in report["errors"]])
@@ -466,7 +466,7 @@ class TransactionalIngestTest(unittest.TestCase):
         patch = request["authority_patches"][0]
         patch["content"] = "# Reading notes\n\n" + patch["content"]
         patch["content_sha256"] = sha256_text(patch["content"])
-        entry_path = self.repo / "knowledge/entries/alpha.md"
+        entry_path = self.repo / ".knowledge/entries/alpha.md"
         entry_before = entry_path.read_bytes()
         apply_ingest(self.paths, finalize_request(request))
         alpha = load_state(self.graph).nodes["alpha"]
@@ -516,7 +516,7 @@ class TransactionalIngestTest(unittest.TestCase):
             "evidence": "Beta directly uses Gamma in its source explanation.",
         }
         if existing_edge:
-            delta_path = self.repo / "knowledge/build/dependency.delta.json"
+            delta_path = self.repo / ".knowledge/build/dependency.delta.json"
             delta_path.write_text(json.dumps({
                 "schema": DELTA_SCHEMA, "nodes": [], "edges": [edge],
                 "remove_nodes": [], "remove_edges": [],
@@ -643,7 +643,7 @@ class TransactionalIngestTest(unittest.TestCase):
         self.assertEqual(["beta"], first["changes"]["nodes"]["added"])
         receipt_path = (
             self.repo
-            / "knowledge/build/kgdistiller-ingest/receipts"
+            / ".knowledge/build/kgdistiller-ingest/receipts"
             / f"{request['request_sha256']}.json"
         )
         self.assertTrue(receipt_path.is_file())
@@ -661,7 +661,7 @@ class TransactionalIngestTest(unittest.TestCase):
         receipt = apply_ingest(self.paths, request)
         receipt_path = (
             self.repo
-            / "knowledge/build/kgdistiller-ingest/receipts"
+            / ".knowledge/build/kgdistiller-ingest/receipts"
             / f"{request['request_sha256']}.json"
         )
 
@@ -772,7 +772,7 @@ class TransactionalIngestTest(unittest.TestCase):
     def prepare_first_ingest(self, mode: str) -> dict:
         self.authority.write_text("# Fresh notes\n", encoding="utf-8")
         shutil.rmtree(self.graph)
-        shutil.rmtree(self.repo / "knowledge/entries")
+        shutil.rmtree(self.repo / ".knowledge/entries")
         synchronize(
             self.repo,
             self.registry,
@@ -785,7 +785,7 @@ class TransactionalIngestTest(unittest.TestCase):
             subject=None,
             write=True,
         )
-        self.assertFalse((self.repo / "knowledge/entries").exists())
+        self.assertFalse((self.repo / ".knowledge/entries").exists())
         snapshot = make_agent_snapshot(load_state(self.graph))
         self.query_report["target"] = {
             "namespace": "personal",
@@ -802,7 +802,7 @@ class TransactionalIngestTest(unittest.TestCase):
         receipt = apply_ingest(self.paths, request)
 
         self.assertEqual("committed", receipt["status"])
-        self.assertTrue((self.repo / "knowledge/entries/beta.md").is_file())
+        self.assertTrue((self.repo / ".knowledge/entries/beta.md").is_file())
         recover_ingest(self.paths)
         view = GraphView.load(self.graph, self.alignments)
         self.assertEqual(
@@ -824,14 +824,14 @@ class TransactionalIngestTest(unittest.TestCase):
         self.assertEqual("injected-failure", failure.exception.code)
         recover_ingest(self.paths)
         self.assertEqual(before, self.material_hashes())
-        self.assertFalse((self.repo / "knowledge/entries").exists())
+        self.assertFalse((self.repo / ".knowledge/entries").exists())
         self.assertNotIn("beta", load_state(self.graph).nodes)
 
     def test_recovery_restores_only_declared_repository_targets(self) -> None:
         request_sha256 = "a" * 64
         backup_root = (
             self.repo
-            / "knowledge/build/kgdistiller-ingest/backups"
+            / ".knowledge/build/kgdistiller-ingest/backups"
             / request_sha256
         )
         records = [

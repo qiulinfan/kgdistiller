@@ -18,8 +18,10 @@ import math
 import re
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Union
+from typing import Any
 
 from .query import _BM25_B, _BM25_K1
 
@@ -39,7 +41,7 @@ def _tokens(text: str) -> list[str]:
     result: list[str] = []
     for word in _WORD.findall(unicodedata.normalize("NFKC", text).casefold()):
         run = ""
-        previous_cjk: Optional[bool] = None
+        previous_cjk: bool | None = None
         for char in word:
             cjk = unicodedata.name(char, "").startswith(
                 ("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH")
@@ -56,7 +58,7 @@ def _tokens(text: str) -> list[str]:
 def _run_tokens(run: str, cjk: bool) -> list[str]:
     if not cjk:
         return [run]
-    return list(run) + [a + b for a, b in zip(run, run[1:])]
+    return list(run) + [a + b for a, b in pairwise(run)]
 
 
 def _mapping(value: Any, field: str) -> dict[str, Any]:
@@ -258,7 +260,7 @@ class CompiledLibrary:
         return cls(payload)
 
     @classmethod
-    def from_path(cls, path: Union[str, Path]) -> CompiledLibrary:
+    def from_path(cls, path: str | Path) -> CompiledLibrary:
         try:
             with Path(path).open(encoding="utf-8") as stream:
                 payload = json.load(stream)
@@ -275,7 +277,7 @@ class CompiledLibrary:
         result.update(_year(source, field))
         return result
 
-    def _source_context(self, reference: Optional[str]) -> dict[str, Any]:
+    def _source_context(self, reference: str | None) -> dict[str, Any]:
         source = self._sources.get(reference, {})
         return {key: value for key, value in source.items() if key in {"title", "year"}}
 
@@ -520,7 +522,7 @@ class CompiledLibrary:
             "source_corpus_completeness": "not-certified",
         }
 
-    def browse(self, reference: Optional[str] = None, *, kind: Optional[str] = None) -> dict[str, Any]:
+    def browse(self, reference: str | None = None, *, kind: str | None = None) -> dict[str, Any]:
         """Open a source, sense group, layer, or node; ambiguous handles need kind."""
         if reference is None:
             return self.overview()
@@ -563,7 +565,7 @@ class CompiledLibrary:
         heading = copy.deepcopy(self._sources[reference]) if selected_kind == "source" else {"name": reference}
         return {"reference": reference, **heading, "entries": [self._preview(ref) for ref in references], "claims": claims}
 
-    def tree(self, reference: Optional[str] = None, *, kind: Optional[str] = None) -> dict[str, Any]:
+    def tree(self, reference: str | None = None, *, kind: str | None = None) -> dict[str, Any]:
         return self.browse(reference, kind=kind)
 
     def _evidence_entry(self, reference: str) -> dict[str, Any]:

@@ -17,13 +17,15 @@ import shutil
 import stat
 import subprocess
 import uuid
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any
 
 MANIFEST_SCHEMA = "kgdistiller-workflows-v1"
 STATE_SCHEMA = "kgdistiller-codex-links-v1"
 STATE_NAME = ".kgdistiller-product-links.json"
 RECOVERY_ROOT_NAME = ".kgdistiller-product-recovery"
+DEFAULT_MANIFEST_RELATIVE = PurePosixPath("workflows", "manifest.json")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 AGENT_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -122,7 +124,7 @@ def _workflow_resources(root: Path, value: Any) -> list[Path]:
 def product_root(
     explicit: Path | None = None,
     *,
-    manifest_relative: PurePosixPath = PurePosixPath("workflows", "manifest.json"),
+    manifest_relative: PurePosixPath = DEFAULT_MANIFEST_RELATIVE,
 ) -> Path:
     if explicit is not None:
         root = explicit.resolve()
@@ -497,7 +499,7 @@ CODEX_PROFILE = RuntimeProfile(
     command="codex",
     home_environment="CODEX_HOME",
     home_default=".codex",
-    manifest_relative=PurePosixPath("workflows", "manifest.json"),
+    manifest_relative=DEFAULT_MANIFEST_RELATIVE,
     state_schema=STATE_SCHEMA,
     doctor_schema="kgdistiller-codex-doctor-v1",
     home_result_key="codex_home",

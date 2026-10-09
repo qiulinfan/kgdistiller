@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib
+
 import importlib.util
 import io
 import json
@@ -33,7 +33,7 @@ class PaperMarkdownSkillTests(unittest.TestCase):
         return out
 
     def validate(self, out, extra=()):
-        return subprocess.run([sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json'),*extra],capture_output=True,text=True)
+        return subprocess.run([sys.executable,str(SCRIPTS/'validate_paper_markdown.py'),'--manifest',str(out/'source.json'),*extra],check=False, capture_output=True,text=True)
 
     def test_archive_is_text_only_and_queryable_without_pdf_or_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,7 +105,7 @@ class PaperMarkdownSkillTests(unittest.TestCase):
             self.assertEqual(json.loads(default.stdout),json.loads(explicit.stdout))
             self.assertEqual('source-only',json.loads(default.stdout)['scope'])
             old_files={'paper.md':b'Old draft: TODO $x+y$.\n',
-                       'paper_ch.md':'旧稿 $z$。\n'.encode('utf-8')}
+                       'paper_ch.md':'旧稿 $z$。\n'.encode()}
             for name,content in old_files.items():
                 (out/name).write_bytes(content)
             result=self.validate(out)

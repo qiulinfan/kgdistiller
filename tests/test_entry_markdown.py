@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from kgdistiller.cli import KnowledgeError, apply_delta, load_state, synchronize
+from kgdistiller.derivation import install_derivation
 from kgdistiller.entry_markdown import (
     ENTRY_SCHEMA,
     EntryMarkdownError,
@@ -16,7 +17,6 @@ from kgdistiller.entry_markdown import (
     render_entry,
     resolve_entry_source,
 )
-from kgdistiller.derivation import install_derivation
 from kgdistiller.obsidian_export import build_obsidian_projection
 from kgdistiller.project import initialize_project
 from kgdistiller.query import get
@@ -26,11 +26,11 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="kgd-entry-md-")
         self.repo = Path(self.temporary.name)
-        self.registry = self.repo / "knowledge/sources.json"
-        self.graph = self.repo / "knowledge/graph"
-        self.identities = self.repo / "knowledge/identities.json"
-        self.alignments = self.repo / "knowledge/alignments.json"
-        self.typst_registry = self.repo / "knowledge/build/knowledge-registry.typ"
+        self.registry = self.repo / ".knowledge/sources.json"
+        self.graph = self.repo / ".knowledge/graph"
+        self.identities = self.repo / ".knowledge/identities.json"
+        self.alignments = self.repo / ".knowledge/alignments.json"
+        self.typst_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
         initialize_project(
             self.repo,
             self.registry,
@@ -56,7 +56,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         )
 
     def write_delta(self, payload: dict) -> Path:
-        path = self.repo / "knowledge/build/entry.delta.json"
+        path = self.repo / ".knowledge/build/entry.delta.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
@@ -83,7 +83,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         }
         self.apply_entry(entry=entry)
 
-        parsed = parse_entry(self.repo / "knowledge/entries/measure-space.md")
+        parsed = parse_entry(self.repo / ".knowledge/entries/measure-space.md")
         self.assertEqual(entry, parsed["entry"])
         self.sync()
         queried = get(self.graph, "measure-space")["node"]
@@ -91,7 +91,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         self.assertEqual("current", queried["properties"]["curation_status"])
         self.assertNotIn("sigma-algebra", load_state(self.graph).nodes)
 
-        output = self.repo / "knowledge/build/obsidian"
+        output = self.repo / ".knowledge/build/obsidian"
         build_obsidian_projection(
             self.repo,
             output,
@@ -156,9 +156,11 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         )
         path = self.repo / "entry.md"
         for invalid in ("mastered", "", None, True):
-            with self.subTest(value=invalid):
-                with self.assertRaisesRegex(EntryMarkdownError, "understanding"):
-                    normalize_entry({"understanding": invalid})
+            with (
+                self.subTest(value=invalid),
+                self.assertRaisesRegex(EntryMarkdownError, "understanding"),
+            ):
+                normalize_entry({"understanding": invalid})
         for invalid in ("mastered", ""):
             with self.subTest(manual=invalid):
                 path.write_text(content.replace("\nunknown\n", f"\n{invalid}\n"), encoding="utf-8")
@@ -170,7 +172,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
         self.sync()
         self.apply_entry(text="Reviewed summary.", properties={"kind": "custom-concept"})
-        path = self.repo / "knowledge/entries/measure-space.md"
+        path = self.repo / ".knowledge/entries/measure-space.md"
         self.assertEqual("custom-concept", parse_entry(path)["metadata"]["kgd_kind"])
         shutil.rmtree(self.graph)
         state, _, _ = self.sync()
@@ -247,7 +249,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             repo_root=self.repo,
         )
 
-        entry = self.repo / "knowledge/entries/measure-space.md"
+        entry = self.repo / ".knowledge/entries/measure-space.md"
         content = entry.read_text(encoding="utf-8")
         self.assertIn(f'kgd_schema: "{ENTRY_SCHEMA}"', content)
         self.assertIn('kgd_source: "notes/chapter.md"', content)
@@ -261,7 +263,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             manifest["entry_authorities"]["schema"],
         )
         self.assertEqual(
-            "knowledge/entries/measure-space.md",
+            ".knowledge/entries/measure-space.md",
             manifest["entry_authorities"]["entries"][0]["path"],
         )
         self.assertNotIn("text", next(
@@ -281,7 +283,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             }
         )
         apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
-        entry = self.repo / "knowledge/entries/measure-space.md"
+        entry = self.repo / ".knowledge/entries/measure-space.md"
         entry.write_text(
             entry.read_text(encoding="utf-8").replace(
                 "Original summary.", "Edited directly in Obsidian."
@@ -304,9 +306,9 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         authority.write_text(content, encoding="utf-8")
         self.sync()
         self.apply_entry(text="Reviewed summary.")
-        path = self.repo / "knowledge/entries/measure-space.md"
+        path = self.repo / ".knowledge/entries/measure-space.md"
         self.assertEqual(f"notes/chapter.{extension}", parse_entry(path)["metadata"]["kgd_source"])
-        self.assertFalse(any((self.repo / "knowledge/derived").rglob("*.md")))
+        self.assertFalse(any((self.repo / ".knowledge/derived").rglob("*.md")))
 
         # Editing another marked definition does not invalidate this entry.
         authority.write_text(content.replace("Unrelated.", "A revised unrelated definition."), encoding="utf-8")
@@ -342,20 +344,20 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
                 "schema": "kgdistiller-agent-delta-v1",
                 "nodes": [{
                     "id": "measure-space", "text": "Reviewed summary.",
-                    "entry_source": "knowledge/derived/by-source/notes/chapter.typ.md",
+                    "entry_source": ".knowledge/derived/by-source/notes/chapter.typ.md",
                 }],
             }
         )
         with self.assertRaisesRegex(KnowledgeError, "derived/by-source/notes/chapter.typ.md"):
             apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
 
-        derived = self.repo / "knowledge/derived/by-source/notes/chapter.typ.md"
+        derived = self.repo / ".knowledge/derived/by-source/notes/chapter.typ.md"
         derived.parent.mkdir(parents=True, exist_ok=True)
         derived.write_text("# Converted chapter\n", encoding="utf-8")
         apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
         self.apply_entry(text="An updated summary retains its explicit evidence link.")
-        parsed = parse_entry(self.repo / "knowledge/entries/measure-space.md")
-        self.assertEqual("knowledge/derived/by-source/notes/chapter.typ.md", parsed["metadata"]["kgd_source"])
+        parsed = parse_entry(self.repo / ".knowledge/entries/measure-space.md")
+        self.assertEqual(".knowledge/derived/by-source/notes/chapter.typ.md", parsed["metadata"]["kgd_source"])
         derived.write_text("# Changed conversion\n", encoding="utf-8")
 
         state, _, _ = self.sync()
@@ -366,7 +368,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         )
 
     def test_resolve_source_has_no_implicit_derived_fallback(self) -> None:
-        derived = self.repo / "knowledge/derived/by-source/notes/missing.typ.md"
+        derived = self.repo / ".knowledge/derived/by-source/notes/missing.typ.md"
         derived.parent.mkdir(parents=True, exist_ok=True)
         derived.write_text("Old converted evidence.", encoding="utf-8")
         node = {"id": "missing", "provenance": {"authority": "notes/missing.typ"}}
@@ -405,7 +407,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
         self.sync()
         self.apply_entry(text="A durable reviewed entry.", properties={"kind": "custom-concept"})
-        entry = self.repo / "knowledge/entries/measure-space.md"
+        entry = self.repo / ".knowledge/entries/measure-space.md"
         before = entry.read_text()
         metadata = parse_entry(entry)["metadata"]
         authority.rename(self.repo / "notes/renamed.typ")
@@ -439,12 +441,12 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
     def test_explicit_derived_binding_does_not_follow_native_relocation(self) -> None:
         authority = self.repo / "notes/chapter.typ"
         authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
-        derived = self.repo / "knowledge/derived/by-source/notes/chapter.typ.md"
+        derived = self.repo / ".knowledge/derived/by-source/notes/chapter.typ.md"
         derived.parent.mkdir(parents=True, exist_ok=True)
         derived.write_text("Reviewed derived evidence.", encoding="utf-8")
         self.sync()
         self.apply_entry(text="A durable reviewed entry.", entry_source=derived.relative_to(self.repo).as_posix())
-        entry = self.repo / "knowledge/entries/measure-space.md"
+        entry = self.repo / ".knowledge/entries/measure-space.md"
         before = entry.read_text()
         authority.rename(self.repo / "notes/renamed.typ")
         self.sync()
@@ -454,12 +456,12 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         pdf = self.repo / "papers/paper.pdf"
         pdf.parent.mkdir()
         pdf.write_bytes(b"%PDF-version-one")
-        converted = self.repo / "knowledge/build/paper.converted.md"
+        converted = self.repo / ".knowledge/build/paper.converted.md"
         converted.parent.mkdir(parents=True, exist_ok=True)
         converted.write_text("--[[PDF concept]]--\n", encoding="utf-8")
         installed = install_derivation(pdf, converted)
         self.assertEqual(
-            "knowledge/derived/by-source/papers/paper.pdf.md",
+            ".knowledge/derived/by-source/papers/paper.pdf.md",
             installed["output"],
         )
         self.sync()

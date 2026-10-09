@@ -89,7 +89,7 @@ The engine:
 4. synchronizes stable marker-derived identities, applies the reviewed delta
    and mappings, and runs scoped plus global deterministic validation;
 5. backs up every live target and records a recovery journal;
-6. installs identity authorities, `knowledge/entries/`, registries, graph
+6. installs identity authorities, `.knowledge/entries/`, registries, graph
    artifacts, and the generated Typst registry while holding the writer lock;
 7. persists the canonical receipt, marks the journal committed, and removes
    the backup.
@@ -112,7 +112,7 @@ after-digests match a fresh `agent status`.
 
 Reapplying an identical canonical request returns its stored receipt. Reusing a
 `request_id` with different content is rejected. Receipts and journals are
-derived local state below `knowledge/build/` and must not contain authority
+derived local state below `.knowledge/build/` and must not contain authority
 bodies, credentials, or model configuration.
 
 Portable snapshots are optional. For a snapshot explicitly maintained with this

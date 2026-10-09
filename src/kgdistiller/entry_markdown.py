@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import hashlib
 import json
 import os
@@ -12,11 +10,12 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .knowledge_paths import KNOWLEDGE_DIRECTORY, knowledge_root
 
 ENTRY_SCHEMA = "kgdistiller-entry-v1"
 ENTRY_INDEX_SCHEMA = "kgdistiller-entry-index-v1"
-ENTRY_ROOT = Path("knowledge/entries")
-DERIVED_ROOT = Path("knowledge/derived")
+ENTRY_ROOT = Path(KNOWLEDGE_DIRECTORY, "entries")
+DERIVED_ROOT = Path(KNOWLEDGE_DIRECTORY, "derived")
 DERIVED_SOURCE_ROOT = DERIVED_ROOT / "by-source"
 
 _SCALAR_FIELDS = ("summary", "context", "role", "understanding")
@@ -73,21 +72,21 @@ def authority_sha256(path: Path) -> str:
     return hashlib.sha256(_normalized_text(path).encode("utf-8")).hexdigest()
 
 
-def entry_relative(node_id: str, repo_root: Path | None = None) -> Path:
+def entry_relative(node_id: str) -> Path:
     filename = f"{node_id}.md"
     if len(filename.encode("utf-8")) > 255 or node_id.casefold() in _WINDOWS_RESERVED:
         digest = hashlib.sha256(node_id.encode("utf-8")).hexdigest()
         filename = f"_kgd-{node_id[:48]}-{digest}.md"
-    return (knowledge_relative(repo_root, ENTRY_ROOT) if repo_root is not None else ENTRY_ROOT) / filename
+    return ENTRY_ROOT / filename
 
 
-def default_derived_relative(authority: str, repo_root: Path | None = None) -> Path:
+def default_derived_relative(authority: str) -> Path:
     source = Path(authority)
     if source.is_absolute() or ".." in source.parts:
         raise EntryMarkdownError(f"unsafe source authority path: {authority}")
     # Preserve the original suffix in the derived name. ``same.typ`` and
     # ``same.tex`` are distinct authorities and must never collide.
-    return (knowledge_relative(repo_root, DERIVED_SOURCE_ROOT) if repo_root is not None else DERIVED_SOURCE_ROOT) / Path(f"{source.as_posix()}.md")
+    return DERIVED_SOURCE_ROOT / Path(f"{source.as_posix()}.md")
 
 
 def _safe_entry_source(repo_root: Path, value: str) -> tuple[str, Path]:
@@ -390,14 +389,15 @@ def load_entry_authorities(
                     metadata["kgd_source"] == old_source
                     and old_source != new_source
                     and Path(old_source).suffix.casefold() in {".md", ".typ", ".tex"}
-                    and not old_source.startswith(f"{knowledge_relative(repo_root, DERIVED_SOURCE_ROOT).as_posix()}/")
+                    and not old_source.startswith(f"{DERIVED_SOURCE_ROOT.as_posix()}/")
                     and provenance.get("authority") == new_source
                     and provenance.get("active")
                 ):
                     source, _ = _safe_entry_source(repo_root, new_source)
+                    source_line = _frontmatter_line("kgd_source", source)
                     content = re.sub(
                         r"(?m)^kgd_source:.*$",
-                        lambda _: _frontmatter_line("kgd_source", source),
+                        lambda _, line=source_line: line,
                         _normalized_text(path),
                         count=1,
                     )
@@ -460,7 +460,7 @@ def load_entry_authorities(
         direct_native_source = (
             source == provenance_authority
             and Path(provenance_authority).suffix.casefold() in {".md", ".typ", ".tex"}
-            and not source.startswith(f"{knowledge_relative(repo_root, DERIVED_SOURCE_ROOT).as_posix()}/")
+            and not source.startswith(f"{DERIVED_SOURCE_ROOT.as_posix()}/")
         )
         entry = parsed["entry"]
         node["entry"] = entry

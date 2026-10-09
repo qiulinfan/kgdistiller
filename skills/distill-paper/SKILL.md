@@ -123,7 +123,7 @@ reteaching it. Missing is not proof the user does not know it. Never accept an
 error, unread candidate, truncated definition or changed generation as a verified
 negative/match; only retrieve the specific missing evidence when needed. Describe absence as
 not found in this bounded lookup, not absence from an entire subject in the vault.
-Do not read raw graph or entry shards or expand into whole-subject inventories.
+Do not read raw graph files or expand into whole-subject inventories.
 
 ## Write once, then finish
 

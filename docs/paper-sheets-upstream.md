@@ -8,7 +8,7 @@ and other knowledge files use the same workflow.
 ```mermaid
 flowchart LR
   S[Knowledge source] --> R[Extraction and identity review]
-  R --> K[knowledge/ metadata]
+  R --> K[.knowledge/ metadata]
   K --> D[Source def sheet: entry links]
   K --> P[Source pending sheet: gap links]
   K --> Q[RAG and knowledge views]
@@ -21,19 +21,21 @@ partial coverage and preserve other rows. Full source distillation is explicitly
 requested; even a complete extraction does not certify the user's understanding.
 
 The source's native markers remain identity authority and its passages remain
-evidence. Accepted entries and semantic state live in `knowledge/`. Source-side
+evidence. Accepted entries and semantic state live in `.knowledge/`. Source-side
 sheets link to those records; they do not hold another complete editable copy of
 the knowledge. An edit proposed through a sheet updates the metadata through a
 reviewed transaction before the view is regenerated.
 
-## One visible interaction root
+## One hidden knowledge root
 
-Keep `knowledge/` visible for Obsidian. Its entries, registries and previously
+Knowledge lives in the hidden `.knowledge/` tree. Obsidian sees it through the
+kgdistiller plugin's hidden-folder indexing, which keeps `build/` out of the
+native index by default. Its entries, registries and previously
 accepted semantic relationships are durable state, alongside generated artifacts.
 Graph generation preserves accepted semantic relationships; this state cannot
 be reconstructed from definition prose alone. Preserve it with the entry authorities and sources in the knowledge project's
 backup. Portable snapshots are an optional packaging operation, not a second
-required daily store. `knowledge/build/` remains transient.
+required daily store. `.knowledge/build/` remains transient.
 
 A paper definition view contains explained source-scoped concepts, types, exact
 locations and actual metadata links. Full definitions, formulas, conditions,
@@ -48,7 +50,7 @@ Unexplained terms require applicability review against a primary defining source
 
 ## Reviewed update and projection refresh
 
-Stage complete new or changed metadata in `knowledge/build/reviews/`. Compare it
+Stage complete new or changed metadata in `.knowledge/build/reviews/`. Compare it
 against accepted content and explicit identities; review additions, edits,
 resolved gaps and withdrawals together. Preserve other sources and user
 annotations. Removing one source contribution does not authorize deleting a

@@ -16,8 +16,12 @@ from typing import Any
 from .contracts import ContractError, canonical_json, sha256_json
 from .json_schema import validate_json_schema
 from .source_evidence import (
-    PROJECTION, RESULT_SCHEMA, SourceEvidenceError, _finalize_budget,
-    _projection, validate_source_evidence_result,
+    PROJECTION,
+    RESULT_SCHEMA,
+    SourceEvidenceError,
+    _finalize_budget,
+    _projection,
+    validate_source_evidence_result,
 )
 
 CONTEXT_SCHEMA = "kgdistiller-source-evidence-context-v1"

@@ -14,9 +14,10 @@ import math
 import re
 import unicodedata
 from collections import Counter, defaultdict, deque
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .alignment import (
     ALIGNMENT_REPORT_SCHEMA,
@@ -30,17 +31,15 @@ from .alignment import (
 from .cli import (
     DELTA_SCHEMA,
     GRAPH_SCHEMA,
-    GRAPH_SCHEMAS,
-    _entry_repo_root,
     ID_RE,
     MAX_NODE_ID_LENGTH,
     MAX_NODE_LABEL_LENGTH,
     KnowledgeError,
+    _entry_repo_root,
     load_state,
     make_agent_snapshot,
 )
 from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
-
 
 SNAPSHOT_SCHEMA = "kgdistiller-agent-snapshot-v1"
 QUERY_STATUS_SCHEMA = "kgdistiller-query-status-v1"
@@ -159,7 +158,7 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(claimed, str) or not _SHA256_RE.fullmatch(claimed) or digest != claimed:
         raise QueryError("snapshot digest does not match its content")
     graph = snapshot.get("graph")
-    if not isinstance(graph, dict) or graph.get("schema") not in GRAPH_SCHEMAS:
+    if not isinstance(graph, dict) or graph.get("schema") != GRAPH_SCHEMA:
         raise QueryError(f"snapshot has no valid {GRAPH_SCHEMA} graph identity")
     if set(graph) != {"schema", "sha256", "counts"}:
         raise QueryError("snapshot graph identity has unsupported fields")
@@ -303,13 +302,12 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             raise QueryError("snapshot semantic edge has no evidence")
         if "evidence" in edge and not isinstance(edge["evidence"], str):
             raise QueryError("snapshot edge evidence must be a string")
-        if relation == "contains":
-            if (node_types[source], node_types[target]) not in {
-                ("field", "topic"),
-                ("field", "knowledge"),
-                ("topic", "knowledge"),
-            }:
-                raise QueryError("snapshot contains edge has invalid node types")
+        if relation == "contains" and (node_types[source], node_types[target]) not in {
+            ("field", "topic"),
+            ("field", "knowledge"),
+            ("topic", "knowledge"),
+        }:
+            raise QueryError("snapshot contains edge has invalid node types")
         edge_keys.add(key)
     reference_ids: set[str] = set()
     for reference in rows["references"]:
@@ -427,7 +425,7 @@ class GraphView:
         *,
         max_attempts: int = 3,
         repo_root: Path | None = None,
-    ) -> "GraphView":
+    ) -> GraphView:
         graph_dir = Path(graph_dir)
         if max_attempts < 1 or max_attempts > 10:
             raise QueryError("max_attempts must be between 1 and 10")
@@ -458,8 +456,7 @@ class GraphView:
                 source_hashes=dict(before.get("source_hashes") or {}),
                 repo_root=(
                     _entry_repo_root(graph_dir, repo_root)
-                    if before.get("schema") == GRAPH_SCHEMA
-                    and before.get("entry_authorities", {}).get("entries")
+                    if before.get("entry_authorities", {}).get("entries")
                     else repo_root
                 ),
             )
@@ -473,7 +470,7 @@ class GraphView:
         snapshot: dict[str, Any],
         *,
         alignments: dict[str, Any] | None = None,
-    ) -> "GraphView":
+    ) -> GraphView:
         """Construct a test/candidate view without filesystem access."""
         validate_agent_snapshot(snapshot)
         validated = validate_alignment_set(alignments or empty_alignment_set())
@@ -495,7 +492,7 @@ class GraphView:
         generation: str,
         source_hashes: dict[str, str],
         repo_root: Path | None = None,
-    ) -> "GraphView":
+    ) -> GraphView:
         nodes = {
             str(node["id"]): copy.deepcopy(node)
             for node in sorted(snapshot["nodes"], key=lambda item: str(item["id"]))
@@ -1189,9 +1186,6 @@ def personalized_pagerank(
         "stationary_error_bound": error_bound,
         "probability_mass": probability_mass,
         "reachable_node_count": len(nodes),
-        # Legacy key retained; this counts allowed reachable edges, not
-        # independently verified or reviewed scientific assertions.
-        "trusted_edge_count": edge_count,
         "allowed_edge_count": edge_count,
         "results": [
             {

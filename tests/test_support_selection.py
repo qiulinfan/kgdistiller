@@ -12,7 +12,11 @@ from kgdistiller.graph_retrieval import GraphRetrievalPolicy
 from kgdistiller.query import GraphView
 from kgdistiller.retrieval import RetrievalError, execute_retrieval_plan
 from kgdistiller.semantic_retrieval import SemanticRankingService, search_document
-from kgdistiller.support_selection import SUPPORT_SELECTION_SCHEMA, make_support_selection, validate_support_selection
+from kgdistiller.support_selection import (
+    SUPPORT_SELECTION_SCHEMA,
+    make_support_selection,
+    validate_support_selection,
+)
 from tests.test_graph_retrieval import candidate_plan, graph_fixture
 from tests.test_query import fixture_nodes, snapshot_with
 from tests.test_semantic_retrieval import FakeEmbedding

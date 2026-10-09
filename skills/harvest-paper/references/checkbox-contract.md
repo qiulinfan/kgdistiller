@@ -11,7 +11,7 @@ Use the current registered project and the existing source def sheet:
 
 ```sh
 kgdistiller --repo-root PROJECT harvest prepare CAPTURES.json \
-  --sheet DEF_SHEET.md --output knowledge/build/reviews/HARVEST
+  --sheet DEF_SHEET.md --output .knowledge/build/reviews/HARVEST
 ```
 
 `CAPTURES.json` contains a nonempty `captures` array of ordinary reviewed
@@ -90,7 +90,7 @@ After the user's explicit harvest request, run:
 
 ```sh
 kgdistiller --repo-root PROJECT harvest apply DEF_SHEET.md \
-  --output knowledge/build/reviews/HARVEST_RUN
+  --output .knowledge/build/reviews/HARVEST_RUN
 ```
 
 The request plus the checked reviewed items authorizes that scope and target.

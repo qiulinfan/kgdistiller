@@ -10,21 +10,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.web import (  # noqa: E402
-    create_graph_server,
-    load_graph_payload,
-    source_excerpt,
-)
-from kgdistiller.cli import (  # noqa: E402
+from kgdistiller.cli import (
     GraphState,
     load_state,
     make_artifacts,
     sha256_text,
     write_artifacts,
+)
+from kgdistiller.web import (
+    create_graph_server,
+    load_graph_payload,
+    source_excerpt,
 )
 
 
@@ -32,7 +31,7 @@ class WebPayloadTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-web-")
         self.root = Path(self.temporary.name)
-        self.graph = self.root / "knowledge/graph"
+        self.graph = self.root / ".knowledge/graph"
         self.source_text = "one\ntwo\nthree\n"
         state = GraphState(
             nodes={
@@ -87,7 +86,7 @@ class WebPayloadTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_entry_shards_are_hydrated(self) -> None:
+    def test_entries_are_hydrated(self) -> None:
         payload = load_graph_payload(self.graph)
         self.assertEqual("Hydrated entry", payload["nodes"][0]["text"])
         self.assertEqual(
@@ -330,10 +329,14 @@ class WebPayloadTest(unittest.TestCase):
             snapshot = load_graph_payload(self.graph)["manifest"]["snapshot_sha256"]
             for path in (
                 f"/api/source?path=..%2F{private.name}&line=1&snapshot={snapshot}",
-                "/api/source?path=notes%2Fdemo.md&line=not-a-number"
-                f"&snapshot={snapshot}",
-                "/api/source?path=knowledge%2Fsources.json&line=1"
-                f"&snapshot={snapshot}",
+                (
+                    "/api/source?path=notes%2Fdemo.md&line=not-a-number"
+                    f"&snapshot={snapshot}"
+                ),
+                (
+                    "/api/source?path=.knowledge%2Fsources.json&line=1"
+                    f"&snapshot={snapshot}"
+                ),
             ):
                 connection.request("GET", path)
                 response = connection.getresponse()

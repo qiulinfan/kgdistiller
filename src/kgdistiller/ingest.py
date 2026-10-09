@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import copy
 import json
 import os
@@ -12,14 +10,14 @@ import shutil
 import stat
 import tempfile
 import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from . import __version__
-from .query import COMPARISON_SCHEMA, PROPOSAL_SCHEMA, validate_agent_snapshot
 from .alignment import (
     ALIGNMENT_REPORT_SCHEMA,
     AlignmentError,
@@ -31,12 +29,13 @@ from .cli import (
     DELTA_SCHEMA,
     GraphState,
     KnowledgeError,
+    apply_delta,
     atomic_write,
-    curation_report,
     build_identity_index,
+    curation_report,
     json_text,
-    load_sources,
     load_identity_registry,
+    load_sources,
     load_state,
     make_agent_snapshot,
     pretty_json,
@@ -49,10 +48,11 @@ from .cli import (
     sha256_text,
     synchronize,
     unique_source_for_path,
-    apply_delta,
 )
+from .entry_markdown import DERIVED_ROOT, ENTRY_ROOT
 from .json_schema import validate_json_schema
-
+from .knowledge_paths import knowledge_root
+from .query import COMPARISON_SCHEMA, PROPOSAL_SCHEMA, validate_agent_snapshot
 
 REQUEST_SCHEMA = "kgdistiller-ingest-request-v1"
 PLAN_SCHEMA = "kgdistiller-ingest-plan-v1"
@@ -671,15 +671,14 @@ def _validate_query_binding(
             "query report was not produced from the supplied candidate snapshot",
             stage="precondition",
         )
-    if schema in {COMPARISON_SCHEMA, PROPOSAL_SCHEMA}:
-        if str(target_record.get("graph_sha256", "")) != str(
-            request["base_graph_sha256"]
-        ):
-            raise IngestError(
-                "stale-query-report",
-                "query report targets a different graph digest",
-                stage="precondition",
-            )
+    if schema in {COMPARISON_SCHEMA, PROPOSAL_SCHEMA} and str(
+        target_record.get("graph_sha256", "")
+    ) != str(request["base_graph_sha256"]):
+        raise IngestError(
+            "stale-query-report",
+            "query report targets a different graph digest",
+            stage="precondition",
+        )
     target_snapshot = make_agent_snapshot(state)["snapshot_sha256"]
     if str(target_record.get("snapshot_sha256", "")) != target_snapshot:
         raise IngestError(
@@ -826,7 +825,7 @@ def _prepare_shadow(paths: IngestPaths, root: Path) -> IngestPaths:
             _filesystem_path(paths.graph_dir),
             _filesystem_path(shadow.graph_dir),
         )
-    for relative in (knowledge_relative(paths.repo_root, "knowledge/entries"), knowledge_relative(paths.repo_root, "knowledge/derived")):
+    for relative in (ENTRY_ROOT, DERIVED_ROOT):
         source_root = paths.repo_root / relative
         target_root = root / relative
         if source_root.is_dir():
@@ -835,7 +834,7 @@ def _prepare_shadow(paths: IngestPaths, root: Path) -> IngestPaths:
                 _filesystem_path(target_root),
                 dirs_exist_ok=True,
             )
-    (root / knowledge_relative(paths.repo_root, "knowledge/entries")).mkdir(parents=True, exist_ok=True)
+    (root / ENTRY_ROOT).mkdir(parents=True, exist_ok=True)
     for spec in specs:
         relative_root = relative_path(paths.repo_root, spec.root)
         (root / relative_root).mkdir(parents=True, exist_ok=True)
@@ -1978,12 +1977,9 @@ def _install_staged(
         _invoke(failure_injector, "installed-registry")
         return journal
     except BaseException as error:
-        try:
-            _restore_journal(paths, journal)
-            journal["status"] = "rolled-back"
-            _atomic_write_text(_journal_path(paths), pretty_json(journal))
-        except IngestError:
-            raise
+        _restore_journal(paths, journal)
+        journal["status"] = "rolled-back"
+        _atomic_write_text(_journal_path(paths), pretty_json(journal))
         if isinstance(error, IngestError):
             raise
         raise IngestError("install-failed", str(error), stage="install") from error

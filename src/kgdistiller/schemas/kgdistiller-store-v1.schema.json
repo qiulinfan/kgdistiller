@@ -39,6 +39,7 @@
     "graph_artifacts": {
       "type": "array",
       "minItems": 4,
+      "maxItems": 4,
       "uniqueItems": true,
       "items": {
         "type": "object",

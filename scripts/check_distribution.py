@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify that built distributions contain every shipped runtime resource."""
 
 from __future__ import annotations

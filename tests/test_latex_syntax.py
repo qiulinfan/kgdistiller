@@ -5,11 +5,10 @@ import sys
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.latex_syntax import (  # noqa: E402
+from kgdistiller.latex_syntax import (
     STATEMENT_KINDS,
     find_group_end,
     mask_latex,
@@ -252,9 +251,8 @@ class LatexStatementTest(unittest.TestCase):
             r"\newtheorem{thm}{Theorem}\begin{thm}\kn{Node}",
         )
         for source in sources:
-            with self.subTest(source=source):
-                with self.assertRaises(ValueError):
-                    statement_ranges(source)
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                statement_ranges(source)
 
     def test_error_line_uses_unmasked_source_offsets(self) -> None:
         source = "% ignored \\end{lemma}\n\\begin{lemma}\n\\end{theorem}"

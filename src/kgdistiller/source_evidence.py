@@ -23,6 +23,7 @@ from typing import Any
 from .contracts import canonical_json, sha256_json
 from .file_io import file_signature, same_file_metadata
 from .json_schema import validate_json_schema
+from .knowledge_paths import KNOWLEDGE_DIRECTORY
 from .query import _BM25_B, _BM25_K1, MAX_QUERY_LENGTH, MAX_QUERY_TERMS, _tokens
 
 MANIFEST_SCHEMA = "kgdistiller-source-evidence-manifest-v1"
@@ -38,8 +39,8 @@ MAX_RESULT_BYTES = 200_000
 MAX_INDEX_TOKENS = 2_000_000
 _LINE_LABEL = re.compile(r"^L\d{6}(?:[ \t]|$)")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+)$")
-_ALGORITHM = re.compile(r"^Algorithm\s+[A-Za-z0-9]+\b", re.I)
-_CAPTION = re.compile(r"^(?:Figure|Table)\s+[A-Za-z0-9]+\b", re.I)
+_ALGORITHM = re.compile(r"^Algorithm\s+[A-Za-z0-9]+\b", re.IGNORECASE)
+_CAPTION = re.compile(r"^(?:Figure|Table)\s+[A-Za-z0-9]+\b", re.IGNORECASE)
 
 
 class SourceEvidenceError(ValueError):
@@ -86,7 +87,7 @@ def validate_source_evidence_manifest(payload: dict[str, Any]) -> None:
         parts = PurePosixPath(path).parts
         if not parts or PurePosixPath(path).as_posix() != path or PurePosixPath(path).is_absolute() or any(part in {"..", "."} for part in parts) or "\\" in path or "\x00" in path or re.match(r"^[A-Za-z]:", path):
             raise SourceEvidenceError("unsafe-source-path", "source paths must be relative POSIX paths without traversal")
-        if any(parts[index] in {"knowledge", ".knowledge"} and parts[index+1] == "graph" for index in range(len(parts)-1)):
+        if any(parts[index] == KNOWLEDGE_DIRECTORY and parts[index+1] == "graph" for index in range(len(parts)-1)):
             raise SourceEvidenceError("unsafe-source-path", "derived graph artifacts are not original source evidence")
 
 
@@ -290,7 +291,7 @@ class SourceEvidenceIndex:
     _fragment_binding_sha256: str
 
     @classmethod
-    def from_manifest(cls, path: Path) -> "SourceEvidenceIndex":
+    def from_manifest(cls, path: Path) -> SourceEvidenceIndex:
         path = Path(path)
         if path.is_symlink():
             raise SourceEvidenceError("unsafe-source-path", "source evidence manifest may not be a symlink")
@@ -312,7 +313,7 @@ class SourceEvidenceIndex:
             root = root_candidate.resolve(strict=True)
         except (OSError,ValueError,RuntimeError) as error:
             raise SourceEvidenceError("source-unavailable", "source evidence root is unavailable") from error
-        if any(root.parts[index] in {"knowledge", ".knowledge"} and root.parts[index+1] == "graph" for index in range(len(root.parts)-1)):
+        if any(root.parts[index] == KNOWLEDGE_DIRECTORY and root.parts[index+1] == "graph" for index in range(len(root.parts)-1)):
             raise SourceEvidenceError("unsafe-source-path", "derived graph directories are not source evidence corpora")
         if not root.is_dir():
             raise SourceEvidenceError("unsafe-source-path", "manifest root must be a directory")

@@ -1,6 +1,6 @@
 import type { ElementDefinition } from "cytoscape";
 
-import type { KgGraphContract } from "./contract";
+import { KNOWLEDGE_DIRECTORY, type KgGraphContract } from "./contract";
 
 export interface GraphFilters {
   relation: string;
@@ -14,7 +14,6 @@ export interface GraphElementData {
   id: string;
   label: string;
   kind: "concept" | "source" | "semantic" | "definition" | "reference";
-  notePath?: string;
   authority?: string;
   conceptId?: string;
   status?: string;
@@ -38,9 +37,27 @@ const RELATION_COLORS = [
   "#db2777",
 ];
 
-export function projectionPath(graphPath: string, notePath: string): string {
-  const slash = graphPath.lastIndexOf("/");
-  return slash < 0 ? notePath : `${graphPath.slice(0, slash + 1)}${notePath}`;
+export interface OpenTarget {
+  path: string;
+  line?: number;
+}
+
+/**
+ * Concepts open their entry; sources, definitions and references open the
+ * authority file. Targets exist only for a graph inside the vault-root
+ * `.knowledge/` tree, whose entries and authorities are vault-relative.
+ */
+export function openTarget(data: GraphElementData, graphPath: string): OpenTarget | undefined {
+  if (!graphPath.startsWith(`${KNOWLEDGE_DIRECTORY}/`)) return undefined;
+  if (data.kind === "concept") {
+    return data.conceptId
+      ? { path: `${KNOWLEDGE_DIRECTORY}/entries/${data.conceptId}.md` }
+      : undefined;
+  }
+  if (data.kind === "semantic" || !data.authority) return undefined;
+  const path = data.authority;
+  const markdown = path.toLowerCase().endsWith(".md");
+  return markdown && data.line ? { path, line: data.line } : { path };
 }
 
 export function relationColor(relation: string): string {
@@ -59,15 +76,8 @@ export function fieldOptions(graph: KgGraphContract): string[] {
 
 export function graphElements(
   graph: KgGraphContract,
-  graphPath: string,
   filters: GraphFilters,
 ): ElementDefinition[] {
-  const sourceNotes = new Map(
-    graph.sources.map((source) => [
-      source.authority,
-      projectionPath(graphPath, source.note_path),
-    ]),
-  );
   const selectedConcepts = new Set(
     graph.concepts
       .filter((concept) => !filters.field || concept.fields.includes(filters.field))
@@ -80,7 +90,6 @@ export function graphElements(
         id: `concept:${concept.id}`,
         label: concept.label,
         kind: "concept",
-        notePath: projectionPath(graphPath, concept.note_path),
         authority: concept.authority,
         conceptId: concept.id,
         status: concept.curation_status,
@@ -106,7 +115,6 @@ export function graphElements(
             id: `source:${source.authority}`,
             label: source.authority,
             kind: "source",
-            notePath: projectionPath(graphPath, source.note_path),
             authority: source.authority,
           } satisfies GraphElementData,
         })),
@@ -146,7 +154,6 @@ export function graphElements(
           label: "defines",
           kind: "definition",
           authority: definition.source_authority,
-          notePath: sourceNotes.get(definition.source_authority),
           line: definition.line_start,
           lineEnd: definition.line_end,
         } satisfies GraphElementData,
@@ -165,7 +172,6 @@ export function graphElements(
           label: "references",
           kind: "reference",
           authority: reference.source_authority,
-          notePath: sourceNotes.get(reference.source_authority),
           line: reference.line,
           evidence: reference.context,
         } satisfies GraphElementData,

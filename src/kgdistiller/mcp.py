@@ -32,7 +32,6 @@ from .retrieval import (
     legacy_retrieval_plan,
 )
 
-
 MCP_PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -393,7 +392,7 @@ class MCPServer:
                 return _result(request_id, _tool_result({"error": error.to_payload()}, is_error=True))
             except (QueryError, OSError, ValueError) as error:
                 return _result(request_id, _tool_result({"error": {"code": "tool-error", "message": str(error), "tool": name}}, is_error=True))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return _result(request_id, _tool_result({"error": {"code": "tool-error", "message": "tool execution failed", "tool": name if name in TOOL_SCHEMAS else "unknown"}}, is_error=True))
         return _protocol_error(request_id, -32601, "Method not found")
 

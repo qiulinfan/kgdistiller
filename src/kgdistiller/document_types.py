@@ -41,7 +41,7 @@ def parse_document_types(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def load_document_types(registry: Path) -> dict[str, dict[str, Any]]:
-    from .cli import KnowledgeError, SOURCE_SCHEMA, read_json
+    from .cli import SOURCE_SCHEMA, KnowledgeError, read_json
 
     payload = read_json(registry, {})
     if not isinstance(payload, dict) or payload.get("schema") != SOURCE_SCHEMA:

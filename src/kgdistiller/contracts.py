@@ -10,7 +10,6 @@ from typing import Any
 
 from .json_schema import SchemaViolation, validate_json_schema
 
-
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 MAX_NAMESPACE_LENGTH = 256
 CONTRACT_SCHEMAS = {
@@ -31,7 +30,6 @@ CONTRACT_SCHEMAS = {
         "kgdistiller-source-evidence-result-v1",
         "kgdistiller-source-evidence-context-v1",
         "kgdistiller-source-reference-result-v1",
-        "kgdistiller-document-record-v1",
         "kgdistiller-document-record-v2",
         "kgdistiller-store-v1",
         "kgdistiller-store-report-v1",
@@ -129,9 +127,7 @@ def _format_violation(error: SchemaViolation) -> str:
 
 
 def _validate_document_record(payload: dict[str, Any]) -> None:
-    if payload.get("schema") not in {
-        "kgdistiller-document-record-v1", "kgdistiller-document-record-v2"
-    }:
+    if payload.get("schema") != "kgdistiller-document-record-v2":
         return
     authority = str(payload.get("authority", ""))
     expected_suffix = {
@@ -434,7 +430,11 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         from .context_projection import validate_compact_context
         validate_compact_context(payload)
     if payload.get("schema") in {"kgdistiller-source-evidence-manifest-v1", "kgdistiller-source-evidence-result-v1"}:
-        from .source_evidence import SourceEvidenceError, validate_source_evidence_manifest, validate_source_evidence_result
+        from .source_evidence import (
+            SourceEvidenceError,
+            validate_source_evidence_manifest,
+            validate_source_evidence_result,
+        )
         try:
             if payload["schema"] == "kgdistiller-source-evidence-manifest-v1":
                 validate_source_evidence_manifest(payload)
@@ -450,8 +450,8 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         except (SourceEvidenceError, UnicodeError, ValueError) as error:
             raise ContractError("source context binding or byte closure is invalid") from error
     if payload.get("schema") == "kgdistiller-source-reference-result-v1":
-        from .source_references import validate_source_reference_result
         from .source_evidence import SourceEvidenceError
+        from .source_references import validate_source_reference_result
         try:
             validate_source_reference_result(payload)
         except (SourceEvidenceError, UnicodeError, ValueError) as error:

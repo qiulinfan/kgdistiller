@@ -6,14 +6,16 @@ description: Extract and review source-grounded knowledge from registered Markdo
 # Curate kgdistiller notes
 
 Turn authored notes into a reviewed update to the caller's canonical
-`knowledge/`, which retains accepted content and semantic state. Treat
+`.knowledge/`, which retains accepted content and semantic state. Treat
 registered native markers as identity authority, source-grounded Markdown
 atomic entries as content authority, and kgdistiller as the deterministic
 transaction boundary. Source-scoped review projections can inform an update;
 definition and pending sheets are lightweight links to committed metadata.
-Full proposals belong in `knowledge/build/reviews/` until accepted; sheets do
-not override these authorities. Graph records remain opaque to this Skill and
-retain durable identity and accepted semantic state; never delete them as cache.
+Full proposals belong in `.knowledge/build/reviews/` until accepted; sheets do
+not override these authorities. `build/` is excluded from Obsidian hidden-folder
+indexing by default; remove `build` from the kgdistiller plugin's exclusion list
+to open drafts there. Graph records remain opaque to this Skill and retain
+durable identity and accepted semantic state; never delete them as cache.
 
 Match user-facing explanations, prompts, and handoffs to the user's language
 unless the user requests another language. Keep commands, identifiers,
@@ -33,14 +35,11 @@ kgdistiller --repo-root PROJECT agent status
 kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY
 ```
 
-Require status to report `kgdistiller-graph-v2` or an existing public
-`kgdistiller-graph-v1` generation. Explicit writers produce v2 while preserving
-accepted state. If the project uses an unsupported pre-0.4 core discriminator,
-stop and hand it to
-`$deploy-kgdistiller` for the explicit Git-backed registry update and rebuild;
-never migrate or relabel the old graph inside a curation transaction.
+Require status to report a `kgdistiller-graph-v2` generation. If it reports
+any other graph schema or fails, stop and report it to the user; never migrate
+or relabel a graph inside a curation transaction.
 
-Require each input to match exactly one pattern in `knowledge/sources.json`.
+Require each input to match exactly one pattern in `.knowledge/sources.json`.
 Use the smallest coherent registered file set, including both paths of a known
 rename. If a document is unregistered, propose the source ID, root, format glob,
 optional user-selected field classification or registered `document_type`, and destination;
@@ -68,7 +67,7 @@ Markdown and link to their native evidence. Preserve existing native markers:
 Build one bounded candidate batch containing names, aliases, source locations,
 short evidence, and supported direct relations. Preserve complete
 relation/application proposals alongside this batch in
-`knowledge/build/reviews/`, using the distinction in the curation contract.
+`.knowledge/build/reviews/`, using the distinction in the curation contract.
 Preserve existing user-marked identities pending explicit review. Do not write
 entries or choose identity from similarity yet.
 
@@ -88,7 +87,7 @@ portion. Write a compact source-grounded entry for every active authority in
 the selected scope and add only direct semantic edges with concrete evidence.
 Retain complete role bindings, arity, states, conditions and evidence while
 reviewing assertions. Current direct-edge deltas cannot represent full n-ary or
-application records: retain unsupported proposals in `knowledge/build/reviews/`,
+application records: retain unsupported proposals in `.knowledge/build/reviews/`,
 report the adapter gap and defer their persistence. Never flatten or omit them to
 make a smaller delta appear complete.
 
@@ -99,9 +98,9 @@ proposal operation or empty `delta_preview` as a write delta.
 
 Prepare the source patch, complete post-patch marker/ref state, and one
 `kgdistiller-agent-delta-v1`. Let ingest create or update
-`knowledge/entries/<node-id>.md`; do not hand-edit those files as a substitute
-for a reviewed transaction. Do not open or edit graph JSONL, legacy entry
-shards, or alignment files directly. Hand the reviewed artifacts and query digests to
+`.knowledge/entries/<node-id>.md`; do not hand-edit those files as a substitute
+for a reviewed transaction. Do not open or edit raw graph files or alignment
+files directly. Hand the reviewed artifacts and query digests to
 `$ingest-kgdistiller`; accept completion only from a committed canonical
 receipt whose after-digests match a fresh status call.
 

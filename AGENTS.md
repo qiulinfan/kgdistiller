@@ -12,7 +12,8 @@
   and retrieval content caller-supplied; do not hardcode papers or benchmark answers.
 - The shared personal-research model follows
   [docs/concepts-and-relations.md](docs/concepts-and-relations.md): knowledge
-  nodes and typed relations, including applications, live in visible `knowledge/`.
+  nodes and typed relations, including applications, live in the hidden
+  `.knowledge/` tree.
   Source-scoped def/pending sheets are lightweight metadata link projections for
   papers, notes, blogs and other knowledge files. Preserve native authority,
   complete scientific content and existing identities; report unsupported
@@ -23,14 +24,14 @@
   capture; explicit whole-source distillation is typically for authored notes
   or familiar material. Harvest uses Obsidian def-sheet task selections and
   deterministic ingest; checking a task does not imply understanding.
-- The project's single metadata root can be `knowledge/` or `.knowledge/`;
-  resolve it through `knowledge_paths`, never create a second tree during reads
-  or writes. New projects default to the visible root. Hidden Obsidian indexing
-  still requires its explicit plugin setting and semantic graph path.
-- Keep metadata minimal: `knowledge/entries/` is the single persisted entry
-  body store. Graph v2 retains stable identities, aliases, orphan state,
-  accepted edges and reference occurrences; it is not a disposable cache.
-  Read existing public graph v1 without mutation; explicit writes produce v2.
+- `.knowledge/` is the project's only metadata root. Resolve it through
+  `knowledge_paths`; never create a second tree during reads or writes. Hidden
+  Obsidian indexing still requires its explicit plugin setting.
+- Keep metadata minimal: `.knowledge/entries/` is the single persisted entry
+  body store. Only `kgdistiller-graph-v2` is read and written; every other graph
+  discriminator fails closed. The graph retains stable identities, aliases,
+  orphan state, accepted edges and reference occurrences; it is not a
+  disposable cache.
   Identity/alignment registries, portable snapshots and consumer exports are
   optional and must not be created merely to fill a default directory layout.
 - Source document types are user-registered extraction profiles, independent
@@ -49,7 +50,11 @@
   integration follow [docs/latex-sources.md](docs/latex-sources.md). Keep the
   renderer in obsidian-latex-live; the graph core only resolves explicit names
   and validates the local converter protocol.
-- Run the complete unit test suite and package build for implementation changes.
+- Implementation changes pass these gates: the complete unit test suite
+  (`uv run --locked python -m unittest discover -s tests`),
+  `uv run --locked ruff check src tests scripts`, `uv build` with
+  `scripts/check_distribution.py`, and `npm run check` in
+  `integrations/obsidian` when the plugin changes.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
   this repository.
 - The Community directory entry stays in this monorepo: root manifest/versions
@@ -66,10 +71,12 @@
   plugin name. The root clean
   builder explicitly installs integration devDependencies, including when the
   caller sets `NODE_ENV=production`; this is required to reproduce release assets.
-- Optional native indexing of a configured hidden knowledge folder follows
+- Optional native indexing of the `.knowledge` folder follows
   [docs/obsidian-hidden-knowledge.md](docs/obsidian-hidden-knowledge.md). Keep it
-  disabled by default, desktop-capability guarded and scoped to that subtree;
-  do not migrate the core storage root or enable competing hidden-folder indexers.
+  disabled by default, desktop-capability guarded and scoped to that subtree
+  (the folder is the product constant, not a setting),
+  minus the user-editable exclusion list (default `build`); do not enable
+  competing hidden-folder indexers.
   Preserve the complete upstream MIT notice and pinned source revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by

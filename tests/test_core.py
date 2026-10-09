@@ -24,7 +24,7 @@ SPEC.loader.exec_module(knowledge)
 
 class KnowledgeGraphTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-graph-v1-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="kgdistiller-graph-test-")
         self.repo = Path(self.temporary.name)
         self.source_root = self.repo / "notes/math/demo"
         self.chapter = self.source_root / "chapters/01-foundations.typ"
@@ -35,14 +35,14 @@ class KnowledgeGraphTest(unittest.TestCase):
         )
         self.derived_chapter = (
             self.repo
-            / "knowledge/derived/by-source/notes/math/demo/chapters/01-foundations.typ.md"
+            / ".knowledge/derived/by-source/notes/math/demo/chapters/01-foundations.typ.md"
         )
         self.derived_chapter.parent.mkdir(parents=True)
         self.derived_chapter.write_text(
             "# Derived fixture\n\nConverted from the Typst authority for entry evidence.\n",
             encoding="utf-8",
         )
-        self.registry = self.repo / "knowledge/sources.json"
+        self.registry = self.repo / ".knowledge/sources.json"
         self.registry.parent.mkdir(parents=True, exist_ok=True)
         self.registry.write_text(
             json.dumps(
@@ -94,9 +94,9 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.graph = self.repo / "knowledge/graph"
-        self.identities = self.repo / "knowledge/identities.json"
-        (self.repo / "knowledge/build").mkdir(parents=True, exist_ok=True)
+        self.graph = self.repo / ".knowledge/graph"
+        self.identities = self.repo / ".knowledge/identities.json"
+        (self.repo / ".knowledge/build").mkdir(parents=True, exist_ok=True)
         self.typst_registry = self.repo / "notes/math/toolchain/generated/knowledge-registry.typ"
 
     def tearDown(self) -> None:
@@ -276,7 +276,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             self.sync()
         self.identities.unlink()
 
-        legacy_delta = self.repo / "knowledge/build/legacy-delta.json"
+        legacy_delta = self.repo / ".knowledge/build/legacy-delta.json"
         legacy_delta.write_text(
             json.dumps({"schema": "legacy-agent-delta-v0", "nodes": [], "edges": []}),
             encoding="utf-8",
@@ -339,7 +339,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         registry_sha = knowledge.source_registry_sha256(self.registry)
         self.assertEqual(registry_sha, state.manifest["registry_sha256"])
 
-        delta = self.repo / "knowledge/build/no-op-generation.json"
+        delta = self.repo / ".knowledge/build/no-op-generation.json"
         delta.write_text(
             json.dumps({"schema": "kgdistiller-agent-delta-v1", "nodes": [], "edges": []}),
             encoding="utf-8",
@@ -475,7 +475,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         )
         for index, (node, message) in enumerate(cases):
             with self.subTest(message=message):
-                delta = self.repo / f"knowledge/build/output-bound-{index}.json"
+                delta = self.repo / f".knowledge/build/output-bound-{index}.json"
                 delta.write_text(
                     json.dumps({"schema": "kgdistiller-agent-delta-v1", "nodes": [node]}),
                     encoding="utf-8",
@@ -485,7 +485,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/snapshot-entry.json"
+        delta = self.repo / ".knowledge/build/snapshot-entry.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -579,7 +579,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_snapshot_command_writes_machine_readable_file(self) -> None:
         self.sync()
-        output = self.repo / "knowledge/build/agent/snapshot.json"
+        output = self.repo / ".knowledge/build/agent/snapshot.json"
         result = subprocess.run(
             [
                 sys.executable,
@@ -629,7 +629,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_entries_are_read_from_markdown_without_graph_body_copies(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/structured-entry.json"
+        delta = self.repo / ".knowledge/build/structured-entry.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -652,10 +652,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
         knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
-        manifest = json.loads((self.graph / "manifest.json").read_text(encoding="utf-8"))
-        self.assertNotIn("entry_store", manifest)
-        self.assertFalse((self.graph / "entries").exists())
-        self.assertFalse((self.graph / "diagnostics.json").exists())
+        self.assertEqual({path.name for path in self.graph.iterdir()}, {"manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"})
         serialized = next(
             json.loads(line)
             for line in (self.graph / "nodes.jsonl").read_text(encoding="utf-8").splitlines()
@@ -663,7 +660,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         )
         self.assertNotIn("text", serialized)
         self.assertNotIn("entry", serialized)
-        self.assertNotIn("entry_path", serialized["properties"])
         hydrated = knowledge.load_state(self.graph).nodes["sigma-algebra"]
         self.assertEqual("A family of sets closed under the defining operations.", hydrated["text"])
         self.assertEqual("Used as the measurable event system.", hydrated["entry"]["context"])
@@ -679,7 +675,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_agent_can_add_node_specific_cross_field_membership(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/cross-field.json"
+        delta = self.repo / ".knowledge/build/cross-field.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -709,7 +705,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_changed_file_orphans_without_erasing_meta_or_edges_then_rehomes(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/delta.json"
+        delta = self.repo / ".knowledge/build/delta.json"
         delta.write_text(
             json.dumps(
                 {
@@ -766,11 +762,11 @@ class KnowledgeGraphTest(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
         subprocess.run(["git", "config", "user.email", "tests@example.test"], cwd=self.repo, check=True)
         subprocess.run(["git", "config", "user.name", "kgdistiller tests"], cwd=self.repo, check=True)
-        subprocess.run(["git", "add", "notes", "knowledge/sources.json"], cwd=self.repo, check=True)
+        subprocess.run(["git", "add", "notes", ".knowledge/sources.json"], cwd=self.repo, check=True)
         subprocess.run(["git", "commit", "-qm", "initial authority"], cwd=self.repo, check=True)
         self.sync()
 
-        entry = self.repo / "knowledge/build/rename-entry.json"
+        entry = self.repo / ".knowledge/build/rename-entry.json"
         entry.parent.mkdir(parents=True, exist_ok=True)
         entry.write_text(
             json.dumps(
@@ -810,11 +806,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(
             ["notes/math/demo/chapters/02-重定位.typ"],
             report["source_changes"]["added"],
-        )
-        self.assertFalse(
-            self.graph.joinpath(
-                "entries/by-source/notes/math/demo/chapters/01-foundations.typ.jsonl"
-            ).exists()
         )
 
     def test_git_machine_output_decode_failures_are_structured(self) -> None:
@@ -887,7 +878,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_definition_change_marks_entries_and_edges_for_review(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/reviewed.json"
+        delta = self.repo / ".knowledge/build/reviewed.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -939,7 +930,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_ref_only_change_does_not_stale_node_curation(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/ref-only.json"
+        delta = self.repo / ".knowledge/build/ref-only.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -971,7 +962,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_explicit_name_reconciliation_preserves_stable_node_id(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/name-entry.json"
+        delta = self.repo / ".knowledge/build/name-entry.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -1080,12 +1071,12 @@ class KnowledgeGraphTest(unittest.TestCase):
         latex = self.source_root / "chapters/same.tex"
         latex.write_text("\\kn{latex authority}\n", encoding="utf-8")
         derived_latex = (
-            self.repo / "knowledge/derived/by-source/notes/math/demo/chapters/same.tex.md"
+            self.repo / ".knowledge/derived/by-source/notes/math/demo/chapters/same.tex.md"
         )
         derived_latex.parent.mkdir(parents=True, exist_ok=True)
         derived_latex.write_text("# Derived LaTeX fixture\n", encoding="utf-8")
         self.sync()
-        delta = self.repo / "knowledge/build/same-stem-entries.json"
+        delta = self.repo / ".knowledge/build/same-stem-entries.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -1150,7 +1141,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(["missing-node-entry"], [item["code"] for item in report["errors"]])
         self.assertIn("publication-concept", knowledge.load_state(self.graph).nodes)
 
-        delta = self.repo / "knowledge/build/publication-entry.json"
+        delta = self.repo / ".knowledge/build/publication-entry.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -1222,7 +1213,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(2, report["quality"]["knowledge_nodes_with_multiple_fields"])
         self.assertEqual({"2": 2}, report["topology"]["field_membership_histogram"])
 
-        delta = self.repo / "knowledge/build/audit.json"
+        delta = self.repo / ".knowledge/build/audit.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -1266,7 +1257,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_semantic_cycle_is_rejected(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/cycle.json"
+        delta = self.repo / ".knowledge/build/cycle.json"
         delta.write_text(
             json.dumps(
                 {
@@ -1307,7 +1298,7 @@ class KnowledgeGraphTest(unittest.TestCase):
                 dict(state.manifest.get("source_hashes") or {}),
             ),
         )
-        delta = self.repo / "knowledge/build/remove-root.json"
+        delta = self.repo / ".knowledge/build/remove-root.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -1336,7 +1327,7 @@ class KnowledgeGraphTest(unittest.TestCase):
 
     def test_discipline_node_type_is_rejected(self) -> None:
         self.sync()
-        delta = self.repo / "knowledge/build/discipline.json"
+        delta = self.repo / ".knowledge/build/discipline.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -1372,7 +1363,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             [item["code"] for item in report["errors"]],
         )
 
-        entries = self.repo / "knowledge/build/entries.json"
+        entries = self.repo / ".knowledge/build/entries.json"
         entries.parent.mkdir(parents=True, exist_ok=True)
         entries.write_text(
             json.dumps(
@@ -1395,13 +1386,13 @@ class KnowledgeGraphTest(unittest.TestCase):
         )
         derived_application = (
             self.repo
-            / "knowledge/derived/by-source/notes/math/demo/chapters/02-application.typ.md"
+            / ".knowledge/derived/by-source/notes/math/demo/chapters/02-application.typ.md"
         )
         derived_application.write_text(
             "# Derived application fixture\n", encoding="utf-8"
         )
         self.sync(files=[Path("notes/math/demo/chapters/02-application.typ")])
-        relation = self.repo / "knowledge/build/relation.json"
+        relation = self.repo / ".knowledge/build/relation.json"
         relation.write_text(
             json.dumps(
                 {

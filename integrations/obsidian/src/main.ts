@@ -10,15 +10,13 @@ import {
 import {
   DEFAULT_SETTINGS,
   KgdistillerSettingTab,
+  mergeStoredSettings,
   type KgdistillerSettings,
 } from "./settings";
 
 export default class KgdistillerPlugin extends Plugin {
   settings: KgdistillerSettings = { ...DEFAULT_SETTINGS };
-  hiddenKnowledgeStatus: HiddenKnowledgeStatus = {
-    state: "disabled",
-    root: DEFAULT_SETTINGS.hiddenKnowledgeFolder,
-  };
+  hiddenKnowledgeStatus: HiddenKnowledgeStatus = { state: "disabled" };
   private hiddenKnowledgeIndexer?: HiddenKnowledgeIndexer;
   private settingsTab?: KgdistillerSettingTab;
   private lastHiddenKnowledgeConfiguration?: string;
@@ -66,6 +64,23 @@ export default class KgdistillerPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => refreshIfGraph(file, oldPath)),
     );
+    // Vault events never fire for a graph under an excluded or unindexed hidden
+    // folder (the default `.knowledge/build/`), so re-check the file when the
+    // user returns to Obsidian or switches leaves.
+    this.registerDomEvent(window, "focus", () => void this.refreshChangedGraphViews());
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => void this.refreshChangedGraphViews()),
+    );
+  }
+
+  async refreshChangedGraphViews(): Promise<void> {
+    await Promise.all(
+      this.app.workspace
+        .getLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH)
+        .map(async (leaf) => {
+          if (leaf.view instanceof KgdistillerGraphView) await leaf.view.refreshIfChanged();
+        }),
+    );
   }
 
   onunload(): void {
@@ -109,8 +124,8 @@ export default class KgdistillerPlugin extends Plugin {
     const indexer = this.hiddenKnowledgeIndexer;
     if (!indexer || this.unloaded) return;
     const enabled = this.settings.hiddenKnowledgeEnabled;
-    const root = this.settings.hiddenKnowledgeFolder;
-    const configuration = JSON.stringify([enabled, root]);
+    const exclusions = this.settings.hiddenKnowledgeExclusions;
+    const configuration = JSON.stringify([enabled, exclusions]);
     const changed = configuration !== this.lastHiddenKnowledgeConfiguration;
     if (!changed && !rescan) return;
     this.lastHiddenKnowledgeConfiguration = configuration;
@@ -121,27 +136,27 @@ export default class KgdistillerPlugin extends Plugin {
 
     try {
       if (Platform.isMobile) {
-        await indexer.configure(false, root);
+        await indexer.configure(false, exclusions);
         updateStatus({
-          state: "unsupported", root,
+          state: "unsupported",
           message: "Hidden folder indexing is available on desktop only. The graph view remains available.",
         });
       } else if (enabled && this.hasExternalHiddenFolderIndexer()) {
-        await indexer.configure(false, root);
+        await indexer.configure(false, exclusions);
         updateStatus({
-          state: "unsupported", root,
+          state: "unsupported",
           message: "Hidden Folders Access is enabled. Disable it, then rescan here to avoid running two hidden-folder indexers.",
         });
       } else {
         const wasEnabled = this.hiddenKnowledgeStatus.state === "enabled";
         const status = !changed && rescan && enabled && wasEnabled
           ? await indexer.rescan()
-          : await indexer.configure(enabled, root);
+          : await indexer.configure(enabled, exclusions);
         updateStatus(status);
       }
     } catch (error) {
       updateStatus({
-        state: "error", root,
+        state: "error",
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -164,7 +179,10 @@ export default class KgdistillerPlugin extends Plugin {
   }
 
   private async loadPluginSettings(): Promise<void> {
-    const stored = (await this.loadData()) as Partial<KgdistillerSettings> | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+    const { settings, rejected } = mergeStoredSettings(await this.loadData());
+    this.settings = settings;
+    if (rejected.length > 0) {
+      new Notice(`kgdistiller ignored invalid stored settings and used defaults: ${rejected.join(", ")}.`);
+    }
   }
 }

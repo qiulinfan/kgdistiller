@@ -24,7 +24,7 @@
           "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
           "items": {"type": "string", "minLength": 1, "maxLength": 128}
         },
-        "graph_schema": {"enum": ["kgdistiller-graph-v1", "kgdistiller-graph-v2"]},
+        "graph_schema": {"const": "kgdistiller-graph-v2"},
         "query_backend": {"const": "json-memory"}
       }
     },

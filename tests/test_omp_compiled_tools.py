@@ -3,20 +3,24 @@ from __future__ import annotations
 import copy
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from kgdistiller.compiled_retrieval import CompiledLibrary
 from kgdistiller.omp_compiled_tools import (
-    BridgeError, bounded_result, encoded, error_response, execute, load_config,
+    BridgeError,
+    bounded_result,
+    encoded,
+    error_response,
+    execute,
+    load_config,
     public_payload,
 )
 from tests.test_compiled_retrieval import library_payload
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,7 +66,7 @@ class OMPCompiledToolsTest(unittest.TestCase):
         env["PYTHONPATH"] = str(REPO_ROOT / "src")
         result = subprocess.run(
             [sys.executable, "-m", "kgdistiller.omp_compiled_tools", "--config", str(self.config_path), "--output", str(self.root)],
-            input=raw, capture_output=True, cwd=self.root, env=env,
+            input=raw, check=False, capture_output=True, cwd=self.root, env=env,
         )
         self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", errors="replace"))
         self.assertEqual(b"", result.stderr)

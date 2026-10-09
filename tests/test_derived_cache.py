@@ -9,7 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from kgdistiller.contracts import sha256_json
-from kgdistiller.derived_cache import DerivedCacheError, ExactInputCache, MAX_RECORD_BYTES
+from kgdistiller.derived_cache import (
+    MAX_RECORD_BYTES,
+    DerivedCacheError,
+    ExactInputCache,
+)
 
 
 def binding(operation: str = "document-vector") -> dict:
@@ -80,9 +84,11 @@ class ExactInputCacheTest(unittest.TestCase):
 
     def test_atomic_failure_keeps_old_record_and_leaves_no_temp_files(self) -> None:
         self.cache.put(binding(), [1.0, 2.0])
-        with patch("kgdistiller.derived_cache.os.replace", side_effect=OSError("disk failure")):
-            with self.assertRaisesRegex(DerivedCacheError, "unwritable"):
-                self.cache.put(binding(), [3.0, 4.0])
+        with (
+            patch("kgdistiller.derived_cache.os.replace", side_effect=OSError("disk failure")),
+            self.assertRaisesRegex(DerivedCacheError, "unwritable"),
+        ):
+            self.cache.put(binding(), [3.0, 4.0])
         self.assertEqual([1.0, 2.0], self.cache.get(binding()))
         self.assertEqual([], list(self.cache.directory.glob("*.tmp")))
 
@@ -118,7 +124,8 @@ class ExactInputCacheTest(unittest.TestCase):
                 births = {}
                 cache = ExactInputCache(self.root / str(change_time_available))
 
-                def metadata(info, *, descriptor=False):
+                def metadata(info, *, descriptor=False, births=births,
+                             change_time_available=change_time_available):
                     fields = {name: getattr(info, name) for name in (
                         "st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")}
                     birth = births.setdefault((info.st_dev, info.st_ino), info.st_ctime_ns)

@@ -12,16 +12,14 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import main  # noqa: E402
-from kgdistiller.vault_registry import (  # noqa: E402
+from kgdistiller.cli import main
+from kgdistiller.vault_registry import (
     HOME_ENVIRONMENT,
     REGISTRY_SCHEMA,
     VAULT_ENVIRONMENT,
-    VAULT_MANIFEST,
     VAULT_SCHEMA,
     VaultRegistryError,
     doctor_vaults,
@@ -34,8 +32,9 @@ from kgdistiller.vault_registry import (  # noqa: E402
     resolve_repo_root,
     set_default_vault,
     unregister_vault,
+    vault_manifest_path,
 )
-from tests.test_query import write_fixture_graph  # noqa: E402
+from tests.test_query import write_fixture_graph
 
 
 class VaultRegistryTest(unittest.TestCase):
@@ -48,7 +47,7 @@ class VaultRegistryTest(unittest.TestCase):
 
             result = register_vault(vault, name="数学", home=home)
             manifest = json.loads(
-                (vault / VAULT_MANIFEST).read_text(encoding="utf-8")
+                vault_manifest_path(vault).read_text(encoding="utf-8")
             )
             registry = load_registry(home)
 
@@ -74,7 +73,7 @@ class VaultRegistryTest(unittest.TestCase):
 
             removed = unregister_vault("数学", home)
             self.assertEqual("unregistered", removed["status"])
-            self.assertTrue((vault / VAULT_MANIFEST).is_file())
+            self.assertTrue(vault_manifest_path(vault).is_file())
             self.assertEqual([], load_registry(home)["vaults"])
             self.assertIsNone(load_registry(home)["default_vault_id"])
 
@@ -205,10 +204,10 @@ class VaultRegistryTest(unittest.TestCase):
             for path in (original, copied, other):
                 path.mkdir()
             register_vault(original, name="main", home=home)
-            (copied / "knowledge").mkdir()
+            (copied / ".knowledge").mkdir()
             shutil.copyfile(
-                original / VAULT_MANIFEST,
-                copied / VAULT_MANIFEST,
+                vault_manifest_path(original),
+                vault_manifest_path(copied),
             )
 
             with self.assertRaisesRegex(VaultRegistryError, "another existing path"):
@@ -234,7 +233,7 @@ class VaultRegistryTest(unittest.TestCase):
             vault = base / "vault"
             vault.mkdir()
             record = register_vault(vault, name="main", home=home)["vault"]
-            manifest_path = vault / VAULT_MANIFEST
+            manifest_path = vault_manifest_path(vault)
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["vault_id"] = "00000000-0000-4000-8000-000000000000"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -308,7 +307,7 @@ class VaultRegistryCliTest(unittest.TestCase):
             )
             self.assertEqual(0, status, error)
             self.assertEqual("unregistered", json.loads(output)["status"])
-            self.assertTrue((vault / VAULT_MANIFEST).is_file())
+            self.assertTrue(vault_manifest_path(vault).is_file())
 
 
 if __name__ == "__main__":

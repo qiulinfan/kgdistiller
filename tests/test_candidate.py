@@ -10,7 +10,6 @@ from pathlib import Path
 
 from kgdistiller.candidate import CandidateError, build_candidate_snapshot
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

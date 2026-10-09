@@ -25,11 +25,11 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve()
         self.sources = self.root / "notes"
         self.sources.mkdir()
-        self.registry = self.root / "knowledge/sources.json"
+        self.registry = self.root / ".knowledge/sources.json"
         self.registry.parent.mkdir()
-        self.graph = self.root / "knowledge/graph"
-        self.identities = self.root / "knowledge/identities.json"
-        self.generated = self.root / "knowledge/build/knowledge-registry.typ"
+        self.graph = self.root / ".knowledge/graph"
+        self.identities = self.root / ".knowledge/identities.json"
+        self.generated = self.root / ".knowledge/build/knowledge-registry.typ"
         self.write_registry(["**/*.typ", "**/*.tex", "**/*.md"])
         def labels(state, _root):
             for node in state.nodes.values():
@@ -278,7 +278,7 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         self.write("chapter.tex", "\\kn{shared}\n")
         paths = IngestPaths(
             self.root, self.registry, self.graph,
-            self.root / "knowledge/identities.json", self.root / "knowledge/alignments.json",
+            self.root / ".knowledge/identities.json", self.root / ".knowledge/alignments.json",
             self.generated,
         )
         with tempfile.TemporaryDirectory(prefix="kgdistiller-pair-shadow-") as directory:

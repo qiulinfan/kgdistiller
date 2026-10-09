@@ -12,9 +12,21 @@ from unittest.mock import patch
 
 from kgdistiller.alignment import empty_alignment_set
 from kgdistiller.capture import CaptureError, prepare_capture
-from kgdistiller.cli import SOURCE_SCHEMA, KnowledgeError, load_state, sha256_authority_file, synchronize
-from kgdistiller.ingest import IngestError, IngestPaths, apply_ingest, load_request, plan_ingest
+from kgdistiller.cli import (
+    SOURCE_SCHEMA,
+    KnowledgeError,
+    load_state,
+    sha256_authority_file,
+    synchronize,
+)
 from kgdistiller.entry_markdown import parse_entry
+from kgdistiller.ingest import (
+    IngestError,
+    IngestPaths,
+    apply_ingest,
+    load_request,
+    plan_ingest,
+)
 from kgdistiller.query import compare
 
 
@@ -27,7 +39,7 @@ class CaptureTest(unittest.TestCase):
         self.source.parent.mkdir(parents=True)
         self.original = "> **Definition: --[[Alpha]]--**\n> Alpha is an unrelated pending definition.\n"
         self.source.write_text(self.original, encoding="utf-8")
-        self.registry = self.root / "knowledge/sources.json"
+        self.registry = self.root / ".knowledge/sources.json"
         self.registry.parent.mkdir()
         self.registry.write_text(json.dumps({
             "schema": SOURCE_SCHEMA,
@@ -39,21 +51,21 @@ class CaptureTest(unittest.TestCase):
                 "web": "https://example.test/notes", "topics": [],
             }],
         }), encoding="utf-8")
-        self.alignments = self.root / "knowledge/alignments.json"
+        self.alignments = self.root / ".knowledge/alignments.json"
         self.alignments.write_text(json.dumps(empty_alignment_set()), encoding="utf-8")
         self.paths = IngestPaths(
             repo_root=self.root, registry=self.registry,
-            graph_dir=self.root / "knowledge/graph",
-            identities=self.root / "knowledge/identities.json",
+            graph_dir=self.root / ".knowledge/graph",
+            identities=self.root / ".knowledge/identities.json",
             alignments=self.alignments,
-            typst_registry=self.root / "knowledge/build/knowledge-registry.typ",
+            typst_registry=self.root / ".knowledge/build/knowledge-registry.typ",
         )
         synchronize(
             self.root, self.registry, self.paths.graph_dir, self.paths.typst_registry,
             identities=self.paths.identities, alignments=self.alignments,
             files=[], course=None, subject=None, write=True,
         )
-        self.output = self.root / "knowledge/build/captures"
+        self.output = self.root / ".knowledge/build/captures"
 
     def payload(self) -> dict:
         return {
@@ -132,7 +144,7 @@ class CaptureTest(unittest.TestCase):
         environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
         result = subprocess.run(
             [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root),
-             "capture", "prepare", input_path.name, "--output", "knowledge/build/captures"],
+             "capture", "prepare", input_path.name, "--output", ".knowledge/build/captures"],
             capture_output=True, text=True, check=False, env=environment,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -171,7 +183,7 @@ class CaptureTest(unittest.TestCase):
                 self.assertIsNone(request["authority_patches"][0]["expected_sha256"])
                 self.assertEqual(request["authority_patches"][0]["expected_markers"]["definitions"], ["beta"])
                 plan_ingest(self.paths, request)
-                self.assertFalse((self.root / "knowledge/derived").exists())
+                self.assertFalse((self.root / ".knowledge/derived").exists())
 
     def _assert_native_capture_lifecycle(self, extension: str, content: str) -> None:
         payload = self.payload()
@@ -181,10 +193,10 @@ class CaptureTest(unittest.TestCase):
         request = load_request(Path(prepared["artifacts"]["apply"]), mode="apply")
         apply_ingest(self.paths, request)
         self.assertEqual(content, (self.root / payload["source"]).read_text())
-        parsed = parse_entry(self.root / "knowledge/entries/beta.md")
+        parsed = parse_entry(self.root / ".knowledge/entries/beta.md")
         self.assertEqual(payload["source"], parsed["metadata"]["kgd_source"])
         self.assertEqual("current", load_state(self.paths.graph_dir).nodes["beta"]["properties"]["curation_status"])
-        self.assertFalse((self.root / "knowledge/derived").exists())
+        self.assertFalse((self.root / ".knowledge/derived").exists())
 
         payload.pop("source_content")
         payload.update(text="Beta is now understood in its original source context.")
@@ -223,7 +235,7 @@ class CaptureTest(unittest.TestCase):
         source.write_text("#kn[Beta]\nA concurrent change.\n", encoding="utf-8")
         with self.assertRaises(IngestError):
             apply_ingest(self.paths, load_request(Path(prepared["artifacts"]["apply"])))
-        self.assertFalse((self.root / "knowledge/entries/beta.md").exists())
+        self.assertFalse((self.root / ".knowledge/entries/beta.md").exists())
 
     def test_reviewed_kind_uses_registered_profile_and_survives_sync(self) -> None:
         registry = json.loads(self.registry.read_text())
@@ -291,9 +303,11 @@ class CaptureTest(unittest.TestCase):
             report["results"][0]["status"] = "ambiguous"
             return report
 
-        with patch("kgdistiller.capture.compare", side_effect=ambiguous):
-            with self.assertRaisesRegex(CaptureError, "ambiguous"):
-                prepare_capture(self.paths, self.payload(), self.output)
+        with (
+            patch("kgdistiller.capture.compare", side_effect=ambiguous),
+            self.assertRaisesRegex(CaptureError, "ambiguous"),
+        ):
+            prepare_capture(self.paths, self.payload(), self.output)
         self.assertEqual(list(self.output.glob("*.json")), [])
 
     def test_requires_a_review_and_preserves_other_definitions(self) -> None:
@@ -316,9 +330,11 @@ class CaptureTest(unittest.TestCase):
 
     def test_rejects_paths_outside_capture_scope(self) -> None:
         for location in (self.root.parent / "escape", self.source.parent / "captures", self.paths.graph_dir / "captures"):
-            with self.subTest(location=location):
-                with self.assertRaises(CaptureError):
-                    prepare_capture(self.paths, self.payload(), location)
+            with (
+                self.subTest(location=location),
+                self.assertRaises(CaptureError),
+            ):
+                prepare_capture(self.paths, self.payload(), location)
         payload = copy.deepcopy(self.payload())
         payload["source"] = "../escape.md"
         with self.assertRaises(CaptureError):

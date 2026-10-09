@@ -11,9 +11,8 @@ from typing import Any
 
 from .cli import GRAPH_SCHEMA, ID_RE, MAX_NODE_LABEL_LENGTH
 from .contracts import MAX_NAMESPACE_LENGTH, sha256_json
-from .query import QueryError, SNAPSHOT_SCHEMA, validate_agent_snapshot
 from .json_schema import validate_json_schema
-
+from .query import SNAPSHOT_SCHEMA, QueryError, validate_agent_snapshot
 
 CANDIDATE_SOURCE_SCHEMA = "kgdistiller-candidate-graph-v1"
 NAMESPACE_RE = re.compile(

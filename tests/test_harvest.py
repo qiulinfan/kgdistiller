@@ -9,11 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import test_capture
+
 from kgdistiller.capture import CaptureError, prepare_captures
 from kgdistiller.cli import load_state, synchronize
+from kgdistiller.entry_markdown import DERIVED_SOURCE_ROOT, default_derived_relative
 from kgdistiller.harvest import HarvestError, apply_harvest, prepare_harvest
 from kgdistiller.ingest import apply_ingest, load_request
-from kgdistiller.entry_markdown import DERIVED_SOURCE_ROOT, default_derived_relative
 from kgdistiller.query import compare
 
 
@@ -23,8 +24,8 @@ class HarvestTest(unittest.TestCase):
 
     def prepare(self, captures=None):
         self.sheet = self.root / "notes/chapter-defs.md"
-        self.reviews = self.root / "knowledge/build/reviews"
-        self.runs = self.root / "knowledge/build/harvest-runs"
+        self.reviews = self.root / ".knowledge/build/reviews"
+        self.runs = self.root / ".knowledge/build/harvest-runs"
         return prepare_harvest(self.paths, {"captures": captures or [self.payload()]}, self.sheet, self.reviews)
 
     def check(self, name="Beta"):
@@ -52,7 +53,7 @@ class HarvestTest(unittest.TestCase):
         self.assertNotIn("--[[Gamma]]--", self.source.read_text(encoding="utf-8"))
         self.assertEqual(state.nodes["beta"]["entry"]["understanding"], "not-yet-understood")
         self.assertEqual(state.nodes["beta"]["entry"]["pending_prerequisites"], self.payload()["entry"]["pending_prerequisites"])
-        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
+        self.assertIn("../.knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         self.assertIn("Personal annotation.\n- [x] Ordinary task", self.sheet.read_text(encoding="utf-8"))
         self.assertIn("- [ ] [Gamma (draft)]", self.sheet.read_text(encoding="utf-8"))
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
@@ -111,7 +112,7 @@ class HarvestTest(unittest.TestCase):
         result = apply_harvest(self.paths, self.sheet, self.root / "a-different-output")
         self.assertEqual(result["receipt"]["request_sha256"], request["request_sha256"])
         self.assertEqual(load_state(self.paths.graph_dir).manifest["graph_sha256"], committed)
-        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
+        self.assertIn("../.knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
 
     def test_recovery_after_sheet_refresh_before_review_receipt(self):
@@ -130,7 +131,7 @@ class HarvestTest(unittest.TestCase):
         with patch("kgdistiller.harvest.atomic_write", side_effect=interrupted_write):
             result = apply_harvest(self.paths, self.sheet, self.runs)
         self.assertEqual(result["status"], "committed-sheet-pending")
-        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
+        self.assertIn("../.knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         retried = apply_harvest(self.paths, self.sheet, self.runs)
         self.assertEqual(retried["receipt"], result["receipt"])
         self.assertEqual(retried["status"], "committed")
@@ -180,9 +181,11 @@ class HarvestTest(unittest.TestCase):
     def test_precommit_interruption_reuses_request_and_selection(self):
         self.prepare()
         self.check()
-        with patch("kgdistiller.harvest.apply_ingest", side_effect=OSError("interrupted before commit")):
-            with self.assertRaises(OSError):
-                apply_harvest(self.paths, self.sheet, self.runs)
+        with (
+            patch("kgdistiller.harvest.apply_ingest", side_effect=OSError("interrupted before commit")),
+            self.assertRaises(OSError),
+        ):
+            apply_harvest(self.paths, self.sheet, self.runs)
         first = json.loads((self.reviews / "review.json").read_text(encoding="utf-8"))["active_run"]["request"]
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
         with patch("kgdistiller.harvest.prepare_captures") as prepare:
@@ -197,13 +200,13 @@ class HarvestTest(unittest.TestCase):
         environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
         prefix = [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "harvest"]
         prepared = subprocess.run(prefix + ["prepare", "capture.json", "--sheet", "notes/defs.md",
-                                  "--output", "knowledge/build/reviews"],
-                                  capture_output=True, text=True, env=environment)
+                                  "--output", ".knowledge/build/reviews"],
+                                  check=False, capture_output=True, text=True, env=environment)
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         sheet = Path(json.loads(prepared.stdout)["sheet"])
         sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
-        applied = subprocess.run(prefix + ["apply", "notes/defs.md", "--output", "knowledge/build/runs"],
-                                 capture_output=True, text=True, env=environment)
+        applied = subprocess.run(prefix + ["apply", "notes/defs.md", "--output", ".knowledge/build/runs"],
+                                 check=False, capture_output=True, text=True, env=environment)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         self.assertEqual(json.loads(applied.stdout)["status"], "committed")
         self.assertIn("beta", load_state(self.paths.graph_dir).nodes)
@@ -217,7 +220,7 @@ class HarvestTest(unittest.TestCase):
         payload["text"] = "A reviewed new explanation."
         self.prepare([payload])
         self.check()
-        entry = self.root / "knowledge/entries/beta.md"
+        entry = self.root / ".knowledge/entries/beta.md"
         entry.write_text(entry.read_text(encoding="utf-8") + "\nAn external user note.\n", encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "entry changed"):
             apply_harvest(self.paths, self.sheet, self.runs)
@@ -265,9 +268,9 @@ class HarvestTest(unittest.TestCase):
                     derived.parent.mkdir(parents=True, exist_ok=True)
                     derived.write_text(f"{name} is defined here.\n", encoding="utf-8")
                 sheet = self.root / f"notes/{extension}-defs.md"
-                prepare_harvest(self.paths, {"captures": [payload]}, sheet, self.root / f"knowledge/build/{extension}-reviews")
+                prepare_harvest(self.paths, {"captures": [payload]}, sheet, self.root / f".knowledge/build/{extension}-reviews")
                 sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
-                apply_harvest(self.paths, sheet, self.root / f"knowledge/build/{extension}-runs")
+                apply_harvest(self.paths, sheet, self.root / f".knowledge/build/{extension}-runs")
                 self.assertIn(name.lower(), load_state(self.paths.graph_dir).nodes)
 
     def test_existing_sheet_frontmatter_and_legacy_tracking_convert_safely(self):
@@ -286,10 +289,12 @@ class HarvestTest(unittest.TestCase):
         self.assertNotIn("notes/chapter-defs.md", load_state(self.paths.graph_dir).manifest["source_hashes"])
 
     def test_sheet_cannot_overwrite_committed_metadata(self):
-        for location in ("knowledge/entries/beta.md", "knowledge/graph/manifest.json", str(DERIVED_SOURCE_ROOT / "beta.md")):
-            with self.subTest(location=location):
-                with self.assertRaises(HarvestError):
-                    prepare_harvest(self.paths, {"captures": [self.payload()]}, self.root / location, self.output)
+        for location in (".knowledge/entries/beta.md", ".knowledge/graph/manifest.json", str(DERIVED_SOURCE_ROOT / "beta.md")):
+            with (
+                self.subTest(location=location),
+                self.assertRaises(HarvestError),
+            ):
+                prepare_harvest(self.paths, {"captures": [self.payload()]}, self.root / location, self.output)
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
 
     def test_overlapping_source_changes_fail_before_knowledge_writes(self):

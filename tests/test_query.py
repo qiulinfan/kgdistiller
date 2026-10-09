@@ -8,24 +8,26 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import (  # noqa: E402
+from kgdistiller.alignment import (
+    ALIGNMENT_REPORT_SCHEMA,
+    ALIGNMENT_SCHEMA,
+    make_reviewed_mapping,
+)
+from kgdistiller.cli import (
     GRAPH_SCHEMA,
     GraphState,
     make_artifacts,
     write_artifacts,
 )
-from kgdistiller.alignment import (  # noqa: E402
-    ALIGNMENT_REPORT_SCHEMA,
-    ALIGNMENT_SCHEMA,
-    make_reviewed_mapping,
+from kgdistiller.contracts import (
+    canonical_json,
+    sha256_json,
+    validate_contract,
 )
-from kgdistiller.contracts import canonical_json, sha256_json  # noqa: E402
-from kgdistiller.contracts import validate_contract  # noqa: E402
-from kgdistiller.query import (  # noqa: E402
+from kgdistiller.query import (
     COMPARISON_SCHEMA,
     CONTEXT_SCHEMA,
     PROPOSAL_SCHEMA,
@@ -39,10 +41,10 @@ from kgdistiller.query import (  # noqa: E402
     expand,
     get,
     personalized_pagerank,
+    propose,
     query_status,
     resolve_concepts,
     search,
-    propose,
 )
 
 
@@ -177,7 +179,7 @@ def alignment_mapping(
 
 
 def write_fixture_graph(root: Path) -> Path:
-    graph = root / "knowledge" / "graph"
+    graph = root / ".knowledge" / "graph"
     nodes = fixture_nodes()
     edges = fixture_edges()
     state = GraphState(
@@ -332,9 +334,11 @@ class QueryTest(unittest.TestCase):
                     GraphView.from_snapshot(resign(payload))
 
     def test_snapshot_collection_limits_are_enforced_before_view_construction(self) -> None:
-        with patch("kgdistiller.query.MAX_SNAPSHOT_NODES", 2):
-            with self.assertRaisesRegex(QueryError, "deterministic graph limits"):
-                GraphView.from_snapshot(fixture_snapshot())
+        with (
+            patch("kgdistiller.query.MAX_SNAPSHOT_NODES", 2),
+            self.assertRaisesRegex(QueryError, "deterministic graph limits"),
+        ):
+            GraphView.from_snapshot(fixture_snapshot())
 
     def test_explicit_chinese_and_english_aliases_resolve_identity(self) -> None:
         resolved = resolve_concepts(
@@ -830,7 +834,6 @@ class QueryTest(unittest.TestCase):
         self.assertLessEqual(actual_error, ranking["stationary_error_bound"] + 1e-14)
         self.assertAlmostEqual(1.0, ranking["probability_mass"], places=14)
         self.assertEqual(2, ranking["allowed_edge_count"])
-        self.assertEqual(ranking["allowed_edge_count"], ranking["trusted_edge_count"])
 
         approximate = personalized_pagerank(view, {"sigma-algebra": 1.0}, max_iterations=1)
         self.assertFalse(approximate["converged"])
@@ -1102,9 +1105,8 @@ class QueryTest(unittest.TestCase):
             with patch(
                 "kgdistiller.query._manifest_payload",
                 side_effect=[manifest, changed],
-            ):
-                with self.assertRaisesRegex(QueryError, "generation changed"):
-                    GraphView.load(graph, max_attempts=1)
+            ), self.assertRaisesRegex(QueryError, "generation changed"):
+                GraphView.load(graph, max_attempts=1)
 
 
 if __name__ == "__main__":

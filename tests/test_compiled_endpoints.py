@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kgdistiller.cli import main
-from kgdistiller.mcp import MCPServer, TOOL_DEFINITIONS, call_tool
+from kgdistiller.mcp import TOOL_DEFINITIONS, MCPServer, call_tool
 from kgdistiller.query import QueryError
 from tests.test_compiled_retrieval import library_payload
 

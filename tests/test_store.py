@@ -8,15 +8,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import apply_delta, synchronize  # noqa: E402
-from kgdistiller.contracts import canonical_json, sha256_json, validate_contract, ContractError  # noqa: E402
-from kgdistiller.query import GraphView  # noqa: E402
-from kgdistiller.project import initialize_project  # noqa: E402
-from kgdistiller.store import StoreError, snapshot_store, verify_store  # noqa: E402
+from kgdistiller.cli import apply_delta, synchronize
+from kgdistiller.contracts import (
+    ContractError,
+    canonical_json,
+    sha256_json,
+    validate_contract,
+)
+from kgdistiller.project import initialize_project
+from kgdistiller.query import GraphView
+from kgdistiller.store import (
+    StoreError,
+    _require_graph_generation_inventory,
+    _validate_manifest_schema,
+    snapshot_store,
+    verify_store,
+)
 
 
 class JsonStoreTest(unittest.TestCase):
@@ -25,11 +35,11 @@ class JsonStoreTest(unittest.TestCase):
         root = Path(self.temporary.name)
         self.source = root / "source"
         self.output = root / "portable"
-        self.registry = self.source / "knowledge/sources.json"
-        self.graph = self.source / "knowledge/graph"
-        self.identities = self.source / "knowledge/identities.json"
-        self.alignments = self.source / "knowledge/alignments.json"
-        self.typst_registry = self.source / "knowledge/build/knowledge-registry.typ"
+        self.registry = self.source / ".knowledge/sources.json"
+        self.graph = self.source / ".knowledge/graph"
+        self.identities = self.source / ".knowledge/identities.json"
+        self.alignments = self.source / ".knowledge/alignments.json"
+        self.typst_registry = self.source / ".knowledge/build/knowledge-registry.typ"
         initialize_project(
             self.source,
             self.registry,
@@ -63,7 +73,7 @@ class JsonStoreTest(unittest.TestCase):
             subject=None,
             write=True,
         )
-        delta = self.source / "knowledge/build/entry.delta.json"
+        delta = self.source / ".knowledge/build/entry.delta.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
         delta.write_text(
             json.dumps(
@@ -109,84 +119,53 @@ class JsonStoreTest(unittest.TestCase):
         self.assertEqual("json-memory", verified["query_backend"])
         self.assertEqual(created["store_generation_sha256"], verified["store_generation_sha256"])
         self.assertTrue((self.output / "notes/concepts.md").is_file())
-        self.assertTrue((self.output / "knowledge/vault.json").is_file())
-        self.assertTrue((self.output / "knowledge/graph/manifest.json").is_file())
-        self.assertTrue((self.output / "knowledge/documents.jsonl").is_file())
+        self.assertTrue((self.output / ".knowledge/vault.json").is_file())
+        self.assertTrue((self.output / ".knowledge/graph/manifest.json").is_file())
+        self.assertTrue((self.output / ".knowledge/documents.jsonl").is_file())
         self.assertTrue(
-            (self.output / "knowledge/entries/sigma-algebra.md").is_file()
+            (self.output / ".knowledge/entries/sigma-algebra.md").is_file()
         )
         self.assertFalse(any(self.output.rglob("*.sqlite")))
-        self.assertFalse((self.output / "knowledge/embeddings").exists())
-        self.assertFalse((self.output / "knowledge/graph/entries").exists())
-        self.assertFalse((self.output / "knowledge/graph/diagnostics.json").exists())
-        self.assertFalse((self.output / "knowledge/alignments.json").exists())
-        view = GraphView.load(self.output / "knowledge/graph", repo_root=self.output)
+        self.assertFalse((self.output / ".knowledge/embeddings").exists())
+        self.assertEqual(
+            {path.name for path in (self.output / ".knowledge/graph").iterdir()},
+            {"manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"},
+        )
+        self.assertFalse((self.output / ".knowledge/alignments.json").exists())
+        view = GraphView.load(self.output / ".knowledge/graph", repo_root=self.output)
         self.assertEqual(
             "A family of sets closed under the defining operations.",
             view.nodes["sigma-algebra"]["text"],
         )
-        documents = [json.loads(line) for line in (self.output / "knowledge/documents.jsonl").read_text().splitlines()]
+        documents = [json.loads(line) for line in (self.output / ".knowledge/documents.jsonl").read_text().splitlines()]
         self.assertTrue(all(record["schema"] == "kgdistiller-document-record-v2" for record in documents))
         self.assertTrue(all("subject" not in record and "course" not in record for record in documents))
         store_manifest = json.loads(
-            (self.output / "knowledge/store.json").read_text(encoding="utf-8")
+            (self.output / ".knowledge/store.json").read_text(encoding="utf-8")
         )
         graph_manifest = json.loads(
-            (self.output / "knowledge/graph/manifest.json").read_text(encoding="utf-8")
+            (self.output / ".knowledge/graph/manifest.json").read_text(encoding="utf-8")
         )
         vault_manifest = json.loads(
-            (self.output / "knowledge/vault.json").read_text(encoding="utf-8")
+            (self.output / ".knowledge/vault.json").read_text(encoding="utf-8")
         )
         self.assertEqual(store_manifest["vault_id"], vault_manifest["vault_id"])
-        self.assertEqual("knowledge/vault.json", store_manifest["paths"]["vault"])
+        self.assertEqual(".knowledge/vault.json", store_manifest["paths"]["vault"])
         self.assertEqual(store_manifest["registry_sha256"], graph_manifest["registry_sha256"])
         self.assertEqual(store_manifest["identity_sha256"], graph_manifest["identity_sha256"])
 
-    def test_legacy_store_fixture_is_readable_without_modification(self) -> None:
-        # Generated with the pre-compaction published writer, not rebuilt by
-        # today's implementation: graph v1 + shards + document records v1.
-        fixture = REPO_ROOT / "tests/fixtures/store-v1"
-        legacy = Path(self.temporary.name) / "legacy"
-        shutil.copytree(fixture, legacy)
-        before = {
-            path.relative_to(legacy): path.read_bytes()
-            for path in legacy.rglob("*") if path.is_file()
-        }
-        self.assertEqual("verified", verify_store(legacy)["status"])
-        view = GraphView.load(legacy / "knowledge/graph", repo_root=legacy)
-        self.assertEqual("A set with finitely many elements.", view.nodes["finite-set"]["text"])
-        copied = Path(self.temporary.name) / "legacy-copy"
-        snapshot_store(
-            legacy, copied,
-            registry=legacy / "knowledge/sources.json",
-            graph_dir=legacy / "knowledge/graph",
-            identities=legacy / "knowledge/identities.json",
-            alignments=legacy / "knowledge/alignments.json",
-        )
-        self.assertEqual("verified", verify_store(copied)["status"])
-        after = {
-            path.relative_to(legacy): path.read_bytes()
-            for path in legacy.rglob("*") if path.is_file()
-        }
-        self.assertEqual(before, after)
-        copied_manifest = json.loads((copied / "knowledge/graph/manifest.json").read_text())
-        self.assertEqual("kgdistiller-graph-v1", copied_manifest["schema"])
-
     def test_compact_store_requires_its_copied_entry_authority(self) -> None:
         self.snapshot()
-        entry = self.output / "knowledge/entries/sigma-algebra.md"
+        entry = self.output / ".knowledge/entries/sigma-algebra.md"
         entry.unlink()
         with self.assertRaisesRegex(StoreError, "entry authority"):
             verify_store(self.output)
 
-    def test_optional_classification_contract_preserves_legacy_validation(self) -> None:
+    def test_optional_classification_contract_is_validated(self) -> None:
         self.snapshot()
-        record = json.loads((self.output / "knowledge/documents.jsonl").read_text().splitlines()[0])
+        record = json.loads((self.output / ".knowledge/documents.jsonl").read_text().splitlines()[0])
         validate_contract(record)
-        legacy = dict(record, schema="kgdistiller-document-record-v1")
-        with self.assertRaises(ContractError):
-            validate_contract(legacy)
-        validate_contract(dict(legacy, subject="measure-theory", course="seminar"))
+        validate_contract(dict(record, subject="measure-theory", course="seminar"))
         with self.assertRaises(ContractError):
             validate_contract(dict(record, subject=""))
         with self.assertRaisesRegex(ContractError, "format must match"):
@@ -214,10 +193,10 @@ class JsonStoreTest(unittest.TestCase):
         )
         alignment_bytes = self.alignments.read_bytes()
         self.snapshot()
-        record = json.loads((self.output / "knowledge/documents.jsonl").read_text().splitlines()[0])
+        record = json.loads((self.output / ".knowledge/documents.jsonl").read_text().splitlines()[0])
         self.assertEqual("measure-theory", record["subject"])
         self.assertEqual("seminar", record["course"])
-        self.assertEqual(alignment_bytes, (self.output / "knowledge/alignments.json").read_bytes())
+        self.assertEqual(alignment_bytes, (self.output / ".knowledge/alignments.json").read_bytes())
         self.assertEqual(alignment_bytes, self.alignments.read_bytes())
         self.assertEqual("verified", verify_store(self.output)["status"])
 
@@ -233,14 +212,14 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_in_place_snapshot_is_idempotent(self) -> None:
         first = self.snapshot(self.source)
-        manifest_before = (self.source / "knowledge/store.json").read_bytes()
-        documents_before = (self.source / "knowledge/documents.jsonl").read_bytes()
+        manifest_before = (self.source / ".knowledge/store.json").read_bytes()
+        documents_before = (self.source / ".knowledge/documents.jsonl").read_bytes()
         second = self.snapshot(self.source)
 
         self.assertEqual("in-place", first["layout"])
         self.assertEqual(first["store_generation_sha256"], second["store_generation_sha256"])
-        self.assertEqual(manifest_before, (self.source / "knowledge/store.json").read_bytes())
-        self.assertEqual(documents_before, (self.source / "knowledge/documents.jsonl").read_bytes())
+        self.assertEqual(manifest_before, (self.source / ".knowledge/store.json").read_bytes())
+        self.assertEqual(documents_before, (self.source / ".knowledge/documents.jsonl").read_bytes())
 
     def test_verify_rejects_tampering(self) -> None:
         self.snapshot()
@@ -254,7 +233,7 @@ class JsonStoreTest(unittest.TestCase):
         typst.write_text("#definition(title: [#kn[Typst concept]])[Body.]\n", encoding="utf-8")
         derived = (
             self.source
-            / "knowledge/derived/by-source/notes/typst-concept.typ.md"
+            / ".knowledge/derived/by-source/notes/typst-concept.typ.md"
         )
         derived.parent.mkdir(parents=True, exist_ok=True)
         derived.write_text("# Converted Typst concept\n", encoding="utf-8")
@@ -270,7 +249,7 @@ class JsonStoreTest(unittest.TestCase):
             subject=None,
             write=True,
         )
-        delta = self.source / "knowledge/build/typst-entry.delta.json"
+        delta = self.source / ".knowledge/build/typst-entry.delta.json"
         delta.write_text(
             json.dumps(
                 {
@@ -314,7 +293,7 @@ class JsonStoreTest(unittest.TestCase):
             identities=self.identities, alignments=self.alignments,
             files=[], course=None, subject=None, write=True,
         )
-        delta = self.source / "knowledge/build/native-entries.delta.json"
+        delta = self.source / ".knowledge/build/native-entries.delta.json"
         delta.write_text(json.dumps({
             "schema": "kgdistiller-agent-delta-v1",
             "nodes": [
@@ -325,20 +304,20 @@ class JsonStoreTest(unittest.TestCase):
         apply_delta(self.graph, self.typst_registry, delta, repo_root=self.source, registry=self.registry)
         self.snapshot()
         verify_store(self.output)
-        restored_registry = json.loads((self.output / "knowledge/sources.json").read_text(encoding="utf-8"))
+        restored_registry = json.loads((self.output / ".knowledge/sources.json").read_text(encoding="utf-8"))
         self.assertEqual(registry["document_types"], restored_registry["document_types"])
-        documents = [json.loads(line) for line in (self.output / "knowledge/documents.jsonl").read_text(encoding="utf-8").splitlines()]
+        documents = [json.loads(line) for line in (self.output / ".knowledge/documents.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertTrue(all(record["document_type"] == "worked-notes" for record in documents))
         for node_id, (source, _) in native_sources.items():
             self.assertTrue((self.output / source).is_file())
-            entry = (self.output / f"knowledge/entries/{node_id}.md").read_text(encoding="utf-8")
+            entry = (self.output / f".knowledge/entries/{node_id}.md").read_text(encoding="utf-8")
             self.assertIn(f'kgd_source: "{source}"', entry)
             self.assertIn('kgd_kind: "construction"', entry)
-        self.assertFalse((self.output / "knowledge/derived").exists())
+        self.assertFalse((self.output / ".knowledge/derived").exists())
 
     def test_verify_rejects_tampered_vault_identity(self) -> None:
         self.snapshot()
-        vault_path = self.output / "knowledge/vault.json"
+        vault_path = self.output / ".knowledge/vault.json"
         vault = json.loads(vault_path.read_text(encoding="utf-8"))
         vault["vault_id"] = "00000000-0000-4000-8000-000000000000"
         vault_path.write_text(json.dumps(vault), encoding="utf-8")
@@ -348,9 +327,9 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_verify_rejects_noncanonical_vault_identity_path(self) -> None:
         self.snapshot()
-        manifest_path = self.output / "knowledge/store.json"
+        manifest_path = self.output / ".knowledge/store.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["paths"]["vault"] = "knowledge/./vault.json"
+        manifest["paths"]["vault"] = ".knowledge/./vault.json"
         manifest.pop("store_sha256")
         manifest["store_sha256"] = sha256_json(manifest)
         manifest_path.write_text(
@@ -363,7 +342,7 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_verify_recomputes_document_inventory_semantics(self) -> None:
         self.snapshot()
-        documents_path = self.output / "knowledge/documents.jsonl"
+        documents_path = self.output / ".knowledge/documents.jsonl"
         documents = [
             json.loads(line)
             for line in documents_path.read_text(encoding="utf-8").splitlines()
@@ -373,7 +352,7 @@ class JsonStoreTest(unittest.TestCase):
         documents_text = "".join(canonical_json(record) + "\n" for record in documents)
         documents_path.write_text(documents_text, encoding="utf-8")
 
-        manifest_path = self.output / "knowledge/store.json"
+        manifest_path = self.output / ".knowledge/store.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["documents"]["sha256"] = hashlib.sha256(
             documents_text.encode("utf-8")
@@ -404,11 +383,37 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_verify_rejects_unmanaged_graph_diagnostics(self) -> None:
         self.snapshot()
-        diagnostics = self.output / "knowledge/graph/diagnostics.json"
+        diagnostics = self.output / ".knowledge/graph/diagnostics.json"
         diagnostics.write_text('{"forged": true}\n', encoding="utf-8")
 
         with self.assertRaisesRegex(StoreError, "graph artifact inventory mismatch"):
             verify_store(self.output)
+
+    def test_graph_artifact_inventory_must_be_exactly_the_generation_files(self) -> None:
+        self.snapshot()
+        root = self.output.resolve()
+        manifest = json.loads((root / ".knowledge/store.json").read_text(encoding="utf-8"))
+        declared = [artifact["path"] for artifact in manifest["graph_artifacts"]]
+        extra = ".knowledge/graph/extra.json"
+        cases = {
+            "appended": {*declared, extra},
+            "substituted": {*declared[:-1], extra},
+        }
+        for label, paths in cases.items():
+            with self.subTest(label), self.assertRaisesRegex(
+                StoreError, "exactly the graph generation files"
+            ):
+                _require_graph_generation_inventory(root, root / ".knowledge/graph", paths)
+
+        appended = dict(
+            manifest,
+            graph_artifacts=[
+                *manifest["graph_artifacts"],
+                dict(manifest["graph_artifacts"][0], path=extra),
+            ],
+        )
+        with self.assertRaisesRegex(StoreError, "at most 4 items"):
+            _validate_manifest_schema(appended)
 
     def test_verify_accepts_git_metadata_but_refresh_refuses_to_delete_it(self) -> None:
         self.snapshot()
@@ -424,12 +429,12 @@ class JsonStoreTest(unittest.TestCase):
     def test_verify_uses_canonical_json_hashes_across_crlf_checkouts(self) -> None:
         self.snapshot()
         manifest = json.loads(
-            (self.output / "knowledge/store.json").read_text(encoding="utf-8")
+            (self.output / ".knowledge/store.json").read_text(encoding="utf-8")
         )
         portable_text_paths = [
-            "knowledge/vault.json",
-            "knowledge/sources.json",
-            "knowledge/identities.json",
+            ".knowledge/vault.json",
+            ".knowledge/sources.json",
+            ".knowledge/identities.json",
             *(artifact["path"] for artifact in manifest["graph_artifacts"]),
         ]
         for relative in portable_text_paths:
@@ -452,7 +457,7 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_verify_rejects_symlinked_manifest_before_reading_it(self) -> None:
         self.snapshot()
-        manifest = self.output / "knowledge/store.json"
+        manifest = self.output / ".knowledge/store.json"
         external = Path(self.temporary.name) / "external-store.json"
         manifest.replace(external)
         try:
@@ -465,10 +470,10 @@ class JsonStoreTest(unittest.TestCase):
             verify_store(self.output)
 
     def test_store_v1_is_rejected_without_deleting_old_assets(self) -> None:
-        (self.output / "knowledge/embeddings").mkdir(parents=True)
-        sentinel = self.output / "knowledge/embeddings/keep.f32"
+        (self.output / ".knowledge/embeddings").mkdir(parents=True)
+        sentinel = self.output / ".knowledge/embeddings/keep.f32"
         sentinel.write_bytes(b"old-vector")
-        (self.output / "knowledge/store.json").write_text(
+        (self.output / ".knowledge/store.json").write_text(
             json.dumps({"schema": "legacy-store-v0"}), encoding="utf-8"
         )
 
@@ -550,7 +555,7 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_verify_rejects_store_registry_that_differs_from_its_graph_generation(self) -> None:
         self.snapshot()
-        portable_registry = self.output / "knowledge/sources.json"
+        portable_registry = self.output / ".knowledge/sources.json"
         payload = json.loads(portable_registry.read_text(encoding="utf-8"))
         payload["sources"][0]["subject"] = "tampered-generation"
         portable_registry.write_text(json.dumps(payload), encoding="utf-8")
@@ -560,7 +565,7 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_verify_rejects_identity_registry_that_differs_from_graph_generation(self) -> None:
         self.snapshot()
-        portable_identities = self.output / "knowledge/identities.json"
+        portable_identities = self.output / ".knowledge/identities.json"
         payload = json.loads(portable_identities.read_text(encoding="utf-8"))
         payload["identities"].append(
             {
@@ -576,11 +581,11 @@ class JsonStoreTest(unittest.TestCase):
 
     def test_snapshot_copy_never_replaces_an_in_place_project(self) -> None:
         victim = Path(self.temporary.name) / "victim"
-        victim_registry = victim / "knowledge/sources.json"
-        victim_graph = victim / "knowledge/graph"
-        victim_identities = victim / "knowledge/identities.json"
-        victim_alignments = victim / "knowledge/alignments.json"
-        victim_typst = victim / "knowledge/build/knowledge-registry.typ"
+        victim_registry = victim / ".knowledge/sources.json"
+        victim_graph = victim / ".knowledge/graph"
+        victim_identities = victim / ".knowledge/identities.json"
+        victim_alignments = victim / ".knowledge/alignments.json"
+        victim_typst = victim / ".knowledge/build/knowledge-registry.typ"
         initialize_project(
             victim,
             victim_registry,
@@ -618,11 +623,11 @@ class JsonStoreTest(unittest.TestCase):
             self.snapshot(victim)
 
         self.assertEqual("keep", sentinel.read_text(encoding="utf-8"))
-        self.assertEqual("in-place", json.loads((victim / "knowledge/store.json").read_text(encoding="utf-8"))["layout"])
+        self.assertEqual("in-place", json.loads((victim / ".knowledge/store.json").read_text(encoding="utf-8"))["layout"])
 
     def test_copy_removes_stale_managed_generation_only_after_verification(self) -> None:
         self.snapshot()
-        stale = self.output / "knowledge/graph/stale.json"
+        stale = self.output / ".knowledge/graph/stale.json"
         stale.write_text("{}", encoding="utf-8")
         # A generation containing unmanaged files is not silently replaced.
         with self.assertRaises(StoreError):

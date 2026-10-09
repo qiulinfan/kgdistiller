@@ -8,14 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.contracts import sha256_json  # noqa: E402
-from kgdistiller.query import GraphView, context, estimate_tokens  # noqa: E402
-from kgdistiller.retrieval import (  # noqa: E402
-    CONTEXT_SCHEMA,
+from kgdistiller.contracts import sha256_json
+from kgdistiller.query import CONTEXT_SCHEMA, GraphView, context, estimate_tokens
+from kgdistiller.retrieval import (
     RETRIEVAL_PLAN_SCHEMA,
     SEARCH_EXECUTION_SCHEMA,
     SEARCH_RESULT_SCHEMA,
@@ -25,7 +23,11 @@ from kgdistiller.retrieval import (  # noqa: E402
     legacy_retrieval_plan,
     load_retrieval_plan,
 )
-from tests.test_query import fixture_nodes, fixture_snapshot, snapshot_with  # noqa: E402
+from tests.test_query import (
+    fixture_nodes,
+    fixture_snapshot,
+    snapshot_with,
+)
 
 
 def retrieval_plan() -> dict:

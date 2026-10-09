@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import hashlib
 import json
 import os
@@ -31,8 +29,8 @@ from .contracts import (
     validate_contract,
 )
 from .json_schema import validate_json_schema
+from .knowledge_paths import knowledge_root
 from .query import GraphView, QueryError, load_graph_view
-
 
 PROJECTION_SCHEMA = "kgdistiller-obsidian-projection-v1"
 PROJECTION_REPORT_SCHEMA = "kgdistiller-obsidian-export-report-v1"
@@ -544,13 +542,13 @@ def _require_fresh_entry_authorities(repo_root: Path, graph_dir: Path) -> None:
         ):
             inventory = manifest.get(key) or {}
             if not isinstance(inventory, dict):
-                raise ValueError(f"invalid {label} inventory")
+                raise ValueError(f"invalid {label} inventory")  # noqa: TRY004
             entries = inventory.get("entries") or []
             if not isinstance(entries, list):
-                raise ValueError(f"invalid {label} inventory")
+                raise ValueError(f"invalid {label} inventory")  # noqa: TRY004
             for record in entries:
                 if not isinstance(record, dict):
-                    raise ValueError(f"invalid {label} record")
+                    raise ValueError(f"invalid {label} record")  # noqa: TRY004
                 relative = _safe_relative(str(record.get("path", "")))
                 digest = str(record.get("sha256", ""))
                 path = _resolve(repo_root, relative)
@@ -577,7 +575,7 @@ def _require_fresh_registries(
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(manifest, dict):
-            raise ValueError("manifest is not an object")
+            raise ValueError("manifest is not an object")  # noqa: TRY004
         registry_sha = source_registry_sha256(registry)
         identity_sha = identity_registry_sha256(identities)
     except (OSError, UnicodeError, ValueError) as error:

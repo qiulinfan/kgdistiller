@@ -24,7 +24,7 @@
     "excluded_sources": 0
   },
   "graph": {
-    "private_schema": "kgdistiller-graph-v1",
+    "private_schema": "kgdistiller-graph-v2",
     "private_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "private_counts": {"nodes": 0, "edges": 0, "references": 0},
     "public_schema": "kgdistiller-site-graph-v1",
@@ -36,5 +36,5 @@
     {"kind": "typst-registry", "path": "knowledge-registry.typ", "bytes": 2, "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
     {"kind": "standalone-verifier", "path": "verify_export.py", "bytes": 2, "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}
   ],
-  "export_sha256": "7d9a081e9835147a0ec321d18fa09069f1857cf2b4fc917b1ee8ebbae5ff1ec6"
+  "export_sha256": "239f0842fee3a168aaa598882fc917ae7bdfd66d865c6fb9eb6f6f3c88a28562"
 }

@@ -7,7 +7,7 @@ name = "kgdistiller"
 version = "0.4.0"
 description = "Local-first agentic distillation of Markdown, Typst, and LaTeX sources into a source-backed knowledge graph."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Qiulin Fan" }]
@@ -19,7 +19,10 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-retrieval = ["sentence-transformers==6.1.0; python_version >= '3.10'"]
+retrieval = ["sentence-transformers==6.1.0"]
+
+[dependency-groups]
+dev = ["ruff==0.16.10"]
 
 [project.urls]
 Homepage = "https://github.com/qiulinfan/kgdistiller"

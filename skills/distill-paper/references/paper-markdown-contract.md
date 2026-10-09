@@ -9,7 +9,7 @@
 │   └── references.bib
 ├── reading.md           # optional user-requested explanation
 ├── section-guide.md     # optional short navigation with original HTML links
-├── knowledge/           # optional isolated graph and concrete prerequisites
+├── .knowledge/          # optional isolated graph and concrete prerequisites
 ├── context/             # optional user-requested external research
 └── learning/            # optional concept dossiers and reading route
 ```

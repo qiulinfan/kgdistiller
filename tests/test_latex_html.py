@@ -9,7 +9,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from kgdistiller.cli import GraphState, KnowledgeError, SourceSpec, apply_delta, build_identity_index, scan_latex, synchronize
+from kgdistiller.cli import (
+    GraphState,
+    KnowledgeError,
+    SourceSpec,
+    apply_delta,
+    build_identity_index,
+    scan_latex,
+    synchronize,
+)
 from kgdistiller.latex_html import (
     COMMAND_ENV,
     RESULT_SCHEMA,
@@ -38,24 +46,31 @@ class LatexHtmlProtocolTest(unittest.TestCase):
         with patch.dict(os.environ, {COMMAND_ENV: '["node", "some path/$tool.mjs"]'}):
             self.assertEqual(["node", "some path/$tool.mjs"], converter_command())
         for value in ['"node script"', '[]', '["node", 7]', '["node", ""]']:
-            with self.subTest(value=value), patch.dict(os.environ, {COMMAND_ENV: value}):
-                with self.assertRaises(LatexHtmlError):
-                    converter_command()
+            with (
+                self.subTest(value=value),
+                patch.dict(os.environ, {COMMAND_ENV: value}),
+                self.assertRaises(LatexHtmlError),
+            ):
+                converter_command()
 
     def test_provider_result_is_bound_to_operation(self) -> None:
         response = {"schema": RESULT_SCHEMA, "operation": "document", "html": "<html></html>"}
         process = Mock(returncode=0)
         process.communicate.return_value = (json.dumps(response), "")
-        with patch("kgdistiller.latex_html.subprocess.Popen", return_value=process):
-            with self.assertRaisesRegex(LatexHtmlError, "another operation"):
-                run_converter({"operation": "labels", "labels": []})
+        with (
+            patch("kgdistiller.latex_html.subprocess.Popen", return_value=process),
+            self.assertRaisesRegex(LatexHtmlError, "another operation"),
+        ):
+            run_converter({"operation": "labels", "labels": []})
 
     def test_converter_timeout_allows_provider_to_clean_up_tex_processes(self) -> None:
         process = Mock()
         process.communicate.side_effect = [subprocess.TimeoutExpired("converter", 120), ("", "cancelled")]
-        with patch("kgdistiller.latex_html.subprocess.Popen", return_value=process):
-            with self.assertRaisesRegex(LatexHtmlError, "failed"):
-                run_converter({"operation": "labels", "labels": []})
+        with (
+            patch("kgdistiller.latex_html.subprocess.Popen", return_value=process),
+            self.assertRaisesRegex(LatexHtmlError, "failed"),
+        ):
+            run_converter({"operation": "labels", "labels": []})
         process.terminate.assert_called_once()
         process.kill.assert_not_called()
 
@@ -96,9 +111,12 @@ class LatexHtmlProtocolTest(unittest.TestCase):
     def test_missing_duplicate_or_unexpected_labels_cannot_install_results(self) -> None:
         for records in [[], [{"id": "other", "html": "unexpected"}], [{"id": "sigma", "html": "one"}, {"id": "sigma", "html": "two"}]]:
             state = GraphState({"sigma": node("sigma", r"$\sigma$-algebra")}, {}, [], {})
-            with self.subTest(records=records), patch("kgdistiller.latex_html.run_converter", return_value={"labels": records}):
-                with self.assertRaises(LatexHtmlError):
-                    render_latex_labels(state)
+            with (
+                self.subTest(records=records),
+                patch("kgdistiller.latex_html.run_converter", return_value={"labels": records}),
+                self.assertRaises(LatexHtmlError),
+            ):
+                render_latex_labels(state)
             self.assertNotIn("label_html", state.nodes["sigma"]["properties"])
 
     def test_only_passive_html_and_mathml_can_become_labels(self) -> None:
@@ -122,9 +140,11 @@ class LatexHtmlProtocolTest(unittest.TestCase):
                 child.write_text("Changed condition.", encoding="utf-8")
                 return {"html": "<html><body>Old condition.</body></html>"}
 
-            with patch("kgdistiller.latex_html.run_converter", side_effect=converted):
-                with self.assertRaisesRegex(LatexHtmlError, "authority changed"):
-                    export_latex_document(root, main, output, state=state)
+            with (
+                patch("kgdistiller.latex_html.run_converter", side_effect=converted),
+                self.assertRaisesRegex(LatexHtmlError, "authority changed"),
+            ):
+                export_latex_document(root, main, output, state=state)
             self.assertFalse(output.exists())
 
     def test_export_does_not_overwrite_an_output_created_while_rendering(self) -> None:
@@ -139,9 +159,11 @@ class LatexHtmlProtocolTest(unittest.TestCase):
                 output.write_text("Another writer's output.", encoding="utf-8")
                 return {"html": "<html><body>Text.</body></html>"}
 
-            with patch("kgdistiller.latex_html.run_converter", side_effect=converted):
-                with self.assertRaisesRegex(LatexHtmlError, "appeared during export"):
-                    export_latex_document(root, main, output, state=state)
+            with (
+                patch("kgdistiller.latex_html.run_converter", side_effect=converted),
+                self.assertRaisesRegex(LatexHtmlError, "appeared during export"),
+            ):
+                export_latex_document(root, main, output, state=state)
             self.assertEqual("Another writer's output.", output.read_text(encoding="utf-8"))
 
 
@@ -149,10 +171,10 @@ class LatexSourceIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="kgd-latex-core-")
         self.root = Path(self.temporary.name).resolve()
-        self.registry = self.root / "knowledge/sources.json"
-        self.graph = self.root / "knowledge/graph"
-        self.generated = self.root / "knowledge/build/knowledge-registry.typ"
-        initialize_project(self.root, self.registry, source_root=Path("notes"), alignments=self.root / "knowledge/alignments.json")
+        self.registry = self.root / ".knowledge/sources.json"
+        self.graph = self.root / ".knowledge/graph"
+        self.generated = self.root / ".knowledge/build/knowledge-registry.typ"
+        initialize_project(self.root, self.registry, source_root=Path("notes"), alignments=self.root / ".knowledge/alignments.json")
         self.source = self.root / "notes/source.tex"
         self.spec = SourceSpec("test", "", "", self.source.parent, ("*.tex",), "", "personal-note", (), ())
 
@@ -283,10 +305,10 @@ class LatexSourceIntegrationTest(unittest.TestCase):
         content = '\\begin{theorem}\n\\kn{Outer}\n\\begin{theorem}\n\\kn{Inner}\n\\end{theorem}\nOuter condition.\n\\end{theorem}\n'
         self.source.write_text(content, encoding="utf-8")
         self.sync()
-        derived = self.root / "knowledge/derived/by-source/notes/source.tex.md"
+        derived = self.root / ".knowledge/derived/by-source/notes/source.tex.md"
         derived.parent.mkdir(parents=True)
         derived.write_text("# Reviewed source\nOuter and inner conditions.\n", encoding="utf-8")
-        delta = self.root / "knowledge/build/delta.json"
+        delta = self.root / ".knowledge/build/delta.json"
         delta.write_text(json.dumps({"schema": "kgdistiller-agent-delta-v1", "nodes": [{"id": "outer", "text": "Reviewed outer theorem."}, {"id": "inner", "text": "Reviewed inner theorem."}]}), encoding="utf-8")
         apply_delta(self.graph, self.generated, delta, repo_root=self.root)
         self.source.write_text(content.replace("Outer condition.", "Changed outer condition."), encoding="utf-8")

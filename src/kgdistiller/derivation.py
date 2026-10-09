@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import hashlib
 import json
 import os
@@ -11,12 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .vault_registry import vault_manifest_path, VaultRegistryError, load_vault_manifest
-
+from .entry_markdown import DERIVED_ROOT, DERIVED_SOURCE_ROOT
+from .vault_registry import VaultRegistryError, load_vault_manifest, vault_manifest_path
 
 DERIVED_SCHEMA = "kgdistiller-derived-markdown-v1"
-DERIVED_ROOT = Path("knowledge/derived")
-DERIVED_SOURCE_ROOT = DERIVED_ROOT / "by-source"
 _FORMATS = {".typ": "typst", ".tex": "latex", ".pdf": "pdf"}
 
 
@@ -41,9 +37,11 @@ def find_enclosing_vault(source: Path) -> Path | None:
 
 def _safe_output(vault: Path, relative: Path) -> tuple[str, Path]:
     if relative.is_absolute() or ".." in relative.parts or relative.suffix.casefold() != ".md":
-        raise DerivationError("derived output must be a relative .md path under knowledge/derived")
-    if relative.parts[:2] != knowledge_relative(vault, DERIVED_ROOT).parts:
-        raise DerivationError("derived output must be under knowledge/derived")
+        raise DerivationError(
+            f"derived output must be a relative .md path under {DERIVED_ROOT.as_posix()}"
+        )
+    if relative.parts[:2] != DERIVED_ROOT.parts:
+        raise DerivationError(f"derived output must be under {DERIVED_ROOT.as_posix()}")
     root = vault.resolve()
     target = (root / relative).resolve(strict=False)
     try:
@@ -70,7 +68,7 @@ def plan_derivation(
     if external and target_vault is None:
         raise DerivationError(
             "source is not inside a kgdistiller vault; specify --repo-root or --vault "
-            "to choose where knowledge/derived Markdown should be stored"
+            f"to choose where {DERIVED_ROOT.as_posix()} Markdown should be stored"
         )
     vault = (target_vault or enclosing).expanduser().resolve(strict=False)  # type: ignore[union-attr]
     try:
@@ -83,13 +81,13 @@ def plan_derivation(
         )
     if output is None:
         if external:
-            relative = knowledge_relative(vault, DERIVED_ROOT) / "imports" / f"{source.stem}.md"
+            relative = DERIVED_ROOT / "imports" / f"{source.stem}.md"
         else:
             source_relative = source.relative_to(vault)
-            relative = knowledge_relative(vault, DERIVED_SOURCE_ROOT) / Path(f"{source_relative.as_posix()}.md")
+            relative = DERIVED_SOURCE_ROOT / Path(f"{source_relative.as_posix()}.md")
     else:
         relative = output
-    required_root = knowledge_relative(vault, DERIVED_ROOT) / ("imports" if external else "by-source")
+    required_root = DERIVED_ROOT / ("imports" if external else "by-source")
     if required_root not in relative.parents:
         raise DerivationError(
             f"{'external' if external else 'in-vault'} derivation output must be under "

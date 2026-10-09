@@ -2,7 +2,7 @@
 
 ## Accepted knowledge and projections
 
-`knowledge/` holds canonical accepted content and semantic state, including the
+`.knowledge/` holds canonical accepted content and semantic state, including the
 node metadata used for retrieval. Registered native Markdown, Typst and LaTeX
 markers retain identity authority; accepted atomic entries retain their content
 contract. A sheet is a source-scoped navigation projection of this state. It
@@ -38,7 +38,7 @@ A row contains only:
 
 A sheet can also present prepared review candidates as ordinary Markdown task
 items. Label their links as review drafts and point to the complete proposed
-metadata under `knowledge/build/reviews/`. These candidates are distinct from
+metadata under `.knowledge/build/reviews/`. These candidates are distinct from
 accepted rows; source coverage can stay partial in either state. The linked
 draft includes the target, source evidence and reviewed identity decision so
 the user can select the actual change rather than just a title.
@@ -88,8 +88,8 @@ reviewed. A citation, familiar term or identical name cannot close a gap.
 
 If a needed definition, full relation/application or richer pending state cannot be
 committed through a supported adapter, retain its draft in
-`knowledge/build/reviews/` and report it as unapplied. Do not fabricate a
-`knowledge/entries/` record, canonical gap state or metadata link. The pending
+`.knowledge/build/reviews/` and report it as unapplied. Do not fabricate a
+`.knowledge/entries/` record, canonical gap state or metadata link. The pending
 view may identify that a draft remains, but must clearly distinguish review
 artifacts from committed metadata.
 

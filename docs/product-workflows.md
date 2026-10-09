@@ -7,7 +7,7 @@ runtime workflow manifests `workflows/manifest.json` (Codex) and
 same Skills and workflows; only linkers and agent-preset formats differ. A
 knowledge project owns its Markdown, Typst, and
 LaTeX identity authorities and directly linked source evidence,
-`knowledge/entries/` atomic authorities, reviewed registries, `kgdistiller-graph-v2` graph (with read-only support for existing public v1),
+`.knowledge/entries/` atomic authorities, reviewed registries, the `kgdistiller-graph-v2` graph,
 optional `kgdistiller-store-v1` snapshot, and explicitly adopted downstream exports.
 
 The manifests are the portable asset/workflow inventory. Install and validate
@@ -48,9 +48,9 @@ renderer is an actionable setup error, not permission to rewrite identity
 authorities into another format.
 
 From a synchronized knowledge project, `kgdistiller export latex-registry
---output knowledge/build/knowledge-registry.tex` generates the native TeX
+--output .knowledge/build/knowledge-registry.tex` generates the native TeX
 marker/ID/link definitions. `kgdistiller export latex notes/main.tex --output
-knowledge/build/main.html` renders a complete native document directly. Use
+.knowledge/build/main.html` renders a complete native document directly. Use
 `--replace` only for an existing generated result. Names, aliases and authored
 reference spellings map to established graph IDs; rendered text never decides
 identity. These commands do not ingest knowledge or publish a website.
@@ -85,7 +85,7 @@ distillation remains a separate explicit request using the same knowledge model.
 `$compile-knowledge-sheets` / `/compile-knowledge-sheets` creates or refreshes
 partial or complete definition and pending link views for papers, mathematical notes, CS notes,
 blogs and project documents. Full knowledge content belongs in accepted
-`knowledge/` metadata; source sheets display names, types, locations and links.
+`.knowledge/` metadata; source sheets display names, types, locations and links.
 New or changed content first forms a reviewed metadata proposal and uses supported
 transactional ingest. Unsupported relations, applications or gap state remain
 unapplied proposals. Ordinary source reading does not activate this Skill.
@@ -96,8 +96,9 @@ harvest. Accepted rows link to real metadata; a draft link is visibly distinct.
 The [shared model](concepts-and-relations.md) defines nodes, relations and
 applications. [Paper sheet projections](paper-sheets-upstream.md) describe the
 paper use case and current adapter limitations. Both runtime manifests install
-the same generic Skill and bundled contracts. `knowledge/` remains visible for
-Obsidian; native source markers and atomic-entry authority remain intact.
+the same generic Skill and bundled contracts. Obsidian opens `.knowledge/`
+through the plugin's hidden-folder indexing; native source markers and
+atomic-entry authority remain intact.
 
 ### Independent paper workflows
 
@@ -239,7 +240,9 @@ mechanisms, essential conditions and source locations, in the same short note.
 They are not imported graph nodes; candidate status does not establish personal
 understanding. Distillation ends with saved candidates, without prompting for
 import. The source's partial or complete def sheet can link to clearly labeled
-review drafts under `knowledge/build/reviews/`. Each selectable draft has an
+review drafts under `.knowledge/build/reviews/` (excluded from Obsidian
+hidden-folder indexing by default; remove `build` from the plugin's exclusion
+list to open them there). Each selectable draft has an
 ordinary Markdown task checkbox and records the complete proposal, source
 evidence, target and reviewed identity decision. Updates show the relevant
 before/after content. Full definitions remain in the linked metadata or draft,
@@ -315,7 +318,7 @@ not the kgdistiller checkout.
 ### Export Obsidian
 
 Use `$deploy-kgdistiller` and open the knowledge-project root as the editor
-vault. Registered Markdown files and `knowledge/entries/*.md` remain non-lossy
+vault. Registered Markdown files and `.knowledge/entries/*.md` remain non-lossy
 authorities.
 Create the managed `kgdistiller-obsidian-projection-v1` subtree as a lossy downstream
 view; never register that subtree in `sources.json`, rescan it, feed it to
@@ -329,14 +332,16 @@ authority boundary.
 
 ### Native indexing of a hidden knowledge folder
 
-The Obsidian plugin also offers an optional desktop indexer for one configured
-hidden folder, `.knowledge` by default. **Index hidden knowledge folder** is
+The Obsidian plugin also offers an optional desktop indexer for the vault-root
+`.knowledge` folder (not configurable). **Index hidden knowledge folder** is
 off by default. It exposes the folder through Obsidian's normal file and
 metadata cache so supported files participate in editing, links, backlinks,
-search and the native graph. It does not move the current `knowledge/` store,
-change the semantic graph path, or create a new source authority. See the
+search and the native graph. Folders on its exclusion list, `build` by
+default, stay out of that index. It does not move knowledge data, change the
+semantic graph path, or create a new source authority. See the
 [hidden knowledge folder guide](obsidian-hidden-knowledge.md) for settings,
-rescan behavior, desktop capability limits and upstream attribution.
+exclusions, rescan behavior, desktop capability limits and upstream
+attribution.
 
 ### Serve the native frontend
 

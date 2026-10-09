@@ -1,8 +1,8 @@
 """Explicit local embedding inference through the optional retrieval extra."""
 from __future__ import annotations
 
-from importlib.metadata import version
 import re
+from importlib.metadata import version
 from typing import Any
 
 from ..semantic_retrieval import SemanticRetrievalError
@@ -34,10 +34,10 @@ class SentenceTransformersAdapter:
             raise SemanticRetrievalError("invalid-model-settings", "invalid device, input length or batch size")
         try:
             import torch
-            from sentence_transformers import SentenceTransformer, CrossEncoder
+            from sentence_transformers import CrossEncoder, SentenceTransformer
         except ImportError as error:
             raise SemanticRetrievalError(
-                "model-dependency-missing", "install kgdistiller[retrieval] using Python 3.10 or newer"
+                "model-dependency-missing", "install kgdistiller[retrieval]"
             ) from error
         if device == "mps" and not torch.backends.mps.is_available():
             raise SemanticRetrievalError("model-device-unavailable", "MPS was requested but is unavailable")

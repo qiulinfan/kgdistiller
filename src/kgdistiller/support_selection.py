@@ -16,7 +16,6 @@ from .contracts import ContractError, canonical_json, sha256_json, validate_cont
 from .query import GraphView
 from .semantic_retrieval import search_document
 
-
 SUPPORT_SELECTION_SCHEMA = "kgdistiller-support-selection-v1"
 SUPPORT_SELECTION_KIND = "caller-selected-query-support"
 MAX_SUPPORT_ITEMS = 32

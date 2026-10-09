@@ -14,16 +14,16 @@ import math
 import os
 import stat
 import tempfile
-from pathlib import Path
 from collections import OrderedDict
-from typing import Any, Callable, Protocol, cast
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Protocol, cast
 
 from .alignment import node_fingerprint
 from .contracts import canonical_json, sha256_json
 from .derived_cache import DerivedCacheError, ExactInputCache
 from .file_io import descriptor_signature, path_signature
 from .query import GraphView, _node_search_fields, load_graph_view
-
 
 DOCUMENT_PROJECTION = "kgdistiller-search-document-v1"
 VECTOR_CACHE_SCHEMA = "kgdistiller-vector-cache-v1"
@@ -67,7 +67,7 @@ def model_descriptor(adapter: EmbeddingAdapter, kind: str = "embedding") -> dict
             if not isinstance(descriptor[key], str) or not descriptor[key].strip() or len(descriptor[key]) > 256:
                 raise ValueError("descriptor strings")
         if not isinstance(descriptor["inference"], dict):
-            raise ValueError("descriptor inference")
+            raise ValueError("descriptor inference")  # noqa: TRY004
         if len(canonical_json(descriptor["inference"]).encode("utf-8")) > 4096:
             raise ValueError("descriptor inference size")
         # Take an immutable canonical copy even if an adapter reuses its object.
@@ -152,22 +152,15 @@ def _source_state(view: GraphView, *, verify_filesystem: bool = False,
                 current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if sha256_json(current_manifest) != view.generation:
                 raise ValueError("filesystem generation changed")
-            names = ["manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"]
-            if current_manifest.get("schema") == "kgdistiller-graph-v1":
-                names.append("diagnostics.json")
-                names.extend(shard["path"] for shard in current_manifest.get("entry_store", {}).get("shards", []))
-            paths: dict[str, Path] = {}
-            for name in names:
-                relative = Path(name)
-                if relative.is_absolute() or ".." in relative.parts:
-                    raise ValueError("unsafe source artifact path")
-                paths["graph/" + name] = view.graph_dir / relative
-            if current_manifest.get("schema") == "kgdistiller-graph-v2":
-                for entry in current_manifest.get("entry_authorities", {}).get("entries", []):
-                    relative = Path(entry["path"])
-                    if relative.is_absolute() or ".." in relative.parts or view.repo_root is None:
-                        raise ValueError("unsafe or unrooted entry authority path")
-                    paths["entry/" + entry["path"]] = view.repo_root / relative
+            paths: dict[str, Path] = {
+                "graph/" + name: view.graph_dir / name
+                for name in ("manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl")
+            }
+            for entry in current_manifest.get("entry_authorities", {}).get("entries", []):
+                relative = Path(entry["path"])
+                if relative.is_absolute() or ".." in relative.parts or view.repo_root is None:
+                    raise ValueError("unsafe or unrooted entry authority path")
+                paths["entry/" + entry["path"]] = view.repo_root / relative
             signatures = []
             for name, path in sorted(paths.items()):
                 info = path.lstat()

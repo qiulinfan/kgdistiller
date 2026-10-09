@@ -1,28 +1,27 @@
 """Cross-platform machine-local registry for kgdistiller vault locations.
 
 The registry is a locator, never a knowledge authority.  Stable vault identity
-lives in ``knowledge/vault.json`` inside each vault; the user-level registry
+lives in ``.knowledge/vault.json`` inside each vault; the user-level registry
 only maps that identity and a convenient local name to an absolute path on the
 current machine.
 """
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import json
 import os
 import tempfile
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
+from .knowledge_paths import knowledge_root
 
 REGISTRY_SCHEMA = "kgdistiller-vault-registry-v1"
 VAULT_SCHEMA = "kgdistiller-vault-v1"
 REGISTRY_FILENAME = "vaults.json"
-VAULT_MANIFEST = Path("knowledge/vault.json")
 HOME_ENVIRONMENT = "KGDISTILLER_HOME"
 VAULT_ENVIRONMENT = "KGDISTILLER_VAULT"
 MAX_VAULT_NAME_LENGTH = 128
@@ -275,11 +274,10 @@ def _registry_lock(home: Path | None = None) -> Iterator[Path]:
     root = kgdistiller_home(home)
     _ensure_private_directory(root)
     lock_path = root / "registry.lock"
-    if lock_path.exists() or lock_path.is_symlink():
-        if lock_path.is_symlink() or not lock_path.is_file():
-            raise VaultRegistryError(
-                f"vault registry lock is not an ordinary file: {lock_path}"
-            )
+    if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
+        raise VaultRegistryError(
+            f"vault registry lock is not an ordinary file: {lock_path}"
+        )
     handle = lock_path.open("a+b")
     try:
         if os.name != "nt":

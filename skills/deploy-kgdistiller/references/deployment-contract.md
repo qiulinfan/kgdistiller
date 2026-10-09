@@ -3,13 +3,13 @@
 ## Knowledge and optional snapshot boundary
 
 The knowledge project owns native Markdown, Typst and LaTeX sources,
-`knowledge/entries/` Markdown atomic entries linked to evidence, source
+`.knowledge/entries/` Markdown atomic entries linked to evidence, source
 registration and durable graph records. Reviewed identities and alignments are
 optional; preserve nonempty registries and create them only when used.
 `kgdistiller-graph-v2` retains identity/alias/orphan state, accepted edges and
 reference occurrences. Entry content is read from the bound Markdown, not a
-second persisted JSONL body store. Existing public graph v1 is read-only
-compatible; explicit writes emit v2 while preserving accepted state.
+second persisted body store. `.knowledge/` is the project's only knowledge
+root, and graph v2 is the only accepted graph schema.
 
 `documents.jsonl` and `store.json` package an explicitly requested portable
 snapshot. They are not live canonical knowledge or prerequisites for capture,
@@ -18,15 +18,13 @@ a checker expects one. Existing derived evidence is retained only where used.
 Opening the knowledge project as an Obsidian vault changes none of these roles.
 The product checkout and generated projections are not authority or backup roots.
 
-Keep `knowledge/build/`, journals, plans, receipts, credentials and query logs
+Keep `.knowledge/build/`, journals, plans, receipts, credentials and query logs
 local and ignored. Exports are optional chosen consumer outputs; retain or
 rebuild those still used by a site or local plugin. No database materialization
 is required.
 
-Pre-0.4 core graphs and SQLite artifacts remain unsupported. Preserve their
-native authorities and reviewed metadata, recover with the earlier release
-when needed, then rebuild and review under current contracts. Do not relabel
-these artifacts or apply this recovery procedure to public graph v1 data.
+Any other graph schema, including pre-0.4 graphs and SQLite artifacts, fails
+closed. Stop and report it to the user; do not relabel or migrate it.
 
 ## Source extraction profiles
 
@@ -53,7 +51,7 @@ or computing classes. For example, using placeholder values:
 }
 ```
 
-This is a fragment of `knowledge/sources.json`; preserve its schema and other
+This is a fragment of `.knowledge/sources.json`; preserve its schema and other
 actual registry/source fields. Without extraction profiles, minimal registration
 needs only `id`, `root` and `files`. Omit unused document types, fields, topics,
 web settings and classification policies; do not invent a general field. `node_kinds` is a nonempty list of unique user-defined
@@ -100,7 +98,7 @@ generate and verify a successor in staging, then use the rollback-safe swap.
 Never pre-delete an adopted bundle.
 
 The knowledge-project root may be the Obsidian editor vault; registered
-Markdown files and `knowledge/entries/*.md` remain authority. An Obsidian export is a managed
+Markdown files and `.knowledge/entries/*.md` remain authority. An Obsidian export is a managed
 `kgdistiller-obsidian-projection-v1` downstream subtree, or an external browsing-only
 vault/projection. It is lossy, disposable, and never a source. Do not add its
 root to the source registry or feed any projected note to scan, sync, candidate,

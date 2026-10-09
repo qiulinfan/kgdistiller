@@ -9,11 +9,13 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.latex_registry import latex_registry_text, marker_registry  # noqa: E402
+from kgdistiller.latex_registry import (
+    latex_registry_text,
+    marker_registry,
+)
 
 
 def knowledge_node(
@@ -161,7 +163,7 @@ class NativeLatexRegistryTest(unittest.TestCase):
             source.write_text(document, encoding="utf-8")
             result = subprocess.run(
                 [executable, "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", source.name],
-                cwd=root, capture_output=True, text=True, timeout=30,
+                cwd=root, check=False, capture_output=True, text=True, timeout=30,
             )
             log_path = root / "document.log"
             log = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else result.stdout + result.stderr
@@ -235,7 +237,7 @@ Unknown: \knref{Unknown theorem}.
         kpsewhich = shutil.which("kpsewhich")
         if kpsewhich is None:
             self.skipTest("cannot locate the Chinese fixture font")
-        font_result = subprocess.run([kpsewhich, "FandolSong-Regular.otf"], capture_output=True, text=True, timeout=10)
+        font_result = subprocess.run([kpsewhich, "FandolSong-Regular.otf"], check=False, capture_output=True, text=True, timeout=10)
         if font_result.returncode != 0 or not font_result.stdout.strip():
             self.skipTest("FandolSong-Regular.otf is not installed")
         state = graph_state(knowledge_node("measurable-function", "可测函数", source_name="可测函数", aliases=("可测映射",)))

@@ -4,17 +4,29 @@ import copy
 import hashlib
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 from kgdistiller.alignment import node_fingerprint
 from kgdistiller.context_projection import (
-    build_compact_context, node_record, project_node, validate_compact_context,
+    build_compact_context,
+    node_record,
+    project_node,
+    validate_compact_context,
 )
-from kgdistiller.contracts import ContractError, canonical_json, sha256_json, validate_contract
+from kgdistiller.contracts import (
+    ContractError,
+    canonical_json,
+    sha256_json,
+    validate_contract,
+)
 from kgdistiller.graph_retrieval import GraphRetrievalPolicy, view_content_sha256
-from kgdistiller.retrieval import RetrievalError, build_context_from_execution, execute_retrieval_plan
 from kgdistiller.query import GraphView
+from kgdistiller.retrieval import (
+    RetrievalError,
+    build_context_from_execution,
+    execute_retrieval_plan,
+)
 from kgdistiller.semantic_retrieval import SemanticRankingService, search_document
 from tests.test_graph_retrieval import candidate_plan, graph_fixture
 from tests.test_query import fixture_nodes, snapshot_with
@@ -32,7 +44,7 @@ def repeated_fixture() -> tuple[GraphView, dict]:
             "entry_source_current_sha256": "c" * 64,
             "curated_definition_sha256": "d" * 64,
             "model_declared_source_sha256": "e" * 64, "source_sha256": "e" * 64,
-            "entry_authority": "knowledge/entries/original.md",
+            "entry_authority": ".knowledge/entries/original.md",
         })
         node["provenance"]["definition_sha256"] = "d" * 64
         node["entry"] = {"summary": node["text"], "context": copy.deepcopy(node["properties"]["conditions"]), "body": "A source-authored claim with its own wording.", "sources": ["https://example.org/original-v2"], "unknown_entry_semantics": {"phase": "train", "operator": "conditional expectation"}}

@@ -14,12 +14,14 @@ write. Match the user's language; preserve identifiers, commands and raw errors.
 
 Use the caller's existing partial or complete `def-sheet.md`. Each selectable
 candidate is an ordinary Markdown task item, usable directly in Obsidian. Link
-it to its clearly labeled review draft in `knowledge/build/reviews/`; the draft
+it to its clearly labeled review draft in `.knowledge/build/reviews/`; the draft
 holds the complete proposed content, source evidence, target and reviewed
-add/update identity decision. Already accepted, reused knowledge remains a direct
-canonical link without a new capture payload. For updates, retain enough before/after
-content to make the change reviewable. Accepted rows link to real canonical
-metadata. A draft link never represents an accepted entry.
+add/update identity decision. `build/` is excluded from Obsidian hidden-folder
+indexing by default; remove `build` from the kgdistiller plugin's exclusion list
+to open drafts there. Already accepted, reused knowledge remains a direct
+canonical link without a new capture payload. For updates, retain enough
+before/after content to make the change reviewable. Accepted rows link to real
+canonical metadata. A draft link never represents an accepted entry.
 
 When preparing new candidates, read only the requested source scope and compare
 plausible identities through the supported bounded API. Preserve native source

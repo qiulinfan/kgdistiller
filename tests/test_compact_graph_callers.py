@@ -10,7 +10,11 @@ from kgdistiller.capture import prepare_capture
 from kgdistiller.ingest import apply_ingest, load_request
 from kgdistiller.mcp import call_tool
 from kgdistiller.query import GraphView, QueryError, get
-from kgdistiller.retrieval import execute_retrieval_plan, legacy_retrieval_plan, RetrievalError
+from kgdistiller.retrieval import (
+    RetrievalError,
+    execute_retrieval_plan,
+    legacy_retrieval_plan,
+)
 from kgdistiller.semantic_retrieval import SemanticRankingService
 from kgdistiller.web import load_graph_payload
 from tests import test_capture, test_semantic_retrieval
@@ -45,8 +49,7 @@ class CompactGraphCallersTest(unittest.TestCase):
         self.assertIn(node, load_graph_payload(self.graph, repo_root=self.root)["nodes"])
         execution = execute_retrieval_plan(self.graph, legacy_retrieval_plan("Beta"), repo_root=self.root)
         self.assertTrue(any(row["node_id"] == "beta" for row in execution["result"]["results"]))
-        self.assertFalse((self.graph / "entries").exists())
-        self.assertFalse((self.graph / "diagnostics.json").exists())
+        self.assertEqual({path.name for path in self.graph.iterdir()}, {"manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"})
 
     def test_custom_graph_capture_keeps_entry_authority_root(self) -> None:
         payload = self.fixture.payload()

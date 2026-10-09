@@ -9,24 +9,37 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.mcp import (  # noqa: E402
+from kgdistiller.contracts import canonical_json, sha256_json
+from kgdistiller.mcp import (
     MAX_TOOL_RESPONSE_BYTES,
-    MCPServer,
     TOOL_DEFINITIONS,
+    MCPServer,
     call_tool,
 )
-from kgdistiller.query import QueryError, load_graph_view, query_status  # noqa: E402
-from tests.test_query import candidate_snapshot_with, fixture_nodes, write_fixture_graph  # noqa: E402
-from tests.test_semantic_retrieval import FakeEmbedding  # noqa: E402
-from kgdistiller.semantic_retrieval import SemanticRankingService, search_document  # noqa: E402
-from kgdistiller.support_selection import make_support_selection  # noqa: E402
-from kgdistiller.contracts import canonical_json, sha256_json  # noqa: E402
-from kgdistiller.retrieval import RetrievalError  # noqa: E402
-from tests.test_retrieval_cli import FakeReranker, assert_compact_source_bundle, repository_bytes, retrieval_plan, write_graph_retrieval_fixture, write_source_evidence_manifest  # noqa: E402
+from kgdistiller.query import QueryError, load_graph_view, query_status
+from kgdistiller.retrieval import RetrievalError
+from kgdistiller.semantic_retrieval import (
+    SemanticRankingService,
+    search_document,
+)
+from kgdistiller.support_selection import make_support_selection
+from tests.test_query import (
+    candidate_snapshot_with,
+    fixture_nodes,
+    write_fixture_graph,
+)
+from tests.test_retrieval_cli import (
+    FakeReranker,
+    assert_compact_source_bundle,
+    repository_bytes,
+    retrieval_plan,
+    write_graph_retrieval_fixture,
+    write_source_evidence_manifest,
+)
+from tests.test_semantic_retrieval import FakeEmbedding
 
 
 class MCPTest(unittest.TestCase):
@@ -473,7 +486,7 @@ class SourceEvidenceMCPTest(unittest.TestCase):
         self.root = Path(temporary.name)
         self.graph = self.root / "missing-graph"
         self.raw = ("# 数据\r\n\r\n| Model | MSE |\r\n|---|---:|\r\n"
-                    "| μ网络 | 0.79 |\r\n| Base | 8.20 |\r\n").encode("utf-8")
+                    "| μ网络 | 0.79 |\r\n| Base | 8.20 |\r\n").encode()
         self.manifest = write_source_evidence_manifest(self.root, {"paper": self.raw, "other": b"MSE alpha other\n"}, hash_mode="normalized-utf8")
         self.server = MCPServer(self.graph)
         self.server.initialized = True
@@ -599,7 +612,7 @@ class SourceEvidenceMCPTest(unittest.TestCase):
         final.symlink_to(source)
         for path in ("../outside.txt", "paper.txt/../paper.txt", "./paper.txt",
                      "/outside.txt", "C:/outside.txt", "linked.txt", "linked/paper.txt",
-                     "knowledge/graph/nodes.jsonl"):
+                     ".knowledge/graph/nodes.jsonl"):
             with self.subTest(path=path):
                 invalid = copy.deepcopy(manifest)
                 invalid["documents"][0]["path"] = path

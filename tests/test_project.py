@@ -9,20 +9,22 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.project import ensure_knowledge_gitignore, initialize_project  # noqa: E402
-from kgdistiller.vault_registry import VAULT_SCHEMA  # noqa: E402
+from kgdistiller.project import (
+    ensure_knowledge_gitignore,
+    initialize_project,
+)
+from kgdistiller.vault_registry import VAULT_SCHEMA
 
 
 class ProjectInitializationTest(unittest.TestCase):
     def test_init_creates_minimal_registry_without_erasing_review_data(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
             root = Path(temporary)
-            registry = root / "knowledge/sources.json"
-            alignments = root / "knowledge/alignments.json"
+            registry = root / ".knowledge/sources.json"
+            alignments = root / ".knowledge/alignments.json"
 
             initialize_project(
                 root,
@@ -39,10 +41,10 @@ class ProjectInitializationTest(unittest.TestCase):
             )
             self.assertEqual({"schema", "sources"}, set(sources))
             self.assertEqual({"id", "root", "files"}, set(sources["sources"][0]))
-            self.assertTrue((root / "knowledge/entries").is_dir())
-            self.assertFalse((root / "knowledge/derived").exists())
+            self.assertTrue((root / ".knowledge/entries").is_dir())
+            self.assertFalse((root / ".knowledge/derived").exists())
             vault_manifest = json.loads(
-                (root / "knowledge/vault.json").read_text(encoding="utf-8")
+                (root / ".knowledge/vault.json").read_text(encoding="utf-8")
             )
             self.assertEqual(VAULT_SCHEMA, vault_manifest["schema"])
             self.assertRegex(
@@ -52,7 +54,7 @@ class ProjectInitializationTest(unittest.TestCase):
             self.assertFalse(alignments.exists())
             self.assertEqual(
                 "build/\n",
-                (root / "knowledge/.gitignore").read_text(encoding="utf-8"),
+                (root / ".knowledge/.gitignore").read_text(encoding="utf-8"),
             )
             reviewed = {
                 "schema": "kgdistiller-alignments-v1",
@@ -63,7 +65,7 @@ class ProjectInitializationTest(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 initialize_project(root, registry, source_root=Path("replacement"))
             self.assertEqual(before, registry.read_bytes())
-            gitignore = root / "knowledge/.gitignore"
+            gitignore = root / ".knowledge/.gitignore"
             gitignore.write_text("build/\nlocal-secret/\n", encoding="utf-8")
             initialize_project(
                 root,
@@ -81,7 +83,7 @@ class ProjectInitializationTest(unittest.TestCase):
 
     def test_existing_gitignore_is_extended_atomically_and_idempotently(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
-            gitignore = Path(temporary) / "knowledge/.gitignore"
+            gitignore = Path(temporary) / ".knowledge/.gitignore"
             gitignore.parent.mkdir(parents=True)
             gitignore.write_bytes(b"local-secret/\r\n")
             if os.name != "nt":
@@ -118,7 +120,7 @@ class ProjectInitializationTest(unittest.TestCase):
 
             self.assertEqual(
                 "build/\n",
-                (root / "knowledge/.gitignore").read_text(encoding="utf-8"),
+                (root / ".knowledge/.gitignore").read_text(encoding="utf-8"),
             )
             self.assertEqual(
                 "build/\n",
@@ -127,13 +129,15 @@ class ProjectInitializationTest(unittest.TestCase):
 
     def test_gitignore_atomic_failure_preserves_existing_content(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
-            gitignore = Path(temporary) / "knowledge/.gitignore"
+            gitignore = Path(temporary) / ".knowledge/.gitignore"
             gitignore.parent.mkdir(parents=True)
             gitignore.write_bytes(b"local-secret/\n")
 
-            with mock.patch("kgdistiller.project.os.replace", side_effect=OSError("injected")):
-                with self.assertRaisesRegex(OSError, "injected"):
-                    ensure_knowledge_gitignore(gitignore)
+            with (
+                mock.patch("kgdistiller.project.os.replace", side_effect=OSError("injected")),
+                self.assertRaisesRegex(OSError, "injected"),
+            ):
+                ensure_knowledge_gitignore(gitignore)
 
             self.assertEqual(b"local-secret/\n", gitignore.read_bytes())
             self.assertEqual(

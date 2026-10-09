@@ -17,7 +17,7 @@ across papers, mathematical notes, CS notes and other sources. Definitions,
 axioms, precise theorems, algorithms and architectures can be knowledge nodes.
 Propositions, remarks, observations and hypotheses express relations; examples
 and experiments express applications. Preserve existing explicit identities.
-Source-side def/pending sheets are link projections to accepted `knowledge/`
+Source-side def/pending sheets are link projections to accepted `.knowledge/`
 metadata, not a second store of full definitions.
 
 A source must actually explain a local concept before it is admitted as a new

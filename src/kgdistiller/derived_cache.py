@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import copy
+import json
 import math
 import os
 import stat
 import uuid
-from contextlib import contextmanager
 from collections import OrderedDict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from .contracts import canonical_json, sha256_json
 from .file_io import descriptor_signature, path_signature
-
 
 EXACT_INPUT_CACHE_SCHEMA = "kgdistiller-exact-input-cache-v1"
 MAX_RECORD_BYTES = 256 * 1024

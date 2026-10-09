@@ -5,7 +5,7 @@ description: Save or update one source-backed knowledge item while reading, pres
 
 # Capture one knowledge item
 
-Save the selected knowledge to the caller's established `knowledge/` through one
+Save the selected knowledge to the caller's established `.knowledge/` through one
 bounded transaction. Use the current passage and just enough nearby context to
 preserve its definition and conditions. Do not turn this into a full-source read,
 a survey, a recursive prerequisite search or a new knowledge project.
@@ -73,7 +73,9 @@ Use the product's [capture preparation contract](references/capture-contract.md)
 compact payload and CLI. The deterministic helper builds the candidate,
 comparison and finalized plan/apply requests; do not hand-create their internal
 identifiers or digests. Keep prepared artifacts in the caller's
-`knowledge/build/reviews/` or another explicit project review directory.
+`.knowledge/build/reviews/` or another explicit project review directory.
+`build/` is excluded from Obsidian hidden-folder indexing by default; remove
+`build` from the kgdistiller plugin's exclusion list to open drafts there.
 
 Supply a source-grounded entry and explicit reviewed add/update intent. A new
 entry needs a reviewed native authority marker at its real definition; an update

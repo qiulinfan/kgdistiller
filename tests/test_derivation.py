@@ -5,13 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from kgdistiller.cli import synchronize
 from kgdistiller.derivation import (
     DERIVED_SCHEMA,
     DerivationError,
     install_derivation,
     plan_derivation,
 )
-from kgdistiller.cli import synchronize
 from kgdistiller.project import initialize_project
 
 
@@ -19,7 +19,7 @@ class DerivationPlacementTest(unittest.TestCase):
     def make_vault(self, root: Path) -> None:
         initialize_project(
             root,
-            root / "knowledge/sources.json",
+            root / ".knowledge/sources.json",
             source_root=Path("notes"),
         )
 
@@ -39,7 +39,7 @@ class DerivationPlacementTest(unittest.TestCase):
 
             self.assertEqual(str(inner.resolve()), plan["vault"])
             self.assertEqual(
-                "knowledge/derived/by-source/drafts/chapter.typ.md", plan["output"]
+                ".knowledge/derived/by-source/drafts/chapter.typ.md", plan["output"]
             )
             self.assertFalse(plan["external_source"])
 
@@ -58,7 +58,7 @@ class DerivationPlacementTest(unittest.TestCase):
             destination = Path(result["destination"])
             content = destination.read_text(encoding="utf-8")
             self.assertEqual(
-                (vault / "knowledge/derived/by-source/notes/chapter.tex.md").resolve(),
+                (vault / ".knowledge/derived/by-source/notes/chapter.tex.md").resolve(),
                 destination,
             )
             self.assertIn(f'kgd_schema: "{DERIVED_SCHEMA}"', content)
@@ -90,35 +90,35 @@ class DerivationPlacementTest(unittest.TestCase):
             content = Path(result["destination"]).read_text(encoding="utf-8")
             metadata = content.split("---", 2)[1]
             self.assertTrue(result["external_source"])
-            self.assertEqual("knowledge/derived/imports/paper.md", result["output"])
+            self.assertEqual(".knowledge/derived/imports/paper.md", result["output"])
             self.assertIn("kgd_schema", metadata)
             self.assertNotIn("kgd_source:", metadata)
             self.assertNotIn("kgd_source_sha256", metadata)
             self.assertNotIn(str(external), content)
             # New projects do not register converted imports automatically.
             # A retained legacy import is an explicit source registration.
-            registry_path = vault / "knowledge/sources.json"
+            registry_path = vault / ".knowledge/sources.json"
             registry = json.loads(registry_path.read_text(encoding="utf-8"))
             registry["sources"].append({
                 **registry["sources"][0],
-                "id": "selected-import", "root": "knowledge/derived/imports",
+                "id": "selected-import", "root": ".knowledge/derived/imports",
                 "files": ["paper.md"],
             })
             registry_path.write_text(json.dumps(registry), encoding="utf-8")
             state, _, _ = synchronize(
                 vault,
-                vault / "knowledge/sources.json",
-                vault / "knowledge/graph",
-                vault / "knowledge/build/knowledge-registry.typ",
-                identities=vault / "knowledge/identities.json",
-                alignments=vault / "knowledge/alignments.json",
+                vault / ".knowledge/sources.json",
+                vault / ".knowledge/graph",
+                vault / ".knowledge/build/knowledge-registry.typ",
+                identities=vault / ".knowledge/identities.json",
+                alignments=vault / ".knowledge/alignments.json",
                 files=[],
                 course=None,
                 subject=None,
                 write=True,
             )
             self.assertEqual(
-                "knowledge/derived/imports/paper.md",
+                ".knowledge/derived/imports/paper.md",
                 state.nodes["paper-concept"]["provenance"]["authority"],
             )
 
@@ -130,7 +130,7 @@ class DerivationPlacementTest(unittest.TestCase):
             source = vault / "notes/chapter.typ"
             source.write_text("= Chapter\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(DerivationError, "knowledge/derived"):
+            with self.assertRaisesRegex(DerivationError, ".knowledge/derived"):
                 plan_derivation(source, output=Path("notes/chapter.md"))
 
 

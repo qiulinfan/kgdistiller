@@ -16,20 +16,20 @@ require incrementing the affected contract version.
 - Add a cross-platform installed `kgdistiller`/`kgd` command with a strict
   machine-local vault registry at `~/.kgdistiller/vaults.json`. Commands can
   select a registered vault by name or stable UUID from any working directory,
-  while portable identity lives in tracked `knowledge/vault.json` and is bound
+  while portable identity lives in tracked `.knowledge/vault.json` and is bound
   into `kgdistiller-store-v1` snapshots.
-- Make `knowledge/entries/<node-id>.md` the atomic-entry authority visible to
-  Obsidian. Graph JSONL entry shards remain deterministic derived indexes, and
-  the graph manifest binds the entry Markdown inventory.
-- Add `knowledge/derived/by-source/` for collision-free in-vault Typst, LaTeX,
-  and PDF conversions plus `knowledge/derived/imports/` for explicitly targeted
+- Make `.knowledge/entries/<node-id>.md` the sole persisted atomic-entry body
+  store. The graph manifest binds the entry Markdown inventory.
+- Add `.knowledge/derived/by-source/` for collision-free in-vault Typst, LaTeX,
+  and PDF conversions plus `.knowledge/derived/imports/` for explicitly targeted
   external sources. Internal conversions record upstream provenance; external
   imports intentionally begin the persisted provenance chain.
 - Establish the `kgdistiller-*` schema namespace with independent v1 contracts
-  such as `kgdistiller-graph-v1`, `kgdistiller-sources-v1`, and
-  `kgdistiller-store-v1`. Pre-0.4 schema aliases and readers are not retained.
+  such as `kgdistiller-sources-v1` and `kgdistiller-store-v1`, plus the
+  compact `kgdistiller-graph-v2`. Pre-0.4 schema aliases and readers are not
+  retained.
 - Make Markdown, Typst, and LaTeX the only authorities and retain the
-  deterministic `kgdistiller-graph-v1` JSON graph as the derived machine contract.
+  deterministic `kgdistiller-graph-v2` JSON graph as the machine contract.
 - Require `kgdistiller-sources-v1`, `kgdistiller-identities-v1`, and
   `kgdistiller-agent-delta-v1` at the persisted core boundary; rebuild derived
   graph artifacts from native authorities when upgrading.
@@ -65,7 +65,7 @@ require incrementing the affected contract version.
 - Package a self-contained native frontend and preserve loopback binding by
   default.
 - Add `kgdistiller-static-export-v1` so the persisted bundle binds its private
-  source to `kgdistiller-graph-v1`; 0.4 does not read pre-0.4 bundle manifests.
+  source to `kgdistiller-graph-v2`; 0.4 does not read pre-0.4 bundle manifests.
 - Add `kgdistiller-obsidian-projection-v1` as a lossy, disposable downstream export
   that is never registered, rescanned, or used for round-trip authoring.
 - Add a read-only Obsidian plugin and the digest-bound
@@ -79,6 +79,24 @@ require incrementing the affected contract version.
   hot-update pipeline as future work.
 - Remove superseded 0.3 database/vector design specifications; Git history is
   their archive.
+- Make the hidden `.knowledge/` tree the only knowledge root; `kgdistiller init`
+  creates it and every CLI default resolves below it.
+- Read and write only `kgdistiller-graph-v2` and
+  `kgdistiller-document-record-v2`; there are no v1 readers, and other graph or
+  document-record discriminators fail closed.
+- Require Python 3.11 or newer.
+- Pin ruff 0.16.10 in the `dev` dependency group and run
+  `ruff check src tests scripts` in CI.
+- Release Obsidian plugin 0.1.5, versioned independently of the Python core
+  (release notes in `.github/obsidian-release-notes.md`): hidden-folder
+  indexing fixed to `.knowledge` (the folder-path setting is removed) with an
+  exclusion list (default `build`, slashes trimmed); the default graph path
+  `.knowledge/build/obsidian/semantic-graph.json`, loaded through the vault
+  adapter so it still loads below an excluded folder and re-checked, one load
+  at a time, on focus or leaf change; a `kgdistiller-graph-v2`-only contract; Open buttons that target
+  `.knowledge/entries/<node-id>.md` and source authorities for a graph under
+  the vault-root `.knowledge/`, instead of projection copies; and
+  type-checked stored settings.
 
 ## 0.3.0
 

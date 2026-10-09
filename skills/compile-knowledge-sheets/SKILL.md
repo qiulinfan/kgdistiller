@@ -5,7 +5,7 @@ description: Create or refresh partial or complete source-scoped definition and 
 
 # Compile knowledge sheets
 
-Create source-scoped link views of the caller's canonical `knowledge/` metadata.
+Create source-scoped link views of the caller's canonical `.knowledge/` metadata.
 Definitions, conditions, evidence, relations and applications belong in accepted
 knowledge records. A definition sheet shows names, types, source locators and
 links to those records; a pending sheet links their supported dependency-gap
@@ -52,9 +52,11 @@ explicit review.
 
 If the selected source needs new or changed metadata, read
 [references/sync-contract.md](references/sync-contract.md). Prepare the complete
-source-grounded proposal in `knowledge/build/reviews/`, including meanings,
+source-grounded proposal in `.knowledge/build/reviews/`, including meanings,
 conditions, formal content, evidence, factual relations, applications and
-unresolved decisions. Keep it distinct from committed metadata.
+unresolved decisions. Keep it distinct from committed metadata. `build/` is
+excluded from Obsidian hidden-folder indexing by default; remove `build` from
+the kgdistiller plugin's exclusion list to open drafts there.
 
 Treat source coverage, available definitions and user understanding separately.
 Read `entry.understanding` as `unknown`, `not-yet-understood` or `understood`;

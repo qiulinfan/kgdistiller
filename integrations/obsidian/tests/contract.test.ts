@@ -24,14 +24,18 @@ describe("kgdistiller Obsidian graph contract", () => {
     expect(parsed.references[0]?.source_authority).toBe("notes/chapter.md");
   });
 
-  it("accepts compact graph storage while retaining legacy projections", async () => {
-    for (const schema of ["kgdistiller-graph-v1", "kgdistiller-graph-v2"] as const) {
-      const graph = await graphFixture();
-      graph.source.graph_schema = schema;
-      graph.bundle_sha256 = await calculateBundleDigest({ ...graph });
-      const parsed = await parseGraphContract(JSON.stringify(graph));
-      expect(parsed.source.graph_schema).toBe(schema);
-    }
+  it("accepts graph-v2", async () => {
+    const parsed = await parseGraphContract(JSON.stringify(await graphFixture()));
+    expect(parsed.source.graph_schema).toBe("kgdistiller-graph-v2");
+  });
+
+  it("rejects kgdistiller-graph-v1", async () => {
+    const graph = (await graphFixture()) as unknown as { source: Record<string, unknown>; bundle_sha256: string };
+    graph.source.graph_schema = "kgdistiller-graph-v1";
+    graph.bundle_sha256 = await calculateBundleDigest({ ...graph });
+    await expect(parseGraphContract(JSON.stringify(graph))).rejects.toThrow(
+      "source.graph_schema must equal kgdistiller-graph-v2",
+    );
   });
 
   it("rejects digest tampering", async () => {

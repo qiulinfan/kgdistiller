@@ -14,9 +14,11 @@ import { isSafeVaultPath, parseGraphContract, type KgGraphContract } from "./con
 import {
   fieldOptions,
   graphElements,
+  openTarget,
   relationOptions,
   type GraphElementData,
   type GraphFilters,
+  type OpenTarget,
 } from "./graph-model";
 import type { KgdistillerSettings } from "./settings";
 
@@ -30,7 +32,6 @@ export interface GraphViewHost {
 
 export class KgdistillerGraphView extends ItemView {
   private graph: KgGraphContract | null = null;
-  private graphPath = "";
   private cytoscape: Core | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private toolbarEl: HTMLElement | null = null;
@@ -38,6 +39,10 @@ export class KgdistillerGraphView extends ItemView {
   private detailEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private filters: GraphFilters;
+  /** Path, mtime and size of the graph file the view last tried to load. */
+  private loadedStamp: string | null = null;
+  /** Loads run one at a time; focus and leaf-change often fire together. */
+  private refreshQueue: Promise<void> = Promise.resolve();
 
   constructor(leaf: WorkspaceLeaf, private readonly host: GraphViewHost) {
     super(leaf);
@@ -83,21 +88,58 @@ export class KgdistillerGraphView extends ItemView {
     this.cytoscape = null;
   }
 
-  async refresh(): Promise<void> {
+  /**
+   * Reload only when the graph file changed since the last load. Vault events do
+   * not fire for a graph under an excluded or unindexed hidden folder, so the
+   * plugin calls this when Obsidian regains focus or the active leaf changes.
+   */
+  refreshIfChanged(): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.toolbarEl) return;
+      const configuredPath = normalizePath(this.host.settings.graphPath.trim());
+      try {
+        if (isSafeVaultPath(configuredPath, /\.json$/) &&
+            (await this.graphStamp(configuredPath)) === this.loadedStamp) return;
+      } catch {
+        // The load below reports the stat failure in the view.
+      }
+      await this.loadGraph();
+    });
+  }
+
+  refresh(): Promise<void> {
+    return this.enqueue(() => this.loadGraph());
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    const next = this.refreshQueue.then(task);
+    this.refreshQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async graphStamp(path: string): Promise<string | null> {
+    const stat = await this.app.vault.adapter.stat(path);
+    return stat ? `${path}:${stat.mtime}:${stat.size}` : null;
+  }
+
+  private async loadGraph(): Promise<void> {
     if (!this.toolbarEl || !this.graphEl || !this.statusEl) return;
     try {
+      this.loadedStamp = null;
       const configuredPath = normalizePath(this.host.settings.graphPath.trim());
       if (!isSafeVaultPath(configuredPath, /\.json$/)) {
         throw new Error("The semantic graph setting must be a safe vault-relative JSON path.");
       }
-      const file = this.app.vault.getAbstractFileByPath(configuredPath);
-      if (!(file instanceof TFile)) {
+      // Read through the adapter so a graph below an excluded or unindexed hidden
+      // folder still loads; such paths have no TFile in the vault index.
+      const adapter = this.app.vault.adapter;
+      this.loadedStamp = await this.graphStamp(configuredPath);
+      if (!(await adapter.exists(configuredPath))) {
         throw new Error(
           `No semantic graph exists at ${configuredPath}. Run kgdistiller export obsidian --replace.`,
         );
       }
-      this.graphPath = configuredPath;
-      this.graph = await parseGraphContract(await this.app.vault.read(file));
+      this.graph = await parseGraphContract(await adapter.read(configuredPath));
       this.filters.showSources = this.host.settings.showSources;
       this.filters.showDefinitions = this.host.settings.showDefinitions;
       this.filters.showReferences = this.host.settings.showReferences;
@@ -199,7 +241,7 @@ export class KgdistillerGraphView extends ItemView {
     if (!this.graphEl || !this.graph) return;
     this.cytoscape?.destroy();
     this.graphEl.empty();
-    const elements = graphElements(this.graph, this.graphPath, this.filters);
+    const elements = graphElements(this.graph, this.filters);
     if (elements.length === 0) {
       this.graphEl.createDiv({ cls: "kgd-empty-state", text: "No nodes match these filters." });
       return;
@@ -340,11 +382,8 @@ export class KgdistillerGraphView extends ItemView {
       this.detailEl.createEl("h4", { text: "Evidence" });
       this.detailEl.createEl("blockquote", { text: data.evidence });
     }
-    if (data.kind === "concept" || data.kind === "source") {
-      this.addOpenButton(data);
-    } else if ((data.kind === "definition" || data.kind === "reference") && data.notePath) {
-      this.addOpenButton(data, "Open source");
-    }
+    const target = openTarget(data, normalizePath(this.host.settings.graphPath.trim()));
+    if (target) this.addOpenButton(target, data.kind === "concept" ? "Open entry" : "Open source");
   }
 
   private detailRow(label: string, value: string): void {
@@ -354,21 +393,19 @@ export class KgdistillerGraphView extends ItemView {
     row.createSpan({ text: value });
   }
 
-  private addOpenButton(data: GraphElementData, label = "Open note"): void {
+  private addOpenButton(target: OpenTarget, label: string): void {
     if (!this.detailEl) return;
     const button = this.detailEl.createEl("button", { cls: "mod-cta", text: label });
-    button.addEventListener("click", () => {
-      const opensMarkdownAuthority =
-        data.kind !== "concept" && data.authority?.toLowerCase().endsWith(".md");
-      const path = opensMarkdownAuthority ? data.authority : data.notePath;
-      if (path) void this.openVaultPath(path, opensMarkdownAuthority ? data.line : undefined);
-    });
+    button.addEventListener("click", () => void this.openVaultPath(target.path, target.line));
   }
 
   private async openVaultPath(path: string, line?: number): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (!(file instanceof TFile)) {
-      new Notice(`kgdistiller note is missing: ${path}`);
+      new Notice(
+        `kgdistiller cannot open ${path}: it is not in the vault index. ` +
+        "Enable hidden-folder indexing in the kgdistiller settings for files under the hidden knowledge folder.",
+      );
       return;
     }
     const leaf = this.app.workspace.getLeaf(false);

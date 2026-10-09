@@ -4,7 +4,6 @@ import runpy
 import unittest
 from pathlib import Path, PurePosixPath
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = runpy.run_path(str(REPO_ROOT / "scripts" / "check_distribution.py"))
 

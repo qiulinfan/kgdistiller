@@ -17,7 +17,7 @@ keys and action codes, and raw errors unchanged.
 
 ## Keep the boundary read-only
 
-- Never open `knowledge/graph/*.jsonl`, any legacy entry shards, or atomic entry
+- Never open raw graph files under `.knowledge/graph/` or atomic entry
   Markdown; use the bounded query interface.
 - Never edit an authority, identity/alignment registry, or graph artifact.
 - Never run `apply`, `sync`, `reconcile`, `ingest`, or another writer.
@@ -36,10 +36,10 @@ Start with `kg_status` or:
 kgdistiller --repo-root PROJECT agent status
 ```
 
-Require `kgdistiller-query-status-v1`, `kgdistiller-agent-snapshot-v1`, a supported
-`kgdistiller-graph-v2` or existing public `kgdistiller-graph-v1` generation,
-`kgdistiller-alignments-v1`, and the `json-memory`/`read-only-query-v3` capabilities.
-A v1 read never authorizes a write or upgrade. The query layer hydrates entry
+Require `kgdistiller-query-status-v1`, `kgdistiller-agent-snapshot-v1`, a
+`kgdistiller-graph-v2` generation, `kgdistiller-alignments-v1`, and the
+`json-memory`/`read-only-query-v3` capabilities; otherwise stop and report the
+reported status. A read never authorizes a write or upgrade. The query layer hydrates entry
 Markdown internally; use its bounded results rather than opening those files.
 Record `snapshot_sha256`, `graph_sha256`, and `alignment_sha256` so a later
 transactional writer can reject a stale decision.
@@ -152,9 +152,12 @@ plausible senses remain; multiple plausible senses stay ambiguous.
 
 ```sh
 kgdistiller --repo-root PROJECT agent align CANDIDATE \
-  --output knowledge/build/reviews/NAME.alignment.json
+  --output .knowledge/build/reviews/NAME.alignment.json
 kgdistiller --repo-root PROJECT agent compare CANDIDATE
 ```
+
+`build/` is excluded from Obsidian hidden-folder indexing by default; remove
+`build` from the kgdistiller plugin's exclusion list to open drafts there.
 
 Alignment is evidence, not a write request. Do not reconcile mappings here.
 Require `kgdistiller-alignment-report-v1`, preserve its `alignment_sha256`, fresh

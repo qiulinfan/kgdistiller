@@ -3,7 +3,7 @@
 ## Authority and review staging
 
 Accepted node content and semantic state belong in the caller's canonical
-`knowledge/`. Keep complete proposed content in `knowledge/build/reviews/`
+`.knowledge/`. Keep complete proposed content in `.knowledge/build/reviews/`
 until a supported, authorized transaction commits it. The review area is
 transient proposal storage, not an alternate accepted knowledge base. Preserve
 registered Markdown, Typst and LaTeX marker authority and the current
@@ -84,7 +84,7 @@ gaps and understanding use the atomic-entry fields above. The
 caller-supplied compiled library is a read-only retrieval input, not a write
 API. Check actual request/delta capabilities before constructing a plan.
 
-For unsupported content, keep the full proposal in `knowledge/build/reviews/`
+For unsupported content, keep the full proposal in `.knowledge/build/reviews/`
 and report the exact item, scientific fields/operation, observed adapter gap and
 unapplied scope. Do not invent a storage format or command, drop fields, flatten
 relations or hide assertions in unrelated nodes. Apply a representable subset

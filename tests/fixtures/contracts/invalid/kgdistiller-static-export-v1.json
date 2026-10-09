@@ -18,7 +18,7 @@
   },
   "visibility": {"policy": "explicit-publish", "published_sources": [], "excluded_sources": 0},
   "graph": {
-    "private_schema": "kgdistiller-graph-v1",
+    "private_schema": "kgdistiller-graph-v2",
     "private_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "private_counts": {"nodes": 0, "edges": 0, "references": 0},
     "public_schema": "kgdistiller-site-graph-v1",

@@ -19,10 +19,10 @@ class DocumentTypesTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.repo = Path(self.temporary.name)
         (self.repo / "sources").mkdir()
-        (self.repo / "knowledge").mkdir()
-        self.registry = self.repo / "knowledge/sources.json"
-        self.graph = self.repo / "knowledge/graph"
-        self.render_registry = self.repo / "knowledge/build/knowledge-registry.typ"
+        (self.repo / ".knowledge").mkdir()
+        self.registry = self.repo / ".knowledge/sources.json"
+        self.graph = self.repo / ".knowledge/graph"
+        self.render_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
         self.profile = {
             "node_kinds": ["construction", "measurement protocol"],
             "extraction_guidance": "Extract explained constructions. Leave unexplained terms pending.\nObservations are relations.",
@@ -153,7 +153,7 @@ class DocumentTypesTest(unittest.TestCase):
         source.write_text("Definition --[[Test object]]--\nOriginal definition.\n", encoding="utf-8")
         self.sync()
         self.apply_kind("test-object", "construction", text="The reviewed original definition.")
-        entry = self.repo / "knowledge/entries/test-object.md"
+        entry = self.repo / ".knowledge/entries/test-object.md"
         before = entry.read_text(encoding="utf-8")
         original = parse_entry(entry)
         source.write_text("Definition --[[Test object]]--\nScientifically changed definition.\n", encoding="utf-8")
@@ -190,7 +190,7 @@ class DocumentTypesTest(unittest.TestCase):
         self.apply_kind("test-object", "construction", text="Reviewed definition.")
         # The original syntax is retained immediately, before any later scan.
         self.assertEqual("definition", cli.load_state(self.graph).nodes["test-object"]["properties"]["source_kind"])
-        entry = self.repo / "knowledge/entries/test-object.md"
+        entry = self.repo / ".knowledge/entries/test-object.md"
         entry.write_text(entry.read_text().replace('kgd_kind: "construction"\n', ""), encoding="utf-8")
         node = self.sync().nodes["test-object"]
         self.assertEqual("definition", node["properties"]["kind"])
@@ -214,7 +214,7 @@ class DocumentTypesTest(unittest.TestCase):
         properties = self.sync().nodes["test-object"]["properties"]
         self.assertEqual("definition", properties["kind"])
         self.assertEqual("theorem", properties["source_kind"])
-        entry = self.repo / "knowledge/entries/test-object.md"
+        entry = self.repo / ".knowledge/entries/test-object.md"
         entry.write_text(entry.read_text().replace('kgd_kind: "definition"\n', ""), encoding="utf-8")
         properties = self.sync().nodes["test-object"]["properties"]
         self.assertEqual("theorem", properties["kind"])
@@ -230,7 +230,7 @@ class DocumentTypesTest(unittest.TestCase):
             with self.subTest(text=text), self.assertRaisesRegex(cli.KnowledgeError, "existing knowledge entry or reviewed content"):
                 self.apply_kind("test-object", "construction", text=text)
         self.assertEqual(cli.load_state(self.graph).nodes, previous)
-        self.assertFalse((self.repo / "knowledge/entries/test-object.md").exists())
+        self.assertFalse((self.repo / ".knowledge/entries/test-object.md").exists())
 
     def test_kind_only_uses_previous_staged_content_for_repeated_node_updates(self) -> None:
         from kgdistiller.entry_markdown import parse_entry
@@ -238,7 +238,7 @@ class DocumentTypesTest(unittest.TestCase):
         source = self.repo / "sources/item.md"
         source.write_text("Definition --[[Test object]]--\nSource definition.\n", encoding="utf-8")
         self.sync()
-        entry = self.repo / "knowledge/entries/test-object.md"
+        entry = self.repo / ".knowledge/entries/test-object.md"
         delta = self.repo / "delta.json"
         for text in ("First accepted entry.", "Updated accepted entry."):
             with self.subTest(text=text):

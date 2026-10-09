@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import copy
 import hashlib
 import json
@@ -26,8 +24,8 @@ from .cli import (
     load_sources,
     load_state,
     make_agent_snapshot,
-    pretty_json,
     paired_typst_rendering_sources,
+    pretty_json,
     sha256_authority_file,
     source_registry_sha256,
     typst_registry_text,
@@ -36,6 +34,7 @@ from .cli import (
     validate_state,
 )
 from .contracts import finalize_self_digest, sha256_json, validate_contract
+from .knowledge_paths import knowledge_root
 from .static_export_verifier import verify_export
 
 EXPORT_SCHEMA = "kgdistiller-static-export-v1"
@@ -352,21 +351,6 @@ def _source_inputs(
     state: GraphState | None = None,
 ) -> list[Path]:
     paths = [registry, *(graph_dir / name for name in sorted(SOURCE_GRAPH_FILES))]
-    entry_store = graph_manifest.get("entry_store") or {}
-    if not isinstance(entry_store, dict):
-        raise StaticExportError("authority graph entry_store is invalid")
-    raw_shards = entry_store.get("shards") or []
-    if not isinstance(raw_shards, list):
-        raise StaticExportError("authority graph entry_store is invalid")
-    for shard in raw_shards:
-        if not isinstance(shard, dict):
-            raise StaticExportError("authority graph entry_store contains a non-object")
-        relative = Path(str(shard.get("path", "")))
-        if not str(relative) or relative.is_absolute() or ".." in relative.parts:
-            raise StaticExportError(
-                f"authority graph contains an unsafe entry shard: {relative}"
-            )
-        paths.append(graph_dir / relative)
     entry_authorities = graph_manifest.get("entry_authorities") or {}
     if not isinstance(entry_authorities, dict):
         raise StaticExportError("authority graph entry_authorities is invalid")
@@ -664,7 +648,8 @@ def build_site_graph(
 ) -> tuple[dict[str, Any], GraphState, dict[str, str], list[str], int]:
     # Recompute the private graph from its canonical LF serialization before
     # trusting its digest or publishing a derivative. load_state has already
-    # checked manifest-declared entry shard hashes using the same text boundary.
+    # verified the manifest-bound entry Markdown authorities using the same
+    # text boundary.
     try:
         make_agent_snapshot(state)
     except KnowledgeError as error:
@@ -721,9 +706,7 @@ def build_site_graph(
     nodes: list[dict[str, Any]] = []
     for node_id in sorted(visible):
         node = copy.deepcopy(state.nodes[node_id])
-        properties = dict(node.get("properties") or {})
-        properties.pop("entry_path", None)
-        node["properties"] = properties
+        node["properties"] = dict(node.get("properties") or {})
         nodes.append(node)
     edges = sorted(
         (

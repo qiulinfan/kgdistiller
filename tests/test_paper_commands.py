@@ -6,11 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kgdistiller.codex_product import (
-    CodexProductError, _validate_workflows, doctor_product, link_product,
-)
 from kgdistiller.claude_product import doctor_claude_product, link_claude_product
-
+from kgdistiller.codex_product import (
+    CodexProductError,
+    _validate_workflows,
+    doctor_product,
+    link_product,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PAPER_COMMANDS = {
@@ -124,7 +126,7 @@ class PaperCommandTests(unittest.TestCase):
                 unrelated.parent.mkdir(parents=True)
                 unrelated.write_text("external\n", encoding="utf-8")
 
-                def link() -> dict:
+                def link(runtime=runtime, home=home, source=source) -> dict:
                     if runtime == "codex":
                         return link_product(codex_home=home, source_root=source)
                     return link_claude_product(claude_home=home, source_root=source)

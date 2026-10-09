@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import hashlib
 import json
 import os
@@ -12,7 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .alignment import load_alignment_set, sha256_json as alignment_sha256_json
+from .alignment import load_alignment_set
+from .alignment import sha256_json as alignment_sha256_json
 from .cli import (
     GraphState,
     KnowledgeError,
@@ -23,25 +22,25 @@ from .cli import (
     make_agent_snapshot,
     relative_path,
     sha256_authority_file,
-    source_registry_sha256,
     source_format,
+    source_registry_sha256,
     unique_source_for_path,
 )
 from .contracts import ContractError, canonical_json, sha256_json, validate_contract
+from .entry_markdown import ENTRY_INDEX_SCHEMA
 from .json_schema import validate_json_schema
+from .knowledge_paths import KNOWLEDGE_DIRECTORY, knowledge_root
 from .project import ensure_knowledge_gitignore
 from .vault_registry import (
     ensure_vault_manifest,
     load_vault_manifest,
     vault_manifest_path,
 )
-from .entry_markdown import ENTRY_INDEX_SCHEMA
-
 
 STORE_SCHEMA = "kgdistiller-store-v1"
 STORE_REPORT_SCHEMA = "kgdistiller-store-report-v1"
-STORE_MANIFEST_PATH = Path("knowledge/store.json")
-DOCUMENTS_PATH = Path("knowledge/documents.jsonl")
+STORE_MANIFEST_PATH = Path(KNOWLEDGE_DIRECTORY, "store.json")
+DOCUMENTS_PATH = Path(KNOWLEDGE_DIRECTORY, "documents.jsonl")
 DOCUMENT_RECORD_SCHEMA = "kgdistiller-document-record-v2"
 
 
@@ -146,21 +145,27 @@ def _read_jsonl(path: Path) -> tuple[str, list[dict[str, Any]]]:
     return canonical, values
 
 
-def _graph_paths(graph_dir: Path, state: GraphState) -> list[Path]:
-    paths = [
-        graph_dir / "manifest.json",
-        graph_dir / "nodes.jsonl",
-        graph_dir / "edges.jsonl",
-        graph_dir / "references.jsonl",
-    ]
-    if state.manifest.get("schema") == "kgdistiller-graph-v1":
-        paths.append(graph_dir / "diagnostics.json")
-        for shard in (state.manifest.get("entry_store") or {}).get("shards", []):
-            relative = _safe_relative(str(shard.get("path", "")))
-            paths.append(graph_dir / relative)
+GRAPH_ARTIFACT_NAMES = ("manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl")
+
+
+def _graph_paths(graph_dir: Path) -> list[Path]:
+    paths = [graph_dir / name for name in GRAPH_ARTIFACT_NAMES]
     if any(not path.is_file() for path in paths):
         raise StoreError("graph generation is incomplete")
     return paths
+
+
+def _require_graph_generation_inventory(
+    root: Path, graph_dir: Path, declared: set[str]
+) -> None:
+    """Require the declared graph artifacts to be exactly the generation files."""
+
+    expected = {(graph_dir / name).relative_to(root).as_posix() for name in GRAPH_ARTIFACT_NAMES}
+    if declared != expected:
+        raise StoreError(
+            "graph artifact inventory must declare exactly the graph generation files: "
+            f"unexpected={sorted(declared - expected)}, missing={sorted(expected - declared)}"
+        )
 
 
 def _entry_authority_paths(repo_root: Path, state: GraphState) -> list[Path]:
@@ -247,8 +252,6 @@ def _document_inventory(
     repo_root: Path,
     registry: Path,
     state: GraphState,
-    *,
-    record_schema: str = DOCUMENT_RECORD_SCHEMA,
 ) -> tuple[list[dict[str, Any]], list[Path]]:
     specs = load_sources(repo_root, registry)
     current_hashes: dict[str, str] = {}
@@ -299,10 +302,10 @@ def _document_inventory(
         paths.append(source)
         records.append(
             {
-                "schema": record_schema,
+                "schema": DOCUMENT_RECORD_SCHEMA,
                 "source_id": spec.id,
-                **({"subject": spec.subject} if spec.subject or record_schema == "kgdistiller-document-record-v1" else {}),
-                **({"course": spec.course} if spec.course or record_schema == "kgdistiller-document-record-v1" else {}),
+                **({"subject": spec.subject} if spec.subject else {}),
+                **({"course": spec.course} if spec.course else {}),
                 "knowledge_origin": spec.knowledge_origin,
                 "authority": str(authority),
                 "format": source_format(source),
@@ -353,10 +356,9 @@ def _require_graph_generation_bindings(
 def verify_store(root: Path) -> dict[str, Any]:
     """Verify a self-contained portable authority and graph generation."""
     root = root.resolve()
-    lexical_manifest = knowledge_root(root) / "store.json"
-    if lexical_manifest.is_symlink() or not lexical_manifest.is_file():
-        raise StoreError("store manifest must be an ordinary file")
     manifest_path = knowledge_root(root) / "store.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise StoreError("store manifest must be an ordinary file")
     manifest = _read_json(manifest_path)
     _validate_manifest_schema(manifest)
     claimed_store_sha = str(manifest.get("store_sha256", ""))
@@ -417,6 +419,7 @@ def verify_store(root: Path) -> dict[str, Any]:
         if normalized_bytes != int(artifact["bytes"]) or digest != artifact["sha256"]:
             raise StoreError(f"graph artifact digest mismatch: {relative}")
         declared_graph_artifacts[relative] = artifact
+    _require_graph_generation_inventory(root, graph_dir, set(declared_graph_artifacts))
     actual_graph_artifacts = {
         path.relative_to(root).as_posix()
         for path in graph_dir.rglob("*")
@@ -461,12 +464,7 @@ def verify_store(root: Path) -> dict[str, Any]:
         inventory_hashes[authority] = digest
     if inventory_hashes != source_hashes:
         raise StoreError("document inventory does not match graph source hashes")
-    # v1 snapshots predate optional source classifications. Preserve their
-    # original record shape and generation digest when verifying a saved store.
-    record_schema = documents[0]["schema"] if documents else DOCUMENT_RECORD_SCHEMA
-    expected_documents, _ = _document_inventory(
-        root, registry, state, record_schema=record_schema
-    )
+    expected_documents, _ = _document_inventory(root, registry, state)
     if documents != expected_documents:
         raise StoreError("document inventory does not match registry and graph semantics")
 
@@ -564,8 +562,6 @@ def snapshot_store(
     """Create or refresh one self-contained portable generation."""
     repo_root = repo_root.resolve()
     output_root = output_root.resolve()
-    store_manifest_path = knowledge_relative(repo_root, STORE_MANIFEST_PATH)
-    documents_path = knowledge_relative(repo_root, DOCUMENTS_PATH)
     if output_root != repo_root:
         try:
             output_root.relative_to(repo_root)
@@ -608,7 +604,7 @@ def snapshot_store(
     source_paths.extend(_entry_authority_paths(repo_root, state))
     documents_text = _jsonl(documents)
     source_snapshot_sha = sha256_json(documents)
-    graph_paths = _graph_paths(graph_dir, state)
+    graph_paths = _graph_paths(graph_dir)
     config_paths = [vault_path, registry]
     if identities.is_file():
         config_paths.append(identities)
@@ -624,8 +620,8 @@ def snapshot_store(
     target_root.mkdir(parents=True, exist_ok=True)
     layout = "in-place" if output_root == repo_root else "snapshot-copy"
     managed: set[str] = {
-        store_manifest_path.as_posix(),
-        documents_path.as_posix(),
+        STORE_MANIFEST_PATH.as_posix(),
+        DOCUMENTS_PATH.as_posix(),
     }
     try:
         if target_root != repo_root:
@@ -636,10 +632,10 @@ def snapshot_store(
             for spec in load_sources(repo_root, registry):
                 relative_root = relative_path(repo_root, spec.root)
                 _resolve(target_root, relative_root).mkdir(parents=True, exist_ok=True)
-        ensure_knowledge_gitignore(target_root / store_manifest_path.parent / ".gitignore")
+        ensure_knowledge_gitignore(target_root / STORE_MANIFEST_PATH.parent / ".gitignore")
         if layout == "snapshot-copy":
-            managed.add((store_manifest_path.parent / ".gitignore").as_posix())
-        _atomic_write_text(_resolve(target_root, documents_path), documents_text)
+            managed.add((STORE_MANIFEST_PATH.parent / ".gitignore").as_posix())
+        _atomic_write_text(_resolve(target_root, DOCUMENTS_PATH), documents_text)
 
         vault_relative = relative_path(repo_root, vault_path)
         registry_relative = relative_path(repo_root, registry)
@@ -691,7 +687,7 @@ def snapshot_store(
                 "identities": identities_relative,
                 "alignments": alignments_relative,
                 "graph": graph_relative,
-                "documents": documents_path.as_posix(),
+                "documents": DOCUMENTS_PATH.as_posix(),
             },
             "documents": {
                 "count": len(documents),
@@ -710,7 +706,7 @@ def snapshot_store(
         }
         manifest["store_sha256"] = sha256_json(manifest)
         _validate_manifest_schema(manifest)
-        _atomic_write_text(_resolve(target_root, store_manifest_path), _pretty_json(manifest))
+        _atomic_write_text(_resolve(target_root, STORE_MANIFEST_PATH), _pretty_json(manifest))
         verify_store(target_root)
         if stage_root is not None:
             _install_external(stage_root, output_root)

@@ -2,12 +2,12 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +19,7 @@ def powershell_ready():
         return False
     try:
         result = subprocess.run(["pwsh", "-NoLogo", "-NoProfile", "-Command", 'Write-Output "ready"'],
-                                capture_output=True, text=True, timeout=15)
+                                check=False, capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         # This optional capability probe must not abort discovery of all tests.
         # Ready runtimes still execute the real PowerShell linker test class.
@@ -77,7 +77,7 @@ class SkillLinkingTests(unittest.TestCase):
         if not legacy:
             command += [runtime] if kind == "sh" else ["-Runtime", runtime]
         result = subprocess.run(command, cwd=repo, env=env, text=True,
-                                capture_output=True, timeout=30)
+                                check=False, capture_output=True, timeout=30)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         else:
@@ -183,7 +183,7 @@ class SkillLinkingTests(unittest.TestCase):
                 env.update(PATH=str(bin_dir) + os.pathsep + env["PATH"], KG_TEST_SYSTEM=system,
                            KG_TEST_LOG=str(log), KG_TEST_PYTHON=sys.executable)
                 result = subprocess.run(["sh", str(repo / "scripts/link-skills.sh"), "opencode"],
-                                        cwd=repo, env=env, text=True, capture_output=True, timeout=30)
+                                        cwd=repo, env=env, text=True, check=False, capture_output=True, timeout=30)
                 self.assertEqual(17, result.returncode, result.stdout + result.stderr)
                 self.assertEqual(["-NoLogo", "-NoProfile", "-File",
                                   "native:" + str(repo / "scripts/link-skills.ps1"),
@@ -201,7 +201,7 @@ class SkillLinkingTests(unittest.TestCase):
             (bin_dir / "dirname").symlink_to(shutil.which("dirname"))
             env["PATH"] = str(bin_dir)
             result = subprocess.run([shutil.which("sh"), str(repo / "scripts/link-skills.sh"), "codex"],
-                                    cwd=repo, env=env, text=True, capture_output=True, timeout=30)
+                                    cwd=repo, env=env, text=True, check=False, capture_output=True, timeout=30)
             self.assertNotEqual(0, result.returncode)
             self.assertIn("PowerShell 7", result.stderr)
             self.assertFalse(homes["codex"].exists())

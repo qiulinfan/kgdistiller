@@ -11,7 +11,8 @@ from unittest.mock import patch
 from kgdistiller.contracts import self_digest, sha256_json
 from kgdistiller.source_evidence import SourceEvidenceError, SourceEvidenceIndex
 from kgdistiller.source_references import (
-    resolve_source_references, validate_source_reference_result,
+    resolve_source_references,
+    validate_source_reference_result,
 )
 
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import io
 import copy
 import hashlib
+import io
 import json
 import os
 import sys
@@ -12,26 +12,38 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import GraphState, main, make_artifacts, make_graph_retrieval_policy, make_ranking_service, parse_args, write_artifacts  # noqa: E402
-from kgdistiller.retrieval import (  # noqa: E402
-    RETRIEVAL_PLAN_SCHEMA,
+from kgdistiller.alignment import node_fingerprint
+from kgdistiller.cli import (
+    GraphState,
+    main,
+    make_artifacts,
+    make_graph_retrieval_policy,
+    make_ranking_service,
+    parse_args,
+    write_artifacts,
+)
+from kgdistiller.contracts import canonical_json, sha256_json
+from kgdistiller.query import load_graph_view
+from kgdistiller.retrieval import (
+    MAX_RETRIEVAL_PLAN_BYTES,
     SEARCH_EXECUTION_SCHEMA,
     SEARCH_RESULT_SCHEMA,
+    RetrievalError,
 )
-from tests.test_query import fixture_edges, fixture_nodes, write_fixture_graph  # noqa: E402
-from tests.test_semantic_retrieval import FakeEmbedding  # noqa: E402
-from kgdistiller.semantic_retrieval import SemanticRetrievalError  # noqa: E402
-from kgdistiller.semantic_retrieval import search_document  # noqa: E402
-from kgdistiller.alignment import node_fingerprint  # noqa: E402
-from kgdistiller.contracts import canonical_json, sha256_json  # noqa: E402
-from kgdistiller.query import load_graph_view  # noqa: E402
-from kgdistiller.retrieval import RetrievalError  # noqa: E402
-from kgdistiller.retrieval import MAX_RETRIEVAL_PLAN_BYTES  # noqa: E402
-from kgdistiller.support_selection import make_support_selection  # noqa: E402
+from kgdistiller.semantic_retrieval import (
+    SemanticRetrievalError,
+    search_document,
+)
+from kgdistiller.support_selection import make_support_selection
+from tests.test_query import (
+    fixture_edges,
+    fixture_nodes,
+    write_fixture_graph,
+)
+from tests.test_semantic_retrieval import FakeEmbedding
 
 
 class FakeReranker(FakeEmbedding):
@@ -111,7 +123,7 @@ def write_source_evidence_manifest(
 
 def write_graph_retrieval_fixture(root: Path) -> Path:
     """Source-backed chain with one deliberately unverified side edge."""
-    graph = root / "knowledge" / "graph"
+    graph = root / ".knowledge" / "graph"
     nodes = fixture_nodes()
     nodes[1]["properties"]["conditions"] = ["Domain is a sigma algebra."]
     unverified = copy.deepcopy(nodes[2])
@@ -163,9 +175,11 @@ class RetrievalCliParserTest(unittest.TestCase):
             return parse_args()
 
     def assert_parse_error(self, *arguments: str) -> None:
-        with redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as raised:
-                self.parse(*arguments)
+        with (
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            self.parse(*arguments)
         self.assertEqual(2, raised.exception.code)
 
     def run_cli(self, root: Path, *arguments: str) -> tuple[int, str, str]:
@@ -520,7 +534,10 @@ class RetrievalCliParserTest(unittest.TestCase):
         self.assertFalse(literal.embedding)
 
     def test_reranker_factory_uses_pinned_or_explicit_model_and_candidate_limit(self) -> None:
-        from kgdistiller.adapters.sentence_transformers import DEFAULT_RERANKER_MODEL, DEFAULT_RERANKER_REVISION
+        from kgdistiller.adapters.sentence_transformers import (
+            DEFAULT_RERANKER_MODEL,
+            DEFAULT_RERANKER_REVISION,
+        )
         with tempfile.TemporaryDirectory(prefix="kgdistiller-retrieval-cli-") as raw:
             root = Path(raw)
             graph = write_fixture_graph(root)
@@ -593,7 +610,8 @@ class RetrievalCliParserTest(unittest.TestCase):
             root = Path(raw)
             graph = write_fixture_graph(root)
             from kgdistiller.adapters.sentence_transformers import (
-                DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_REVISION,
+                DEFAULT_EMBEDDING_MODEL,
+                DEFAULT_EMBEDDING_REVISION,
             )
             with patch("kgdistiller.adapters.sentence_transformers.SentenceTransformersAdapter",
                        return_value=FakeEmbedding()) as constructor:
@@ -634,9 +652,11 @@ class RetrievalCliParserTest(unittest.TestCase):
                 for arguments in (("agent", "status"), ("agent", "search", "measure")):
                     status, _, error = self.run_cli(root, *arguments)
                     self.assertEqual(0, status, error)
-                with redirect_stdout(io.StringIO()):
-                    with self.assertRaises(SystemExit) as raised:
-                        self.parse("agent", "search", "--help")
+                with (
+                    redirect_stdout(io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    self.parse("agent", "search", "--help")
                 self.assertEqual(0, raised.exception.code)
                 constructor.assert_not_called()
             self.assertEqual(before, repository_bytes(root))
@@ -787,7 +807,7 @@ class SourceEvidenceCliTest(unittest.TestCase):
 
     def test_unicode_table_spans_and_document_scope_need_no_graph(self) -> None:
         raw = ("# --[[Invented identity]]--\r\n\r\n| 模型 | MSE |\r\n|---|---:|\r\n"
-               "| μ网络 | 0.79 |\r\n| 基线 | 8.20 |\r\n").encode("utf-8")
+               "| μ网络 | 0.79 |\r\n| 基线 | 8.20 |\r\n").encode()
         manifest = write_source_evidence_manifest(self.root, {"paper": raw, "other": b"alpha MSE 99\n"}, hash_mode="normalized-utf8")
         before = repository_bytes(self.root)
         status, output, error = self.run_evidence(Path(manifest.name), "--doc-id", "paper", query="MSE μ网络")
@@ -810,7 +830,7 @@ class SourceEvidenceCliTest(unittest.TestCase):
             self.assertTrue(all(heading["identity_authority"] is False for heading in fragment["heading_context"]))
         self.assertEqual(len(canonical_json(result).encode("utf-8")), result["budget"]["used_bytes"])
         self.assertEqual(before, repository_bytes(self.root))
-        self.assertFalse((self.root / "knowledge").exists())
+        self.assertFalse((self.root / ".knowledge").exists())
 
     def test_budget_omits_whole_fragments_and_reports_too_small(self) -> None:
         raw = ("alpha long " * 300 + "\n\nalpha concise result\n").encode("utf-8")
@@ -890,7 +910,7 @@ class SourceEvidenceCliTest(unittest.TestCase):
         self.assertEqual(["adam"], result["matched_doc_ids"])
         self.assertIs(False, result["identity_authority"])
         self.assertEqual(before, repository_bytes(self.root))
-        self.assertFalse((self.root / "knowledge").exists())
+        self.assertFalse((self.root / ".knowledge").exists())
 
     def test_invalid_filters_and_result_bounds_fail_as_structured_errors(self) -> None:
         manifest = write_source_evidence_manifest(self.root, {"paper": b"alpha source\n"})

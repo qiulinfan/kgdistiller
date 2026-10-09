@@ -36,7 +36,7 @@ resolved by the existing authored names and identity registry. If a converted
 marker has a different normalized name, register its explicit alias first:
 for example, the original Typst `$L^(+)$ space` and native TeX `$L^{+}$ space`
 normalize to different identity names. Their association must be recorded in
-`knowledge/identities.json`, using the existing ID and the converted normalized
+`.knowledge/identities.json`, using the existing ID and the converted normalized
 name as an alias. Sync refuses to write a generation if an old active definition
 cannot resolve to the same ID in its TeX sibling, rather than retaining an old
 entry and creating another. Filenames and marker order establish no identity.
@@ -79,7 +79,7 @@ MathJax, a TeX engine, or a LaTeX-to-Typst adapter.
 Generate a TeX registry from the current synchronized graph:
 
 ```sh
-kgdistiller export latex-registry --output knowledge/build/knowledge-registry.tex
+kgdistiller export latex-registry --output .knowledge/build/knowledge-registry.tex
 ```
 
 Input it in the native document preamble. It provides `\kn`, `\knref`,
@@ -94,7 +94,7 @@ transactional generation/portable four-file static bundle.
 Export a complete native LaTeX document directly:
 
 ```sh
-kgdistiller export latex notes/main.tex --output knowledge/build/main.html
+kgdistiller export latex notes/main.tex --output .knowledge/build/main.html
 ```
 
 The provider copies only the document's bounded dependency closure to temporary

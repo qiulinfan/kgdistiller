@@ -9,18 +9,17 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from kgdistiller.cli import main  # noqa: E402
-from kgdistiller.obsidian_plugin import (  # noqa: E402
+from kgdistiller.cli import main
+from kgdistiller.obsidian_plugin import (
     INSTALL_SCHEMA,
     PLUGIN_FILES,
     ObsidianPluginError,
     install_obsidian_plugin,
 )
-from kgdistiller.vault_registry import register_vault  # noqa: E402
+from kgdistiller.vault_registry import register_vault
 
 
 class ObsidianPluginInstallTest(unittest.TestCase):

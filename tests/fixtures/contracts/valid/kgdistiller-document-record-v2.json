@@ -1,8 +1,6 @@
 {
-  "schema": "kgdistiller-document-record-v1",
+  "schema": "kgdistiller-document-record-v2",
   "source_id": "synthetic-notes",
-  "subject": "Synthetic subject",
-  "course": "Synthetic course",
   "knowledge_origin": "personal-note",
   "authority": "notes/synthetic.md",
   "format": "markdown",

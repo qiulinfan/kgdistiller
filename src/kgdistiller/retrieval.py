@@ -8,12 +8,21 @@ import json
 import math
 import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
+from .alignment import node_fingerprint
 from .contracts import ContractError, canonical_json, sha256_json, validate_contract
+from .graph_retrieval import (
+    GRAPH_SEARCH_EXECUTION_SCHEMA,
+    GRAPH_SEARCH_RESULT_SCHEMA,
+    GraphRetrievalPolicy,
+    build_graph_context,
+    graph_lanes,
+    view_content_sha256,
+)
 from .query import (
-    CONTEXT_SCHEMA,
     DEFAULT_SEMANTIC_RELATIONS,
     GraphView,
     QueryError,
@@ -25,13 +34,11 @@ from .query import (
     resolve_concepts,
     search,
 )
-from .semantic_retrieval import SemanticRankingService, SemanticRetrievalError, search_document
-from .alignment import node_fingerprint
-from .graph_retrieval import (
-    GRAPH_SEARCH_EXECUTION_SCHEMA, GRAPH_SEARCH_RESULT_SCHEMA,
-    GraphRetrievalPolicy, build_graph_context, graph_lanes, view_content_sha256,
+from .semantic_retrieval import (
+    SemanticRankingService,
+    SemanticRetrievalError,
+    search_document,
 )
-
 
 RETRIEVAL_PLAN_SCHEMA = "kgdistiller-retrieval-plan-v1"
 SEARCH_RESULT_SCHEMA = "kgdistiller-search-result-v1"
@@ -286,9 +293,7 @@ def _passes_filters(node: Mapping[str, Any], filters: Mapping[str, Any]) -> bool
         return False
     if not filters["include_stale"] and properties.get("curation_status") == "needs-review":
         return False
-    if not filters["include_orphaned"] and source_status == "orphaned":
-        return False
-    return True
+    return filters["include_orphaned"] or source_status != "orphaned"
 
 
 def execute_retrieval_plan(

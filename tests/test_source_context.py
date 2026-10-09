@@ -10,10 +10,16 @@ from unittest.mock import patch
 
 from kgdistiller.contracts import canonical_json, sha256_json
 from kgdistiller.source_context import (
-    CONTEXT_PROJECTION, CONTEXT_SCHEMA, build_source_context, validate_source_context,
+    CONTEXT_PROJECTION,
+    CONTEXT_SCHEMA,
+    build_source_context,
+    validate_source_context,
 )
 from kgdistiller.source_evidence import (
-    SourceEvidenceError, SourceEvidenceIndex, _finalize_budget, _projection,
+    SourceEvidenceError,
+    SourceEvidenceIndex,
+    _finalize_budget,
+    _projection,
     validate_source_evidence_result,
 )
 

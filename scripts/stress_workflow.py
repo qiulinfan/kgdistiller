@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Exercise a disposable Markdown/Typst/LaTeX JSON-memory workflow."""
 
 from __future__ import annotations
@@ -8,11 +7,13 @@ import json
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from kgdistiller.alignment import empty_alignment_set
 from kgdistiller.cli import (
+    GRAPH_SCHEMA,
     apply_delta,
     generated_id,
     load_state,
@@ -144,7 +145,7 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
     # These hold independent concepts, rather than paired formats of one source.
     (notes / "concepts-typst.typ").write_text("\n".join(typst), encoding="utf-8")
     (notes / "concepts-latex.tex").write_text("\n".join(latex), encoding="utf-8")
-    derived = root / "knowledge/derived/by-source/notes/stress"
+    derived = root / ".knowledge/derived/by-source/notes/stress"
     derived.mkdir(parents=True)
     (derived / "concepts-typst.typ.md").write_text(
         "# Converted Typst stress authority\n", encoding="utf-8"
@@ -153,17 +154,17 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
         "# Converted LaTeX stress authority\n", encoding="utf-8"
     )
 
-    registry = root / "knowledge/sources.json"
-    alignments = root / "knowledge/alignments.json"
+    registry = root / ".knowledge/sources.json"
+    alignments = root / ".knowledge/alignments.json"
     _write_json(registry, _registry())
     _write_json(alignments, empty_alignment_set())
     paths = IngestPaths(
         repo_root=root,
         registry=registry,
-        graph_dir=root / "knowledge/graph",
-        identities=root / "knowledge/identities.json",
+        graph_dir=root / ".knowledge/graph",
+        identities=root / ".knowledge/identities.json",
         alignments=alignments,
-        typst_registry=root / "knowledge/build/knowledge-registry.typ",
+        typst_registry=root / ".knowledge/build/knowledge-registry.typ",
     )
     synchronize(
         root,
@@ -178,7 +179,7 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
         write=True,
     )
 
-    delta = root / "knowledge/build/stress.delta.json"
+    delta = root / ".knowledge/build/stress.delta.json"
     _write_json(
         delta,
         {
@@ -213,7 +214,7 @@ def _candidate_snapshot() -> dict[str, Any]:
         "schema": "kgdistiller-agent-snapshot-v1",
         "namespace": "paper:stress",
         "graph": {
-            "schema": "kgdistiller-graph-v1",
+            "schema": GRAPH_SCHEMA,
             "sha256": "c" * 64,
             "counts": {"nodes": 1, "edges": 0, "references": 0},
         },
@@ -247,7 +248,7 @@ def _transaction_request(
     request_id: str,
 ) -> dict[str, Any]:
     candidate = _candidate_snapshot()
-    candidate_path = paths.repo_root / "knowledge/build/stress-candidate.json"
+    candidate_path = paths.repo_root / ".knowledge/build/stress-candidate.json"
     _write_json(candidate_path, candidate)
     target = make_agent_snapshot(load_state(paths.graph_dir))
     comparison = {
@@ -282,7 +283,7 @@ def _transaction_request(
         },
         "alignment_report_sha256": "1" * 64,
     }
-    comparison_path = paths.repo_root / "knowledge/build/stress-comparison.json"
+    comparison_path = paths.repo_root / ".knowledge/build/stress-comparison.json"
     _write_json(comparison_path, comparison)
     authority = paths.repo_root / "notes/stress/concepts.md"
     content = authority.read_text(encoding="utf-8") + (
@@ -533,7 +534,7 @@ def main() -> int:
             transaction=not args.skip_transaction,
             fault_injection=not args.skip_fault_injection,
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001
         print(f"stress workflow failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))

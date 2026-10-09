@@ -11,7 +11,7 @@ user profile) and resolve its `workflow_guide` relative to that canonical
 product root. Use the `query-kgdistiller` Skill through the read-only MCP tools
 or public CLI and its generation-checked GraphView. Batch candidates, keep
 identity, lexical, and graph lanes explicit, preserve ambiguity, and report
-graph, snapshot, and alignment digests. Never open raw graph shards, mutate an
+graph, snapshot, and alignment digests. Never open raw graph files, mutate an
 authority, add a semantic/vector lane, or promote lexical, translation, acronym,
 or topology similarity into identity. For paper candidates, require
 paper/version-qualified labels, treat bare terms as retrieval hints, and require

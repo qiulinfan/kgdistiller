@@ -3,16 +3,15 @@
 Use this contract for Markdown, Typst, and LaTeX authorities registered in a
 kgdistiller project.
 
-Require `kgdistiller-graph-v2` or an existing public `kgdistiller-graph-v1`
-generation and prepare only `kgdistiller-agent-delta-v1`. Explicit writers emit
-v2 and preserve accepted state. Unsupported pre-0.4 registries and graphs
-belong to the explicit deployment/rebuild workflow, not curation.
+Require a `kgdistiller-graph-v2` generation and prepare only
+`kgdistiller-agent-delta-v1`. If the project reports any other graph schema,
+stop and report it; curation never migrates a graph.
 
 ## Authority and identity
 
 Use the selected source's registered `document_type` profile, exposed by
 `scan --file`, for its `node_kinds` and `extraction_guidance`. Profiles are
-user data in `knowledge/sources.json`; file format and fields/topics do not
+user data in `.knowledge/sources.json`; file format and fields/topics do not
 choose them. Read native sources directly. Markdown atomic entries can cite
 `.md`, `.typ` or `.tex` evidence without a converted source copy.
 
@@ -23,12 +22,12 @@ and keep any suspected conflict or bundled concept pending explicit identity
 review. A classification policy alone never authorizes deleting or reclassifying
 an existing marked identity.
 
-The caller's `knowledge/` holds canonical accepted content and semantic state.
+The caller's `.knowledge/` holds canonical accepted content and semantic state.
 Registered native source markers remain identity authority and source-grounded
 atomic entries retain content authority. Notes, papers and projects can all
 supply evidence. Definition and pending sheets are source-scoped link
 projections to committed metadata. Keep full proposed meanings, conditions,
-evidence, relations and applications in `knowledge/build/reviews/` until a
+evidence, relations and applications in `.knowledge/build/reviews/` until a
 supported transaction accepts them; a sheet cannot override accepted content.
 
 The repository's [shared model](../../../docs/concepts-and-relations.md)
@@ -73,8 +72,8 @@ Use `properties.kind` for its reviewed semantic kind, following the source's
 registered `node_kinds` when it has a document profile. Preserve reviewed kinds
 on later sync; native statement syntax is not a semantic reclassification.
 Keep longer dossiers outside node properties; the engine stores reviewed entry
-bodies only in `knowledge/entries/<node-id>.md`. Graph v2 hydrates the unchanged
-API content from these bound Markdown authorities without JSONL body copies.
+bodies only in `.knowledge/entries/<node-id>.md`. Graph v2 hydrates API content
+from these bound Markdown authorities.
 
 ## Personal understanding and direct gaps
 
@@ -128,7 +127,7 @@ not become a concept solely to hold these fields.
 The current `kgdistiller-agent-delta-v1` direct-edge contract does not provide a
 lossless full n-ary, application-record or rich gap-history adapter. Simple
 direct gaps and understanding use the entry fields above. Retain
-unsupported proposals in `knowledge/build/reviews/`, identify the exact gap and
+unsupported proposals in `.knowledge/build/reviews/`, identify the exact gap and
 defer their persistence.
 Never flatten them into disconnected edges, hide them in unrelated nodes, drop
 fields or claim a smaller committed delta applied the whole extraction. Apply

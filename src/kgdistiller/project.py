@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import json
 import os
 import stat
 import tempfile
 from pathlib import Path
 
+from .knowledge_paths import knowledge_root
 from .vault_registry import ensure_vault_manifest
-
 
 _BUILD_IGNORE_RULES = {
     b"build",
@@ -76,7 +74,7 @@ def _atomic_write_bytes(path: Path, content: bytes, *, mode: int | None) -> None
 
 
 def ensure_knowledge_gitignore(path: Path) -> bool:
-    """Atomically ensure machine-local knowledge/build artifacts stay ignored."""
+    """Atomically ensure machine-local .knowledge/build artifacts stay ignored."""
     original_mode: int | None = None
     try:
         with path.open("rb") as handle:

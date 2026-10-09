@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 STATEMENT_KINDS = frozenset(
     {"definition", "theorem", "lemma", "corollary", "proposition", "axiom", "example"}
 )

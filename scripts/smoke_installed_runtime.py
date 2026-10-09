@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Exercise the self-contained JSON runtime through an installed wheel."""
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ def run_command(*arguments: str, cwd: Path | None = None) -> dict[str, Any]:
     )
     value = json.loads(completed.stdout)
     if not isinstance(value, dict):
-        raise RuntimeError(f"installed command returned non-object JSON: {arguments}")
+        raise RuntimeError(f"installed command returned non-object JSON: {arguments}")  # noqa: TRY004
     return value
 
 
@@ -48,7 +47,7 @@ def run_text(root: Path, *arguments: str) -> str:
 def run(root: Path, *arguments: str) -> dict[str, Any]:
     value = json.loads(run_text(root, *arguments))
     if not isinstance(value, dict):
-        raise RuntimeError(f"installed command returned non-object JSON: {arguments}")
+        raise RuntimeError(f"installed command returned non-object JSON: {arguments}")  # noqa: TRY004
     return value
 
 
@@ -145,7 +144,7 @@ def main() -> int:
             cwd=outside,
         )
         require(default_status.get("backend") == "json-memory", "default vault lookup failed")
-        require((root / "knowledge/vault.json").is_file(), "portable vault identity missing")
+        require((root / ".knowledge/vault.json").is_file(), "portable vault identity missing")
         require((state / "vaults.json").is_file(), "machine-local vault registry missing")
 
         store = run(root, "store", "snapshot")
@@ -156,7 +155,7 @@ def main() -> int:
         require(projection.get("schema") == "kgdistiller-obsidian-export-report-v1", "Obsidian export failed")
         require(projection.get("artifact_schema") == "kgdistiller-obsidian-projection-v1", "Obsidian report mismatch")
         require(
-            (root / "knowledge/build/obsidian/concepts/Measure.md").is_file(),
+            (root / ".knowledge/build/obsidian/concepts/Measure.md").is_file(),
             "raw Markdown Wikilink target projection missing",
         )
 

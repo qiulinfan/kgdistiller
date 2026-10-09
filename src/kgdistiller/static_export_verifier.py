@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify a kgdistiller static site export using only the Python standard library."""
 
 from __future__ import annotations
@@ -305,11 +304,6 @@ def _verify_graph(payload: dict[str, Any], manifest: dict[str, Any]) -> dict[str
         node_ids.add(node_id)
         if node.get("type") == "knowledge":
             knowledge_ids.add(node_id)
-        properties = node.get("properties")
-        if isinstance(properties, dict) and "entry_path" in properties:
-            raise ExportVerificationError(
-                f"graph node exposes a private entry path: {node_id}"
-            )
 
     if [str(node.get("id", "")) for node in nodes] != sorted(node_ids):
         raise ExportVerificationError("graph nodes are not in canonical id order")
@@ -615,7 +609,7 @@ def _verify_export(path: str | Path) -> dict[str, Any]:
     }:
         raise ExportVerificationError("manifest graph record is invalid")
     if (
-        graph_manifest.get("private_schema") not in {"kgdistiller-graph-v1", "kgdistiller-graph-v2"}
+        graph_manifest.get("private_schema") != "kgdistiller-graph-v2"
         or graph_manifest.get("public_schema") != SITE_GRAPH_SCHEMA
     ):
         raise ExportVerificationError("manifest graph schemas are invalid")

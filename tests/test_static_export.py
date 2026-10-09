@@ -48,7 +48,7 @@ class StaticSiteExportTests(unittest.TestCase):
         self.private_source.parent.mkdir(parents=True)
         self.public_source.write_text("--[[Public concept]]--\n", encoding="utf-8")
         self.private_source.write_text("--[[Private concept]]--\n", encoding="utf-8")
-        self.registry = self.repo / "knowledge/sources.json"
+        self.registry = self.repo / ".knowledge/sources.json"
         self.identities = self.repo / "config/custom-identities.json"
         self.registry.parent.mkdir(parents=True)
         self.registry.write_text(
@@ -193,7 +193,7 @@ class StaticSiteExportTests(unittest.TestCase):
         }
         self.state = state
         self.source_hashes = source_hashes
-        self.graph = self.repo / "knowledge/graph"
+        self.graph = self.repo / ".knowledge/graph"
         write_artifacts(
             self.graph,
             make_artifacts(
@@ -221,7 +221,7 @@ class StaticSiteExportTests(unittest.TestCase):
         payload["sources"][0]["files"] = ["*.tex", "*.typ"]
         payload["sources"][1]["files"] = ["*.md", "*.tex", "*.typ"]
         self.registry.write_text(json.dumps(payload), encoding="utf-8")
-        generated = self.repo / "knowledge/build/knowledge-registry.typ"
+        generated = self.repo / ".knowledge/build/knowledge-registry.typ"
         def render_labels(state, _root):
             for node in state.nodes.values():
                 if node["type"] == "knowledge":
@@ -234,7 +234,7 @@ class StaticSiteExportTests(unittest.TestCase):
         self.assertNotIn("notes/public/public.typ", state.manifest["source_hashes"])
         self.assertIn("notes/public/public.tex", state.manifest["source_hashes"])
         self.assertIn("[#text[Public concept]]", generated.read_text(encoding="utf-8"))
-        output = self.repo / "knowledge/export/paired"
+        output = self.repo / ".knowledge/export/paired"
         with (
             patch("kgdistiller.static_export._source_checkout_commit", return_value=None),
             patch("kgdistiller.static_export._distribution_commit", return_value=None),
@@ -262,7 +262,7 @@ class StaticSiteExportTests(unittest.TestCase):
         product_commit: str = "b" * 40,
         replace: bool = False,
     ) -> Path:
-        output = self.repo / "knowledge/export" / name
+        output = self.repo / ".knowledge/export" / name
         with (
             patch(
                 "kgdistiller.static_export._source_checkout_commit", return_value=None
@@ -394,7 +394,7 @@ class StaticSiteExportTests(unittest.TestCase):
         dirty = subprocess.CompletedProcess(
             args=["git", "status"],
             returncode=0,
-            stdout=b" M knowledge/graph/nodes.jsonl\n",
+            stdout=b" M .knowledge/graph/nodes.jsonl\n",
             stderr=b"",
         )
         with (
@@ -463,7 +463,6 @@ class StaticSiteExportTests(unittest.TestCase):
             self.repo / str(entry["path"])
             for entry in graph_manifest["entry_authorities"]["entries"]
         }
-        self.assertNotIn("entry_store", graph_manifest)
         self.assertIn(self.graph / "nodes.jsonl", inputs)
         self.assertTrue(entry_authorities.issubset(set(inputs)))
 
@@ -589,7 +588,6 @@ class StaticSiteExportTests(unittest.TestCase):
         )
         public = next(node for node in graph["nodes"] if node["id"] == "public-concept")
         self.assertEqual("A hydrated public entry.", public["text"])
-        self.assertNotIn("entry_path", public["properties"])
         self.assertEqual(1, len(graph["edges"]))
         self.assertEqual("contains", graph["edges"][0]["relation"])
         self.assertEqual(1, len(graph["references"]))
@@ -1147,7 +1145,7 @@ class StaticSiteExportTests(unittest.TestCase):
         with self.assertRaisesRegex(StaticExportError, "credential-free HTTPS"):
             export_site_bundle(
                 self.repo,
-                self.repo / "knowledge/export/bad-url",
+                self.repo / ".knowledge/export/bad-url",
                 registry=self.registry,
                 graph_dir=self.graph,
                 product_commit="b" * 40,
@@ -1204,7 +1202,7 @@ class StaticSiteExportTests(unittest.TestCase):
         self.assertEqual("ok", verify_export(output)["status"])
 
     def test_replace_refuses_an_unverified_directory_without_deleting_it(self) -> None:
-        output = self.repo / "knowledge/export/unmanaged"
+        output = self.repo / ".knowledge/export/unmanaged"
         output.mkdir(parents=True)
         sentinel = output / "sentinel.txt"
         sentinel.write_text("keep\n", encoding="utf-8")
@@ -1221,8 +1219,8 @@ class StaticSiteExportTests(unittest.TestCase):
         self.assertEqual("keep\n", sentinel.read_text(encoding="utf-8"))
 
     def test_directory_swap_failure_restores_the_previous_bundle(self) -> None:
-        output = self.repo / "knowledge/export/swap-target"
-        staging = self.repo / "knowledge/export/swap-staging"
+        output = self.repo / ".knowledge/export/swap-target"
+        staging = self.repo / ".knowledge/export/swap-staging"
         output.mkdir(parents=True)
         staging.mkdir()
         (output / "sentinel.txt").write_text("old\n", encoding="utf-8")
@@ -1245,7 +1243,7 @@ class StaticSiteExportTests(unittest.TestCase):
                 staging,
                 output,
                 True,
-                recovery_root=self.repo / "knowledge/build/direct-swap-recovery",
+                recovery_root=self.repo / ".knowledge/build/direct-swap-recovery",
                 previous_export_sha256="a" * 64,
                 current_export_sha256="b" * 64,
             )
@@ -1272,7 +1270,7 @@ class StaticSiteExportTests(unittest.TestCase):
         self.assertEqual(1, len(committed["recovery_paths"]))
         recovery_path = Path(committed["recovery_paths"][0])
         self.assertTrue(recovery_path.is_dir())
-        self.assertIn("knowledge", recovery_path.parts)
+        self.assertIn(".knowledge", recovery_path.parts)
         self.assertIn("build", recovery_path.parts)
         current = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual("d" * 40, current["producer"]["commit"])

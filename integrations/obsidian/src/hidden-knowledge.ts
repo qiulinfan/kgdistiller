@@ -1,5 +1,7 @@
 import { type App, normalizePath } from "obsidian";
 
+import { KNOWLEDGE_DIRECTORY } from "./contract";
+
 // Adapted from Hidden Folders Access (MIT), commit
 // de3734d36997a98b81a6a6644984748af1e6b3b0, hidden-folders-indexer.ts.
 // See THIRD_PARTY_NOTICES.md for the full upstream notice.
@@ -26,12 +28,11 @@ interface InternalAdapter {
 
 export interface HiddenKnowledgeStatus {
   state: "disabled" | "enabled" | "missing" | "unsupported" | "invalid" | "error" | "disposed";
-  root: string;
   message?: string;
 }
 
 interface Session {
-  root: string;
+  exclusions: string[];
   adapter: InternalAdapter;
   originalList: ListChild;
   originalReconcile: Reconcile;
@@ -43,19 +44,29 @@ interface Session {
   reconciling: number;
 }
 
-const under = (path: string, root: string): boolean => path === root || path.startsWith(`${root}/`);
+const root = KNOWLEDGE_DIRECTORY;
+
+/** Folders under the hidden root that stay out of native indexing unless the user changes them. */
+export const DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS: readonly string[] = ["build"];
+
+const under = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
+const excluded = (session: Session, path: string): boolean =>
+  session.exclusions.some((prefix) => under(path, `${root}/${prefix}`));
+const sameList = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
 const missing = (error: unknown): boolean => typeof error === "object" && error !== null &&
   "code" in error && error.code === "ENOENT";
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
-/** A single hidden root joins the native Vault and metadata cache; no files are converted. */
+/** The product's hidden knowledge tree joins the native Vault and metadata cache; no files are converted. */
 export class HiddenKnowledgeIndexer {
-  private desired = { enabled: false, root: ".knowledge" };
+  private desired: { enabled: boolean; exclusions: unknown } =
+    { enabled: false, exclusions: [...DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS] };
   private revision = 0;
   private disposed = false;
   private queue: Promise<void> = Promise.resolve();
   private session?: Session;
-  private status: HiddenKnowledgeStatus = { state: "disabled", root: ".knowledge" };
+  private status: HiddenKnowledgeStatus = { state: "disabled" };
   private fs?: Filesystem;
 
   constructor(
@@ -63,14 +74,16 @@ export class HiddenKnowledgeIndexer {
     private readonly loadFilesystem: () => Filesystem = () => require("node:fs/promises") as Filesystem,
   ) {}
 
-  configure(enabled: boolean, root: string): Promise<HiddenKnowledgeStatus> {
-    if (this.disposed) return Promise.resolve({ state: "disposed", root });
-    this.desired = { enabled, root };
+  /** Exclusions are folder paths relative to the hidden root; each covers its whole subtree. */
+  configure(enabled: boolean, exclusions: unknown): Promise<HiddenKnowledgeStatus> {
+    if (this.disposed) return Promise.resolve({ state: "disposed" });
+    // Copy arrays only; any other stored value reaches validation unchanged.
+    this.desired = { enabled, exclusions: Array.isArray(exclusions) ? [...exclusions] : exclusions };
     return this.schedule(false);
   }
 
   rescan(): Promise<HiddenKnowledgeStatus> {
-    if (this.disposed) return Promise.resolve({ state: "disposed", root: this.desired.root });
+    if (this.disposed) return Promise.resolve({ state: "disposed" });
     return this.schedule(true);
   }
 
@@ -79,7 +92,7 @@ export class HiddenKnowledgeIndexer {
    * An already-running native traversal keeps inert wrappers until it settles,
    * so restoring the hidden filter cannot remove its cached files mid-traversal.
    * Obsidian owns workspace restoration; removing cached files here closes tabs.
-   * Explicit disable/root changes use removeSession(true) to hide old entries.
+   * An explicit disable uses removeSession(true) to hide old entries.
    */
   dispose(): void {
     if (this.disposed) return;
@@ -90,7 +103,7 @@ export class HiddenKnowledgeIndexer {
       if (!session.reconciling) this.restoreHooks(session);
       this.stopWatchers(session);
     }
-    this.status = { state: "disposed", root: this.desired.root };
+    this.status = { state: "disposed" };
   }
 
   private schedule(rescan: boolean): Promise<HiddenKnowledgeStatus> {
@@ -106,7 +119,7 @@ export class HiddenKnowledgeIndexer {
           catch (cleanupError) { message += `; cache cleanup: ${errorMessage(cleanupError)}`; }
         }
         if (this.disposed) return this.status;
-        this.status = { state: "error", root: this.desired.root, message };
+        this.status = { state: "error", message };
         return this.status;
       }
     });
@@ -119,17 +132,15 @@ export class HiddenKnowledgeIndexer {
   }
 
   private active(session: Session): boolean {
-    return !this.disposed && this.session === session && this.desired.enabled &&
-      this.desired.root === session.root;
+    return !this.disposed && this.session === session && this.desired.enabled;
   }
 
-  private validateRoot(root: string): string | undefined {
-    if (!/^\.[^./\\\s][^/\\:\x00-\x1f]*$/.test(root) || root.trim() !== root || /[. ]$/.test(root)) {
-      return "Choose one hidden folder at the vault root, such as .knowledge.";
-    }
-    const configRoot = this.app.vault.configDir.replace(/\\/g, "/").split("/")[0]?.toLowerCase();
-    if ([".obsidian", ".git", ".trash", configRoot].includes(root.toLowerCase())) {
-      return "The Obsidian configuration, Git and trash folders cannot be indexed.";
+  private validateExclusions(exclusions: unknown): string | undefined {
+    const valid = (entry: unknown): boolean => typeof entry === "string" && entry.trim() === entry &&
+      entry.split("/").every((part) => part !== "" && part !== "." && part !== ".." &&
+        !/[\\:\x00-\x1f]/.test(part));
+    if (!Array.isArray(exclusions) || !exclusions.every(valid)) {
+      return "Excluded folders must be relative paths under the hidden folder, such as build.";
     }
     return undefined;
   }
@@ -146,16 +157,17 @@ export class HiddenKnowledgeIndexer {
   }
 
   private async apply(revision: number, rescan: boolean): Promise<HiddenKnowledgeStatus> {
-    const { enabled, root } = this.desired;
-    const invalid = this.validateRoot(root);
-    if (this.session && (!enabled || invalid || this.session.root !== root)) {
+    const { enabled } = this.desired;
+    const invalid = this.validateExclusions(this.desired.exclusions);
+    if (this.session && (!enabled || invalid)) {
       await this.removeSession(true);
     }
     if (!this.current(revision)) return this.status;
-    if (!enabled) return this.status = { state: "disabled", root };
-    if (invalid) return this.status = { state: "invalid", root, message: invalid };
+    if (!enabled) return this.status = { state: "disabled" };
+    if (invalid) return this.status = { state: "invalid", message: invalid };
+    const exclusions = this.desired.exclusions as string[];
     const adapter = this.adapter();
-    if (!adapter) return this.status = { state: "unsupported", root,
+    if (!adapter) return this.status = { state: "unsupported",
       message: "Hidden knowledge needs the supported desktop FileSystemAdapter internals." };
     // Obsidian desktop exposes CommonJS require; browser dynamic import cannot
     // resolve node: URLs. Keep the require lazy, after the desktop adapter guard.
@@ -166,16 +178,20 @@ export class HiddenKnowledgeIndexer {
     const exists = listing.folders.some((path) => path.replace(/^\/+|\/+$/g, "") === root);
     if (!exists) {
       if (this.session) await this.removeSession(true);
-      return this.status = { state: "missing", root, message: "The configured folder does not exist; rescan after creating it." };
+      return this.status = { state: "missing", message: "The .knowledge folder does not exist; rescan after creating it." };
     }
     if (!await this.safePhysicalPath(adapter, root)) {
       if (this.session) await this.removeSession(true);
-      return this.status = { state: "invalid", root, message: "The hidden knowledge root must be a real folder, not a symbolic link." };
+      return this.status = { state: "invalid", message: "The hidden knowledge root must be a real folder, not a symbolic link." };
     }
     if (!this.current(revision)) return this.status;
     const existing = this.session;
-    if (existing && !rescan) return this.status = { state: "enabled", root };
-    const session = existing ?? this.installHooks(adapter, root);
+    const exclusionsChanged = existing !== undefined && !sameList(existing.exclusions, exclusions);
+    if (existing && !rescan && !exclusionsChanged) return this.status = { state: "enabled" };
+    // A changed exclusion list takes the rescan path: the absent sweep evicts newly
+    // excluded cache entries and the traversal admits newly included files.
+    if (existing) existing.exclusions = [...exclusions];
+    const session = existing ?? this.installHooks(adapter, exclusions);
     try {
       // Both arguments are logical vault paths, not absolute filesystem paths.
       session.scanned = new Set<string>();
@@ -198,15 +214,15 @@ export class HiddenKnowledgeIndexer {
       }
     }
     if (!this.current(revision)) {
-      if (!this.disposed) await this.removeSession(!this.desired.enabled || this.desired.root !== root);
+      if (!this.disposed) await this.removeSession(!this.desired.enabled);
       return this.status;
     }
-    return this.status = { state: "enabled", root };
+    return this.status = { state: "enabled" };
   }
 
-  private installHooks(adapter: InternalAdapter, root: string): Session {
+  private installHooks(adapter: InternalAdapter, exclusions: readonly string[]): Session {
     const session: Session = {
-      root, adapter, originalList: adapter.listRecursiveChild, originalReconcile: adapter.reconcileFile,
+      exclusions: [...exclusions], adapter, originalList: adapter.listRecursiveChild, originalReconcile: adapter.reconcileFile,
       previousWatchers: new Map(Object.entries(adapter.watchers)), ownedWatchers: new Map(), reconciling: 0,
       listWrapper: async () => undefined, reconcileWrapper: async () => undefined,
     };
@@ -214,6 +230,7 @@ export class HiddenKnowledgeIndexer {
       const path = parent ? `${parent}/${name}` : name;
       if (this.disposed && session.reconciling && under(path, root)) return;
       if (!this.active(session) || !under(path, root)) return session.originalList.call(adapter, parent, name);
+      if (excluded(session, path)) return;
       await this.reconcile(session, path, normalizePath(path), true);
     };
     session.reconcileWrapper = async (path, normalized, silent) => {
@@ -221,6 +238,8 @@ export class HiddenKnowledgeIndexer {
       if (!this.active(session) || !under(normalized, root)) {
         return session.originalReconcile.call(adapter, path, normalized, silent);
       }
+      // Watcher events below an excluded folder are dropped, never handed to the native filter.
+      if (excluded(session, normalized) || excluded(session, path)) return;
       if (!under(path, root) || normalized !== normalizePath(path) ||
           !await this.safePhysicalPath(adapter, path) || !this.active(session)) return;
       const parent = path.slice(0, path.lastIndexOf("/"));
@@ -271,7 +290,7 @@ export class HiddenKnowledgeIndexer {
   }
 
   private async reconcile(session: Session, path: string, normalized: string, silent: boolean): Promise<void> {
-    if (!under(path, session.root)) return;
+    if (!under(path, root) || excluded(session, path)) return;
     const safe = await this.safePhysicalPath(session.adapter, path);
     if (!this.active(session)) return;
     if (!safe) {
@@ -309,7 +328,7 @@ export class HiddenKnowledgeIndexer {
 
   private captureWatchers(session: Session): void {
     for (const [path, watcher] of Object.entries(session.adapter.watchers)) {
-      if (under(path, session.root) && !session.previousWatchers.has(path) && !session.ownedWatchers.has(path)) {
+      if (under(path, root) && !session.previousWatchers.has(path) && !session.ownedWatchers.has(path)) {
         session.ownedWatchers.set(path, watcher);
       }
     }
@@ -336,7 +355,7 @@ export class HiddenKnowledgeIndexer {
     this.stopWatchers(session);
     if (!clearCache) return;
     const paths = this.app.vault.getAllLoadedFiles().map((file) => file.path)
-      .filter((path) => under(path, session.root)).sort((a, b) => b.length - a.length);
+      .filter((path) => under(path, root)).sort((a, b) => b.length - a.length);
     for (const path of paths) {
       if (this.disposed) return;
       // This internal operation removes cache entries only, never disk files.

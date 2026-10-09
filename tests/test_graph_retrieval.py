@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +9,11 @@ from unittest.mock import patch
 from kgdistiller.contracts import ContractError, canonical_json, validate_contract
 from kgdistiller.graph_retrieval import GraphRetrievalPolicy
 from kgdistiller.query import GraphView, personalized_pagerank
-from kgdistiller.retrieval import RetrievalError, build_context_from_execution, execute_retrieval_plan
+from kgdistiller.retrieval import (
+    RetrievalError,
+    build_context_from_execution,
+    execute_retrieval_plan,
+)
 from kgdistiller.semantic_retrieval import SemanticRankingService
 from tests.test_query import fixture_edges, fixture_nodes, snapshot_with
 from tests.test_retrieval import retrieval_plan

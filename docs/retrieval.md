@@ -23,7 +23,7 @@ and exact/alias resolution are unchanged.
 
 ## Local model adapter
 
-The optional extra needs Python3.10+:
+Install the optional extra:
 
 ```sh
 python -m pip install 'kgdistiller[retrieval]'
@@ -63,7 +63,7 @@ Options shared by search/context and MCP launch:
   commit revisions; mutable branch/tag names are rejected.
 - `--rerank-candidates N`: defaults50, bounded1–500. Requires both embedding and
   reranker selection; unused model options are rejected.
-- `--model-cache-dir PATH`: defaults to `knowledge/build/retrieval` beside the
+- `--model-cache-dir PATH`: defaults to `.knowledge/build/retrieval` beside the
   selected graph, never inside the authority graph directory.
 
 Embedding uses the complete source projection and original `plan.question`,

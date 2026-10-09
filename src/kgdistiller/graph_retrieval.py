@@ -8,12 +8,20 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from .alignment import node_fingerprint
-from .contracts import canonical_json, sha256_json, validate_contract
-from .query import GraphView, QueryError, expand, finalize_token_estimate, personalized_pagerank, resolve_concepts
+from .contracts import sha256_json, validate_contract
+from .query import (
+    GraphView,
+    QueryError,
+    expand,
+    finalize_token_estimate,
+    personalized_pagerank,
+    resolve_concepts,
+)
 from .semantic_retrieval import search_document
 
 GRAPH_SEARCH_RESULT_SCHEMA = "kgdistiller-search-result-v3"
@@ -140,9 +148,9 @@ def graph_lanes(
 
 def validate_graph_context_inputs(view: GraphView, execution: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate the full source boundary before any budget selects packets."""
-    from .retrieval import RetrievalError, _passes_filters, _validated_plan
     from .contracts import ContractError
     from .query import _edge_allowed
+    from .retrieval import RetrievalError, _passes_filters, _validated_plan
 
     plan = _validated_plan(plan)
     try:

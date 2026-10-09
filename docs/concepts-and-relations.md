@@ -2,8 +2,8 @@
 
 kgdistiller is a personal research knowledge base. Papers, mathematical notes,
 computer-science notes, blogs and project documents supply knowledge through the
-same model. The accepted knowledge lives in the project's visible `knowledge/`
-root; source-scoped sheets are views of that metadata.
+same model. The accepted knowledge lives in the project's hidden `.knowledge/`
+tree; source-scoped sheets are views of that metadata.
 
 ## Source document types: user-owned extraction rules
 
@@ -47,7 +47,7 @@ to that evidence remain necessary. A def sheet displays metadata links and is
 not a converted copy of the source. Optional rendering or downstream views do
 not become a source-conversion stage in the knowledge model.
 
-Register profiles in the existing `knowledge/sources.json` under
+Register profiles in the existing `.knowledge/sources.json` under
 `document_types`, for example:
 
 ```json
@@ -94,10 +94,11 @@ retrieval filters or choose an embedding/index backend.
 
 ## Minimum stored metadata
 
-Keep the existing `knowledge/` root. The normal knowledge store consists of:
+A project's knowledge lives only in `<root>/.knowledge/`. The normal knowledge
+store consists of:
 
 ```text
-knowledge/
+.knowledge/
 ├── vault.json              # stable vault identity for registration
 ├── sources.json            # bounded source registration; optional document types
 ├── entries/<node-id>.md    # one editable body per accepted knowledge entry
@@ -114,12 +115,10 @@ classification policies. User-selected fields/topics and extraction profiles
 remain optional data; source registration does not create knowledge nodes.
 
 `kgdistiller-graph-v2` stores entry content only in the Markdown authorities.
-The loader reads their manifest-bound content and returns the same hydrated
-`text`/`entry` API fields; it does not create JSONL body copies. New generations
-omit `graph/entries/`, `entry_store`, per-node `entry_path`, persisted diagnostics
-and unused classification counters. Read-only loading still accepts existing
-public graph v1; an explicit synchronization or writer produces graph v2 and
-preserves IDs, aliases, accepted relations and source content.
+The loader reads their manifest-bound content and returns hydrated
+`text`/`entry` API fields; the graph holds no JSONL body copies, persisted
+diagnostics or unused classification counters. Graph v2 is the only accepted
+graph schema; any other discriminator fails closed.
 
 Create `identities.json` only for reviewed renames/aliases and `alignments.json`
 only for accepted cross-namespace mappings. Existing nonempty registries remain
@@ -137,14 +136,16 @@ not graph identity, scientific content or the unresolved RAG architecture.
 
 Native Markdown, Typst and LaTeX markers establish explicit knowledge identity.
 Source passages supply definitions, assumptions, proofs and evidence. Reviewed
-atomic entries hold source-grounded knowledge content in `knowledge/entries/`;
+atomic entries hold source-grounded knowledge content in `.knowledge/entries/`;
 accepted semantic relationships and registries are also durable knowledge state.
 Do not infer identity from headings, names, document order or co-occurrence.
 
 Extraction prepares a metadata update, including complete meanings, formulas,
 conditions, evidence and relations. Review it against existing identities, then
 apply it through a supported transaction. Unaccepted proposals belong in
-`knowledge/build/reviews/`, not in the accepted entry collection.
+`.knowledge/build/reviews/`, not in the accepted entry collection. `build/` is
+excluded from Obsidian hidden-folder indexing by default; remove `build` from
+the plugin's exclusion list to open review drafts there.
 
 A **def sheet** selects the knowledge associated with a source and displays its
 names, types, precise source locations and links to actual accepted metadata.

@@ -17,7 +17,6 @@ from .contracts import ContractError, canonical_json, sha256_json, validate_cont
 from .query import GraphView, finalize_token_estimate
 from .semantic_retrieval import search_document
 
-
 COMPACT_CONTEXT_SCHEMA = "kgdistiller-context-bundle-v3"
 CONTEXT_PROJECTION = "kgdistiller-context-projection-v1"
 FULL_CONTEXT_PROJECTION = "kgdistiller-context-projection-full-v1"
@@ -71,8 +70,8 @@ def node_record(node: dict[str, Any], *, node_projection: str = "compact") -> di
 
 def _plain_context_inputs(view: GraphView, execution: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, Any]]:
     """Bind v1/v2 hits as direct sources; legacy graph paths confer no proof."""
-    from .retrieval import RetrievalError, _passes_filters, _validated_plan
     from .graph_retrieval import view_content_sha256
+    from .retrieval import RetrievalError, _passes_filters, _validated_plan
 
     _validated_plan(plan)
     try:

@@ -13,7 +13,6 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | `kgdistiller-entry-v1` | yes | yes | Obsidian-compatible atomic-entry authority. |
 | `kgdistiller-entry-index-v1` | yes | nested | Manifest inventory of atomic-entry authorities. |
 | `kgdistiller-entry-source-index-v1` | yes | nested | Manifest inventory of original or explicitly selected evidence bytes. |
-| `kgdistiller-graph-v1` | yes | no | Existing public graph with legacy entry shards; read-only loading never upgrades it. |
 | `kgdistiller-graph-v2` | yes | yes | Compact graph; entry bodies are hydrated from bound Markdown authorities. |
 | `kgdistiller-sources-v1` | yes | yes | Bounded native sources and optional user-owned document type profiles. |
 | `kgdistiller-identities-v1` | yes | yes | Reviewed authored-name changes and aliases. |
@@ -34,7 +33,6 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | `kgdistiller-ingest-plan-v1` | yes | output | Staged review result, not a receipt. |
 | `kgdistiller-ingest-receipt-v1` | yes | yes | JSON-memory committed-write receipt. |
 | `kgdistiller-ingest-error-v1` | yes | output | Stable transactional failure envelope. |
-| `kgdistiller-document-record-v1` | yes | no | Existing portable snapshot inventory row. |
 | `kgdistiller-document-record-v2` | yes | output | Optional snapshot inventory row with user-supplied classification only. |
 | `kgdistiller-store-v1` | yes | yes | File-based portable authority and graph generation. |
 | `kgdistiller-store-report-v1` | yes | output | Verified store operation result. |
@@ -51,10 +49,9 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | `kgdistiller-audit-v1` | yes | output | Whole-graph deterministic audit report. |
 
 The `kgdistiller-*` v1 names are the first public contract generation in this
-namespace. Graph v2 and document-record v2 revise only their storage contracts;
-query, delta, snapshot-manifest and consumer API versions remain independent.
-Existing public graph v1 and document-record v1 snapshots remain readable.
-A read operation never rewrites a generation; explicit writers emit graph v2.
+namespace. Graph v2 and document-record v2 are the only graph and
+document-record contracts; query, delta, snapshot-manifest and consumer API
+versions remain independent. A read operation never rewrites a generation.
 The normal project has no mandatory portable snapshot or duplicated entry body. Once 0.4 is published, a changed invariant, required field, identity
 meaning, or digest algorithm requires incrementing that contract's own version.
 Readers fail closed on unknown incompatible schemas.
@@ -66,22 +63,9 @@ machine-profile, database override, and store-materialization path. It also
 removes v1 retrieval/execution/result and portable-store compatibility from the
 active product boundary.
 
-There is no pre-0.4 schema reader or automatic core/database migration. Before
-upgrading a pre-0.4 project, commit native authorities and reviewed registries so Git history
-provides an exact rollback point. Preserve any Agent-curated entries or
-semantic edges that must survive for later human review. Then move the old
-generated `knowledge/graph/` outside the project, or delete that exact directory
-after confirming the rollback commit. Write registries with the current
-`kgdistiller-sources-v1` and `kgdistiller-identities-v1` discriminators and run
-an unscoped `sync` to derive `kgdistiller-graph-v2`. Reissue retained reviewed
-metadata as `kgdistiller-agent-delta-v1`; never relabel an old delta without
-re-reviewing it against the rebuilt generation.
-
-Databases and vectors were derived data and are not migrated. After rebuilding,
-create and verify a new `kgdistiller-store-v1` snapshot only when that backup
-operation is requested. If only an older store
-survives, restore its native authorities with the earlier release first; 0.4
-does not interpret pre-0.4 stores or graphs.
+There is no older schema reader and no automatic core or database migration.
+Graphs, stores and records with any other schema, including pre-0.4 artifacts,
+fail closed. Databases and vectors were derived data and are not migrated.
 
 Rebuild consumer bundles as `kgdistiller-static-export-v1` from the verified
 `kgdistiller-graph-v2` authority graph instead of relabeling or reusing old
@@ -102,9 +86,10 @@ must never be registered or scanned back into the authority graph.
 Run from a clean engine worktree:
 
 ```sh
-uv run python -m unittest discover -s tests -v
+uv run --locked python -m unittest discover -s tests -v
+uv run --locked ruff check src tests scripts
 uv build --out-dir build/release/0.4.0
-uv run python scripts/check_distribution.py --dist-root build/release/0.4.0
+uv run --locked python scripts/check_distribution.py --dist-root build/release/0.4.0
 cd integrations/obsidian && npm ci && npm run check
 ```
 
@@ -122,11 +107,10 @@ Then verify that:
   command/flag;
 - a Markdown/Typst/LaTeX fixture passes sync, check, `agent status`, exact and
   lexical/graph query, MCP smoke, and loopback browser smoke tests;
-- GraphView load accepts current public graph v1/v2 without writing, detects a
-  generation change and never returns mixed records; graph v2 reads its bound
-  entry Markdown and rejects missing or modified entry authorities;
-- explicit graph writes preserve accepted identities/aliases/semantic edges,
-  emit v2 and remove only obsolete writer-owned shards and diagnostic output;
+- GraphView accepts only graph-v2, loads without writing, detects a
+  generation change and never returns mixed records; it reads the bound entry
+  Markdown and rejects missing or modified entry authorities;
+- explicit graph writes preserve accepted identities/aliases/semantic edges;
 - new projects omit unused classification/empty registries and do not create
   portable snapshots or downstream exports by default;
 - `kgdistiller-retrieval-plan-v1` rejects `semantic_queries` and all results bind to one

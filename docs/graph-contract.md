@@ -5,7 +5,7 @@
 Authority is layered. Configured `.md`, `.typ`, and `.tex` markers define
 identity. Original source files provide evidence directly, and every
 curated atomic entry is an Obsidian-compatible Markdown authority under
-`knowledge/entries/`. Graph records retain durable identity state and accepted semantic relationships;
+`.knowledge/entries/`. Graph records retain durable identity state and accepted semantic relationships;
 they are not a disposable cache or a second editable copy of entry content.
 In-memory query views, HTML, static sites and managed Obsidian projections do
 not become another authority.
@@ -59,7 +59,7 @@ until their definitions and conditions have been compared. Unexplained external
 terms remain pending dependencies. Paper extraction uses around twenty concepts
 as a diagnostic, not a general node limit.
 
-Accepted entries live in `knowledge/`; source def sheets are lightweight links
+Accepted entries live in `.knowledge/`; source def sheets are lightweight links
 to those entries. Rich n-ary relations, applications and complete gap-state
 records are authoring targets, not additional `kgdistiller-agent-delta-v1` capabilities.
 Unsupported updates remain review proposals rather than invented graph data.
@@ -79,19 +79,15 @@ references.
 ## Entries and provenance
 
 Every curated active knowledge node has a concise, source-grounded
-`knowledge/entries/<node-id>.md` file using the
+`.knowledge/entries/<node-id>.md` file using the
 `kgdistiller-entry-v1` frontmatter contract. The entry improves search and
 explanation but does not replace the identity marker or its statement/proof.
 The entry records its native or explicitly selected evidence, evidence digest, and reviewed
 definition digest. Graph v2 keeps the body only here. Its manifest binds the
 entry Markdown and source evidence; the loader validates and reads that content
-to populate the unchanged hydrated `text` and `entry` API fields. It writes no
-`knowledge/graph/entries/` copy, `entry_store` or per-node `entry_path`.
-
-Existing public `kgdistiller-graph-v1` generations remain readable without
-mutation, including their legacy shards. An explicit sync or writer emits
-`kgdistiller-graph-v2`, preserving established identities and accepted semantic
-state. This is separate from unsupported pre-0.4 graphs and databases.
+to populate the hydrated `text` and `entry` API fields; the graph holds no
+copy of entry bodies. `kgdistiller-graph-v2` is the only graph schema that is
+read or written; every other discriminator fails closed.
 
 ```markdown
 ---
@@ -155,7 +151,7 @@ project initialization creates no derived source roots or registrations.
 An internal derived Markdown file uses `kgdistiller-derived-markdown-v1`
 frontmatter to bind the upstream vault-relative source path, source format, and
 digest. If the original file is outside every vault, a target vault is
-mandatory and the persisted `knowledge/derived/imports/*.md` deliberately omits
+mandatory and the persisted `.knowledge/derived/imports/*.md` deliberately omits
 the external path and digest. That Markdown is the first persisted source in
 the chain.
 
@@ -224,7 +220,7 @@ them into a substitute transaction.
 
 ```sh
 kgdistiller scan --file notes/chapter.typ
-kgdistiller apply knowledge/reviews/chapter.delta.json
+kgdistiller apply .knowledge/build/reviews/chapter.delta.json
 kgdistiller sync --file notes/chapter.typ
 kgdistiller curate-check --file notes/chapter.typ
 kgdistiller check
@@ -292,9 +288,9 @@ and graph digests so a later transaction can reject a stale decision.
 `kgdistiller-static-export-v1` is a privacy-filtered consumer bundle.
 `kgdistiller-obsidian-projection-v1` is a lossy, disposable managed downstream view.
 The project root may be the editor vault, where registered Markdown and
-`knowledge/entries/*.md` remain native authorities; the managed projection
+`.knowledge/entries/*.md` remain native authorities; the managed projection
 subtree is not authority. It must never be registered in
-`knowledge/sources.json`, scanned, or ingested back; regenerate it from the
+`.knowledge/sources.json`, scanned, or ingested back; regenerate it from the
 Markdown, Typst, or LaTeX authorities and the deterministic graph.
 
 Every Obsidian projection includes one `kgdistiller-obsidian-graph-v1` JSON
@@ -326,8 +322,8 @@ the plugin graph retains semantic relation labels, direction, and evidence.
 - an explicit file scope has exactly one bounded registry owner;
 - examples and headings create no implicit nodes.
 
-Diagnostics are computed from the loaded graph when needed; graph v2 does not
-persist `diagnostics.json` or unused manifest classification counters.
+Diagnostics are computed at load; the graph persists no diagnostics file or
+unused manifest classification counters.
 
 Run `kgdistiller audit` for entry coverage, topology, relation counts,
 cross-course bridges, field memberships, and edge metadata completeness.

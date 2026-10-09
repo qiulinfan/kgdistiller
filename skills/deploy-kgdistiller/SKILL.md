@@ -26,7 +26,7 @@ credentials, or exports in the kgdistiller product repository.
 
 ## Choose the requested operation
 
-An ordinary knowledge project needs its native sources, `knowledge/sources.json`,
+An ordinary knowledge project needs its native sources, `.knowledge/sources.json`,
 `vault.json`, entry Markdown and graph records. Optional identity/alignment
 registries exist only for actual reviewed content. It does not need
 `documents.jsonl` or `store.json` for capture, query, export or Git backup.
@@ -47,7 +47,7 @@ source copies or duplicate entry bodies.
 ## Create, refresh, and restore
 
 For a new project, initialize and review bounded source roots/globs and any
-user-defined extraction profiles in `knowledge/sources.json`. Each source can
+user-defined extraction profiles in `.knowledge/sources.json`. Each source can
 select one registered `document_type`; the profile specifies `node_kinds` and
 `extraction_guidance`. Follow the registry example in the deployment contract;
 do not install a fixed catalog of document classes or infer types from file
@@ -82,7 +82,7 @@ kgdistiller --repo-root PROJECT agent status
 kgdistiller --repo-root PROJECT agent resolve "KNOWN NAME"
 ```
 
-When restoring an actual snapshot with `knowledge/store.json`, run
+When restoring an actual snapshot with `.knowledge/store.json`, run
 `store verify` before accepting it. A missing optional snapshot is not a
 verification failure; do not create one simply to satisfy a checker. An existing
 snapshot that was not refreshed after source changes must be reported as stale
@@ -92,23 +92,20 @@ A valid graph is directly queryable through generation-checked `GraphView`;
 there is no materialization step. Verification failures require a known-good
 revision or repair of the native authority, not a sync that masks the mismatch.
 
-Existing public graph v1 remains readable without mutation; explicit writers
-produce graph v2 and preserve IDs, aliases and accepted relationships. Entry
-bodies persist once in Markdown. Never discard the graph as disposable cache.
-Unsupported pre-0.4 artifacts are a different recovery case: preserve native
-authorities and reviewed metadata, restore them with the earlier release if
-needed, then rebuild and review under current contracts. Do not silently
-relabel those artifacts or apply that recovery procedure to public v1 data.
+Require a `kgdistiller-graph-v2` generation; writers preserve IDs, aliases and
+accepted relationships. Entry bodies persist once in Markdown. Never discard the
+graph as disposable cache. If status reports any other graph schema, stop and
+report it to the user; do not relabel or migrate it.
 
 ## Initialize Git only with authorization
 
 Recommend private Git when appropriate, but run `git init`, commit, configure a
 remote, or push only when explicitly requested. Track registered authorities,
-`knowledge/sources.json`, optional `identities.json`/`alignments.json`,
-`knowledge/vault.json`, `knowledge/entries/`, `knowledge/graph/`, and all evidence
+`.knowledge/sources.json`, optional `identities.json`/`alignments.json`,
+`.knowledge/vault.json`, `.knowledge/entries/`, `.knowledge/graph/`, and all evidence
 actually referenced by accepted entries. Track `documents.jsonl` and `store.json`
 only for a deliberately maintained snapshot.
-Ignore `knowledge/build/`, journals, plans, receipts, credentials, query logs,
+Ignore `.knowledge/build/`, journals, plans, receipts, credentials, query logs,
 and disposable projections.
 
 Say `store verified locally` only after verify succeeds, `committed locally`
@@ -133,7 +130,7 @@ kgdistiller --repo-root PROJECT export obsidian --replace
 ```
 
 `PROJECT` is the editor vault, and registered Markdown plus
-`knowledge/entries/*.md` remain non-lossy authorities. The managed `kgdistiller-obsidian-projection-v1`
+`.knowledge/entries/*.md` remain non-lossy authorities. The managed `kgdistiller-obsidian-projection-v1`
 subtree is lossy and disposable. Never register that subtree in `sources.json`,
 scan/ingest it, or treat projected-note edits as round-trip authority. Source
 proxies for Typst and LaTeX navigate to their native files. An explicit external

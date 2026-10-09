@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import copy
 import difflib
 import tempfile
@@ -28,8 +26,15 @@ from .cli import (
 )
 from .contracts import sha256_json
 from .document_types import load_document_types, validate_node_kind
-from .entry_markdown import DERIVED_SOURCE_ROOT, ENTRY_ROOT, normalize_entry
-from .ingest import CAPABILITY, REQUEST_SCHEMA, IngestPaths, finalize_request, validate_request
+from .entry_markdown import normalize_entry
+from .ingest import (
+    CAPABILITY,
+    REQUEST_SCHEMA,
+    IngestPaths,
+    finalize_request,
+    validate_request,
+)
+from .knowledge_paths import knowledge_root
 from .query import GraphView, compare
 
 

@@ -1,11 +1,12 @@
 export const GRAPH_SCHEMA = "kgdistiller-obsidian-graph-v1" as const;
 export const PRIVATE_GRAPH_SCHEMA = "kgdistiller-graph-v2" as const;
-const LEGACY_PRIVATE_GRAPH_SCHEMA = "kgdistiller-graph-v1" as const;
+/** The product's single knowledge tree at a project root; entries live in its `entries/` folder. */
+export const KNOWLEDGE_DIRECTORY = ".knowledge";
 
 export type CurationStatus = "current" | "pending" | "needs-review";
 
 export interface GraphSourceGeneration {
-  graph_schema: typeof PRIVATE_GRAPH_SCHEMA | typeof LEGACY_PRIVATE_GRAPH_SCHEMA;
+  graph_schema: typeof PRIVATE_GRAPH_SCHEMA;
   graph_sha256: string;
   snapshot_sha256: string;
   source_hashes_sha256: string;
@@ -245,8 +246,8 @@ export async function parseGraphContract(text: string): Promise<KgGraphContract>
     ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
     "source",
   );
-  if (source.graph_schema !== PRIVATE_GRAPH_SCHEMA && source.graph_schema !== LEGACY_PRIVATE_GRAPH_SCHEMA) {
-    fail(`source.graph_schema must equal ${PRIVATE_GRAPH_SCHEMA} or ${LEGACY_PRIVATE_GRAPH_SCHEMA}`);
+  if (source.graph_schema !== PRIVATE_GRAPH_SCHEMA) {
+    fail(`source.graph_schema must equal ${PRIVATE_GRAPH_SCHEMA}`);
   }
   sha256(source.graph_sha256, "source.graph_sha256");
   sha256(source.snapshot_sha256, "source.snapshot_sha256");

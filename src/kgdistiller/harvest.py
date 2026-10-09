@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .knowledge_paths import knowledge_root, knowledge_relative
-
 import copy
 import difflib
 import json
@@ -14,12 +12,30 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
 
-from .capture import CaptureError, _inside, _merge_source_content, prepare_capture, prepare_captures
-from .cli import (KnowledgeError, atomic_write, build_identity_index, load_identity_registry, load_sources, load_state,
-                  mark_definition_projection, pretty_json, scan_source, sha256_authority_file, unique_source_for_path)
+from .capture import (
+    CaptureError,
+    _inside,
+    _merge_source_content,
+    prepare_capture,
+    prepare_captures,
+)
+from .cli import (
+    KnowledgeError,
+    atomic_write,
+    build_identity_index,
+    load_identity_registry,
+    load_sources,
+    load_state,
+    mark_definition_projection,
+    pretty_json,
+    scan_source,
+    sha256_authority_file,
+    unique_source_for_path,
+)
 from .contracts import sha256_json
-from .entry_markdown import DERIVED_SOURCE_ROOT, ENTRY_ROOT, _SECTIONS, entry_relative
+from .entry_markdown import _SECTIONS, entry_relative
 from .ingest import IngestPaths, _receipt_path, apply_ingest, load_request
+from .knowledge_paths import knowledge_root
 
 SCHEMA = "kgdistiller-checkbox-review-v1"
 _HEADER = re.compile(r"^<!-- kgdistiller-harvest-review: (\S+) -->$")
@@ -97,7 +113,7 @@ def _node_state(paths: IngestPaths, node_id: str) -> dict[str, Any]:
     node = load_state(paths.graph_dir, repo_root=paths.repo_root).nodes.get(node_id)
     authority = (node or {}).get("provenance") or {}
     properties = (node or {}).get("properties") or {}
-    entry_path = paths.repo_root / entry_relative(node_id, paths.repo_root)
+    entry_path = paths.repo_root / entry_relative(node_id)
     return {
         "node": None if node is None else {
             "id": node["id"], "label": node.get("label"), "type": node.get("type"),
