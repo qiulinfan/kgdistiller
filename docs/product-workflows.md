@@ -6,7 +6,7 @@ runtime workflow manifests `workflows/manifest.json` (Codex) and
 `workflows/claude-manifest.json` (Claude Code). Both manifests declare the
 same Skills and workflows; only linkers and agent-preset formats differ. A
 knowledge project owns its Markdown, Typst, and
-LaTeX identity authorities, `knowledge/derived/` evidence,
+LaTeX identity authorities and directly linked source evidence,
 `knowledge/entries/` atomic authorities, reviewed registries, `kgdistiller-graph-v1` graph,
 optional `kgdistiller-store-v1` snapshot, and explicitly adopted downstream exports.
 

@@ -47,16 +47,27 @@ and transaction preconditions are generated, not requested from the reader.
 Updates preserve omitted structured entry fields; supplied fields replace their
 previous values. An explicit empty list clears a list field.
 
+An optional top-level `kind` records the reviewed semantic node kind. Read the
+source's profile with `scan --file` and choose one of its registered `node_kinds`
+when `document_type` is assigned. A supplied kind must be nonempty text and
+match that profile; omission preserves an existing reviewed kind. A native
+statement wrapper or file extension does not override the reviewed value. The
+helper carries `kind` into the candidate and the delta's `properties.kind`.
+Changing only a knowledge type does not re-review its scientific text or refresh
+stale source evidence.
+
 `entry` uses the normal structured entry fields. `understanding` may be `unknown`,
 `not-yet-understood`, or `understood`; omission makes no mastery claim.
 `pending_prerequisites` records only directly encountered gaps as text. It creates
 neither placeholder graph nodes nor prerequisite edges. Reading a prerequisite
 later can reveal its own immediate gaps in a separate capture.
 
-Markdown, Typst and LaTeX use their existing native scanners. Native Typst/LaTeX
-entries also require their prepared Markdown evidence, as in the ordinary entry
-workflow; capture does not render or synthesize that evidence. Preparation reports
-a missing evidence file instead of returning a request that cannot be applied.
+Markdown, Typst and LaTeX use their existing native scanners. New entries link
+to their original `.md`, `.typ` or `.tex` evidence directly; no prepared Markdown
+copy of the source is required. Atomic knowledge entries themselves remain
+Markdown. Existing explicit derived-evidence bindings remain valid and are not
+rewritten as a side effect of capture. This does not add direct PDF capture or
+change the separate raw-evidence import workflow.
 
 The output directory must be inside the project and outside registered sources,
 committed graph/entry data and derived evidence. The result has this shape, with

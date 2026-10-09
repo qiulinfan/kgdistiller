@@ -102,6 +102,7 @@ class SourceSpec:
     knowledge_origin: str
     fields: tuple[str, ...]
     topic_patterns: tuple[tuple[str, str, str, tuple[str, ...]], ...]
+    document_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ class DefinitionOccurrence:
     definition_sha256: str
     definition_start_line: int
     definition_end_line: int
+    document_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -353,9 +355,12 @@ def load_fields(registry: Path) -> list[FieldSpec]:
 
 
 def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
+    from kgdistiller.document_types import parse_document_types, validate_document_type
+
     payload = read_json(registry, {})
     if payload.get("schema") != SOURCE_SCHEMA:
         raise KnowledgeError(f"expected {SOURCE_SCHEMA} source registry: {registry}")
+    profiles = parse_document_types(payload)
     repository = repo_root.resolve()
     result: list[SourceSpec] = []
     seen: set[str] = set()
@@ -415,6 +420,8 @@ def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
                 knowledge_origin=knowledge_origin,
                 fields=source_fields,
                 topic_patterns=topics,
+                document_type=(validate_document_type(raw["document_type"], profiles)
+                               if "document_type" in raw else ""),
             )
         )
     return result
@@ -912,6 +919,7 @@ def scan_typst(
                 anchor=anchor,
                 web=definition_web(spec, path, node_id),
                 source_id=spec.id,
+                document_type=spec.document_type,
                 subject=spec.subject,
                 course=spec.course,
                 knowledge_origin=spec.knowledge_origin,
@@ -1062,6 +1070,7 @@ def scan_markdown(
                 anchor=f"kn-{node_id}",
                 web=definition_web(spec, path, node_id),
                 source_id=spec.id,
+                document_type=spec.document_type,
                 subject=spec.subject,
                 course=spec.course,
                 knowledge_origin=spec.knowledge_origin,
@@ -1183,6 +1192,7 @@ def scan_latex(
                 anchor=f"kn-{node_id}",
                 web=definition_web(spec, path, node_id),
                 source_id=spec.id,
+                document_type=spec.document_type,
                 subject=spec.subject,
                 course=spec.course,
                 knowledge_origin=spec.knowledge_origin,
@@ -1629,9 +1639,11 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
     old_label = str(previous.get("label", ""))
     if old_label and old_label != definition.label and old_label not in aliases:
         aliases.append(old_label)
+    if properties.get("kind_origin") != "reviewed":
+        properties["kind"] = definition.kind
     properties.update(
         {
-            "kind": definition.kind,
+            "source_kind": definition.kind,
             "aliases": aliases,
             "origin": "authored",
             "source_status": "active",
@@ -1644,6 +1656,10 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
             "source_name": definition.label_markup,
         }
     )
+    if definition.document_type:
+        properties["document_type"] = definition.document_type
+    else:
+        properties.pop("document_type", None)
     previous_provenance = previous.get("provenance") or {}
     previous_fingerprint = str(previous_provenance.get("definition_sha256", ""))
     curated_fingerprint = str(properties.get("curated_definition_sha256", ""))
@@ -2776,10 +2792,20 @@ def synchronize(
     from kgdistiller.entry_markdown import (
         EntryMarkdownError,
         load_entry_authorities,
+        write_entry,
     )
 
+    source_relocations = {}
+    for definition in scan.definitions:
+        old_authority = str(((previous.nodes.get(definition.id) or {}).get("provenance") or {}).get("authority", ""))
+        if (old_authority and old_authority != definition.authority
+                and Path(old_authority).suffix.lower() in {".md", ".typ", ".tex"}):
+            source_relocations[definition.id] = (old_authority, definition.authority)
+    entry_updates: dict[Path, str] = {}
     try:
-        entry_hashes = load_entry_authorities(repo_root, state.nodes)
+        entry_hashes = load_entry_authorities(
+            repo_root, state.nodes, source_relocations=source_relocations, entry_updates=entry_updates
+        )
     except EntryMarkdownError as error:
         raise KnowledgeError(str(error)) from error
     refresh_semantic_edge_curation(state)
@@ -2842,6 +2868,8 @@ def synchronize(
     }
     if write:
         rendering_names = typst_rendering_names(repo_root, specs, state, registered_identities)
+        for path, content in sorted(entry_updates.items()):
+            write_entry(path, content)
         write_artifacts(graph_dir, artifacts)
         # All readers load and validate this committed JSON generation
         # directly. There is no second runtime generation to publish.
@@ -2872,6 +2900,7 @@ def apply_delta(
         EntryMarkdownError,
         authority_sha256,
         entry_relative,
+        entry_with_kind,
         load_entry_authorities,
         normalize_entry,
         render_entry,
@@ -2883,6 +2912,8 @@ def apply_delta(
     entry_writes: dict[Path, str] = {}
     before = dict(state.manifest.get("counts") or {})
     removed_nodes = 0
+    kind_profiles: dict[str, dict[str, Any]] | None = None
+    kind_specs: list[SourceSpec] = []
     for raw_id in delta.get("remove_nodes", []):
         node_id = str(raw_id)
         existing = state.nodes.get(node_id)
@@ -2916,6 +2947,22 @@ def apply_delta(
                     f"invalid knowledge_origin for delta node {node_id}: {knowledge_origin!r}"
                 )
             properties["knowledge_origin"] = knowledge_origin
+            if "kind" in (raw.get("properties") or {}):
+                from kgdistiller.document_types import load_document_types, validate_node_kind
+
+                if kind_profiles is None:
+                    kind_registry = registry or repo_root / "knowledge/sources.json"
+                    has_registry = registry is not None or kind_registry.is_file()
+                    kind_profiles = load_document_types(kind_registry) if has_registry else {}
+                    kind_specs = load_sources(repo_root, kind_registry) if has_registry else []
+                authority = str((existing.get("provenance") or {}).get("authority", ""))
+                source = authority or str(raw.get("entry_source", "") or properties.get("entry_source", ""))
+                source_path = (repo_root / source).resolve() if source else None
+                owner = (unique_source_for_path(kind_specs, source_path)
+                         if source_path and matching_sources(kind_specs, source_path) else None)
+                document_type = owner.document_type if owner else ""
+                properties["kind"] = validate_node_kind(properties["kind"], document_type, kind_profiles)
+                properties["kind_origin"] = "reviewed"
         else:
             properties.pop("knowledge_origin", None)
         properties.setdefault("aliases", [])
@@ -2965,7 +3012,26 @@ def apply_delta(
                     "curation_status", "current" if text_value.strip() or raw_entry else "pending"
                 )
         state.nodes[node_id] = node
-        if node_type == "knowledge" and ("text" in raw or "entry" in raw):
+        reviewed_kind = "kind" in (raw.get("properties") or {})
+        if node_type == "knowledge" and reviewed_kind and not (text_value.strip() or raw_entry):
+            raise KnowledgeError(
+                f"reviewed kind requires an existing knowledge entry or reviewed content: {node_id}"
+            )
+        if node_type == "knowledge" and reviewed_kind and not reviewed_content:
+            entry_path = repo_root / entry_relative(node_id)
+            if entry_path not in entry_writes and not entry_path.is_file():
+                raise KnowledgeError(
+                    f"reviewed kind requires an existing knowledge entry or reviewed content: {node_id}"
+                )
+            try:
+                entry_writes[entry_path] = entry_with_kind(
+                    entry_path, str(properties["kind"]), content=entry_writes.get(entry_path)
+                )
+            except EntryMarkdownError as error:
+                raise KnowledgeError(str(error)) from error
+            entry_deletes.discard(entry_path)
+            continue
+        if node_type == "knowledge" and reviewed_content:
             entry_path = repo_root / entry_relative(node_id)
             if not text_value.strip() and not raw_entry:
                 entry_deletes.add(entry_path)
@@ -2990,6 +3056,8 @@ def apply_delta(
                         source_sha256=source_sha,
                         definition_sha256=definition_sha,
                         origin=str(properties.get("entry_origin", "agent-extracted")),
+                        kind=(str(properties["kind"])
+                              if properties.get("kind_origin") == "reviewed" else None),
                     )
                 except EntryMarkdownError as error:
                     raise KnowledgeError(str(error)) from error
@@ -4701,7 +4769,10 @@ def main() -> int:
         if args.command in {"sync", "build", "scan"}:
             pairs_files = list(args.file)
             if args.command == "scan":
+                from kgdistiller.document_types import load_document_types
+
                 specs = load_sources(repo_root, registry)
+                profiles = load_document_types(registry)
                 state = load_state(graph_dir)
                 pairs, selected, full = select_scope(
                     repo_root, specs, pairs_files, args.course, args.subject
@@ -4740,6 +4811,16 @@ def main() -> int:
                         {
                             "scope": "repository" if full else "incremental",
                             "files": [relative_path(repo_root, path) for _, path in pairs],
+                            "sources": [
+                                {"path": relative_path(repo_root, path), "source_id": spec.id,
+                                 "source_format": source_format(path), "document_type": spec.document_type}
+                                for spec, path in pairs
+                            ],
+                            "document_types": {
+                                name: profiles[name] for name in sorted({
+                                    spec.document_type for spec, _ in pairs if spec.document_type
+                                })
+                            },
                             "definitions": [item.__dict__ | {"statement": None} for item in result.definitions],
                             "references": [item.__dict__ for item in result.references],
                             "would_orphan": orphaned,

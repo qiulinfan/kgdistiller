@@ -74,6 +74,31 @@ class HarvestTest(unittest.TestCase):
         self.assertIn("beta", load_state(self.paths.graph_dir).nodes)
         self.assertIn("gamma", load_state(self.paths.graph_dir).nodes)
 
+    def test_review_draft_shows_explicit_kind_and_omitted_update_preserves_it(self):
+        payload = self.payload()
+        payload["kind"] = "construction"
+        prepared = self.prepare([payload])
+        draft = Path(prepared["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
+        self.assertIn("## Knowledge type", draft)
+        self.assertIn('- After: "construction"', draft)
+        self.check()
+        apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertEqual(load_state(self.paths.graph_dir).nodes["beta"]["properties"]["kind"], "construction")
+
+        payload.pop("kind")
+        payload.pop("source_content")
+        payload["review"].update(action="update", target_id="beta")
+        prepared = self.prepare([payload])
+        draft = Path(prepared["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
+        self.assertIn('- Before: "construction"', draft)
+        self.assertIn('- After: "construction"（保持现有类型）', draft)
+
+        payload["kind"] = "procedure"
+        prepared = self.prepare([payload])
+        draft = Path(prepared["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
+        self.assertIn('- Before: "construction"', draft)
+        self.assertIn('- After: "procedure"', draft)
+
     def test_recovery_after_ingest_before_sheet_refresh(self):
         self.prepare()
         self.check()

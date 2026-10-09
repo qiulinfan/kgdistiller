@@ -49,7 +49,10 @@ unsupported edits require correction. Markdown, Typst and LaTeX keep their
 native identity and evidence requirements.
 
 Preparation writes readable drafts with proposed text, before/after structured
-entry content, identity review and native source diff. It binds generated task
+entry content, knowledge type, identity review and native source diff. The type
+comparison states when an omitted `kind` preserves the existing type; a type
+change alone does not re-review the scientific text or refresh stale evidence.
+It binds generated task
 rows to these frozen proposals and returns `status: prepared`. It does not ingest
 the candidates. The review directory must be inside the project and outside
 registered sources and accepted data. To append candidates to the same sheet,

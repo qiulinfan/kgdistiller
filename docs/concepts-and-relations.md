@@ -47,16 +47,44 @@ to that evidence remain necessary. A def sheet displays metadata links and is
 not a converted copy of the source. Optional rendering or downstream views do
 not become a source-conversion stage in the knowledge model.
 
-This is the agreed target data contract, not an implemented type-registry API.
-The current `SourceSpec` and source registry do not carry an extraction profile.
-`entry_markdown.resolve_entry_source` and the capture path still require
-Markdown evidence, including derived Markdown for non-Markdown authorities;
-that requirement must be decoupled before this workflow is implemented.
-Format scanners also infer `properties.kind` from source syntax and overwrite
-it during synchronization. Source syntax must not override an accepted semantic
-knowledge type. These are implementation gaps, not requirements of the target
-model. This document does not migrate existing sources or claim the registry
-is already available.
+Register profiles in the existing `knowledge/sources.json` under
+`document_types`, for example:
+
+```json
+{
+  "worked-notes": {
+    "node_kinds": ["definition", "theorem"],
+    "extraction_guidance": "Extract explained definitions and precise theorems; represent worked examples as applications."
+  }
+}
+```
+
+The block above is the value of `document_types`, not a replacement for the
+whole source registry. Add `"document_type": "worked-notes"` to the relevant
+existing source record. That record can cover a bounded set of files of any
+supported native format. Separate source records can use different profiles.
+Names and kinds are caller-supplied; new projects start with an empty mapping.
+Existing registries without profiles remain unclassified. Explicit unknown
+profile names or malformed registrations are errors.
+
+`kgdistiller --repo-root PROJECT scan --file SOURCE` exposes the selected
+`document_types` and per-file `sources` information without writing graph data.
+This works before a source has any knowledge markers, so an agent can read the
+extraction rules before choosing nodes. Capture accepts an optional reviewed
+`kind`; when supplied, it must belong to the source's registered profile.
+The accepted type is stored in entry frontmatter as `kgd_kind`, and projected
+as `properties.kind` with `kind_origin: reviewed`. Scanner syntax is retained
+separately in `source_kind`; subsequent synchronization does not overwrite the
+reviewed type. Old entries without an explicit reviewed kind remain readable.
+
+Entries now default to original Markdown, Typst or LaTeX evidence. Explicit
+historical Markdown evidence links still work; no automatic conversion or
+derived-file fallback is performed. New projects no longer create derived
+source directories or register converted imports automatically. Existing
+same-stem TeX/Typst authority selection remains supported for already paired
+registrations; it does not create or convert either file. Optional rendering
+and explicitly requested older import commands are separate from extraction.
+
 RAG architecture is still open. Source types must not silently impose hard
 retrieval filters or choose an embedding/index backend.
 

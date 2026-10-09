@@ -7,6 +7,10 @@ node metadata used for retrieval. Registered native Markdown, Typst and LaTeX
 markers retain identity authority; accepted atomic entries retain their content
 contract. A sheet is a source-scoped navigation projection of this state. It
 neither defines a new authority nor independently stores full meanings.
+The source's registered `document_type` selects user-authored extraction rules;
+it is independent of source format and knowledge domain. Keep original `.md`,
+`.typ` and `.tex` evidence links. Entries and sheet projections can be Markdown
+without converting the source itself.
 
 This applies to mathematical notes, computer-science notes, papers, blogs and
 project documents. Preserve caller-selected locations and existing filenames;

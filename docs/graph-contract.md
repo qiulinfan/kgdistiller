@@ -3,7 +3,7 @@
 ## Authority
 
 Authority is layered. Configured `.md`, `.typ`, and `.tex` markers define
-identity. Converted evidence is Markdown under `knowledge/derived/`, and every
+identity. Original source files provide evidence directly, and every
 curated atomic entry is an Obsidian-compatible Markdown authority under
 `knowledge/entries/`. Generated graph artifacts, in-memory query views, HTML,
 static sites, and managed Obsidian projections never become another authority.
@@ -80,7 +80,7 @@ Every curated active knowledge node has a concise, source-grounded
 `knowledge/entries/<node-id>.md` file using the
 `kgdistiller-entry-v1` frontmatter contract. The entry improves search and
 explanation but does not replace the identity marker or its statement/proof.
-The entry records its Markdown evidence, evidence digest, and reviewed
+The entry records its native or explicitly selected evidence, evidence digest, and reviewed
 definition digest. The JSONL copy in `knowledge/graph/entries/` is derived and
 must never be edited as authority.
 
@@ -90,7 +90,8 @@ kgd_schema: "kgdistiller-entry-v1"
 kgd_id: "measure-space"
 kgd_label: "Measure space"
 kgd_entry_origin: "agent-extracted"
-kgd_source: "knowledge/derived/by-source/notes/chapter.typ.md"
+kgd_source: "notes/chapter.typ"
+kgd_kind: "definition"
 kgd_source_sha256: "..."
 kgd_definition_sha256: "..."
 ---
@@ -101,6 +102,15 @@ kgd_definition_sha256: "..."
 
 A measurable space equipped with a measure.
 ```
+
+Optional `kgd_kind` preserves the reviewed semantic knowledge type. In the
+graph this is `properties.kind` with `kind_origin: reviewed`; the independent
+`source_kind` records what the native scanner inferred. A source sync must not
+overwrite a reviewed kind with a statement-environment or heading label.
+Entries without this optional field remain readable.
+A type-only edit of an existing entry preserves its content-review fingerprints
+and stale status. A reviewed type needs an accepted entry or simultaneously
+reviewed content; it is not stored solely on an uncurated scanner node.
 
 Optional entry learning metadata uses `understanding` (`unknown`,
 `not-yet-understood`, `understood`) and `pending_prerequisites` (direct gap
@@ -116,17 +126,19 @@ closed instead of becoming invisible graph data. Normal IDs use
 `<node-id>.md`; Windows-reserved or overlong IDs use a deterministic `_kgd-...`
 filename while `kgd_id` remains the stable graph identity.
 
-Direct Markdown identity sources may be entry evidence themselves. Typst and
-LaTeX entries require their converted Markdown at
-`knowledge/derived/by-source/<vault-relative-source>.md`; the relative source
-already retains its original suffix.
+Markdown, Typst and LaTeX entries default to their original identity source as
+evidence. Capture and ingest do not require a converted Markdown companion.
+Explicit existing Markdown evidence links remain supported and checked;
+conversion is never an automatic fallback when a source is missing.
 Rich LaTeX knowledge names use the local obsidian-latex-live converter to
 produce passive HTML/MathML labels while preserving native TeX spellings.
 Native TeX registries and direct HTML document exports are derived views; see
 [the LaTeX source contract](latex-sources.md). They do not change identity or
 entry authority and do not route documents through Typst.
-Internal PDF conversion uses the same path rule and its derived Markdown is the
-scanned identity source. Same-stem formats remain distinct.
+The older explicitly invoked derivation command remains available for existing
+imports, including PDFs; these are not native PDF graph authorities. Its
+Markdown result must be explicitly registered if it is to be scanned. New
+project initialization creates no derived source roots or registrations.
 
 An internal derived Markdown file uses `kgdistiller-derived-markdown-v1`
 frontmatter to bind the upstream vault-relative source path, source format, and

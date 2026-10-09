@@ -25,7 +25,8 @@ from .cli import (
     unique_source_for_path,
 )
 from .contracts import sha256_json
-from .entry_markdown import DERIVED_SOURCE_ROOT, ENTRY_ROOT, normalize_entry, resolve_entry_source
+from .document_types import load_document_types, validate_node_kind
+from .entry_markdown import DERIVED_SOURCE_ROOT, ENTRY_ROOT, normalize_entry
 from .ingest import CAPABILITY, REQUEST_SCHEMA, IngestPaths, finalize_request, validate_request
 from .query import GraphView, compare
 
@@ -59,7 +60,7 @@ def _prepare_capture_record(
     """Validate one capture and return its independently reviewed source edit.
 
     ``payload`` selects ``name`` in one registered ``source``, supplies ``text``
-    and optional ``entry``, and carries an explicit ``review`` with ``action``
+    and optional ``entry`` and reviewed ``kind``, and carries an explicit ``review`` with ``action``
     (add/update), ``reviewer`` and ``evidence``. Updates use the selected native
     identity in the same source; an optional ``target_id`` must agree with it.
     Optional ``source_content`` or ``source_content_file`` contains
@@ -69,7 +70,7 @@ def _prepare_capture_record(
         raise CaptureError("capture must be an object")
     unknown = set(payload) - {
         "name", "source", "text", "entry", "review", "source_content",
-        "source_content_file",
+        "source_content_file", "kind",
     }
     if unknown:
         raise CaptureError(f"unknown capture fields: {', '.join(sorted(unknown))}")
@@ -95,6 +96,10 @@ def _prepare_capture_record(
     output = _inside(root, output_dir, "output_dir")
     specs = load_sources(root, paths.registry)
     owner = unique_source_for_path(specs, source)
+    kind = None
+    if "kind" in payload:
+        kind = _text(payload, "kind")
+        validate_node_kind(kind, owner.document_type, load_document_types(paths.registry))
     if any(output == spec.root or output.is_relative_to(spec.root) for spec in specs):
         raise CaptureError("output_dir must be outside registered source roots")
     for protected in (paths.graph_dir.resolve(), root / ENTRY_ROOT, root / DERIVED_SOURCE_ROOT):
@@ -169,19 +174,11 @@ def _prepare_capture_record(
         for field, value in (payload.get("entry") or {}).items():
             if value == []:
                 entry[field] = []
-    if definition.source_format != "markdown":
-        # The entry store consumes prepared Markdown evidence for native notes.
-        # Capture does not convert or create that evidence as a side effect.
-        resolve_entry_source(root, {
-            "id": definition.id,
-            "properties": (state.nodes.get(definition.id) or {}).get("properties", {}),
-            "provenance": {"authority": relative.as_posix()},
-        })
     return {
         "definition": definition, "scan": scan,
         "source": relative.as_posix(), "content": content,
         "expected_source": expected_source,
-        "text": text, "entry": entry, "action": action,
+        "text": text, "entry": entry, "action": action, "kind": kind,
         "target_id": target_id, "reviewer": reviewer, "evidence": evidence,
         "base_graph": state.manifest["graph_sha256"],
     }
@@ -280,7 +277,10 @@ def prepare_captures(
     candidate_nodes = [{
         "id": record["definition"].id, "type": "knowledge", "label": record["definition"].label,
         "text": record["text"], "entry": copy.deepcopy(record["entry"]),
-        "properties": {"target_id": record["target_id"]} if record["target_id"] else {},
+        "properties": {
+            **({"target_id": record["target_id"]} if record["target_id"] else {}),
+            **({"kind": record["kind"]} if record["kind"] is not None else {}),
+        },
         "provenance": {
             "authority": record["source"], "line": record["definition"].line,
             "source_format": record["definition"].source_format,
@@ -327,7 +327,10 @@ def prepare_captures(
         } for record in records],
         "delta": {
             "schema": DELTA_SCHEMA, "remove_nodes": [], "remove_edges": [],
-            "nodes": [{"id": record["definition"].id, "text": record["text"], "entry": record["entry"]} for record in records],
+            "nodes": [{
+                "id": record["definition"].id, "text": record["text"], "entry": record["entry"],
+                **({"properties": {"kind": record["kind"]}} if record["kind"] is not None else {}),
+            } for record in records],
             "edges": [],
         },
         "alignment_decisions": [],

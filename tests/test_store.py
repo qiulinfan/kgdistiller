@@ -184,7 +184,10 @@ class JsonStoreTest(unittest.TestCase):
             json.dumps(
                 {
                     "schema": "kgdistiller-agent-delta-v1",
-                    "nodes": [{"id": "typst-concept", "text": "Reviewed Typst concept."}],
+                    "nodes": [{
+                        "id": "typst-concept", "text": "Reviewed Typst concept.",
+                        "entry_source": derived.relative_to(self.source).as_posix(),
+                    }],
                 }
             ),
             encoding="utf-8",
@@ -198,6 +201,49 @@ class JsonStoreTest(unittest.TestCase):
         copied.write_text("# Tampered conversion\n", encoding="utf-8")
         with self.assertRaisesRegex(StoreError, "entry source is out of sync"):
             verify_store(self.output)
+
+    def test_snapshot_preserves_document_profile_and_native_entry_sources(self) -> None:
+        registry = json.loads(self.registry.read_text(encoding="utf-8"))
+        registry["document_types"] = {
+            "worked-notes": {
+                "node_kinds": ["construction"],
+                "extraction_guidance": "Extract explained constructions; keep examples as applications.",
+            }
+        }
+        registry["sources"][0]["document_type"] = "worked-notes"
+        self.registry.write_text(json.dumps(registry), encoding="utf-8")
+        native_sources = {
+            "native-typst": ("notes/construction.typ", "#definition(title: [#kn[Native Typst]])[Body.]\n"),
+            "native-tex": ("notes/construction-tex.tex", "\\begin{definition}\\kn{Native TeX} Body.\\end{definition}\n"),
+        }
+        for path, text in native_sources.values():
+            (self.source / path).write_text(text, encoding="utf-8")
+        synchronize(
+            self.source, self.registry, self.graph, self.typst_registry,
+            identities=self.identities, alignments=self.alignments,
+            files=[], course=None, subject=None, write=True,
+        )
+        delta = self.source / "knowledge/build/native-entries.delta.json"
+        delta.write_text(json.dumps({
+            "schema": "kgdistiller-agent-delta-v1",
+            "nodes": [
+                {"id": node_id, "text": "A reviewed construction.", "properties": {"kind": "construction"}}
+                for node_id in native_sources
+            ],
+        }), encoding="utf-8")
+        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.source, registry=self.registry)
+        self.snapshot()
+        verify_store(self.output)
+        restored_registry = json.loads((self.output / "knowledge/sources.json").read_text(encoding="utf-8"))
+        self.assertEqual(registry["document_types"], restored_registry["document_types"])
+        documents = [json.loads(line) for line in (self.output / "knowledge/documents.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(all(record["document_type"] == "worked-notes" for record in documents))
+        for node_id, (source, _) in native_sources.items():
+            self.assertTrue((self.output / source).is_file())
+            entry = (self.output / f"knowledge/entries/{node_id}.md").read_text(encoding="utf-8")
+            self.assertIn(f'kgd_source: "{source}"', entry)
+            self.assertIn('kgd_kind: "construction"', entry)
+        self.assertFalse((self.output / "knowledge/derived").exists())
 
     def test_verify_rejects_tampered_vault_identity(self) -> None:
         self.snapshot()

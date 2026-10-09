@@ -123,43 +123,9 @@ def initialize_project(
             "topics": [],
         }
     ]
-    derived_imports = project_root / "knowledge/derived/imports"
-    derived_imports.mkdir(parents=True, exist_ok=True)
-    (project_root / "knowledge/derived/by-source").mkdir(
-        parents=True, exist_ok=True
-    )
-    if resolved_source.resolve() not in (
-        derived_imports.resolve(),
-        *derived_imports.resolve().parents,
-    ):
-        sources.append(
-            {
-                "id": "local:derived-imports",
-                "subject": "local",
-                "course": "derived-imports",
-                "knowledge_origin": "personal-note",
-                "fields": ["general"],
-                "root": "knowledge/derived/imports",
-                "files": ["**/*.md"],
-                "web": "",
-                "topics": [],
-            }
-        )
-        sources.append(
-            {
-                "id": "local:derived-pdf",
-                "subject": "local",
-                "course": "derived-pdf",
-                "knowledge_origin": "personal-note",
-                "fields": ["general"],
-                "root": "knowledge/derived/by-source",
-                "files": ["**/*.pdf.md"],
-                "web": "",
-                "topics": [],
-            }
-        )
     payload = {
         "schema": "kgdistiller-sources-v1",
+        "document_types": {},
         "fields": [
             {
                 "id": "general",
@@ -172,7 +138,6 @@ def initialize_project(
     registry.parent.mkdir(parents=True, exist_ok=True)
     default_knowledge = project_root / "knowledge"
     (default_knowledge / "entries").mkdir(parents=True, exist_ok=True)
-    (default_knowledge / "derived").mkdir(parents=True, exist_ok=True)
     ensure_knowledge_gitignore(default_knowledge / ".gitignore")
     if registry.parent.resolve() != default_knowledge.resolve():
         ensure_knowledge_gitignore(registry.parent / ".gitignore")

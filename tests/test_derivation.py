@@ -95,6 +95,16 @@ class DerivationPlacementTest(unittest.TestCase):
             self.assertNotIn("kgd_source:", metadata)
             self.assertNotIn("kgd_source_sha256", metadata)
             self.assertNotIn(str(external), content)
+            # New projects do not register converted imports automatically.
+            # A retained legacy import is an explicit source registration.
+            registry_path = vault / "knowledge/sources.json"
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            registry["sources"].append({
+                **registry["sources"][0],
+                "id": "selected-import", "root": "knowledge/derived/imports",
+                "files": ["paper.md"],
+            })
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
             state, _, _ = synchronize(
                 vault,
                 vault / "knowledge/sources.json",

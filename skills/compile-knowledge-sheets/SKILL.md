@@ -24,6 +24,14 @@ coverage. Respect existing filenames; otherwise use `def-sheet.md` and
 `pending-sheet.md` beside the selected source or in its caller-selected folder.
 Do not assume a paper corpus, paper-reading vault or prior sheet layout.
 
+Run `kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY` for each
+selected source. Read its `sources[].document_type` and matching `document_types`
+profile: `node_kinds` and `extraction_guidance` are user-registered extraction
+rules, independent of `.md`/`.typ`/`.tex` and fields/topics. Do not impose a fixed
+catalog of document classes. An unassigned source keeps the explicitly requested
+scope until the user registers a profile. Read the native source directly;
+source conversion is not a prerequisite for metadata or its link sheets.
+
 Partial sheets are normal. Use the explicitly selected concepts or passages as
 the scope; do not fill every missing row or initiate full-source distillation.
 For a request to save one item while reading, use `$capture-kgdistiller`. Read
@@ -56,7 +64,8 @@ Store only direct gaps in `pending_prerequisites`, retaining the term, required
 meaning and use context. When the user chooses to learn a pending concept, its
 own entry may expose the next layer; do not recursively resolve the chain now.
 
-The shared model admits mathematical definitions, axioms and theorems, and
+Apply the registered profile's node kinds and extraction guidance. For example,
+the shared model admits mathematical definitions, axioms and theorems, and
 computer-science algorithms and architectures as knowledge nodes. Propositions
 and remarks express relations; examples and experiments express typed
 applications. The bundled sync contract provides the preservation rules.

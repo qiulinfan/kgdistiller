@@ -47,6 +47,7 @@ _FRONTMATTER_KEYS = {
     "kgd_source_sha256",
     "kgd_definition_sha256",
 }
+_OPTIONAL_FRONTMATTER_KEYS = {"kgd_kind"}
 _WINDOWS_RESERVED = {
     "con",
     "prn",
@@ -87,16 +88,17 @@ def default_derived_relative(authority: str) -> Path:
     return DERIVED_SOURCE_ROOT / Path(f"{source.as_posix()}.md")
 
 
-def _safe_markdown_source(repo_root: Path, value: str) -> tuple[str, Path]:
+def _safe_entry_source(repo_root: Path, value: str) -> tuple[str, Path]:
     relative = Path(value)
     if (
         not value
+        or any(character in value for character in ("\n", "\r", "\0"))
         or relative.is_absolute()
         or ".." in relative.parts
-        or relative.suffix.casefold() != ".md"
+        or relative.suffix.casefold() not in {".md", ".typ", ".tex"}
     ):
         raise EntryMarkdownError(
-            f"entry source must be a vault-relative Markdown path: {value!r}"
+            f"entry source must be a vault-relative .md, .typ, or .tex path: {value!r}"
         )
     root = repo_root.resolve()
     path = (root / relative).resolve(strict=False)
@@ -104,8 +106,11 @@ def _safe_markdown_source(repo_root: Path, value: str) -> tuple[str, Path]:
         canonical = path.relative_to(root).as_posix()
     except ValueError as error:
         raise EntryMarkdownError(f"entry source escapes the vault: {value}") from error
-    if path.is_symlink() or not path.is_file():
-        raise EntryMarkdownError(f"entry source Markdown does not exist: {canonical}")
+    unresolved = root / relative
+    if any(part.is_symlink() for part in (unresolved, *unresolved.parents) if part != root):
+        raise EntryMarkdownError(f"entry source must not use symlinks: {value}")
+    if not path.is_file():
+        raise EntryMarkdownError(f"entry source does not exist: {canonical}")
     return canonical, path
 
 
@@ -119,19 +124,27 @@ def resolve_entry_source(
     if not candidate:
         authority = str((node.get("provenance") or {}).get("authority", ""))
         suffix = Path(authority).suffix.casefold()
-        if suffix == ".md":
+        if suffix in {".md", ".typ", ".tex"}:
             candidate = authority
-        elif suffix in {".typ", ".tex", ".pdf"}:
-            candidate = default_derived_relative(authority).as_posix()
         else:
             raise EntryMarkdownError(
-                f"knowledge entry {node.get('id')} needs an explicit Markdown entry_source"
+                f"knowledge entry {node.get('id')} needs an explicit .md, .typ, or .tex entry_source"
             )
-    return _safe_markdown_source(repo_root, candidate)
+    return _safe_entry_source(repo_root, candidate)
 
 
 def _frontmatter_line(key: str, value: str) -> str:
     return f"{key}: {json.dumps(value, ensure_ascii=False)}"
+
+
+def _entry_kind(value: Any) -> str:
+    from .cli import KnowledgeError
+    from .document_types import validate_node_kind
+
+    try:
+        return validate_node_kind(value, "", {})
+    except KnowledgeError as error:
+        raise EntryMarkdownError(str(error)) from error
 
 
 def normalize_entry(entry: Any, text: str = "") -> dict[str, Any]:
@@ -180,6 +193,7 @@ def render_entry(
     source_sha256: str,
     definition_sha256: str,
     origin: str = "agent-extracted",
+    kind: str | None = None,
 ) -> str:
     normalized = normalize_entry(entry)
     if not normalized:
@@ -193,10 +207,10 @@ def render_entry(
         _frontmatter_line("kgd_source", source),
         _frontmatter_line("kgd_source_sha256", source_sha256),
         _frontmatter_line("kgd_definition_sha256", definition_sha256),
-        "---",
-        "",
-        f"# {label}",
     ]
+    if kind is not None:
+        lines.append(_frontmatter_line("kgd_kind", _entry_kind(kind)))
+    lines.extend(["---", "", f"# {label}"])
     for field in (*_SCALAR_FIELDS, *_LIST_FIELDS):
         value = normalized.get(field)
         if not value:
@@ -222,7 +236,7 @@ def _parse_frontmatter(text: str, path: Path) -> tuple[dict[str, str], str]:
         if not line.strip():
             continue
         key, separator, raw_value = line.partition(":")
-        if not separator or key not in _FRONTMATTER_KEYS or key in metadata:
+        if not separator or key not in _FRONTMATTER_KEYS | _OPTIONAL_FRONTMATTER_KEYS or key in metadata:
             raise EntryMarkdownError(f"invalid entry frontmatter line in {path}: {line!r}")
         try:
             value = json.loads(raw_value.strip())
@@ -233,11 +247,13 @@ def _parse_frontmatter(text: str, path: Path) -> tuple[dict[str, str], str]:
         if not isinstance(value, str):
             raise EntryMarkdownError(f"entry frontmatter value must be a string: {key}")
         metadata[key] = value
-    if set(metadata) != _FRONTMATTER_KEYS:
+    if not _FRONTMATTER_KEYS.issubset(metadata):
         missing = ", ".join(sorted(_FRONTMATTER_KEYS - set(metadata)))
         raise EntryMarkdownError(f"entry frontmatter is missing fields in {path}: {missing}")
     if metadata["kgd_schema"] != ENTRY_SCHEMA:
         raise EntryMarkdownError(f"expected {ENTRY_SCHEMA} entry: {path}")
+    if "kgd_kind" in metadata:
+        _entry_kind(metadata["kgd_kind"])
     return metadata, "\n".join(lines[end + 1 :]).strip()
 
 
@@ -286,6 +302,33 @@ def parse_entry(path: Path) -> dict[str, Any]:
     return {"metadata": metadata, "entry": entry}
 
 
+def entry_with_kind(path: Path, kind: str, *, content: str | None = None) -> str:
+    """Plan a type-only metadata edit without refreshing scientific evidence."""
+    if path.is_symlink() or path.parent.is_symlink() or (path.exists() and not path.is_file()):
+        raise EntryMarkdownError(f"entry authority is not an ordinary file: {path}")
+    if content is None:
+        if not path.is_file():
+            raise EntryMarkdownError(f"entry authority is not an ordinary file: {path}")
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            content = handle.read()
+    elif not isinstance(content, str):
+        raise EntryMarkdownError("staged entry content must be text")
+    metadata, body = _parse_frontmatter(content, path)
+    if not normalize_entry(_parse_sections(body, path)):
+        raise EntryMarkdownError(f"entry has no recognized content sections: {path}")
+    replacement = _frontmatter_line("kgd_kind", _entry_kind(kind))
+    lines = content.splitlines(keepends=True)
+    end = next(index for index, line in enumerate(lines[1:], 1) if line.rstrip("\r\n") == "---")
+    if "kgd_kind" in metadata:
+        index = next(index for index in range(1, end) if lines[index].startswith("kgd_kind:"))
+        ending = lines[index][len(lines[index].rstrip("\r\n")):]
+        lines[index] = replacement + ending
+    else:
+        ending = lines[0][len(lines[0].rstrip("\r\n")):]
+        lines.insert(end, replacement + ending)
+    return "".join(lines)
+
+
 def write_entry(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -308,7 +351,19 @@ def write_entry(path: Path, content: str) -> None:
 def load_entry_authorities(
     repo_root: Path,
     nodes: dict[str, dict[str, Any]],
+    *,
+    source_relocations: dict[str, tuple[str, str]] | None = None,
+    entry_updates: dict[Path, str] | None = None,
 ) -> dict[str, str]:
+    """Hydrate entries, optionally planning explicitly matched native source moves.
+
+    The caller supplies moves only after resolving the same native identity in
+    the old and new authority. Planned frontmatter edits are returned through
+    ``entry_updates`` and never written while loading or during a dry run.
+    Scientific fingerprints and the reviewed entry body remain unchanged.
+    """
+    if source_relocations and entry_updates is None:
+        raise EntryMarkdownError("source relocations require an entry update plan")
     root = repo_root / ENTRY_ROOT
     if root.exists() and (root.is_symlink() or not root.is_dir()):
         raise EntryMarkdownError(f"entry authority root is not an ordinary directory: {root}")
@@ -324,8 +379,35 @@ def load_entry_authorities(
                 raise EntryMarkdownError(f"entry filename/id mismatch or duplicate: {path}")
             if node_id not in nodes:
                 raise EntryMarkdownError(f"entry authority references unknown node: {node_id}")
+            relocation = (source_relocations or {}).get(node_id)
+            if relocation is not None:
+                old_source, new_source = relocation
+                metadata = parsed["metadata"]
+                provenance = nodes[node_id].get("provenance") or {}
+                if (
+                    metadata["kgd_source"] == old_source
+                    and old_source != new_source
+                    and Path(old_source).suffix.casefold() in {".md", ".typ", ".tex"}
+                    and not old_source.startswith(f"{DERIVED_SOURCE_ROOT.as_posix()}/")
+                    and provenance.get("authority") == new_source
+                    and provenance.get("active")
+                ):
+                    source, _ = _safe_entry_source(repo_root, new_source)
+                    content = re.sub(
+                        r"(?m)^kgd_source:.*$",
+                        lambda _: _frontmatter_line("kgd_source", source),
+                        _normalized_text(path),
+                        count=1,
+                    )
+                    metadata["kgd_source"] = source
+                    assert entry_updates is not None
+                    entry_updates[path] = content
             parsed_by_id[node_id] = (path, parsed)
-            entry_hashes[path.relative_to(repo_root).as_posix()] = authority_sha256(path)
+            planned = (entry_updates or {}).get(path)
+            entry_hashes[path.relative_to(repo_root).as_posix()] = (
+                hashlib.sha256(planned.encode("utf-8")).hexdigest()
+                if planned is not None else authority_sha256(path)
+            )
     for node_id, node in nodes.items():
         if node.get("type") != "knowledge":
             continue
@@ -349,8 +431,17 @@ def load_entry_authorities(
             continue
         path, parsed = found
         metadata = parsed["metadata"]
+        if "kgd_kind" in metadata:
+            properties["kind"] = metadata["kgd_kind"]
+            properties["kind_origin"] = "reviewed"
+        elif properties.get("kind_origin") == "reviewed":
+            properties.pop("kind_origin")
+            if "source_kind" in properties:
+                properties["kind"] = properties["source_kind"]
+            else:
+                properties.pop("kind", None)
         label_matches = metadata["kgd_label"] == str(node.get("label", ""))
-        source, source_path = _safe_markdown_source(repo_root, metadata["kgd_source"])
+        source, source_path = _safe_entry_source(repo_root, metadata["kgd_source"])
         current_source_sha = authority_sha256(source_path)
         current_definition_sha = str(
             (node.get("provenance") or {}).get("definition_sha256", "")
@@ -358,9 +449,9 @@ def load_entry_authorities(
         provenance_authority = str(
             (node.get("provenance") or {}).get("authority", "")
         )
-        direct_markdown_source = (
+        direct_native_source = (
             source == provenance_authority
-            and Path(provenance_authority).suffix.casefold() == ".md"
+            and Path(provenance_authority).suffix.casefold() in {".md", ".typ", ".tex"}
             and not source.startswith(f"{DERIVED_SOURCE_ROOT.as_posix()}/")
         )
         entry = parsed["entry"]
@@ -381,7 +472,7 @@ def load_entry_authorities(
         properties["curation_status"] = (
             "current"
             if (
-                direct_markdown_source
+                direct_native_source
                 or current_source_sha == metadata["kgd_source_sha256"]
             )
             and current_definition_sha == metadata["kgd_definition_sha256"]

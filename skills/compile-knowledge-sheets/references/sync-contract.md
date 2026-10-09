@@ -15,6 +15,13 @@ Skills do not require a repository checkout.
 
 ## Knowledge model and complete proposals
 
+Read the selected source's `document_type` profile from `scan --file` before
+extracting. The profile's `node_kinds` and `extraction_guidance` determine what
+knowledge to propose; no document-class enum is built into this workflow. The
+following are examples of the shared model, not a substitute for the caller's
+profile. Preserve native source evidence directly, without preparing a converted
+Markdown copy. Accepted entry bodies remain Markdown.
+
 - Mathematical definitions, axioms and theorems/lemmas can be knowledge nodes;
   computer-science algorithms, architectures and independently defined methods,
   quantities or components can also be nodes. Retain complete meanings,

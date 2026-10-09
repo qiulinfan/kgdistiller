@@ -34,12 +34,13 @@ class ProjectInitializationTest(unittest.TestCase):
             sources = json.loads(registry.read_text(encoding="utf-8"))
             self.assertEqual("kgdistiller-sources-v1", sources["schema"])
             self.assertEqual(
-                {"local:notes", "local:derived-imports", "local:derived-pdf"},
+                {"local:notes"},
                 {source["id"] for source in sources["sources"]},
             )
+            self.assertEqual({}, sources["document_types"])
+            self.assertNotIn("document_type", sources["sources"][0])
             self.assertTrue((root / "knowledge/entries").is_dir())
-            self.assertTrue((root / "knowledge/derived/imports").is_dir())
-            self.assertTrue((root / "knowledge/derived/by-source").is_dir())
+            self.assertFalse((root / "knowledge/derived").exists())
             vault_manifest = json.loads(
                 (root / "knowledge/vault.json").read_text(encoding="utf-8")
             )

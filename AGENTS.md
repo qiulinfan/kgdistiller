@@ -1,7 +1,8 @@
 # kgdistiller agent guidance
 
-- Work directly on `main` for the owner's ongoing main feature. Commit and push
-  authorized progress after checks; do not create new PRs unless requested.
+- Work directly on `main` for the owner's ongoing main feature. Keep completed
+  work local unless instructed otherwise; push only when the owner explicitly
+  asks to push. Do not create new PRs unless requested.
 - Keep the deterministic core provider-neutral. Model-specific behavior belongs
   in Agent skills or adapters.
 - Text BM25, optional local embedding/reranker adapters, versioned search results
@@ -23,10 +24,11 @@
   or familiar material. Harvest uses Obsidian def-sheet task selections and
   deterministic ingest; checking a task does not imply understanding.
 - Source document types are user-registered extraction profiles, independent
-  of file format and knowledge domain. Follow the target contract in
+  of file format and knowledge domain. Follow the registration contract in
   `docs/concepts-and-relations.md`; do not hardcode the owner's example types
-  or require source-to-source Markdown/Typst/LaTeX conversion. The registry is
-  an agreed design direction, not yet an implemented API; RAG remains open.
+  or require source-to-source Markdown/Typst/LaTeX conversion. Read selected
+  profiles through `scan --file`; preserve reviewed node kinds independently
+  of scanner syntax and link entries to native evidence. RAG remains open.
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

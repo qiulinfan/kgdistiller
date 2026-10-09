@@ -44,6 +44,12 @@ new identities from them. Preserve unrelated prose and user-authored markers.
 Paper snapshots remain read-only unless the user explicitly authorizes exact
 selected entries or mappings for import.
 
+Keep `.md`, `.typ` and `.tex` evidence linked to the original registered source;
+do not require a derived Markdown copy before ingest. Atomic knowledge entries
+remain Markdown. A source's user-registered `document_type` supplies extraction
+guidance, not permission to create identities or bypass source review. Preserve
+reviewed semantic kinds independently of native statement syntax.
+
 Compute authority hashes over UTF-8 text with universal-newline normalization
 (CRLF/CR to LF), not raw checkout bytes. This boundary matches sync, ingest,
 store, check, and export.

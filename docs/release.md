@@ -12,9 +12,9 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | `kgdistiller-derived-markdown-v1` | yes | yes | In-vault conversion provenance frontmatter. |
 | `kgdistiller-entry-v1` | yes | yes | Obsidian-compatible atomic-entry authority. |
 | `kgdistiller-entry-index-v1` | yes | nested | Manifest inventory of atomic-entry authorities. |
-| `kgdistiller-entry-source-index-v1` | yes | nested | Manifest inventory of current Markdown evidence bytes. |
+| `kgdistiller-entry-source-index-v1` | yes | nested | Manifest inventory of original or explicitly selected evidence bytes. |
 | `kgdistiller-graph-v1` | yes | yes | Deterministic authority graph. |
-| `kgdistiller-sources-v1` | yes | yes | Bounded Markdown/Typst/LaTeX registry. |
+| `kgdistiller-sources-v1` | yes | yes | Bounded native sources and optional user-owned document type profiles. |
 | `kgdistiller-identities-v1` | yes | yes | Reviewed authored-name changes and aliases. |
 | `kgdistiller-scoped-aliases-v1` | yes | nested | Collision-aware aliases within one authority scope. |
 | `kgdistiller-alignments-v1` | yes | yes | Bounded fingerprint-bound reviewed mappings. |

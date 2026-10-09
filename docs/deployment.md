@@ -1,7 +1,7 @@
 # Local-first deployment and recovery
 
 The knowledge project is the deployment and backup unit. It owns registered
-Markdown, Typst, and LaTeX identity authorities, converted Markdown evidence,
+Markdown, Typst, and LaTeX identity authorities and their source evidence,
 Markdown atomic entries, reviewed registries, the deterministic `kgdistiller-graph-v1`
 graph, and the `kgdistiller-store-v1` manifest. The kgdistiller product
 checkout owns only engine code, schemas, native frontend assets, Skills, and
@@ -14,10 +14,9 @@ personal-knowledge-store/
 ├── notes/                         # native authorities
 └── knowledge/
     ├── vault.json                 # portable kgdistiller-vault-v1 identity
-    ├── sources.json               # kgdistiller-sources-v1
+    ├── sources.json               # source registration and user document types
     ├── identities.json            # optional reviewed renames/aliases
     ├── alignments.json             # reviewed cross-namespace mappings
-    ├── derived/                    # Markdown conversions; imports or by-source
     ├── entries/                    # kgdistiller-entry-v1 atomic authorities
     ├── graph/                      # deterministic kgdistiller-graph-v1 generation
     ├── documents.jsonl            # canonical authority inventory
@@ -86,7 +85,7 @@ kgdistiller --repo-root STORE store verify
 
 `STORE` must not be nested in `PROJECT`. Snapshot copies only registered,
 already-ingested identity authorities, manifest-bound entry Markdown, their
-Markdown evidence, and the exact portable vault identity, registries, graph
+native or explicitly selected evidence, and the exact portable vault identity, registries, graph
 generation, and document inventory that describe them. Snapshot and verify
 never contact a network service.
 
@@ -115,8 +114,8 @@ the user explicitly authorizes that action. Track:
 - `knowledge/vault.json`;
 - `knowledge/sources.json`;
 - optional `knowledge/identities.json` and `knowledge/alignments.json`;
-- `knowledge/derived/` evidence referenced by entries and
-  `knowledge/entries/`;
+- `knowledge/entries/` and all evidence files they reference, including any
+  explicitly retained older `knowledge/derived/` files;
 - `knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
 
 Ignore `knowledge/build/`, transaction staging and journals, plans, receipts,

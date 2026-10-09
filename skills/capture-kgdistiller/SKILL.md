@@ -23,6 +23,20 @@ or definition location from the current conversation. Ask only for an essential
 missing target or a genuinely ambiguous meaning. Read additional local context
 only when a defining condition or source statement is incomplete.
 
+Read the source's extraction profile before preparing content:
+
+```sh
+kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY
+```
+
+Use `sources[].document_type` and its entry in `document_types` to select the
+user-registered `node_kinds` and `extraction_guidance`. File format selects the
+native reader; document type guides extraction; fields/topics describe knowledge
+domain. Do not infer one from another or substitute a built-in type list. If the
+source has no profile, use the user's explicit extraction scope without silently
+registering one. Read `.md`, `.typ` or `.tex` directly; no source-to-source
+conversion is required. The accepted knowledge entry remains Markdown.
+
 Keep the full definition and essential assumptions in the entry. Definitions,
 axioms, precise theorems, algorithms and architectures may be nodes. A claim or
 example belongs to a relation/application; do not manufacture a concept merely

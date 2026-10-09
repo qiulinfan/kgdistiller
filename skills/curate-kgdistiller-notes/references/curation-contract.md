@@ -9,6 +9,12 @@ workflow, not curation.
 
 ## Authority and identity
 
+Use the selected source's registered `document_type` profile, exposed by
+`scan --file`, for its `node_kinds` and `extraction_guidance`. Profiles are
+user data in `knowledge/sources.json`; file format and fields/topics do not
+choose them. Read native sources directly. Markdown atomic entries can cite
+`.md`, `.typ` or `.tex` evidence without a converted source copy.
+
 For source-level curation, treat one complete source file as the curation unit.
 For one selected item, use `$capture-kgdistiller` and preserve unselected entries. Read its statements,
 proofs, explanations, examples, and comparisons. Preserve user-authored markers
@@ -26,7 +32,7 @@ supported transaction accepts them; a sheet cannot override accepted content.
 
 The repository's [shared model](../../../docs/concepts-and-relations.md)
 defines this distinction across source types. Its essentials are included here
-for packaged use:
+for packaged use. These examples do not define a fixed document-type registry:
 
 - Mathematical definitions, axioms and theorems/lemmas can be knowledge nodes;
   computer-science algorithms, architectures and independently defined methods
@@ -62,6 +68,9 @@ Synthesize rather than copy a long span. Do not add external facts to an
 authority entry.
 
 Use `properties.entry_origin: agent-extracted` for a new agent-authored entry.
+Use `properties.kind` for its reviewed semantic kind, following the source's
+registered `node_kinds` when it has a document profile. Preserve reviewed kinds
+on later sync; native statement syntax is not a semantic reclassification.
 Keep longer dossiers outside node properties; the engine stores reviewed entry
 bodies in authority-scoped shards.
 

@@ -40,8 +40,13 @@ never migrate or relabel the old graph inside a curation transaction.
 Require each input to match exactly one pattern in `knowledge/sources.json`.
 Use the smallest coherent registered file set, including both paths of a known
 rename. If a document is unregistered, propose the source ID, root, format glob,
-field classification, and destination; obtain review before moving it or
-expanding a glob.
+field classification, optional registered `document_type`, and destination;
+obtain review before moving it or expanding a glob. `scan --file` returns
+`sources[].document_type` and the selected `document_types` profiles. Follow
+the user's `node_kinds` and `extraction_guidance`; document type is separate from
+file format and knowledge domain. Do not hardcode document classes or infer
+extraction policy from an extension. An absent profile makes no classification
+claim; use the explicitly requested scope without silently adding a profile.
 
 Read [references/curation-contract.md](references/curation-contract.md) before
 extracting. Never infer graph identity from headings, order, syntax wrappers,
@@ -49,7 +54,9 @@ keywords, embeddings, or co-occurrence.
 
 ## Extract before explaining
 
-Read each selected authority completely. Preserve existing native markers:
+Read each selected `.md`, `.typ` or `.tex` authority directly and completely;
+no converted Markdown source is required. Knowledge entries themselves remain
+Markdown and link to their native evidence. Preserve existing native markers:
 
 - Markdown: `--[[Concept]]--` and `[[Concept]]`;
 - Typst: `#kn[Concept]` and `#ref[Concept]`;

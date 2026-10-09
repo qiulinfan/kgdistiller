@@ -9,6 +9,13 @@ are not identity evidence. Reviewed authored-name changes use the identity
 registry; reviewed cross-namespace mappings use the alignment registry and
 remain fingerprint-bound.
 
+A registered source's `document_type` selects user-authored `node_kinds` and
+`extraction_guidance`; it is independent of format and knowledge domain. These
+rules guide the upstream review and do not create identities. Atomic entries
+remain Markdown while evidence links directly to the original `.md`, `.typ` or
+`.tex`; source conversion is not an ingest prerequisite. Preserve supported
+legacy derived-evidence bindings when maintaining an existing record.
+
 Every semantic edge is direct, typed, and supported by concrete source
 evidence. Candidate and personal namespaces remain separate. Conflicting or
 uncertain identities block their own operation.
@@ -39,7 +46,8 @@ changing it requires a new canonical digest and review.
 Do not compose `apply`, `sync`, or `reconcile` as a substitute, and do not edit
 graph JSON/JSONL, derived entry shards, identities, or alignments directly.
 Atomic entry Markdown is changed only through the reviewed transaction. There is no
-secondary database, embedding, provider, profile, or materialization boundary.
+secondary database, embedding, provider, or materialization boundary. Extraction
+profiles are source-registry data within the existing knowledge project.
 If rollback is degraded or fails, stop writers, preserve the journal/backups,
 and recover from them or a known-good Git revision.
 

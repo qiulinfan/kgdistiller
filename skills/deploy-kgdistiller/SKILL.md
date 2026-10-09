@@ -7,7 +7,8 @@ description: Create, refresh, verify, clone, and restore a small personal kgdist
 
 Treat the knowledge project—not a product checkout or generated projection—as
 the portable authority store. Version 0.4 has no database, embedding, provider,
-profile, or materialization step.
+or materialization step. User-registered extraction profiles belong in the
+source registry.
 
 ## Align language
 
@@ -32,15 +33,22 @@ credentials, or exports in the kgdistiller product repository.
 
 Both layouts contain only registered, already-ingested Markdown, Typst, and
 LaTeX identity authorities, manifest-bound `knowledge/entries/` Markdown and
-its `knowledge/derived/` evidence, source/identity/alignment registries,
+its native source evidence (plus existing `knowledge/derived/` evidence when
+used), source/identity/alignment registries,
 deterministic graph artifacts, canonical document inventory, and
 `kgdistiller-store-v1` manifest.
 
 ## Create, refresh, and restore
 
-For a new project, initialize and review bounded source roots/globs, add native
-definition/reference markers, then run `sync`. Never infer nodes from headings,
-document order, proximity, or similarity.
+For a new project, initialize and review bounded source roots/globs and any
+user-defined extraction profiles in `knowledge/sources.json`. Each source can
+select one registered `document_type`; the profile specifies `node_kinds` and
+`extraction_guidance`. Follow the registry example in the deployment contract;
+do not install a fixed catalog of document classes or infer types from file
+formats or domains. Add reviewed native definition/reference markers, then run
+`sync`. Never infer nodes from headings, document order, proximity, or similarity.
+Keep `.md`, `.typ` and `.tex` sources in their original form. Entry Markdown can
+link directly to native evidence; no derived Markdown source is required.
 
 For an in-place snapshot, run this complete command set:
 

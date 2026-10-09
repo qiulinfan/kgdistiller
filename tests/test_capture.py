@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 from kgdistiller.alignment import empty_alignment_set
 from kgdistiller.capture import CaptureError, prepare_capture
-from kgdistiller.cli import SOURCE_SCHEMA, load_state, sha256_authority_file, synchronize
-from kgdistiller.ingest import IngestPaths, apply_ingest, load_request, plan_ingest
-from kgdistiller.entry_markdown import EntryMarkdownError, default_derived_relative
+from kgdistiller.cli import SOURCE_SCHEMA, KnowledgeError, load_state, sha256_authority_file, synchronize
+from kgdistiller.ingest import IngestError, IngestPaths, apply_ingest, load_request, plan_ingest
+from kgdistiller.entry_markdown import parse_entry
 from kgdistiller.query import compare
 
 
@@ -166,22 +166,106 @@ class CaptureTest(unittest.TestCase):
             with self.subTest(extension=extension):
                 payload = self.payload()
                 payload.update(source=f"notes/new.{extension}", source_content=content)
-                if extension != "md":
-                    derived = self.root / default_derived_relative(payload["source"])
-                    derived.parent.mkdir(parents=True, exist_ok=True)
-                    derived.write_text("Beta is defined here.\n", encoding="utf-8")
                 result = prepare_capture(self.paths, payload, self.output)
                 request = load_request(Path(result["artifacts"]["plan"]))
                 self.assertIsNone(request["authority_patches"][0]["expected_sha256"])
                 self.assertEqual(request["authority_patches"][0]["expected_markers"]["definitions"], ["beta"])
                 plan_ingest(self.paths, request)
+                self.assertFalse((self.root / "knowledge/derived").exists())
 
-    def test_native_source_requires_existing_derived_evidence(self) -> None:
+    def _assert_native_capture_lifecycle(self, extension: str, content: str) -> None:
         payload = self.payload()
-        payload.update(source="notes/new.typ", source_content="#kn[Beta]\nBeta is defined here.\n")
-        with self.assertRaisesRegex(EntryMarkdownError, "does not exist"):
+        payload.update(source=f"notes/new.{extension}", source_content=content)
+        prepared = prepare_capture(self.paths, payload, self.output)
+        self.assertFalse((self.root / payload["source"]).exists())
+        request = load_request(Path(prepared["artifacts"]["apply"]), mode="apply")
+        apply_ingest(self.paths, request)
+        self.assertEqual(content, (self.root / payload["source"]).read_text())
+        parsed = parse_entry(self.root / "knowledge/entries/beta.md")
+        self.assertEqual(payload["source"], parsed["metadata"]["kgd_source"])
+        self.assertEqual("current", load_state(self.paths.graph_dir).nodes["beta"]["properties"]["curation_status"])
+        self.assertFalse((self.root / "knowledge/derived").exists())
+
+        payload.pop("source_content")
+        payload.update(text="Beta is now understood in its original source context.")
+        payload["entry"] = {"understanding": "understood", "pending_prerequisites": []}
+        payload["review"]["action"] = "update"
+        prepared = prepare_capture(self.paths, payload, self.output)
+        apply_ingest(self.paths, load_request(Path(prepared["artifacts"]["apply"])))
+        node = load_state(self.paths.graph_dir).nodes["beta"]
+        self.assertEqual(payload["text"], node["text"])
+        self.assertEqual("understood", node["entry"]["understanding"])
+        self.assertNotIn("pending_prerequisites", node["entry"])
+        self.assertEqual(payload["source"], node["properties"]["entry_source"])
+
+    def test_new_typst_source_capture_applies_and_updates_without_conversion(self) -> None:
+        self._assert_native_capture_lifecycle("typ", "#kn[Beta]\nBeta is defined here.\n")
+
+    def test_new_latex_source_capture_applies_and_updates_without_conversion(self) -> None:
+        self._assert_native_capture_lifecycle("tex", "\\kn{Beta}\nBeta is defined here.\n")
+
+    def test_missing_native_source_requires_content_not_derived_evidence(self) -> None:
+        for extension in ("typ", "tex"):
+            with self.subTest(extension=extension):
+                payload = self.payload()
+                payload.update(source=f"notes/missing.{extension}")
+                payload.pop("source_content")
+                with self.assertRaisesRegex(CaptureError, "complete proposed source content"):
+                    prepare_capture(self.paths, payload, self.output)
+
+    def test_native_source_capture_is_stale_safe(self) -> None:
+        source = self.root / "notes/chapter.typ"
+        source.write_text("#kn[Beta]\nBeta is defined here.\n", encoding="utf-8")
+        payload = self.payload()
+        payload.update(source="notes/chapter.typ")
+        payload.pop("source_content")
+        prepared = prepare_capture(self.paths, payload, self.output)
+        source.write_text("#kn[Beta]\nA concurrent change.\n", encoding="utf-8")
+        with self.assertRaises(IngestError):
+            apply_ingest(self.paths, load_request(Path(prepared["artifacts"]["apply"])))
+        self.assertFalse((self.root / "knowledge/entries/beta.md").exists())
+
+    def test_reviewed_kind_uses_registered_profile_and_survives_sync(self) -> None:
+        registry = json.loads(self.registry.read_text())
+        registry["document_types"] = {
+            "custom-review": {"node_kinds": ["custom-structure"], "extraction_guidance": "Extract named structures only."},
+        }
+        registry["sources"][0]["document_type"] = "custom-review"
+        self.registry.write_text(json.dumps(registry), encoding="utf-8")
+        payload = self.payload()
+        payload["kind"] = "custom-structure"
+        prepared = prepare_capture(self.paths, payload, self.output)
+        candidate = json.loads(Path(prepared["artifacts"]["candidate"]).read_text())
+        self.assertEqual("custom-structure", candidate["nodes"][0]["properties"]["kind"])
+        request = load_request(Path(prepared["artifacts"]["apply"]))
+        self.assertEqual({"kind": "custom-structure"}, request["delta"]["nodes"][0]["properties"])
+        apply_ingest(self.paths, request)
+        synchronize(
+            self.root, self.registry, self.paths.graph_dir, self.paths.typst_registry,
+            identities=self.paths.identities, alignments=self.alignments,
+            files=[], course=None, subject=None, write=True,
+        )
+        properties = load_state(self.paths.graph_dir).nodes["beta"]["properties"]
+        self.assertEqual("custom-structure", properties["kind"])
+        self.assertEqual("reviewed", properties["kind_origin"])
+        self.assertEqual("definition", properties["source_kind"])
+
+        payload["kind"] = "unregistered-kind"
+        with self.assertRaises(KnowledgeError):
             prepare_capture(self.paths, payload, self.output)
-        self.assertEqual(list(self.output.glob("*.json")), [])
+
+    def test_kind_is_optional_and_does_not_require_builtin_categories(self) -> None:
+        payload = self.payload()
+        result = prepare_capture(self.paths, payload, self.output)
+        request = load_request(Path(result["artifacts"]["plan"]))
+        self.assertNotIn("properties", request["delta"]["nodes"][0])
+        payload["kind"] = "personal-object"
+        result = prepare_capture(self.paths, payload, self.output)
+        request = load_request(Path(result["artifacts"]["plan"]))
+        self.assertEqual("personal-object", request["delta"]["nodes"][0]["properties"]["kind"])
+        for invalid in ("", 42, "two\nlines"):
+            with self.subTest(kind=invalid), self.assertRaises(KnowledgeError):
+                prepare_capture(self.paths, {**payload, "kind": invalid}, self.output)
 
     def test_normalizes_authority_newlines(self) -> None:
         self.source.write_bytes(self.original.replace("\n", "\r\n").encode())

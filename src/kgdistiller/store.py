@@ -161,7 +161,7 @@ def _graph_paths(graph_dir: Path, state: GraphState) -> list[Path]:
 
 
 def _entry_authority_paths(repo_root: Path, state: GraphState) -> list[Path]:
-    """Return verified entry MD authorities and their Markdown evidence."""
+    """Return verified Markdown entries and their original or explicit evidence."""
 
     inventory = state.manifest.get("entry_authorities") or {}
     if not isinstance(inventory, dict) or inventory.get("schema") != ENTRY_INDEX_SCHEMA:
@@ -304,6 +304,7 @@ def _document_inventory(
                 "source_sha256": str(digest),
                 "definition_ids": sorted(definitions.get(str(authority), [])),
                 "reference_count": references.get(str(authority), 0),
+                **({"document_type": spec.document_type} if spec.document_type else {}),
             }
         )
     return records, paths

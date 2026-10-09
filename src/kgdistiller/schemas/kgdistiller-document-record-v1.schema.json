@@ -11,6 +11,7 @@
   "properties": {
     "schema": {"const": "kgdistiller-document-record-v1"},
     "source_id": {"type": "string", "minLength": 1},
+    "document_type": {"type": "string", "minLength": 1},
     "subject": {"type": "string", "minLength": 1},
     "course": {"type": "string", "minLength": 1},
     "knowledge_origin": {"enum": ["personal-note", "research"]},

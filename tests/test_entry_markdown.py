@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,9 +10,11 @@ from kgdistiller.cli import KnowledgeError, apply_delta, load_state, synchronize
 from kgdistiller.entry_markdown import (
     ENTRY_SCHEMA,
     EntryMarkdownError,
+    entry_with_kind,
     normalize_entry,
     parse_entry,
     render_entry,
+    resolve_entry_source,
 )
 from kgdistiller.derivation import install_derivation
 from kgdistiller.obsidian_export import build_obsidian_projection
@@ -38,7 +41,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def sync(self):
+    def sync(self, *, write: bool = True):
         return synchronize(
             self.repo,
             self.registry,
@@ -49,7 +52,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             files=[],
             course=None,
             subject=None,
-            write=True,
+            write=write,
         )
 
     def write_delta(self, payload: dict) -> Path:
@@ -162,6 +165,61 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
                 with self.assertRaisesRegex(EntryMarkdownError, "understanding"):
                     parse_entry(path)
 
+    def test_reviewed_kind_is_durable_in_entry_and_survives_graph_rebuild(self) -> None:
+        authority = self.repo / "notes/chapter.typ"
+        authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
+        self.sync()
+        self.apply_entry(text="Reviewed summary.", properties={"kind": "custom-concept"})
+        path = self.repo / "knowledge/entries/measure-space.md"
+        self.assertEqual("custom-concept", parse_entry(path)["metadata"]["kgd_kind"])
+        shutil.rmtree(self.graph)
+        state, _, _ = self.sync()
+        self.assertEqual("custom-concept", state.nodes["measure-space"]["properties"]["kind"])
+        self.assertEqual("reviewed", state.nodes["measure-space"]["properties"]["kind_origin"])
+        self.assertEqual("definition", state.nodes["measure-space"]["properties"]["source_kind"])
+
+        self.apply_entry(properties={"kind": "reclassified-concept"})
+        self.assertEqual("reclassified-concept", parse_entry(path)["metadata"]["kgd_kind"])
+        self.sync()
+        self.assertEqual("reclassified-concept", load_state(self.graph).nodes["measure-space"]["properties"]["kind"])
+
+    def test_invalid_reviewed_kind_is_rejected_when_rendered_or_manually_edited(self) -> None:
+        arguments = {
+            "node_id": "measure-space", "label": "Measure space", "entry": {"summary": "A definition."},
+            "source": "notes/chapter.typ", "source_sha256": "source", "definition_sha256": "definition",
+        }
+        path = self.repo / "entry.md"
+        content = render_entry(**arguments, kind="custom-concept")
+        for invalid in ("", "two\nlines", " padded ", 42):
+            with self.subTest(kind=invalid):
+                with self.assertRaises(EntryMarkdownError):
+                    render_entry(**arguments, kind=invalid)
+                path.write_text(content.replace('kgd_kind: "custom-concept"', f"kgd_kind: {json.dumps(invalid)}"), encoding="utf-8")
+                with self.assertRaises(EntryMarkdownError):
+                    parse_entry(path)
+
+    def test_kind_only_plan_preserves_existing_entry_bytes_and_does_not_write(self) -> None:
+        path = self.repo / "entry.md"
+        for previous_kind in (None, "old-kind"):
+            with self.subTest(previous_kind=previous_kind):
+                content = render_entry(
+                    node_id="measure-space", label="Measure space", entry={"summary": "An existing explanation."},
+                    source="notes/chapter.typ", source_sha256="old-source", definition_sha256="old-definition",
+                    kind=previous_kind,
+                ).replace("\n", "\r\n")
+                path.write_bytes(content.encode("utf-8"))
+                planned = entry_with_kind(path, "new-kind")
+                self.assertEqual(content.encode("utf-8"), path.read_bytes())
+                restored = (
+                    planned.replace('kgd_kind: "new-kind"', 'kgd_kind: "old-kind"')
+                    if previous_kind else planned.replace('kgd_kind: "new-kind"\r\n', "")
+                )
+                self.assertEqual(content, restored)
+        link = self.repo / "linked-entry.md"
+        link.symlink_to(path)
+        with self.assertRaisesRegex(EntryMarkdownError, "ordinary file"):
+            entry_with_kind(link, "new-kind")
+
     def test_apply_writes_obsidian_visible_markdown_authority(self) -> None:
         authority = self.repo / "notes/chapter.md"
         authority.write_text("--[[Measure space]]--\n", encoding="utf-8")
@@ -239,14 +297,51 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             load_state(self.graph).nodes["measure-space"]["text"],
         )
 
-    def test_typst_entry_requires_derived_markdown_and_tracks_its_hash(self) -> None:
+    def _assert_native_entry_lifecycle(self, extension: str, content: str) -> None:
+        authority = self.repo / f"notes/chapter.{extension}"
+        authority.write_text(content, encoding="utf-8")
+        self.sync()
+        self.apply_entry(text="Reviewed summary.")
+        path = self.repo / "knowledge/entries/measure-space.md"
+        self.assertEqual(f"notes/chapter.{extension}", parse_entry(path)["metadata"]["kgd_source"])
+        self.assertFalse(any((self.repo / "knowledge/derived").rglob("*.md")))
+
+        # Editing another marked definition does not invalidate this entry.
+        authority.write_text(content.replace("Unrelated.", "A revised unrelated definition."), encoding="utf-8")
+        state, _, _ = self.sync()
+        self.assertEqual("current", state.nodes["measure-space"]["properties"]["curation_status"])
+
+        authority.write_text(content.replace("Body.", "A changed definition."), encoding="utf-8")
+        state, _, _ = self.sync()
+        self.assertEqual("needs-review", state.nodes["measure-space"]["properties"]["curation_status"])
+        self.apply_entry(text="Refreshed after reviewing the native definition.")
+        state, _, _ = self.sync()
+        self.assertEqual("current", state.nodes["measure-space"]["properties"]["curation_status"])
+        self.assertEqual("Refreshed after reviewing the native definition.", state.nodes["measure-space"]["text"])
+
+    def test_typst_entry_uses_native_authority_and_refreshes_without_conversion(self) -> None:
+        self._assert_native_entry_lifecycle("typ", (
+            "#definition(title: [#kn[Measure space]])[Body.]\n\n"
+            "#definition(title: [#kn[Other concept]])[Unrelated.]\n"
+        ))
+
+    def test_latex_entry_uses_native_authority_and_refreshes_without_conversion(self) -> None:
+        self._assert_native_entry_lifecycle("tex", (
+            "\\begin{definition}\\kn{Measure space} Body.\\end{definition}\n\n"
+            "\\begin{definition}\\kn{Other concept} Unrelated.\\end{definition}\n"
+        ))
+
+    def test_explicit_historical_derived_source_is_preserved_and_tracks_its_hash(self) -> None:
         authority = self.repo / "notes/chapter.typ"
         authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
         self.sync()
         delta = self.write_delta(
             {
                 "schema": "kgdistiller-agent-delta-v1",
-                "nodes": [{"id": "measure-space", "text": "Reviewed summary."}],
+                "nodes": [{
+                    "id": "measure-space", "text": "Reviewed summary.",
+                    "entry_source": "knowledge/derived/by-source/notes/chapter.typ.md",
+                }],
             }
         )
         with self.assertRaisesRegex(KnowledgeError, "derived/by-source/notes/chapter.typ.md"):
@@ -256,6 +351,9 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         derived.parent.mkdir(parents=True, exist_ok=True)
         derived.write_text("# Converted chapter\n", encoding="utf-8")
         apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
+        self.apply_entry(text="An updated summary retains its explicit evidence link.")
+        parsed = parse_entry(self.repo / "knowledge/entries/measure-space.md")
+        self.assertEqual("knowledge/derived/by-source/notes/chapter.typ.md", parsed["metadata"]["kgd_source"])
         derived.write_text("# Changed conversion\n", encoding="utf-8")
 
         state, _, _ = self.sync()
@@ -264,6 +362,91 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             "needs-review",
             state.nodes["measure-space"]["properties"]["curation_status"],
         )
+
+    def test_resolve_source_has_no_implicit_derived_fallback(self) -> None:
+        derived = self.repo / "knowledge/derived/by-source/notes/missing.typ.md"
+        derived.parent.mkdir(parents=True, exist_ok=True)
+        derived.write_text("Old converted evidence.", encoding="utf-8")
+        node = {"id": "missing", "provenance": {"authority": "notes/missing.typ"}}
+        with self.assertRaisesRegex(EntryMarkdownError, "does not exist: notes/missing.typ"):
+            resolve_entry_source(self.repo, node)
+        self.assertEqual(derived.relative_to(self.repo).as_posix(), resolve_entry_source(
+            self.repo, node, derived.relative_to(self.repo).as_posix(),
+        )[0])
+        node["provenance"]["authority"] = "notes/missing.pdf"
+        with self.assertRaisesRegex(EntryMarkdownError, "explicit"):
+            resolve_entry_source(self.repo, node)
+
+    def test_resolve_source_rejects_unsafe_missing_and_non_file_paths(self) -> None:
+        node = {"id": "test"}
+        for value in ("../outside.md", str(self.repo / "notes/absolute.md"), "notes/source.pdf", "notes/a\nb.md"):
+            with self.subTest(value=value), self.assertRaisesRegex(EntryMarkdownError, "vault-relative"):
+                resolve_entry_source(self.repo, node, value)
+        for value in ("notes/missing.typ", "notes/missing.tex"):
+            with self.subTest(value=value), self.assertRaisesRegex(EntryMarkdownError, "does not exist"):
+                resolve_entry_source(self.repo, node, value)
+        directory = self.repo / "notes/directory.tex"
+        directory.mkdir()
+        with self.assertRaisesRegex(EntryMarkdownError, "does not exist"):
+            resolve_entry_source(self.repo, node, "notes/directory.tex")
+        target = self.repo / "notes/real.typ"
+        target.write_text("#kn[Example]", encoding="utf-8")
+        (self.repo / "notes/link.typ").symlink_to(target)
+        with self.assertRaisesRegex(EntryMarkdownError, "symlinks"):
+            resolve_entry_source(self.repo, node, "notes/link.typ")
+        (self.repo / "linked").symlink_to(self.repo / "notes", target_is_directory=True)
+        with self.assertRaisesRegex(EntryMarkdownError, "symlinks"):
+            resolve_entry_source(self.repo, node, "linked/real.typ")
+
+    def test_native_source_relocation_is_planned_without_writing_during_dry_run(self) -> None:
+        authority = self.repo / "notes/chapter.typ"
+        authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
+        self.sync()
+        self.apply_entry(text="A durable reviewed entry.", properties={"kind": "custom-concept"})
+        entry = self.repo / "knowledge/entries/measure-space.md"
+        before = entry.read_text()
+        metadata = parse_entry(entry)["metadata"]
+        authority.rename(self.repo / "notes/renamed.typ")
+        state, _, _ = self.sync(write=False)
+        self.assertEqual(before, entry.read_text())
+        self.assertEqual("notes/renamed.typ", state.nodes["measure-space"]["properties"]["entry_source"])
+
+        self.sync()
+        self.assertEqual(
+            before.replace('kgd_source: "notes/chapter.typ"', 'kgd_source: "notes/renamed.typ"'),
+            entry.read_text(),
+        )
+        after = parse_entry(entry)["metadata"]
+        self.assertEqual(metadata["kgd_source_sha256"], after["kgd_source_sha256"])
+        self.assertEqual(metadata["kgd_definition_sha256"], after["kgd_definition_sha256"])
+        state, _, _ = self.sync()
+        self.assertEqual("current", state.nodes["measure-space"]["properties"]["curation_status"])
+
+    def test_relocated_native_definition_with_changed_content_stays_stale(self) -> None:
+        authority = self.repo / "notes/chapter.tex"
+        authority.write_text("\\begin{definition}\\kn{Measure space} Body.\\end{definition}\n", encoding="utf-8")
+        self.sync()
+        self.apply_entry(text="A durable reviewed entry.")
+        relocated = self.repo / "notes/renamed.tex"
+        authority.rename(relocated)
+        relocated.write_text(relocated.read_text().replace("Body.", "Changed scientific content."), encoding="utf-8")
+        state, _, _ = self.sync()
+        self.assertEqual("needs-review", state.nodes["measure-space"]["properties"]["curation_status"])
+        self.assertEqual("A durable reviewed entry.", state.nodes["measure-space"]["text"])
+
+    def test_explicit_derived_binding_does_not_follow_native_relocation(self) -> None:
+        authority = self.repo / "notes/chapter.typ"
+        authority.write_text("#definition(title: [#kn[Measure space]])[Body.]\n", encoding="utf-8")
+        derived = self.repo / "knowledge/derived/by-source/notes/chapter.typ.md"
+        derived.parent.mkdir(parents=True, exist_ok=True)
+        derived.write_text("Reviewed derived evidence.", encoding="utf-8")
+        self.sync()
+        self.apply_entry(text="A durable reviewed entry.", entry_source=derived.relative_to(self.repo).as_posix())
+        entry = self.repo / "knowledge/entries/measure-space.md"
+        before = entry.read_text()
+        authority.rename(self.repo / "notes/renamed.typ")
+        self.sync()
+        self.assertEqual(before, entry.read_text())
 
     def test_internal_pdf_derivation_is_scanned_and_preserves_review_chain(self) -> None:
         pdf = self.repo / "papers/paper.pdf"
@@ -281,7 +464,10 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         delta = self.write_delta(
             {
                 "schema": "kgdistiller-agent-delta-v1",
-                "nodes": [{"id": "pdf-concept", "text": "Reviewed PDF concept."}],
+                "nodes": [{
+                    "id": "pdf-concept", "text": "Reviewed PDF concept.",
+                    "entry_source": installed["output"],
+                }],
             }
         )
         apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)

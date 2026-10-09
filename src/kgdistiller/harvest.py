@@ -94,6 +94,7 @@ def _load_manifest(path: Path, root: Path, sheet: Path) -> dict[str, Any]:
 def _node_state(paths: IngestPaths, node_id: str) -> dict[str, Any]:
     node = load_state(paths.graph_dir).nodes.get(node_id)
     authority = (node or {}).get("provenance") or {}
+    properties = (node or {}).get("properties") or {}
     entry_path = paths.repo_root / entry_relative(node_id)
     return {
         "node": None if node is None else {
@@ -101,7 +102,8 @@ def _node_state(paths: IngestPaths, node_id: str) -> dict[str, Any]:
             "text": node.get("text"), "entry": node.get("entry"),
             "authority": authority.get("authority"), "active": authority.get("active"),
             "definition": authority.get("definition_sha256"),
-            "entry_file": (node.get("properties") or {}).get("entry_sha256"),
+            "kind": properties.get("kind"), "kind_origin": properties.get("kind_origin"),
+            "entry_file": properties.get("entry_sha256"),
         },
         "entry_file": sha256_authority_file(entry_path) if entry_path.is_file() else None,
     }
@@ -122,11 +124,20 @@ def _entry_sections(entry: dict[str, Any]) -> list[str]:
 
 
 def _draft(payload: dict[str, Any], before: dict[str, Any], base_source: str, root: Path, draft: Path) -> str:
+    previous = before.get("node") or {}
+    old_kind = json.dumps(previous["kind"], ensure_ascii=False) if previous.get("kind") else "（尚无类型）"
+    if "kind" in payload:
+        new_kind = json.dumps(payload["kind"], ensure_ascii=False)
+    elif previous.get("kind"):
+        new_kind = old_kind + "（保持现有类型）"
+    else:
+        new_kind = "未指定审定类型；原文语法类型仅供参考。"
     lines = [f"# {payload['name']} · REVIEW DRAFT", "",
              "> 这是待写入的审阅草稿。勾选后请求 harvest，才会写入知识库。", "",
              f"目标知识库：{_link(draft, root / 'knowledge', root.name + '/knowledge/')}", "",
              f"Source: `{payload['source']}`", "",
              "勾选只表示选择这次写入，不会改变 Understanding。", "",
+             "## Knowledge type", "", f"- Before: {old_kind}", f"- After: {new_kind}", "",
              "## Reviewed text", "", payload["text"], "", "## Entry before", "",
              *_entry_sections((before.get("node") or {}).get("entry") or {}), "",
              "## Entry after", "", *_entry_sections(payload.get("entry") or {}), "",
