@@ -28,8 +28,8 @@ class HarvestTest(unittest.TestCase):
         return prepare_harvest(self.paths, {"captures": captures or [self.payload()]}, self.sheet, self.reviews)
 
     def check(self, name="Beta"):
-        text = self.sheet.read_text()
-        self.sheet.write_text(text.replace(f"- [ ] [{name} (draft)]", f"- [x] [{name} (draft)]"))
+        text = self.sheet.read_text(encoding="utf-8")
+        self.sheet.write_text(text.replace(f"- [ ] [{name} (draft)]", f"- [x] [{name} (draft)]"), encoding="utf-8")
 
     def gamma(self):
         payload = self.payload()
@@ -41,7 +41,7 @@ class HarvestTest(unittest.TestCase):
     def test_checked_only_real_ingest_preserves_pending_and_annotations(self):
         self.prepare([self.payload(), self.gamma()])
         self.check()
-        self.sheet.write_text(self.sheet.read_text() + "\nPersonal annotation.\n- [x] Ordinary task\n")
+        self.sheet.write_text(self.sheet.read_text(encoding="utf-8") + "\nPersonal annotation.\n- [x] Ordinary task\n", encoding="utf-8")
         with patch("kgdistiller.capture.compare", wraps=compare) as comparison:
             result = apply_harvest(self.paths, self.sheet, self.runs)
         self.assertEqual(comparison.call_count, 1)
@@ -49,12 +49,12 @@ class HarvestTest(unittest.TestCase):
         state = load_state(self.paths.graph_dir)
         self.assertIn("beta", state.nodes)
         self.assertNotIn("gamma", state.nodes)
-        self.assertNotIn("--[[Gamma]]--", self.source.read_text())
+        self.assertNotIn("--[[Gamma]]--", self.source.read_text(encoding="utf-8"))
         self.assertEqual(state.nodes["beta"]["entry"]["understanding"], "not-yet-understood")
         self.assertEqual(state.nodes["beta"]["entry"]["pending_prerequisites"], self.payload()["entry"]["pending_prerequisites"])
-        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text())
-        self.assertIn("Personal annotation.\n- [x] Ordinary task", self.sheet.read_text())
-        self.assertIn("- [ ] [Gamma (draft)]", self.sheet.read_text())
+        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
+        self.assertIn("Personal annotation.\n- [x] Ordinary task", self.sheet.read_text(encoding="utf-8"))
+        self.assertIn("- [ ] [Gamma (draft)]", self.sheet.read_text(encoding="utf-8"))
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
         # A later checkbox from the same source rebases only over this harvest's
         # own accepted source update, retaining the still-reviewed Gamma edit.
@@ -81,12 +81,12 @@ class HarvestTest(unittest.TestCase):
             interrupted = apply_harvest(self.paths, self.sheet, self.runs)
             self.assertEqual(interrupted["status"], "committed-sheet-pending")
         committed = load_state(self.paths.graph_dir).manifest["graph_sha256"]
-        manifest = json.loads((self.reviews / "review.json").read_text())
+        manifest = json.loads((self.reviews / "review.json").read_text(encoding="utf-8"))
         request = load_request(self.root / manifest["active_run"]["request"])
         result = apply_harvest(self.paths, self.sheet, self.root / "a-different-output")
         self.assertEqual(result["receipt"]["request_sha256"], request["request_sha256"])
         self.assertEqual(load_state(self.paths.graph_dir).manifest["graph_sha256"], committed)
-        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text())
+        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
 
     def test_recovery_after_sheet_refresh_before_review_receipt(self):
@@ -105,7 +105,7 @@ class HarvestTest(unittest.TestCase):
         with patch("kgdistiller.harvest.atomic_write", side_effect=interrupted_write):
             result = apply_harvest(self.paths, self.sheet, self.runs)
         self.assertEqual(result["status"], "committed-sheet-pending")
-        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text())
+        self.assertIn("../knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         retried = apply_harvest(self.paths, self.sheet, self.runs)
         self.assertEqual(retried["receipt"], result["receipt"])
         self.assertEqual(retried["status"], "committed")
@@ -114,26 +114,26 @@ class HarvestTest(unittest.TestCase):
         result = self.prepare()
         self.check()
         draft = Path(result["artifacts"]["drafts"][0])
-        draft.write_text(draft.read_text().replace("Beta transforms", "Beta alters"))
+        draft.write_text(draft.read_text(encoding="utf-8").replace("Beta transforms", "Beta alters"), encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "draft changed"):
             apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(self.source.read_text(), self.original)
+        self.assertEqual(self.source.read_text(encoding="utf-8"), self.original)
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
 
     def test_targeted_re_review_replaces_one_pending_row_and_resets_selection(self):
         prepared = self.prepare([self.payload(), self.gamma()])
         self.check()
-        text = self.sheet.read_text()
+        text = self.sheet.read_text(encoding="utf-8")
         selected = next(line for line in text.splitlines() if "[Beta (draft)]" in line)
-        self.sheet.write_text(text.replace(selected, selected + " My annotation."))
+        self.sheet.write_text(text.replace(selected, selected + " My annotation."), encoding="utf-8")
         old_draft = Path(prepared["artifacts"]["drafts"][0])
-        old_draft.write_text(old_draft.read_text().replace("Beta transforms", "Beta maps"))
+        old_draft.write_text(old_draft.read_text(encoding="utf-8").replace("Beta transforms", "Beta maps"), encoding="utf-8")
         corrected = self.payload()
         corrected["text"] = "Beta maps an input representation."
         corrected["source_content"] = corrected["source_content"].replace("Beta transforms", "Beta maps")
-        before_gamma = next(line for line in self.sheet.read_text().splitlines() if "[Gamma (draft)]" in line)
+        before_gamma = next(line for line in self.sheet.read_text(encoding="utf-8").splitlines() if "[Gamma (draft)]" in line)
         prepared = prepare_harvest(self.paths, {"captures": [corrected]}, self.sheet, self.reviews)
-        after = self.sheet.read_text()
+        after = self.sheet.read_text(encoding="utf-8")
         self.assertEqual(after.count("[Beta (draft)]"), 1)
         self.assertIn("- [ ] [Beta (draft)]", after)
         self.assertIn("My annotation.", after)
@@ -147,7 +147,7 @@ class HarvestTest(unittest.TestCase):
     def test_source_changes_require_re_review(self):
         self.prepare()
         self.check()
-        self.source.write_text(self.original + "\nExternal annotation.\n")
+        self.source.write_text(self.original + "\nExternal annotation.\n", encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "source changed"):
             apply_harvest(self.paths, self.sheet, self.runs)
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
@@ -158,7 +158,7 @@ class HarvestTest(unittest.TestCase):
         with patch("kgdistiller.harvest.apply_ingest", side_effect=OSError("interrupted before commit")):
             with self.assertRaises(OSError):
                 apply_harvest(self.paths, self.sheet, self.runs)
-        first = json.loads((self.reviews / "review.json").read_text())["active_run"]["request"]
+        first = json.loads((self.reviews / "review.json").read_text(encoding="utf-8"))["active_run"]["request"]
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
         with patch("kgdistiller.harvest.prepare_captures") as prepare:
             result = apply_harvest(self.paths, self.sheet, self.root / "another-run-directory")
@@ -167,7 +167,7 @@ class HarvestTest(unittest.TestCase):
 
     def test_cli_prepares_and_harvests_selected_metadata(self):
         capture = self.root / "capture.json"
-        capture.write_text(json.dumps({"captures": [self.payload()]}))
+        capture.write_text(json.dumps({"captures": [self.payload()]}), encoding="utf-8")
         environment = dict(os.environ)
         environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
         prefix = [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "harvest"]
@@ -176,7 +176,7 @@ class HarvestTest(unittest.TestCase):
                                   capture_output=True, text=True, env=environment)
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         sheet = Path(json.loads(prepared.stdout)["sheet"])
-        sheet.write_text(sheet.read_text().replace("- [ ]", "- [x]"))
+        sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
         applied = subprocess.run(prefix + ["apply", "notes/defs.md", "--output", "knowledge/build/runs"],
                                  capture_output=True, text=True, env=environment)
         self.assertEqual(applied.returncode, 0, applied.stderr)
@@ -193,23 +193,23 @@ class HarvestTest(unittest.TestCase):
         self.prepare([payload])
         self.check()
         entry = self.root / "knowledge/entries/beta.md"
-        entry.write_text(entry.read_text() + "\nAn external user note.\n")
+        entry.write_text(entry.read_text(encoding="utf-8") + "\nAn external user note.\n", encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "entry changed"):
             apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertIn("An external user note", entry.read_text())
+        self.assertIn("An external user note", entry.read_text(encoding="utf-8"))
 
     def test_fenced_task_examples_and_ordinary_tasks_are_ignored(self):
         self.prepare()
-        text = self.sheet.read_text()
+        text = self.sheet.read_text(encoding="utf-8")
         task = next(line for line in text.splitlines() if "- [ ] [Beta (draft)]" in line).replace("[ ]", "[x]", 1)
-        self.sheet.write_text(text + f"\n```markdown\n{task}\n```\n\n    {task}\n\n- [x] ordinary task\n")
+        self.sheet.write_text(text + f"\n```markdown\n{task}\n```\n\n    {task}\n\n- [x] ordinary task\n", encoding="utf-8")
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
 
     def test_binding_and_link_cannot_be_repurposed(self):
         self.prepare()
         self.check()
-        self.sheet.write_text(self.sheet.read_text().replace("[Beta (draft)]", "[Different (draft)]"))
+        self.sheet.write_text(self.sheet.read_text(encoding="utf-8").replace("[Beta (draft)]", "[Different (draft)]"), encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "label or link"):
             apply_harvest(self.paths, self.sheet, self.runs)
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
@@ -217,7 +217,7 @@ class HarvestTest(unittest.TestCase):
     def test_sheet_crlf_and_unchecked_annotations_are_preserved(self):
         self.prepare([self.payload(), self.gamma()])
         self.check()
-        text = self.sheet.read_text().replace("\n", "\r\n")
+        text = self.sheet.read_text(encoding="utf-8").replace("\n", "\r\n")
         text += "\r\nUnrelated annotation with trailing spaces.  \r\n"
         self.sheet.write_bytes(text.encode())
         unchecked = next(line for line in text.splitlines(keepends=True) if "[Gamma (draft)]" in line)
@@ -238,10 +238,10 @@ class HarvestTest(unittest.TestCase):
                 if extension != "md":
                     derived = self.root / default_derived_relative(payload["source"])
                     derived.parent.mkdir(parents=True, exist_ok=True)
-                    derived.write_text(f"{name} is defined here.\n")
+                    derived.write_text(f"{name} is defined here.\n", encoding="utf-8")
                 sheet = self.root / f"notes/{extension}-defs.md"
                 prepare_harvest(self.paths, {"captures": [payload]}, sheet, self.root / f"knowledge/build/{extension}-reviews")
-                sheet.write_text(sheet.read_text().replace("- [ ]", "- [x]"))
+                sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
                 apply_harvest(self.paths, sheet, self.root / f"knowledge/build/{extension}-runs")
                 self.assertIn(name.lower(), load_state(self.paths.graph_dir).nodes)
 
@@ -276,7 +276,7 @@ class HarvestTest(unittest.TestCase):
         self.check("Gamma")
         with self.assertRaisesRegex(CaptureError, "overlap"):
             apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(self.source.read_text(), self.original)
+        self.assertEqual(self.source.read_text(encoding="utf-8"), self.original)
         self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
 
     def test_external_edit_after_commit_does_not_become_an_owned_source_version(self):
@@ -285,7 +285,7 @@ class HarvestTest(unittest.TestCase):
         self.check()
         def refresh_then_external_edit(*args):
             _refresh_sheet(*args)
-            self.source.write_text(self.source.read_text() + "\nExternal annotation.\n")
+            self.source.write_text(self.source.read_text(encoding="utf-8") + "\nExternal annotation.\n", encoding="utf-8")
         with patch("kgdistiller.harvest._refresh_sheet", side_effect=refresh_then_external_edit):
             apply_harvest(self.paths, self.sheet, self.runs)
         self.check("Gamma")
