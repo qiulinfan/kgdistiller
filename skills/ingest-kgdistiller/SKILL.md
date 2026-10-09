@@ -52,7 +52,7 @@ reviewed semantic kinds independently of native statement syntax.
 
 Compute authority hashes over UTF-8 text with universal-newline normalization
 (CRLF/CR to LF), not raw checkout bytes. This boundary matches sync, ingest,
-store, check, and export.
+store, and check.
 
 ## Plan, review, then apply
 
@@ -88,9 +88,6 @@ store, check, and export.
    Report an existing snapshot as stale if it was not refreshed, and verify it
    before using it as backup. Report Git state separately; never silently
    initialize Git, commit, or push.
-7. Create a static-site or lossy Obsidian projection only when explicitly in
-   scope. Neither export is authority, and the managed Obsidian subtree or an
-   external browsing-only vault/projection must never be rescanned or ingested.
 
 The engine owns locking, optimistic concurrency, staging, scan, delta apply,
 entry-Markdown installation, sync, curation, global validation, atomic graph
@@ -107,5 +104,5 @@ generation/document count when refreshed.
 
 Report Git state only as `local-only`, `committed locally`, or `remote
 confirmed`, using the latter states only after the explicitly authorized action
-succeeds. Report requested export receipts separately. Do not include authority
-bodies, paper text, credentials, or unbounded evidence.
+succeeds. Do not include authority bodies, paper text, credentials, or unbounded
+evidence.

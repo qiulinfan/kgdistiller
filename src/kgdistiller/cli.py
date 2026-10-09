@@ -19,18 +19,18 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from kgdistiller.knowledge_paths import KNOWLEDGE_DIRECTORY, knowledge_root
 
 GRAPH_SCHEMA = "kgdistiller-graph-v2"
 SOURCE_SCHEMA = "kgdistiller-sources-v1"
+SOURCE_REGISTRY_KEYS = {"schema", "sources", "document_types"}
+SOURCE_KEYS = {"id", "root", "files", "document_type"}
 DELTA_SCHEMA = "kgdistiller-agent-delta-v1"
 IDENTITY_SCHEMA = "kgdistiller-identities-v1"
 ENTRY_AUTHORITY_SCHEMA = "kgdistiller-entry-index-v1"
 ENTRY_SOURCE_INDEX_SCHEMA = "kgdistiller-entry-source-index-v1"
 AGENT_SNAPSHOT_SCHEMA = "kgdistiller-agent-snapshot-v1"
-KNOWLEDGE_ORIGINS = {"personal-note", "research"}
 MAX_NODE_ID_LENGTH = 256
 MAX_NODE_LABEL_LENGTH = 1024
 MAX_NAMESPACE_LENGTH = 256
@@ -49,27 +49,34 @@ MARKDOWN_WIKILINK_RE = re.compile(
     r"(?P<definition>(?<![!\\])--\[\[(?P<definition_body>[^\]\n]+)\]\]--)"
     r"|(?P<reference>(?<![!\-\\])\[\[(?P<reference_body>[^\]\n]+)\]\](?!--))"
 )
-LABEL_HTML_RE = re.compile(
-    r'<ql-label data-node-id="(?P<id>[a-z0-9-]+)">(?P<html>.*?)</ql-label>',
-    re.DOTALL,
-)
-UNSAFE_LABEL_HTML_RE = re.compile(
-    r"<(?:script|style|iframe|object|embed|link|meta|img|svg|form|input|button|a)\b"
-    r"|\son[a-z]+\s*=|javascript:",
-    re.IGNORECASE,
-)
 STATEMENT_RE = re.compile(
     r"#(?P<kind>definition|theorem|lemma|corollary|proposition|axiom|example)\s*\("
 )
 SEMANTIC_RELATIONS = {
-    "contains",
     "prerequisite-for",
     "implies",
     "generalizes",
     "contrasts-with",
     "derived-from",
 }
-ACYCLIC_RELATIONS = {"contains", "prerequisite-for"}
+ACYCLIC_RELATIONS = {"prerequisite-for"}
+# Source markers rebuild every other property; these record reviewed curation.
+RETAINED_SOURCE_NODE_PROPERTIES = frozenset({
+    "aliases",
+    "kind",
+    "kind_origin",
+    "source_kind",
+    "display_name",
+    "conditions",
+    "curation_status",
+    "curated_definition_sha256",
+    "entry_authority",
+    "entry_origin",
+    "entry_sha256",
+    "entry_source",
+    "entry_source_sha256",
+    "entry_source_current_sha256",
+})
 CURATION_STATUSES = {"current", "pending", "needs-review"}
 CROSS_FILE_REF_ENDPOINTS = {
     "prerequisite-for": ("target", "source"),
@@ -83,24 +90,10 @@ class KnowledgeError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class FieldSpec:
-    id: str
-    label: str
-    text: str
-    aliases: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class SourceSpec:
     id: str
-    subject: str
-    course: str
     root: Path
     patterns: tuple[str, ...]
-    web: str
-    knowledge_origin: str
-    fields: tuple[str, ...]
-    topic_patterns: tuple[tuple[str, str, str, tuple[str, ...]], ...]
     document_type: str = ""
 
 
@@ -120,14 +113,7 @@ class DefinitionOccurrence:
     kind: str
     authority: str
     line: int
-    anchor: str
-    web: str
     source_id: str
-    subject: str
-    course: str
-    knowledge_origin: str
-    topic: str | None
-    fields: tuple[str, ...]
     position: int
     statement: StatementRange | None
     definition_sha256: str
@@ -143,11 +129,9 @@ class ReferenceOccurrence:
     label: str
     authority: str
     line: int
-    web: str
     context: str | None
     source_format: str
     source_name: str
-    display_markup: str
 
 
 @dataclass
@@ -328,42 +312,28 @@ def source_registry_sha256(path: Path) -> str:
     return sha256_text(json_text(read_json(path, {})))
 
 
-def load_fields(registry: Path) -> list[FieldSpec]:
-    payload = read_json(registry, {})
-    if payload.get("schema") != SOURCE_SCHEMA:
-        raise KnowledgeError(f"expected {SOURCE_SCHEMA} source registry: {registry}")
-    result: list[FieldSpec] = []
-    seen: set[str] = set()
-    for raw in payload.get("fields", []):
-        field_id = str(raw.get("id", ""))
-        if not ID_RE.fullmatch(field_id) or field_id in seen:
-            raise KnowledgeError(f"duplicate or invalid field id: {field_id!r}")
-        seen.add(field_id)
-        label = str(raw.get("label", "")).strip()
-        if not label:
-            raise KnowledgeError(f"field {field_id} has no label")
-        result.append(
-            FieldSpec(
-                id=field_id,
-                label=label,
-                text=str(raw.get("text", "")).strip(),
-                aliases=tuple(str(item) for item in raw.get("aliases", [])),
-            )
-        )
-    return result
-
-
 def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
     from kgdistiller.document_types import parse_document_types, validate_document_type
 
     payload = read_json(registry, {})
-    if payload.get("schema") != SOURCE_SCHEMA:
+    if not isinstance(payload, dict) or payload.get("schema") != SOURCE_SCHEMA:
         raise KnowledgeError(f"expected {SOURCE_SCHEMA} source registry: {registry}")
+    unknown = sorted(set(payload) - SOURCE_REGISTRY_KEYS)
+    if unknown:
+        raise KnowledgeError(f"unknown source registry key {unknown[0]!r}: {registry}")
     profiles = parse_document_types(payload)
     repository = repo_root.resolve()
     result: list[SourceSpec] = []
     seen: set[str] = set()
-    for raw in payload.get("sources", []):
+    raw_sources = payload.get("sources", [])
+    if not isinstance(raw_sources, list):
+        raise KnowledgeError(f"source registry sources must be a list: {registry}")
+    for raw in raw_sources:
+        if not isinstance(raw, dict):
+            raise KnowledgeError(f"source registry entries must be objects: {registry}")
+        unknown = sorted(set(raw) - SOURCE_KEYS)
+        if unknown:
+            raise KnowledgeError(f"unknown key {unknown[0]!r} in source {raw.get('id', '')!r}")
         source_id = str(raw.get("id", ""))
         if not source_id or source_id in seen:
             raise KnowledgeError(f"duplicate or empty source id: {source_id!r}")
@@ -390,35 +360,17 @@ def load_sources(repo_root: Path, registry: Path) -> list[SourceSpec]:
             )
         if not root.is_dir():
             raise KnowledgeError(f"missing source root for {source_id}: {root}")
-        patterns = tuple(str(item) for item in raw.get("files", []))
-        if not patterns:
+        files = raw.get("files", [])
+        if not isinstance(files, list) or not files or not all(
+            isinstance(item, str) and item for item in files
+        ):
             raise KnowledgeError(f"source {source_id} has no bounded file patterns")
-        source_fields = tuple(dict.fromkeys(str(item) for item in raw.get("fields", [])))
-        topics = tuple(
-            (
-                str(item["glob"]),
-                str(item["id"]),
-                str(item["label"]),
-                tuple(dict.fromkeys(str(field) for field in item.get("fields", []))),
-            )
-            for item in raw.get("topics", [])
-        )
-        knowledge_origin = str(raw.get("knowledge_origin", "personal-note"))
-        if knowledge_origin not in KNOWLEDGE_ORIGINS:
-            raise KnowledgeError(
-                f"source {source_id} has invalid knowledge_origin: {knowledge_origin!r}"
-            )
+        patterns = tuple(files)
         result.append(
             SourceSpec(
                 id=source_id,
-                subject=str(raw.get("subject", "")),
-                course=str(raw.get("course", "")),
                 root=root,
                 patterns=patterns,
-                web=str(raw.get("web", "")).rstrip("/"),
-                knowledge_origin=knowledge_origin,
-                fields=source_fields,
-                topic_patterns=topics,
                 document_type=(validate_document_type(raw["document_type"], profiles)
                                if "document_type" in raw else ""),
             )
@@ -584,14 +536,6 @@ def unique_source_for_path(
     raise KnowledgeError(f"file is outside configured source roots: {path}")
 
 
-def topic_for(spec: SourceSpec, path: Path) -> tuple[str, str, tuple[str, ...]] | None:
-    relative = path.resolve().relative_to(spec.root).as_posix()
-    for pattern, topic_id, label, topic_fields in spec.topic_patterns:
-        if path.match(str(spec.root / pattern)) or Path(relative).match(pattern):
-            return topic_id, label, tuple(dict.fromkeys((*spec.fields, *topic_fields)))
-    return None
-
-
 def source_format(path: Path) -> str:
     formats = {
         ".typ": "typst",
@@ -602,23 +546,6 @@ def source_format(path: Path) -> str:
         return formats[path.suffix.lower()]
     except KeyError as error:
         raise KnowledgeError(f"unsupported knowledge source format: {path}") from error
-
-
-def markdown_web_path(spec: SourceSpec, path: Path) -> str:
-    """Map one Markdown authority to its static note route."""
-    relative = path.resolve().relative_to(spec.root).with_suffix("")
-    parts = list(relative.parts)
-    if parts and parts[-1].casefold() in {"index", "readme"}:
-        parts.pop()
-    suffix = "/".join(quote(part, safe="-._~") for part in parts)
-    return f"{spec.web}/{suffix}".rstrip("/") if suffix else spec.web
-
-
-def definition_web(spec: SourceSpec, path: Path, node_id: str) -> str:
-    base = markdown_web_path(spec, path) if path.suffix.lower() == ".md" else spec.web
-    if not base:
-        return f"/knowledge/#node={node_id}"
-    return f"{base}/#kn-{node_id}"
 
 
 def find_matching(text: str, start: int, opening: str, closing: str) -> int:
@@ -878,7 +805,6 @@ def scan_typst(
         ranges = statement_ranges(text)
     except KnowledgeError as error:
         return ScanResult([], [], [diagnostic("typst-parse", str(error), source=authority)])
-    topic = topic_for(spec, path)
     definitions: list[DefinitionOccurrence] = []
     for match in KN_RE.finditer(text):
         try:
@@ -905,7 +831,6 @@ def scan_typst(
             text, match.start(), statement
         )
         line = text.count("\n", 0, match.start()) + 1
-        anchor = f"kn-{node_id}"
         definitions.append(
             DefinitionOccurrence(
                 id=node_id,
@@ -915,15 +840,8 @@ def scan_typst(
                 kind=statement.kind if statement else "concept",
                 authority=authority,
                 line=line,
-                anchor=anchor,
-                web=definition_web(spec, path, node_id),
                 source_id=spec.id,
                 document_type=spec.document_type,
-                subject=spec.subject,
-                course=spec.course,
-                knowledge_origin=spec.knowledge_origin,
-                topic=topic[0] if topic else None,
-                fields=topic[2] if topic else spec.fields,
                 position=match.start(),
                 statement=statement,
                 definition_sha256=fingerprint,
@@ -967,11 +885,9 @@ def scan_typst(
                 label=label,
                 authority=authority,
                 line=line,
-                web=spec.web,
                 context=context,
                 source_format="typst",
                 source_name=text[match.end() : close],
-                display_markup=text[match.end() : close],
             )
         )
     return ScanResult(definitions, references, errors)
@@ -1028,7 +944,6 @@ def scan_markdown(
 ) -> ScanResult:
     authority = relative_path(repo_root, path)
     text = path.read_text(encoding="utf-8")
-    topic = topic_for(spec, path)
     definitions: list[DefinitionOccurrence] = []
     references: list[ReferenceOccurrence] = []
     errors: list[dict[str, Any]] = []
@@ -1066,15 +981,8 @@ def scan_markdown(
                 kind=statement.kind,
                 authority=authority,
                 line=line,
-                anchor=f"kn-{node_id}",
-                web=definition_web(spec, path, node_id),
                 source_id=spec.id,
                 document_type=spec.document_type,
-                subject=spec.subject,
-                course=spec.course,
-                knowledge_origin=spec.knowledge_origin,
-                topic=topic[0] if topic else None,
-                fields=topic[2] if topic else spec.fields,
                 position=match.start(),
                 statement=statement,
                 definition_sha256=fingerprint,
@@ -1114,11 +1022,9 @@ def scan_markdown(
                 label=label,
                 authority=authority,
                 line=line,
-                web=markdown_web_path(spec, path),
                 context=context,
                 source_format="markdown",
                 source_name=target_markup,
-                display_markup=wikilink_parts(body)[1],
             )
         )
     return ScanResult(definitions, references, errors)
@@ -1139,7 +1045,6 @@ def scan_latex(
         active = mask_latex(text)
     except (KnowledgeError, ValueError) as error:
         return ScanResult([], [], [diagnostic("latex-parse", str(error), source=authority)])
-    topic = topic_for(spec, path)
     definitions: list[DefinitionOccurrence] = []
     references: list[ReferenceOccurrence] = []
     errors: list[dict[str, Any]] = []
@@ -1188,15 +1093,8 @@ def scan_latex(
                 kind=statement.kind if statement else "concept",
                 authority=authority,
                 line=line,
-                anchor=f"kn-{node_id}",
-                web=definition_web(spec, path, node_id),
                 source_id=spec.id,
                 document_type=spec.document_type,
-                subject=spec.subject,
-                course=spec.course,
-                knowledge_origin=spec.knowledge_origin,
-                topic=topic[0] if topic else None,
-                fields=topic[2] if topic else spec.fields,
                 position=match.start(),
                 statement=statement,
                 definition_sha256=fingerprint,
@@ -1242,11 +1140,9 @@ def scan_latex(
                 label=label,
                 authority=authority,
                 line=line,
-                web=spec.web,
                 context=context,
                 source_format="latex",
                 source_name=text[match.end() : close],
-                display_markup=text[match.end() : close],
             )
         )
     return ScanResult(definitions, references, errors)
@@ -1393,20 +1289,8 @@ def select_scope(
     repo_root: Path,
     specs: list[SourceSpec],
     files: list[Path],
-    course: str | None,
-    subject: str | None,
 ) -> tuple[list[tuple[SourceSpec, Path]], set[str], bool]:
-    full = not files and not course and not subject
-    selected_specs = [
-        spec
-        for spec in specs
-        if (course is None or spec.course == course)
-        and (subject is None or spec.subject == subject)
-    ]
-    if (course or subject) and not selected_specs:
-        raise KnowledgeError(f"no source matched course={course!r} subject={subject!r}")
-    if full:
-        selected_specs = specs
+    full = not files
     pairs: list[tuple[SourceSpec, Path]] = []
     if files:
         for raw in files:
@@ -1438,7 +1322,7 @@ def select_scope(
                 preferred = preferred_source_path(owner, path)
                 pairs.append((unique_source_for_path(specs, preferred), preferred))
     else:
-        for spec in selected_specs:
+        for spec in specs:
             pairs.extend((spec, path) for path in expand_source(spec))
     unique: dict[str, tuple[SourceSpec, Path]] = {}
     for spec, path in pairs:
@@ -1571,19 +1455,11 @@ def include_previous_authorities(
     git_context: dict[str, Any],
     *,
     files: list[Path],
-    course: str | None,
-    subject: str | None,
     full: bool,
 ) -> tuple[list[tuple[SourceSpec, Path]], set[str]]:
     """Include deleted/renamed old paths so their occurrences can be retired."""
     unique = {relative_path(repo_root, path): (spec, path) for spec, path in pairs}
     previous_paths = set((previous.manifest.get("source_hashes") or {}).keys())
-    selected_specs = {
-        spec.id
-        for spec in specs
-        if (course is None or spec.course == course)
-        and (subject is None or spec.subject == subject)
-    }
     requested = [
         (repo_root / raw).resolve() if not raw.is_absolute() else raw.resolve()
         for raw in files
@@ -1603,7 +1479,6 @@ def include_previous_authorities(
         )
         if (
             full
-            or ((course or subject) and owner.id in selected_specs)
             or requested_path(authority)
             or preferred in selected_keys
         ):
@@ -1681,11 +1556,12 @@ def edge_key(edge: dict[str, Any]) -> tuple[str, str, str]:
 
 def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | None) -> dict[str, Any]:
     previous = copy.deepcopy(existing) if existing else {}
-    properties = dict(previous.get("properties") or {})
+    properties = {
+        key: value
+        for key, value in (previous.get("properties") or {}).items()
+        if key in RETAINED_SOURCE_NODE_PROPERTIES
+    }
     aliases = list(dict.fromkeys(str(item) for item in properties.get("aliases", [])))
-    additional_fields = list(
-        dict.fromkeys(str(item) for item in properties.get("additional_fields", []))
-    )
     old_label = str(previous.get("label", ""))
     if old_label and old_label != definition.label and old_label not in aliases:
         aliases.append(old_label)
@@ -1699,19 +1575,12 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
             "aliases": aliases,
             "origin": "authored",
             "source_status": "active",
-            "subject": definition.subject,
-            "course": definition.course,
-            "fields": list(dict.fromkeys((*definition.fields, *additional_fields))),
-            "additional_fields": additional_fields,
-            "knowledge_origin": definition.knowledge_origin,
             "source_format": definition.source_format,
             "source_name": definition.label_markup,
         }
     )
     if definition.document_type:
         properties["document_type"] = definition.document_type
-    else:
-        properties.pop("document_type", None)
     previous_provenance = previous.get("provenance") or {}
     previous_fingerprint = str(previous_provenance.get("definition_sha256", ""))
     curated_fingerprint = str(properties.get("curated_definition_sha256", ""))
@@ -1728,20 +1597,6 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
     else:
         properties["curation_status"] = "current"
         properties["curated_definition_sha256"] = definition.definition_sha256
-    if definition.source_format == "typst":
-        properties["typst_name"] = definition.label_markup
-        properties.pop("latex_name", None)
-    elif definition.source_format == "latex":
-        properties["latex_name"] = definition.label_markup
-        properties.pop("typst_name", None)
-        properties.pop("label_html", None)
-    else:
-        properties.pop("typst_name", None)
-        properties.pop("latex_name", None)
-        properties.pop("label_html", None)
-    if definition.topic:
-        properties["topic"] = definition.topic
-    properties.pop("orphaned_from", None)
     node = {
         "id": definition.id,
         "type": "knowledge",
@@ -1754,8 +1609,6 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
             "definition_start_line": definition.definition_start_line,
             "definition_end_line": definition.definition_end_line,
             "definition_sha256": definition.definition_sha256,
-            "anchor": definition.anchor,
-            "web": definition.web,
             "active": True,
         },
     }
@@ -1788,176 +1641,10 @@ def reference_record(item: ReferenceOccurrence) -> dict[str, Any]:
         "origin": "authored",
         "source_format": item.source_format,
         "source_name": item.source_name,
-        "display_markup": item.display_markup,
     }
-    if item.web:
-        value["web"] = item.web
     if item.context:
         value["context"] = item.context
     return value
-
-
-def ensure_taxonomy_nodes_and_edges(
-    state: GraphState,
-    fields: list[FieldSpec],
-    specs: list[SourceSpec],
-    definitions: list[DefinitionOccurrence],
-    selected_knowledge_ids: set[str],
-    *,
-    prune: bool,
-) -> None:
-    field_index = {field.id: field for field in fields}
-    referenced_fields = {
-        field_id
-        for spec in specs
-        for field_id in (
-            *spec.fields,
-            *(
-                field_id
-                for _, _, _, topic_fields in spec.topic_patterns
-                for field_id in topic_fields
-            ),
-        )
-    }
-    missing_fields = sorted(referenced_fields - set(field_index))
-    if missing_fields:
-        raise KnowledgeError(
-            f"source registry references undefined fields: {', '.join(missing_fields)}"
-        )
-
-    for field in fields:
-        previous = copy.deepcopy(state.nodes.get(field.id) or {})
-        properties = dict(previous.get("properties") or {})
-        properties.update(
-            {
-                "kind": "field",
-                "aliases": list(field.aliases),
-                "origin": "registry-taxonomy",
-                "source_status": "meta",
-            }
-        )
-        for source_key in ("subject", "course", "fields", "knowledge_origin"):
-            properties.pop(source_key, None)
-        state.nodes[field.id] = {
-            "id": field.id,
-            "type": "field",
-            "label": field.label,
-            "text": field.text or str(previous.get("text", "")),
-            "properties": properties,
-        }
-
-    configured_topics: dict[str, tuple[str, tuple[str, ...], SourceSpec]] = {}
-    for spec in specs:
-        for _, topic_id, label, topic_fields in spec.topic_patterns:
-            effective_fields = tuple(dict.fromkeys((*spec.fields, *topic_fields)))
-            previous_topic = configured_topics.get(topic_id)
-            if previous_topic and previous_topic[:2] != (label, effective_fields):
-                raise KnowledgeError(f"conflicting configured topic: {topic_id}")
-            configured_topics[topic_id] = (label, effective_fields, spec)
-
-    taxonomy_collisions = sorted(set(field_index) & set(configured_topics))
-    if taxonomy_collisions:
-        raise KnowledgeError(
-            f"field and topic ids must be distinct: {', '.join(taxonomy_collisions)}"
-        )
-    knowledge_collisions = sorted(
-        {definition.id for definition in definitions}
-        & (set(field_index) | set(configured_topics))
-    )
-    if knowledge_collisions:
-        raise KnowledgeError(
-            f"knowledge ids collide with configured taxonomy: {', '.join(knowledge_collisions)}"
-        )
-    if prune:
-        configured_ids = set(field_index) | set(configured_topics)
-        stale_ids = {
-            node_id
-            for node_id, node in state.nodes.items()
-            if node_id not in configured_ids
-            and node.get("type") in {"field", "topic"}
-            and (node.get("properties") or {}).get("origin") == "registry-taxonomy"
-        }
-        for node_id in stale_ids:
-            state.nodes.pop(node_id, None)
-        if stale_ids:
-            state.edges = {
-                key: edge
-                for key, edge in state.edges.items()
-                if edge.get("source") not in stale_ids and edge.get("target") not in stale_ids
-            }
-
-    for topic_id, (label, topic_fields, spec) in configured_topics.items():
-        previous = copy.deepcopy(state.nodes.get(topic_id) or {})
-        properties = dict(previous.get("properties") or {})
-        properties.update(
-            {
-                "kind": "topic",
-                "aliases": list(properties.get("aliases", [])),
-                "origin": "registry-taxonomy",
-                "source_status": "meta",
-                "subject": spec.subject,
-                "course": spec.course,
-                "fields": list(topic_fields),
-            }
-        )
-        state.nodes[topic_id] = {
-            "id": topic_id,
-            "type": "topic",
-            "label": label,
-            "text": str(previous.get("text", "")),
-            "properties": properties,
-        }
-
-    configured_topic_ids = set(configured_topics)
-    for key, edge in list(state.edges.items()):
-        if edge.get("relation") != "contains":
-            continue
-        source_type = (state.nodes.get(str(edge.get("source"))) or {}).get("type")
-        target = str(edge.get("target", ""))
-        if (
-            (target in configured_topic_ids and source_type == "field")
-            or (target in selected_knowledge_ids and source_type in {"field", "topic"})
-        ):
-            state.edges.pop(key)
-
-    for topic_id, (_, topic_fields, _) in configured_topics.items():
-        for field_id in topic_fields:
-            edge = {
-                "source": field_id,
-                "relation": "contains",
-                "target": topic_id,
-                "origin": "registry-taxonomy",
-                "confidence": "high",
-                "evidence": f"configured topic {topic_id} is classified in field {field_id}",
-            }
-            state.edges[edge_key(edge)] = edge
-
-    for definition in definitions:
-        node_properties = (state.nodes.get(definition.id) or {}).get("properties") or {}
-        additional_fields = tuple(
-            dict.fromkeys(str(item) for item in node_properties.get("additional_fields", []))
-        )
-        unknown_additional = sorted(set(additional_fields) - set(field_index))
-        if unknown_additional:
-            raise KnowledgeError(
-                f"knowledge node {definition.id} references undefined additional fields: "
-                + ", ".join(unknown_additional)
-            )
-        parents = (
-            tuple(dict.fromkeys((definition.topic, *additional_fields)))
-            if definition.topic
-            else tuple(dict.fromkeys((*definition.fields, *additional_fields)))
-        )
-        for parent in parents:
-            edge = {
-                "source": parent,
-                "relation": "contains",
-                "target": definition.id,
-                "origin": "registry-taxonomy",
-                "confidence": "high",
-                "evidence": f"canonical definition is authored in {definition.authority}",
-            }
-            state.edges[edge_key(edge)] = edge
 
 
 def refresh_node_curation_defaults(state: GraphState) -> None:
@@ -1977,8 +1664,6 @@ def refresh_node_curation_defaults(state: GraphState) -> None:
 def refresh_semantic_edge_curation(state: GraphState) -> None:
     """Keep reviewed edges, but make source changes visible instead of silently trusting them."""
     for edge in state.edges.values():
-        if edge.get("relation") == "contains":
-            continue
         current: dict[str, str] = {}
         inactive: list[str] = []
         for endpoint in (str(edge.get("source", "")), str(edge.get("target", ""))):
@@ -2046,37 +1731,10 @@ def graph_cycles(nodes: set[str], edges: Iterable[dict[str, Any]], relation: str
     return cycles
 
 
-def knowledge_field_memberships(state: GraphState) -> dict[str, set[str]]:
-    field_ids = {
-        node_id for node_id, node in state.nodes.items() if node.get("type") == "field"
-    }
-    topic_fields: dict[str, set[str]] = defaultdict(set)
-    memberships: dict[str, set[str]] = defaultdict(set)
-    for edge in state.edges.values():
-        if edge.get("relation") != "contains":
-            continue
-        source = str(edge.get("source", ""))
-        target = str(edge.get("target", ""))
-        target_type = (state.nodes.get(target) or {}).get("type")
-        if source in field_ids and target_type == "topic":
-            topic_fields[target].add(source)
-        elif source in field_ids and target_type == "knowledge":
-            memberships[target].add(source)
-    for edge in state.edges.values():
-        if edge.get("relation") != "contains":
-            continue
-        source = str(edge.get("source", ""))
-        target = str(edge.get("target", ""))
-        if (state.nodes.get(source) or {}).get("type") == "topic":
-            memberships[target].update(topic_fields.get(source, set()))
-    return memberships
-
-
 def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     node_ids = set(state.nodes)
-    allowed_node_types = {"field", "topic", "knowledge"}
     for node in state.nodes.values():
         raw_node_id = node.get("id")
         raw_label = node.get("label")
@@ -2102,11 +1760,11 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                     node=node_id,
                 )
             )
-        if node.get("type") not in allowed_node_types:
+        if node.get("type") != "knowledge":
             errors.append(
                 diagnostic(
                     "unknown-node-type",
-                    f"unsupported node type in field-facet graph: {node.get('type')}",
+                    f"unsupported node type: {node.get('type')}",
                     node=str(node.get("id", "")),
                 )
             )
@@ -2122,22 +1780,7 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                         node=str(edge.get(endpoint, "")),
                     )
                 )
-        if edge.get("relation") == "contains":
-            source_type = (state.nodes.get(str(edge.get("source"))) or {}).get("type")
-            target_type = (state.nodes.get(str(edge.get("target"))) or {}).get("type")
-            if (source_type, target_type) not in {
-                ("field", "topic"),
-                ("field", "knowledge"),
-                ("topic", "knowledge"),
-            }:
-                errors.append(
-                    diagnostic(
-                        "invalid-taxonomy-edge",
-                        f"contains must be field -> topic/knowledge or topic -> knowledge, got {source_type} -> {target_type}",
-                        node=str(edge.get("target", "")),
-                    )
-                )
-        if edge.get("relation") != "contains" and edge.get("curation_status") == "needs-review":
+        if edge.get("curation_status") == "needs-review":
             warnings.append(
                 diagnostic(
                     "stale-semantic-edge",
@@ -2163,22 +1806,6 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                     "invalid-curation-status",
                     f"unsupported knowledge curation status: {curation_status!r}",
                     node=str(node.get("id", "")),
-                )
-            )
-        if node.get("type") == "knowledge" and properties.get("typst_name") and not properties.get("label_html"):
-            errors.append(
-                diagnostic(
-                    "missing-label-html",
-                    "Typst-authored knowledge node has no math-aware HTML label",
-                    node=node["id"],
-                )
-            )
-        if node.get("type") == "knowledge" and properties.get("latex_name") and not properties.get("label_html"):
-            errors.append(
-                diagnostic(
-                    "missing-label-html",
-                    "LaTeX-authored knowledge node has no rendered HTML label",
-                    node=node["id"],
                 )
             )
         if properties.get("source_status") == "orphaned":
@@ -2378,241 +2005,16 @@ def write_artifacts(graph_dir: Path, artifacts: dict[str, str]) -> None:
         atomic_write(graph_dir / name, content)
 
 
-def typst_string(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
-
-
-def render_typst_labels(state: GraphState) -> None:
-    """Render authored knowledge names once with Typst's native HTML target."""
-    candidates = [
-        (node["id"], str((node.get("properties") or {}).get("typst_name", "")))
-        for node in sorted(state.nodes.values(), key=lambda item: item["id"])
-        if node.get("type") == "knowledge"
-        and (node.get("properties") or {}).get("typst_name")
-    ]
-    if not candidates:
-        return
-    lines = [
-        '#let graph-label(id, body) = html.elem("ql-label", attrs: (data-node-id: id))[#body]',
-        "",
-    ]
-    for node_id, typst_name in candidates:
-        lines.append(f'#graph-label("{typst_string(node_id)}")[{typst_name}]')
-    with tempfile.TemporaryDirectory(prefix="kgdistiller-labels-") as temporary:
-        source = Path(temporary) / "labels.typ"
-        output = Path(temporary) / "labels.html"
-        source.write_text("\n\n".join(lines) + "\n", encoding="utf-8")
-        try:
-            result = subprocess.run(
-                [
-                    "typst",
-                    "compile",
-                    "--features",
-                    "html",
-                    "--format",
-                    "html",
-                    str(source),
-                    str(output),
-                ],
-                check=False,
-                capture_output=True,
-                text=False,
-            )
-        except OSError as error:
-            raise KnowledgeError("Typst is required to render knowledge-node labels") from error
-        if result.returncode != 0:
-            try:
-                stdout = _decode_machine_output(result.stdout, "Typst stdout")
-                stderr = _decode_machine_output(result.stderr, "Typst stderr")
-            except KnowledgeError as error:
-                raise KnowledgeError(
-                    "knowledge-label rendering returned invalid UTF-8"
-                ) from error
-            detail = stderr.strip() or stdout.strip() or "unknown Typst error"
-            raise KnowledgeError(f"knowledge-label rendering failed: {detail}")
-        try:
-            document = output.read_text(encoding="utf-8")
-        except UnicodeError as error:
-            raise KnowledgeError(
-                "rendered knowledge labels are not valid UTF-8"
-            ) from error
-        except OSError as error:
-            raise KnowledgeError("cannot read rendered knowledge labels") from error
-    rendered = {
-        match.group("id"): match.group("html").strip()
-        for match in LABEL_HTML_RE.finditer(document)
-    }
-    expected = {node_id for node_id, _ in candidates}
-    if set(rendered) != expected:
-        missing = ", ".join(sorted(expected - set(rendered))) or "none"
-        raise KnowledgeError(f"Typst omitted knowledge labels: {missing}")
-    for node_id, label_html in rendered.items():
-        if UNSAFE_LABEL_HTML_RE.search(label_html):
-            raise KnowledgeError(f"unsafe HTML in rendered knowledge label: {node_id}")
-        node = state.nodes[node_id]
-        properties = dict(node.get("properties") or {})
-        properties["label_html"] = label_html
-        node["properties"] = properties
-
-
-def render_source_labels(state: GraphState, repo_root: Path) -> None:
-    from kgdistiller.latex_html import LatexHtmlError, render_latex_labels
-
-    render_typst_labels(state)
-    try:
-        render_latex_labels(state, repo_root)
-    except LatexHtmlError as error:
-        raise KnowledgeError(str(error)) from error
-
-
-def graph_entry_url(state: GraphState, node_id: str) -> str:
-    for node in sorted(state.nodes.values(), key=lambda item: item["id"]):
-        web = str((node.get("provenance") or {}).get("web", ""))
-        marker = "/notes/"
-        if marker in web:
-            return f"{web.split(marker, 1)[0]}/knowledge/#node={node_id}"
-    return f"/knowledge/#node={node_id}"
-
-
-def paired_typst_rendering_sources(
-    repo_root: Path, specs: list[SourceSpec], state: GraphState
-) -> list[tuple[SourceSpec, Path]]:
-    """Find admitted Typst companions of this generation's TeX authorities."""
-    source_hashes = state.manifest.get("source_hashes") or {}
-    result: list[tuple[SourceSpec, Path]] = []
-    for spec in specs:
-        for source in expand_source(spec):
-            if (
-                source.suffix.lower() != ".tex"
-                or relative_path(repo_root, source) not in source_hashes
-            ):
-                continue
-            companion = source.with_suffix(".typ")
-            if (
-                companion.is_file()
-                and _source_admits_path(spec, companion)
-                and preferred_source_path(spec, companion) == source
-            ):
-                unique_source_for_path(specs, source)
-                result.append((spec, companion))
-    return result
-
-
-def typst_rendering_names(
-    repo_root: Path,
-    specs: list[SourceSpec],
-    state: GraphState,
-    registered: dict[str, dict[str, Any]] | None = None,
-) -> dict[str, list[str]]:
-    """Read rendering spellings without admitting another identity authority."""
-    identities = build_identity_index(state, registered)
-    definitions: dict[str, list[str]] = defaultdict(list)
-    references: dict[str, list[str]] = defaultdict(list)
-    for spec, companion in paired_typst_rendering_sources(repo_root, specs, state):
-        scan = scan_typst(repo_root, spec, companion, dict(identities))
-        if scan.errors:
-            raise KnowledgeError(
-                "cannot read paired Typst rendering names: "
-                + "\n".join(item["message"] for item in scan.errors)
-            )
-        tex_authority = relative_path(repo_root, companion.with_suffix(".tex"))
-        for definition in scan.definitions:
-            node_id = identities.get(identity_key(definition.label))
-            node = state.nodes.get(node_id or "")
-            if (
-                node is not None
-                and node.get("type") == "knowledge"
-                and (node.get("provenance") or {}).get("active") is True
-                and (node.get("provenance") or {}).get("authority") == tex_authority
-            ):
-                definitions[node_id].append(definition.label_markup)
-        for reference in scan.references:
-            node_id = identities.get(identity_key(reference.label))
-            node = state.nodes.get(node_id or "")
-            if (
-                node is not None
-                and node.get("type") == "knowledge"
-                and (node.get("provenance") or {}).get("active") is True
-            ):
-                references[node_id].append(reference.source_name)
-    return {
-        node_id: list(dict.fromkeys([*definitions[node_id], *references[node_id]]))
-        for node_id in sorted(definitions.keys() | references.keys())
-    }
-
-
-def typst_registry_text(
-    state: GraphState, rendering_names: dict[str, list[str]] | None = None
-) -> str:
-    lines = ["// Generated by kgdistiller. Do not edit by hand.", "#let knowledge-registry = ("]
-    typst_reference_names: dict[str, list[str]] = defaultdict(list)
-    for reference in state.references:
-        if reference.get("source_format") != "typst":
-            continue
-        target = str(reference.get("target", ""))
-        source_name = str(reference.get("source_name", ""))
-        if source_name and source_name not in typst_reference_names[target]:
-            typst_reference_names[target].append(source_name)
-    for node in sorted(state.nodes.values(), key=lambda item: item["id"]):
-        node_id = node["id"]
-        properties = node.get("properties") or {}
-        typst_name = properties.get("typst_name")
-        if node.get("type") != "knowledge":
-            continue
-        companion_names = (rendering_names or {}).get(node_id, [])
-        if typst_name:
-            registry_name = str(typst_name)
-        elif companion_names:
-            registry_name = companion_names[0]
-        else:
-            registry_name = f'#text("{typst_string(str(node.get("label", node_id)))}")'
-        names = [registry_name]
-        names.extend(
-            name for name in [*companion_names, *typst_reference_names.get(node_id, [])]
-            if name not in names
-        )
-        provenance = node.get("provenance") or {}
-        if properties.get("source_status") == "active" and provenance.get("web"):
-            url = str(provenance["web"])
-        else:
-            url = graph_entry_url(state, node_id)
-        lines.extend(
-            [
-                "  (",
-                f"    name: [{registry_name}],",
-                "    names: (",
-                *(f"      [{name}]," for name in names),
-                "    ),",
-                f'    id: "{typst_string(node_id)}",',
-                f'    title: "{typst_string(str(node.get("label", node_id)))}",',
-                f'    url: "{typst_string(url)}",',
-                "  ),",
-            ]
-        )
-    lines.append(")")
-    return "\n".join(lines) + "\n"
-
-
-def write_registry(
-    path: Path, state: GraphState, rendering_names: dict[str, list[str]] | None = None
-) -> None:
-    atomic_write(path, typst_registry_text(state, rendering_names))
-
-
 def synchronize(
     repo_root: Path,
     registry: Path,
     graph_dir: Path,
-    typst_registry: Path,
     *,
     identities: Path | None = None,
     alignments: Path | None = None,
     files: list[Path],
-    course: str | None,
-    subject: str | None,
     write: bool,
 ) -> tuple[GraphState, dict[str, str], dict[str, Any]]:
-    fields = load_fields(registry)
     specs = load_sources(repo_root, registry)
     previous = load_state(graph_dir, repo_root=repo_root, verify_entries=False)
     registered_identities = load_identity_registry(identities)
@@ -2621,7 +2023,7 @@ def synchronize(
         str(previous.manifest.get("git_revision", "")) or None,
         specs,
     )
-    pairs, selected_keys, full = select_scope(repo_root, specs, files, course, subject)
+    pairs, selected_keys, full = select_scope(repo_root, specs, files)
     pairs, selected_keys = include_previous_authorities(
         repo_root,
         specs,
@@ -2630,8 +2032,6 @@ def synchronize(
         previous,
         git_context,
         files=files,
-        course=course,
-        subject=subject,
         full=full,
     )
     state = copy.deepcopy(previous)
@@ -2702,14 +2102,6 @@ def synchronize(
     state.references = [
         item for item in state.references if item.get("authority") not in selected_keys
     ] + [reference_record(item) for item in scan.references]
-    ensure_taxonomy_nodes_and_edges(
-        state,
-        fields,
-        specs,
-        scan.definitions,
-        found_ids | set(orphaned),
-        prune=full,
-    )
     previous_source_hashes = dict(previous.manifest.get("source_hashes") or {})
     source_hashes = dict(previous_source_hashes)
     for authority in previous_source_hashes:
@@ -2751,7 +2143,6 @@ def synchronize(
     except EntryMarkdownError as error:
         raise KnowledgeError(str(error)) from error
     refresh_semantic_edge_curation(state)
-    render_source_labels(state, repo_root)
     previous_git_revision = str(previous.manifest.get("git_revision", "")) or None
     git_revision = previous_git_revision
     if git_context.get("head") and (
@@ -2795,7 +2186,6 @@ def synchronize(
             "edges": sum(
                 edge.get("curation_status") == "needs-review"
                 for edge in state.edges.values()
-                if edge.get("relation") != "contains"
             ),
         },
         "source_changes": {
@@ -2809,25 +2199,21 @@ def synchronize(
         },
     }
     if write:
-        rendering_names = typst_rendering_names(repo_root, specs, state, registered_identities)
         for path, content in sorted(entry_updates.items()):
             write_entry(path, content)
         write_artifacts(graph_dir, artifacts)
         # All readers load and validate this committed JSON generation
         # directly. There is no second runtime generation to publish.
         state = load_state(graph_dir, repo_root=repo_root)
-        write_registry(typst_registry, state, rendering_names)
     return state, artifacts, report
 
 
 def apply_delta(
     graph_dir: Path,
-    typst_registry: Path,
     delta_path: Path,
     *,
     repo_root: Path | None = None,
     registry: Path | None = None,
-    identities: Path | None = None,
 ) -> dict[str, Any]:
     delta = read_json(delta_path, {})
     if delta.get("schema") != DELTA_SCHEMA:
@@ -2878,37 +2264,28 @@ def apply_delta(
         properties = dict(existing.get("properties") or {})
         properties.update(raw.get("properties") or {})
         node_type = str(raw.get("type") or existing.get("type") or "knowledge")
-        if node_type == "knowledge":
-            knowledge_origin = str(properties.get("knowledge_origin", "personal-note"))
-            if knowledge_origin not in KNOWLEDGE_ORIGINS:
-                raise KnowledgeError(
-                    f"invalid knowledge_origin for delta node {node_id}: {knowledge_origin!r}"
-                )
-            properties["knowledge_origin"] = knowledge_origin
-            if "kind" in (raw.get("properties") or {}):
-                from kgdistiller.document_types import (
-                    load_document_types,
-                    validate_node_kind,
-                )
+        if node_type == "knowledge" and "kind" in (raw.get("properties") or {}):
+            from kgdistiller.document_types import (
+                load_document_types,
+                validate_node_kind,
+            )
 
-                if kind_profiles is None:
-                    kind_registry = registry or knowledge_root(repo_root) / "sources.json"
-                    has_registry = registry is not None or kind_registry.is_file()
-                    kind_profiles = load_document_types(kind_registry) if has_registry else {}
-                    kind_specs = load_sources(repo_root, kind_registry) if has_registry else []
-                authority = str((existing.get("provenance") or {}).get("authority", ""))
-                source = authority or str(raw.get("entry_source", "") or properties.get("entry_source", ""))
-                source_path = (repo_root / source).resolve() if source else None
-                owner = (unique_source_for_path(kind_specs, source_path)
-                         if source_path and matching_sources(kind_specs, source_path) else None)
-                document_type = owner.document_type if owner else ""
-                original_properties = existing.get("properties") or {}
-                if original_properties.get("kind_origin") != "reviewed" and "kind" in original_properties:
-                    properties["source_kind"] = original_properties["kind"]
-                properties["kind"] = validate_node_kind(properties["kind"], document_type, kind_profiles)
-                properties["kind_origin"] = "reviewed"
-        else:
-            properties.pop("knowledge_origin", None)
+            if kind_profiles is None:
+                kind_registry = registry or knowledge_root(repo_root) / "sources.json"
+                has_registry = registry is not None or kind_registry.is_file()
+                kind_profiles = load_document_types(kind_registry) if has_registry else {}
+                kind_specs = load_sources(repo_root, kind_registry) if has_registry else []
+            authority = str((existing.get("provenance") or {}).get("authority", ""))
+            source = authority or str(raw.get("entry_source", "") or properties.get("entry_source", ""))
+            source_path = (repo_root / source).resolve() if source else None
+            owner = (unique_source_for_path(kind_specs, source_path)
+                     if source_path and matching_sources(kind_specs, source_path) else None)
+            document_type = owner.document_type if owner else ""
+            original_properties = existing.get("properties") or {}
+            if original_properties.get("kind_origin") != "reviewed" and "kind" in original_properties:
+                properties["source_kind"] = original_properties["kind"]
+            properties["kind"] = validate_node_kind(properties["kind"], document_type, kind_profiles)
+            properties["kind_origin"] = "reviewed"
         properties.setdefault("aliases", [])
         properties.setdefault("origin", "agent")
         properties.setdefault("source_status", "meta")
@@ -3023,7 +2400,6 @@ def apply_delta(
         }
         state.edges[edge_key(edge)] = edge
     refresh_semantic_edge_curation(state)
-    render_source_labels(state, repo_root)
     # Entry Markdown is the authority. Install reviewed entry changes before
     # hydrating the graph projection from those files.
     for path in sorted(entry_deletes):
@@ -3049,16 +2425,8 @@ def apply_delta(
     if diagnostics["errors"]:
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
     state.manifest = json.loads(artifacts["manifest.json"])
-    rendering_names = (
-        typst_rendering_names(
-            repo_root, load_sources(repo_root, registry), state,
-            load_identity_registry(identities),
-        )
-        if registry is not None else None
-    )
     write_artifacts(graph_dir, artifacts)
     state = load_state(graph_dir, repo_root=repo_root)
-    write_registry(typst_registry, state, rendering_names)
     after = state.manifest["counts"]
     return {
         "nodes_removed": removed_nodes,
@@ -3215,7 +2583,6 @@ def search_graph(state: GraphState, query: str, limit: int) -> list[dict[str, An
         if not all(term in haystack for term in terms):
             continue
         score = 20 if all(term in label.lower() for term in terms) else 0
-        score += 10 if node.get("type") == "knowledge" else 0
         scored.append((score, node))
     return [item for _, item in sorted(scored, key=lambda pair: (-pair[0], pair[1]["label"]))[:limit]]
 
@@ -3362,8 +2729,7 @@ def curation_report(
 
     for edge in state.edges.values():
         if (
-            edge.get("relation") != "contains"
-            and edge.get("curation_status") == "needs-review"
+            edge.get("curation_status") == "needs-review"
             and ({str(edge.get("source", "")), str(edge.get("target", ""))} & relation_scope)
         ):
             errors.append(
@@ -3392,14 +2758,9 @@ def audit_report(state: GraphState) -> dict[str, Any]:
         if node.get("type") == "knowledge"
         and (node.get("provenance") or {}).get("active")
     }
-    semantic_edges = [
-        edge
-        for edge in state.edges.values()
-        if edge.get("relation") != "contains"
-    ]
+    semantic_edges = list(state.edges.values())
     adjacency: dict[str, set[str]] = defaultdict(set)
     semantic_degree: Counter[str] = Counter()
-    cross_course_edges = 0
     for edge in semantic_edges:
         source = str(edge.get("source", ""))
         target = str(edge.get("target", ""))
@@ -3408,10 +2769,6 @@ def audit_report(state: GraphState) -> dict[str, Any]:
             adjacency[target].add(source)
             semantic_degree[source] += 1
             semantic_degree[target] += 1
-            source_course = str((active[source].get("properties") or {}).get("course", ""))
-            target_course = str((active[target].get("properties") or {}).get("course", ""))
-            if source_course and target_course and source_course != target_course:
-                cross_course_edges += 1
 
     unseen = set(active)
     component_sizes: list[int] = []
@@ -3446,54 +2803,6 @@ def audit_report(state: GraphState) -> dict[str, Any]:
         else:
             pending_authorities.append(authority)
 
-    reference_authorities = Counter(
-        str(reference.get("authority", ""))
-        for reference in state.references
-    )
-    authority_course = {
-        authority: str((nodes[0].get("properties") or {}).get("course", "unknown"))
-        for authority, nodes in authorities.items()
-        if nodes
-    }
-    courses: dict[str, dict[str, Any]] = {}
-    for course in sorted(
-        {str((node.get("properties") or {}).get("course", "unknown")) for node in active.values()}
-    ):
-        course_nodes = {
-            node_id: node
-            for node_id, node in active.items()
-            if str((node.get("properties") or {}).get("course", "unknown")) == course
-        }
-        course_entries = sum(
-            bool(str(node.get("text", "")).strip()) for node in course_nodes.values()
-        )
-        courses[course] = {
-            "nodes": len(course_nodes),
-            "entries": course_entries,
-            "entry_ratio": round(course_entries / len(course_nodes), 6) if course_nodes else 1.0,
-            "semantic_nodes": sum(bool(adjacency[node_id]) for node_id in course_nodes),
-            "isolated_nodes": sum(not adjacency[node_id] for node_id in course_nodes),
-            "references": sum(
-                count
-                for authority, count in reference_authorities.items()
-                if authority_course.get(authority) == course
-            ),
-        }
-
-    taxonomy_parents: Counter[str] = Counter()
-    for edge in state.edges.values():
-        if edge.get("relation") == "contains" and edge.get("target") in active:
-            taxonomy_parents[str(edge["target"])] += 1
-    field_memberships = knowledge_field_memberships(state)
-    field_counts: Counter[str] = Counter()
-    for node_id in active:
-        field_counts.update(field_memberships.get(node_id, set()))
-    unclassified_nodes = sorted(
-        node_id for node_id in active if not field_memberships.get(node_id)
-    )
-    multiply_classified_nodes = sorted(
-        node_id for node_id in active if len(field_memberships.get(node_id, set())) > 1
-    )
     entry_count = sum(bool(str(node.get("text", "")).strip()) for node in active.values())
     relation_counts = Counter(str(edge.get("relation", "")) for edge in state.edges.values())
     return {
@@ -3532,13 +2841,6 @@ def audit_report(state: GraphState) -> dict[str, Any]:
                 str(size): count
                 for size, count in sorted(Counter(component_sizes).items())
             },
-            "cross_course_edges": cross_course_edges,
-            "field_membership_histogram": {
-                str(count): occurrences
-                for count, occurrences in sorted(
-                    Counter(len(field_memberships.get(node_id, set())) for node_id in active).items()
-                )
-            },
             "top_hubs": [
                 {"id": node_id, "degree": degree}
                 for node_id, degree in sorted(
@@ -3551,12 +2853,6 @@ def audit_report(state: GraphState) -> dict[str, Any]:
             relation: relation_counts[relation]
             for relation in sorted(relation_counts)
         },
-        "fields": {
-            field_id: field_counts[field_id]
-            for field_id, node in sorted(state.nodes.items())
-            if node.get("type") == "field"
-        },
-        "courses": courses,
         "quality": {
             "semantic_edges_missing_evidence": sum(
                 not str(edge.get("evidence", "")).strip() for edge in semantic_edges
@@ -3564,11 +2860,6 @@ def audit_report(state: GraphState) -> dict[str, Any]:
             "semantic_edges_missing_confidence": sum(
                 not str(edge.get("confidence", "")).strip() for edge in semantic_edges
             ),
-            "knowledge_nodes_without_taxonomy_parent": sorted(
-                node_id for node_id in active if not taxonomy_parents[node_id]
-            ),
-            "knowledge_nodes_without_field": unclassified_nodes,
-            "knowledge_nodes_with_multiple_fields": len(multiply_classified_nodes),
         },
     }
 
@@ -3579,8 +2870,6 @@ def defaults(repo_root: Path, value: str) -> Path:
 
 def add_scope_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--file", action="append", default=[], type=Path)
-    parser.add_argument("--course")
-    parser.add_argument("--subject")
 
 
 def add_model_arguments(parser: argparse.ArgumentParser) -> None:
@@ -3702,10 +2991,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--graph", default=f"{KNOWLEDGE_DIRECTORY}/graph")
     parser.add_argument("--identities", default=f"{KNOWLEDGE_DIRECTORY}/identities.json")
     parser.add_argument("--alignments", default=f"{KNOWLEDGE_DIRECTORY}/alignments.json")
-    parser.add_argument(
-        "--typst-registry",
-        default=f"{KNOWLEDGE_DIRECTORY}/build/knowledge-registry.typ",
-    )
     commands = parser.add_subparsers(dest="command", required=True)
     vault_command = commands.add_parser(
         "vault",
@@ -3826,13 +3111,6 @@ def parse_args() -> argparse.Namespace:
     show_command.add_argument("id")
     curate_command = commands.add_parser("curate-check")
     curate_command.add_argument("--file", action="append", required=True, type=Path)
-    publish_command = commands.add_parser("publish")
-    publish_command.add_argument(
-        "--format",
-        required=True,
-        choices=("typst", "markdown", "latex"),
-        dest="source_format",
-    )
     commands.add_parser("audit")
     commands.add_parser("stats")
     snapshot_command = commands.add_parser("snapshot")
@@ -3888,12 +3166,8 @@ def parse_args() -> argparse.Namespace:
         help="execute a kgdistiller-retrieval-plan-v1 JSON file instead of a legacy query",
     )
     agent_search_command.add_argument("--namespace")
-    agent_search_command.add_argument("--type", action="append", dest="node_types")
     agent_search_command.add_argument("--limit", type=int)
     agent_search_command.add_argument("--depth", type=int)
-    agent_search_command.add_argument(
-        "--include-taxonomy", action="store_true", default=None
-    )
     agent_search_command.add_argument("--include-stale", action="store_true", default=None)
     agent_search_command.add_argument(
         "--include-orphaned", action="store_true", default=None
@@ -3917,13 +3191,11 @@ def parse_args() -> argparse.Namespace:
     expand_command.add_argument("--relation", action="append", dest="edge_types")
     expand_command.add_argument("--depth", type=int, default=1)
     expand_command.add_argument("--limit", type=int, default=50)
-    expand_command.add_argument("--include-taxonomy", action="store_true")
     expand_command.add_argument("--include-stale", action="store_true")
     expand_command.add_argument("--include-orphaned", action="store_true")
     ppr_command = agent_commands.add_parser("ppr")
     ppr_command.add_argument("id", nargs="+")
     ppr_command.add_argument("--namespace", default="personal")
-    ppr_command.add_argument("--type", action="append", dest="node_types")
     ppr_command.add_argument("--relation", action="append", dest="edge_types")
     ppr_command.add_argument(
         "--direction",
@@ -3931,7 +3203,6 @@ def parse_args() -> argparse.Namespace:
         default="outgoing",
     )
     ppr_command.add_argument("--limit", type=int, default=50)
-    ppr_command.add_argument("--include-taxonomy", action="store_true")
     ppr_command.add_argument("--include-stale", action="store_true")
     ppr_command.add_argument("--include-orphaned", action="store_true")
     context_command = agent_commands.add_parser("context")
@@ -3942,15 +3213,11 @@ def parse_args() -> argparse.Namespace:
         help="execute a kgdistiller-retrieval-plan-v1 JSON file instead of a legacy query",
     )
     context_command.add_argument("--namespace")
-    context_command.add_argument("--type", action="append", dest="node_types")
     context_command.add_argument("--budget", type=int, default=6000)
     context_command.add_argument("--context-projection", choices=("full", "compact"), default="full", help="source context projection; compact retains definitions and conditions and stores path evidence once")
     context_command.add_argument("--support-selection", type=Path, help="source-bound caller-selected evidence support manifest; does not change answer ranking or identity")
     context_command.add_argument("--limit", type=int)
     context_command.add_argument("--depth", type=int)
-    context_command.add_argument(
-        "--include-taxonomy", action="store_true", default=None
-    )
     context_command.add_argument("--include-stale", action="store_true", default=None)
     context_command.add_argument(
         "--include-orphaned", action="store_true", default=None
@@ -4017,51 +3284,13 @@ def parse_args() -> argparse.Namespace:
     export_commands = export_command.add_subparsers(
         dest="export_command", required=True
     )
-    export_latex = export_commands.add_parser(
-        "latex", help="export native LaTeX directly through the selected local HTML converter"
-    )
-    export_latex.add_argument("source", type=Path)
-    export_latex.add_argument("--output", type=Path, required=True)
-    export_latex.add_argument("--replace", action="store_true")
-    export_latex.add_argument(
-        "--engine", choices=("auto", "pdflatex", "xelatex", "lualatex"), default="auto"
-    )
-    export_latex_registry = export_commands.add_parser(
-        "latex-registry", help="write native TeX knowledge markers, stable IDs, and links"
-    )
-    export_latex_registry.add_argument("--output", type=Path, required=True)
-    export_latex_registry.add_argument("--replace", action="store_true")
-    export_site = export_commands.add_parser("site")
-    export_site.add_argument("--output", type=Path, required=True)
-    export_site.add_argument(
-        "--product-commit",
-        help=(
-            "full producer Git commit; must match discoverable clean-checkout/direct-url "
-            "provenance"
-        ),
-    )
-    export_site.add_argument(
-        "--product-repository",
-        default="https://github.com/qiulinfan/kgdistiller",
-    )
-    export_site.add_argument(
-        "--source-repository",
-        required=True,
-        help="credential-free HTTPS URL for the authority repository",
-    )
-    export_site.add_argument(
-        "--replace",
-        action="store_true",
-        help="atomically replace an existing verified four-file export bundle",
-    )
-    export_obsidian = export_commands.add_parser("obsidian")
-    export_obsidian.add_argument(
-        "--output", type=Path, default=Path(KNOWLEDGE_DIRECTORY, "build", "obsidian")
+    export_obsidian = export_commands.add_parser(
+        "obsidian", help="write the Obsidian plugin's typed graph feed"
     )
     export_obsidian.add_argument(
-        "--replace",
-        action="store_true",
-        help="atomically replace a previous verified Obsidian projection",
+        "--output",
+        type=Path,
+        default=Path(KNOWLEDGE_DIRECTORY, "build", "obsidian", "semantic-graph.json"),
     )
     codex_command = commands.add_parser("codex")
     codex_commands = codex_command.add_subparsers(dest="codex_command", required=True)
@@ -4093,10 +3322,6 @@ def parse_args() -> argparse.Namespace:
     claude_doctor.add_argument("--source-only", action="store_true")
     mcp_command = commands.add_parser("mcp")
     add_model_arguments(mcp_command)
-    serve_command = commands.add_parser("serve")
-    serve_command.add_argument("--host", default="127.0.0.1")
-    serve_command.add_argument("--port", type=int, default=8765)
-    serve_command.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
     if hasattr(args, "graph_retrieval"):
         graph_options = {"--graph-seed-candidates", "--graph-edge-policy"}
@@ -4176,10 +3401,8 @@ def parse_args() -> argparse.Namespace:
             getattr(args, name) is not None
             for name in (
                 "namespace",
-                "node_types",
                 "limit",
                 "depth",
-                "include_taxonomy",
                 "include_stale",
                 "include_orphaned",
                 "graph_strategy",
@@ -4378,121 +3601,40 @@ def main() -> int:
             print(pretty_json(result), end="")
             return 0
         if args.command == "export":
-            registry = defaults(repo_root, args.registry)
-            graph_dir = defaults(repo_root, args.graph)
-            identities = defaults(repo_root, args.identities)
+            from .obsidian_export import ObsidianExportError, export_obsidian_graph
+
             output = (
                 Path(os.path.abspath(args.output))
                 if args.output.is_absolute()
                 else Path(os.path.abspath(repo_root / args.output))
             )
-            if args.export_command in {"latex", "latex-registry"}:
-                from kgdistiller.latex_html import LatexHtmlError, export_latex_document
-                from kgdistiller.latex_registry import latex_registry_text
-
-                try:
-                    state = load_state(graph_dir, repo_root=repo_root)
-                    if not state.manifest or state.manifest.get("registry_sha256") != source_registry_sha256(registry):
-                        raise LatexHtmlError("source registry is out of sync; run kgdistiller sync")
-                    problems = validate_state(state)["errors"]
-                    if problems:
-                        raise LatexHtmlError("cannot export an invalid knowledge graph")
-                    for authority, expected in state.manifest.get("source_hashes", {}).items():
-                        path = (repo_root / authority).resolve()
-                        if not path.is_relative_to(repo_root.resolve()) or not path.is_file() or sha256_authority_file(path) != expected:
-                            raise LatexHtmlError(f"source authority changed; run kgdistiller sync: {authority}")
-                    if args.export_command == "latex":
-                        result = export_latex_document(
-                            repo_root,
-                            defaults(repo_root, args.source),
-                            output,
-                            state=state,
-                            engine=args.engine,
-                            replace=args.replace,
-                        )
-                    else:
-                        if output.is_symlink() or (output.exists() and not args.replace):
-                            raise LatexHtmlError("LaTeX registry output already exists; pass --replace")
-                        if output.suffix.lower() != ".tex":
-                            raise LatexHtmlError("LaTeX registry output must be a .tex file")
-                        if output.resolve() in {(repo_root / authority).resolve() for authority in state.manifest.get("source_hashes", {})}:
-                            raise LatexHtmlError("LaTeX registry output cannot replace an authority")
-                        atomic_write(output, latex_registry_text(state))
-                        result = {
-                            "schema": "kgdistiller-latex-registry-export-v1",
-                            "status": "exported",
-                            "output": str(output),
-                        }
-                except (LatexHtmlError, ValueError, KnowledgeError, OSError) as error:
-                    print(pretty_json({
-                        "kind": "kgdistiller-latex-export-error",
-                        "code": "latex-export-failed",
-                        "message": str(error),
-                    }), end="", file=sys.stderr)
-                    return 1
-            elif args.export_command == "site":
-                from .static_export import StaticExportError, export_site_bundle
-
-                try:
-                    result = export_site_bundle(
-                        repo_root,
-                        output,
-                        registry=registry,
-                        graph_dir=graph_dir,
-                        identities=identities,
-                        product_commit=args.product_commit,
-                        product_repository=args.product_repository,
-                        source_repository=args.source_repository,
-                        replace=args.replace,
-                    )
-                except StaticExportError as error:
-                    print(
-                        pretty_json(
-                            {
-                                "kind": "kgdistiller-static-export-error",
-                                "code": "static-export-failed",
-                                "message": str(error),
-                            }
-                        ),
-                        end="",
-                        file=sys.stderr,
-                    )
-                    return 1
-            else:
-                from .obsidian_export import (
-                    ObsidianExportError,
-                    build_obsidian_projection,
+            try:
+                result = export_obsidian_graph(
+                    repo_root,
+                    output,
+                    registry=defaults(repo_root, args.registry),
+                    graph_dir=defaults(repo_root, args.graph),
+                    identities=defaults(repo_root, args.identities),
                 )
-
-                try:
-                    result = build_obsidian_projection(
-                        repo_root,
-                        output,
-                        registry=registry,
-                        graph_dir=graph_dir,
-                        identities=identities,
-                        replace=args.replace,
-                    )
-                except ObsidianExportError as error:
-                    print(
-                        pretty_json(
-                            {
-                                "kind": "kgdistiller-obsidian-export-error",
-                                "code": "obsidian-export-failed",
-                                "message": str(error),
-                            }
-                        ),
-                        end="",
-                        file=sys.stderr,
-                    )
-                    return 1
+            except ObsidianExportError as error:
+                print(
+                    pretty_json(
+                        {
+                            "kind": "kgdistiller-obsidian-export-error",
+                            "code": "obsidian-export-failed",
+                            "message": str(error),
+                        }
+                    ),
+                    end="",
+                    file=sys.stderr,
+                )
+                return 1
             print(pretty_json(result), end="")
             return 0
         registry = defaults(repo_root, args.registry)
         graph_dir = defaults(repo_root, args.graph)
         identities = defaults(repo_root, args.identities)
         alignments = defaults(repo_root, args.alignments)
-        typst_registry = defaults(repo_root, args.typst_registry)
         if args.command == "candidate":
             from .candidate import build_candidate_snapshot
             from .query import validate_agent_snapshot
@@ -4546,7 +3688,6 @@ def main() -> int:
                 graph_dir=graph_dir,
                 identities=identities,
                 alignments=alignments,
-                typst_registry=typst_registry,
             )
             sheet_path = defaults(repo_root, args.sheet)
             output_path = defaults(repo_root, args.output)
@@ -4569,7 +3710,6 @@ def main() -> int:
                 graph_dir=graph_dir,
                 identities=identities,
                 alignments=alignments,
-                typst_registry=typst_registry,
             )
             result = prepare_capture(paths, read_json(input_path, {}), output_path)
             print(pretty_json(result), end="")
@@ -4594,7 +3734,6 @@ def main() -> int:
                 graph_dir=graph_dir,
                 identities=identities,
                 alignments=alignments,
-                typst_registry=typst_registry,
             )
             fail_stage = os.environ.get("KGDISTILLER_INGEST_FAIL_STAGE", "")
             crash_stage = os.environ.get("KGDISTILLER_INGEST_CRASH_STAGE", "")
@@ -4658,12 +3797,9 @@ def main() -> int:
                     repo_root,
                     registry,
                     graph_dir,
-                    typst_registry,
                     identities=identities,
                     alignments=alignments,
                     files=[],
-                    course=None,
-                    subject=None,
                     write=False,
                 )
                 stale = [
@@ -4708,12 +3844,9 @@ def main() -> int:
                 repo_root,
                 registry,
                 graph_dir,
-                typst_registry,
                 identities=identities,
                 alignments=alignments,
                 files=[],
-                course=None,
-                subject=None,
                 write=True,
             )
             print(pretty_json({"initialized": str(repo_root), **report}), end="")
@@ -4726,9 +3859,7 @@ def main() -> int:
                 specs = load_sources(repo_root, registry)
                 profiles = load_document_types(registry)
                 state = load_state(graph_dir, repo_root=repo_root)
-                pairs, selected, full = select_scope(
-                    repo_root, specs, pairs_files, args.course, args.subject
-                )
+                pairs, selected, full = select_scope(repo_root, specs, pairs_files)
                 pairs, selected = include_previous_authorities(
                     repo_root,
                     specs,
@@ -4741,8 +3872,6 @@ def main() -> int:
                         specs,
                     ),
                     files=pairs_files,
-                    course=args.course,
-                    subject=args.subject,
                     full=full,
                 )
                 result = scan_scope(
@@ -4786,12 +3915,9 @@ def main() -> int:
                 repo_root,
                 registry,
                 graph_dir,
-                typst_registry,
                 identities=identities,
                 alignments=alignments,
                 files=pairs_files,
-                course=args.course,
-                subject=args.subject,
                 write=True,
             )
             print(pretty_json(report), end="")
@@ -4802,11 +3928,9 @@ def main() -> int:
                 pretty_json(
                     apply_delta(
                         graph_dir,
-                        typst_registry,
                         delta,
                         repo_root=repo_root,
                         registry=registry,
-                        identities=identities,
                     )
                 ),
                 end="",
@@ -4852,12 +3976,9 @@ def main() -> int:
                 repo_root,
                 registry,
                 graph_dir,
-                typst_registry,
                 identities=identities,
                 alignments=alignments,
                 files=[],
-                course=None,
-                subject=None,
                 write=False,
             )
             stale = [
@@ -4869,55 +3990,6 @@ def main() -> int:
             if stale:
                 raise KnowledgeError(f"stale graph artifacts: {', '.join(stale)}")
             print(f"OK: {GRAPH_SCHEMA}; {json_text(report['counts'])}; warnings={report['warnings']}")
-            return 0
-        if args.command == "publish":
-            specs = load_sources(repo_root, registry)
-            pairs, _, _ = select_scope(repo_root, specs, [], None, None)
-            selected_paths = [
-                path for _, path in pairs if source_format(path) == args.source_format
-            ]
-            missing = [
-                relative_path(repo_root, path)
-                for path in selected_paths
-                if not path.is_file()
-            ]
-            if missing:
-                raise KnowledgeError(f"publication source does not exist: {', '.join(missing)}")
-            sync_report: dict[str, Any] | None = None
-            if selected_paths:
-                _, _, sync_report = synchronize(
-                    repo_root,
-                    registry,
-                    graph_dir,
-                    typst_registry,
-                    identities=identities,
-                    alignments=alignments,
-                    files=selected_paths,
-                    course=None,
-                    subject=None,
-                    write=True,
-                )
-            state = load_state(graph_dir, repo_root=repo_root)
-            authorities = {
-                relative_path(repo_root, path) for path in selected_paths
-            }
-            report = curation_report(state, authorities)
-            report["source_format"] = args.source_format
-            report["synchronized_files"] = len(selected_paths)
-            if sync_report is not None:
-                report["graph_counts"] = sync_report["counts"]
-            print(pretty_json(report), end="")
-            return 1 if report["errors"] else 0
-        if args.command == "serve":
-            from .web import serve_graph
-
-            serve_graph(
-                repo_root,
-                graph_dir,
-                host=args.host,
-                port=args.port,
-                open_browser=not args.no_open,
-            )
             return 0
         if args.command == "mcp":
             from kgdistiller.mcp import serve_stdio
@@ -5008,10 +4080,8 @@ def main() -> int:
                         plan = legacy_retrieval_plan(
                             str(args.query),
                             namespace=execution_namespace_argument,
-                            node_types=args.node_types,
                             limit=args.limit if args.limit is not None else 20,
                             max_depth=args.depth if args.depth is not None else 1,
-                            include_taxonomy=bool(args.include_taxonomy),
                             include_stale=bool(args.include_stale),
                             include_orphaned=bool(args.include_orphaned),
                             graph_strategy=args.graph_strategy or "hybrid",
@@ -5048,7 +4118,6 @@ def main() -> int:
                     edge_types=args.edge_types,
                     max_depth=args.depth,
                     limit=args.limit,
-                    include_taxonomy=args.include_taxonomy,
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
                 )
@@ -5058,11 +4127,9 @@ def main() -> int:
                     {str(node_id): 1.0 for node_id in args.id},
                     alignments=alignments,
                     namespace=args.namespace,
-                    node_types=args.node_types,
                     edge_types=args.edge_types,
                     direction=args.direction,
                     limit=args.limit,
-                    include_taxonomy=args.include_taxonomy,
                     include_stale=args.include_stale,
                     include_orphaned=args.include_orphaned,
                 )
@@ -5084,10 +4151,8 @@ def main() -> int:
                         plan = legacy_retrieval_plan(
                             str(args.query),
                             namespace=execution_namespace,
-                            node_types=args.node_types,
                             limit=args.limit if args.limit is not None else 50,
                             max_depth=args.depth if args.depth is not None else 1,
-                            include_taxonomy=bool(args.include_taxonomy),
                             include_stale=bool(args.include_stale),
                             include_orphaned=bool(args.include_orphaned),
                             graph_strategy=args.graph_strategy or "hybrid",
@@ -5239,13 +4304,7 @@ def main() -> int:
                 )
         elif args.command == "curate-check":
             specs = load_sources(repo_root, registry)
-            pairs, authorities, _ = select_scope(
-                repo_root,
-                specs,
-                list(args.file),
-                None,
-                None,
-            )
+            pairs, authorities, _ = select_scope(repo_root, specs, list(args.file))
             missing = [
                 relative_path(repo_root, path)
                 for _, path in pairs

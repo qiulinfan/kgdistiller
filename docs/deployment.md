@@ -3,7 +3,9 @@
 The knowledge project is the deployment and backup unit. It owns registered
 Markdown, Typst and LaTeX source authorities, one Markdown file per accepted
 entry, reviewed registries and graph state. The product checkout owns only
-engine code, schemas, frontend assets, Skills and workflow definitions.
+engine code, schemas, the Obsidian plugin bundle, Skills and workflow
+definitions. kgdistiller has no publishing surface; a repository that publishes
+its notes owns its website and registries.
 
 ## Core and optional artifacts
 
@@ -30,15 +32,14 @@ Add artifacts only for actual uses:
   accepted cross-namespace mappings; absent registries are valid.
 - `documents.jsonl` and `store.json` for an explicitly requested portable
   snapshot, not daily capture or ordinary Git backup.
-- `build/` for ignored plans, receipts, journals and previews.
-- Static or Obsidian exports for chosen consumers. Preserve or rebuild outputs
-  still adopted by a site or local plugin.
+- `build/` for ignored plans, receipts, journals, previews and the Obsidian
+  plugin's graph feed.
 
 A normal checkout is queryable through a generation-checked in-memory
 `GraphView`; it does not need a store snapshot, database or materialization
-step. Source registration requires `id`, `root` and `files`, plus its registry
-schema. Optional fields/topics, document types and display configuration are
-user decisions, not prefilled placeholder structures.
+step. A source registration holds `id`, `root`, `files` and an optional
+`document_type`; the registry adds only optional `document_types` profiles, and
+any other key is rejected.
 
 ## Global command and machine-local registration
 
@@ -127,8 +128,7 @@ the user explicitly authorizes that action. Track:
   an actual portable snapshot.
 
 Ignore `.knowledge/build/`, transaction staging and journals, plans, receipts,
-credentials, query logs, and generated exports unless an export is deliberately
-adopted by a consumer. Verification proves local integrity, not that a commit
+credentials, query logs, and the Obsidian graph feed. Verification proves local integrity, not that a commit
 or remote synchronization happened.
 
 After an ordinary knowledge-project clone or pull:
@@ -152,44 +152,31 @@ will never replace a store root that contains `.git`; that would discard
 repository history. Refresh a cloned store in place, or write a new snapshot to
 a separate empty path and adopt it through Git review.
 
-## Local services and exports
+## Local services and the Obsidian graph feed
 
-`kgdistiller serve` uses the frontend assets packaged with the installed
-product and binds to `127.0.0.1` by default. It is not an authenticated public
-service. `kgdistiller mcp` exposes only bounded read-only graph operations.
+`kgdistiller mcp` exposes only bounded read-only graph operations.
 
-`export site` produces a privacy-filtered `kgdistiller-static-export-v1` bundle with a
-dependency-free verifier. Producer release, authority generation, export, and
-consumer adoption are separate provenance events. Verify the bundle before a
-consumer commits its exact files.
-
-`export obsidian` produces a `kgdistiller-obsidian-projection-v1` downstream view.
-Install the packaged read-only plugin into a selected vault with
+Install the packaged read-only Obsidian plugin into a selected vault with
 `kgdistiller --vault <name-or-id> obsidian install`; use `--replace` for an
 upgrade. The installer manages only `main.js`, `manifest.json`, and `styles.css`,
 preserves `data.json`, and can leave the enabled-plugin list untouched with
-`--no-enable`.
-Open the knowledge repository root as the editor vault; its registered Markdown
-files and `.knowledge/entries/*.md` remain non-lossy authorities. Only the
-managed default subtree is a lossy projection. The plugin's Open buttons resolve
-entries and authorities against the project that owns the configured graph
-path, so they work only when the graph lies inside that project's
-`.knowledge/` tree in the same vault. An external output links back with
-`file:` URLs and offers no Open targets. Never register projected output as a
-source, rescan it, or use edits in it to update the graph. Replace the
-projection from the identity and entry authorities instead.
+`--no-enable`. Open the knowledge repository root as the editor vault; its
+registered sources and `.knowledge/entries/*.md` remain the authorities.
 
-The projection contains `semantic-graph.json`, a validated
-`kgdistiller-obsidian-graph-v1` plugin boundary. Native Obsidian keeps using
-ordinary Wikilinks and backlinks. The optional kgdistiller plugin adds a
-separate typed graph view over semantic, definition, and reference edges; it
-does not read private JSONL graph internals or write any authority.
+The plugin reads one derived file, `.knowledge/build/obsidian/semantic-graph.json`
+(`kgdistiller-obsidian-graph-v1`). Regenerate it with
+`kgdistiller --repo-root PROJECT export obsidian` after a sync or ingest; the
+command writes it atomically and refuses an out-of-sync graph. The plugin's
+typed graph view covers semantic, definition, and reference edges; its Open
+buttons resolve entries and authorities only when the feed lies inside the
+project's `.knowledge/` tree in the same vault. It does not read private JSONL
+graph internals or write any authority. Never register the feed as a source or
+rescan it.
 
 ## Deployment receipt
 
 Record the absolute project/store root, installed kgdistiller version and exact
 product commit when known, graph generation, optional snapshot schema/digests and
-document count only when a snapshot was created or verified,
-Git commit/remote state only when actually confirmed, and any static-export
-receipt. Never include full authority content, credentials, or unbounded source
-excerpts.
+document count only when a snapshot was created or verified, and Git
+commit/remote state only when actually confirmed. Never include full authority
+content, credentials, or unbounded source excerpts.

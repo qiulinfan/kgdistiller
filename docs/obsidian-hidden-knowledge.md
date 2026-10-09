@@ -29,7 +29,7 @@ drops leading and trailing slashes, so `build/` and `/build` both mean `build`.
 The remaining entries must be relative paths without empty, `.` or `..`
 segments or backslashes; an invalid entry sets the status to invalid and
 removes the injected cache. The default keeps the transient `.knowledge/build/`
-work tree, including review drafts and exports, out of the native index;
+work tree, including review drafts and the graph feed, out of the native index;
 remove `build` from the list to open those drafts in Obsidian. Changing the
 list rescans the folder: newly excluded files leave the native cache and newly
 included files join it, without any file being written or deleted on disk.

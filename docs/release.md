@@ -33,18 +33,10 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | `kgdistiller-ingest-plan-v1` | yes | output | Staged review result, not a receipt. |
 | `kgdistiller-ingest-receipt-v1` | yes | yes | JSON-memory committed-write receipt. |
 | `kgdistiller-ingest-error-v1` | yes | output | Stable transactional failure envelope. |
-| `kgdistiller-document-record-v2` | yes | output | Optional snapshot inventory row with user-supplied classification only. |
+| `kgdistiller-document-record-v2` | yes | output | Optional snapshot inventory row. |
 | `kgdistiller-store-v1` | yes | yes | File-based portable authority and graph generation. |
 | `kgdistiller-store-report-v1` | yes | output | Verified store operation result. |
-| `kgdistiller-site-graph-v1` | yes | output | Privacy-filtered hydrated site graph. |
-| `kgdistiller-static-export-v1` | yes | yes | Verifiable privacy-filtered site export. |
-| `kgdistiller-static-export-report-v1` | yes | output | Static export operation and cleanup result. |
-| `kgdistiller-static-export-verification-v1` | yes | output | Standalone verifier result. |
-| `kgdistiller-obsidian-projection-v1` | yes | yes | Lossy downstream Obsidian projection. |
-| `kgdistiller-obsidian-graph-v1` | yes | yes | Typed, source-backed Obsidian plugin graph. |
-| `kgdistiller-obsidian-export-report-v1` | yes | output | Obsidian build or verification result. |
-| `kgdistiller-obsidian-concept-v1` | yes | output | Generated concept-note frontmatter tag. |
-| `kgdistiller-obsidian-source-v1` | yes | output | Generated source-proxy frontmatter tag. |
+| `kgdistiller-obsidian-graph-v1` | yes | yes | Typed, source-backed Obsidian plugin graph feed. |
 | `kgdistiller-curation-check-v1` | yes | output | Scoped curation readiness report. |
 | `kgdistiller-audit-v1` | yes | output | Whole-graph deterministic audit report. |
 
@@ -67,10 +59,6 @@ There is no older schema reader and no automatic core or database migration.
 Graphs, stores and records with any other schema, including pre-0.4 artifacts,
 fail closed. Databases and vectors were derived data and are not migrated.
 
-Rebuild consumer bundles as `kgdistiller-static-export-v1` from the verified
-`kgdistiller-graph-v2` authority graph instead of relabeling or reusing old
-bundle bytes.
-
 Retrieval clients must emit `kgdistiller-retrieval-plan-v1`, omit
 `semantic_queries`, and consume `kgdistiller-search-execution-v1` with nested
 `kgdistiller-search-result-v1` plus `kgdistiller-context-bundle-v1`. Alignment,
@@ -78,8 +66,8 @@ comparison, and proposal review artifacts bind to `alignment_sha256`. A
 verified `kgdistiller-store-v1` clone is immediately queryable; do not call or
 emulate a materialization command.
 
-Obsidian exports are new downstream projections, not a migration target. They
-must never be registered or scanned back into the authority graph.
+The Obsidian graph feed is regenerated from the current graph, not migrated,
+and must never be registered or scanned back into the authority graph.
 
 ## Release gates
 
@@ -95,8 +83,7 @@ cd integrations/obsidian && npm ci && npm run check
 
 Then verify that:
 
-- wheel and sdist contain Python modules, native static frontend assets, every
-  current JSON Schema, product Skill, workflow manifest, workflow guide,
+- wheel and sdist contain Python modules, every current JSON Schema, product Skill, workflow manifest, workflow guide,
   `.codex/agents` preset, and the three-file Obsidian plugin bundle;
 - an isolated environment installs the wheel and runs `kgdistiller --help`;
 - installed `kgdistiller`/`kgdistiller.exe` registers and queries a vault from
@@ -106,13 +93,13 @@ Then verify that:
 - help exposes no profile, embedding, database, provider, or materialization
   command/flag;
 - a Markdown/Typst/LaTeX fixture passes sync, check, `agent status`, exact and
-  lexical/graph query, MCP smoke, and loopback browser smoke tests;
+  lexical/graph query, and MCP smoke tests;
 - GraphView accepts only graph-v2, loads without writing, detects a
   generation change and never returns mixed records; it reads the bound entry
   Markdown and rejects missing or modified entry authorities;
 - explicit graph writes preserve accepted identities/aliases/semantic edges;
-- new projects omit unused classification/empty registries and do not create
-  portable snapshots or downstream exports by default;
+- new projects omit empty registries and do not create portable snapshots or
+  the Obsidian graph feed by default;
 - `kgdistiller-retrieval-plan-v1` rejects `semantic_queries` and all results bind to one
   snapshot and graph digest;
 - transactional plan/apply, idempotency, stale preconditions, lock conflict,
@@ -120,12 +107,9 @@ Then verify that:
 - `store snapshot` and `store verify` cover in-place and separate snapshots,
   safe paths, digest failures, and a cold clone immediately queried without
   materialization;
-- static export passes its packaged schema and dependency-free verifier,
-  rejects dirty/untracked instance inputs, and preserves an existing valid
-  destination on failed `--replace`;
-- Obsidian export validates its managed boundary, rejects unsafe/unmanaged
-  replacement, emits one closed typed plugin graph, and can be regenerated
-  solely from the native graph;
+- `export obsidian` rejects out-of-sync graphs and unsafe outputs, writes one
+  closed typed plugin graph atomically, and can be regenerated solely from the
+  native graph;
 - the Obsidian plugin passes contract/parser tests, type checking, and a
   production bundle build;
 - every materially updated Skill passes the active `skill-creator` validator,
@@ -133,19 +117,6 @@ Then verify that:
 - POSIX and Windows copy/link doctor tests preserve unrelated Codex files;
 - no credential, personal graph, authority note, generated store, build
   artifact, or private fixture is tracked in the product repository.
-
-## Static consumer release order
-
-1. Publish and verify the kgdistiller release commit and distributions.
-2. Install that exact product in the authority project, run checks, and commit
-   all instance inputs so its checkout is clean.
-3. Create `export site` with exact producer and source repository provenance.
-4. Run the bundled `verify_export.py` without kgdistiller installed.
-5. Adopt and commit exactly the verified bundle bytes in the consumer.
-6. Run consumer-specific checks and record manifest/export/graph digests.
-
-Product release, authority generation, export generation, and consumer
-adoption remain separate auditable events.
 
 ## Supply-chain checklist
 

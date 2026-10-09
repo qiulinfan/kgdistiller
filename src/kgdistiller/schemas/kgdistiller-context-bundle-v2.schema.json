@@ -193,7 +193,6 @@
     },
     "edgeType": {
       "enum": [
-        "contains",
         "prerequisite-for",
         "implies",
         "generalizes",
@@ -269,7 +268,6 @@
             "learning-prerequisite",
             "source-derivation",
             "comparison",
-            "taxonomy-navigation",
             "relation-navigation"
           ]
         },

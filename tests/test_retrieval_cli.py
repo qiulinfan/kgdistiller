@@ -84,7 +84,6 @@ def retrieval_plan() -> dict:
             "strategy": "hybrid",
         },
         "filters": {
-            "node_types": ["knowledge"],
             "include_stale": False,
             "include_orphaned": False,
         },

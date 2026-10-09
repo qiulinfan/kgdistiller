@@ -48,45 +48,15 @@ class KnowledgeGraphTest(unittest.TestCase):
             json.dumps(
                 {
                     "schema": "kgdistiller-sources-v1",
-                    "fields": [
-                        {
-                            "id": "analysis",
-                            "label": "Analysis",
-                            "text": "A broad analytic field.",
-                        },
-                        {
-                            "id": "demo-methods",
-                            "label": "Demo Methods",
-                            "text": "A fixture-specific field.",
-                        },
-                        {
-                            "id": "geometry",
-                            "label": "Geometry",
-                            "text": "",
-                        },
-                    ],
                     "sources": [
                         {
                             "id": "math:demo",
-                            "subject": "math",
-                            "course": "demo",
-                            "knowledge_origin": "personal-note",
-                            "fields": ["analysis"],
                             "root": "notes/math/demo",
                             "files": [
                                 "chapters/*.typ",
                                 "chapters/*.md",
                                 "chapters/*.tex",
                                 "appendix/*.md",
-                            ],
-                            "web": "https://example.test/demo",
-                            "topics": [
-                                {
-                                    "glob": "chapters/*.typ",
-                                    "id": "demo-foundations",
-                                    "label": "Demo Foundations",
-                                    "fields": ["demo-methods"],
-                                }
                             ],
                         }
                     ],
@@ -97,7 +67,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.graph = self.repo / ".knowledge/graph"
         self.identities = self.repo / ".knowledge/identities.json"
         (self.repo / ".knowledge/build").mkdir(parents=True, exist_ok=True)
-        self.typst_registry = self.repo / "notes/math/toolchain/generated/knowledge-registry.typ"
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -107,11 +76,8 @@ class KnowledgeGraphTest(unittest.TestCase):
             self.repo,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             files=files or [],
-            course=None,
-            subject=None,
             write=True,
         )
 
@@ -163,16 +129,9 @@ class KnowledgeGraphTest(unittest.TestCase):
         })
         self.assertNotIn("worked-example", state.nodes)
         self.assertNotIn("mathematics", state.nodes)
-        self.assertEqual("field", state.nodes["analysis"]["type"])
-        self.assertIn(("analysis", "contains", "demo-foundations"), state.edges)
-        self.assertIn(("demo-methods", "contains", "demo-foundations"), state.edges)
+        self.assertEqual({}, state.edges)
         self.assertEqual("measure-space", state.references[0]["target"])
-        self.assertIn(("demo-foundations", "contains", "sigma-algebra"), state.edges)
         self.assertEqual("sigma-algebra", knowledge.show_node(state, "σ-algebra")["node"]["id"])
-        registry = self.typst_registry.read_text(encoding="utf-8")
-        self.assertIn("name: [$sigma$-algebra]", registry)
-        self.assertIn('id: "sigma-algebra"', registry)
-        self.assertIn("<math>", state.nodes["sigma-algebra"]["properties"]["label_html"])
 
     def test_typst_math_interval_brackets_do_not_break_statement_scan(self) -> None:
         self.chapter.write_text(
@@ -192,25 +151,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(
             {"the-test-domain", "the-example-domain"},
             {item.id for item in result.definitions},
-        )
-
-    def test_graph_entry_url_is_derived_from_registered_note_web(self) -> None:
-        state = knowledge.GraphState(
-            nodes={
-                "known": {
-                    "id": "known",
-                    "provenance": {
-                        "web": "https://example.test/custom/notes/math/demo/#kn-known"
-                    },
-                }
-            },
-            edges={},
-            references=[],
-            manifest={},
-        )
-        self.assertEqual(
-            "https://example.test/custom/knowledge/#node=orphan",
-            knowledge.graph_entry_url(state, "orphan"),
         )
 
     def test_artifacts_are_deterministic(self) -> None:
@@ -282,7 +222,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(knowledge.KnowledgeError, "kgdistiller-agent-delta-v1"):
-            knowledge.apply_delta(self.graph, self.typst_registry, legacy_delta)
+            knowledge.apply_delta(self.graph, legacy_delta)
 
     def test_source_hash_and_graph_check_are_crlf_portable(self) -> None:
         state, _, _ = self.sync()
@@ -318,11 +258,8 @@ class KnowledgeGraphTest(unittest.TestCase):
             self.repo,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             files=[],
-            course=None,
-            subject=None,
             write=False,
         )
         self.assertEqual([], report["source_changes"]["modified"])
@@ -344,7 +281,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             json.dumps({"schema": "kgdistiller-agent-delta-v1", "nodes": [], "edges": []}),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
 
         hydrated = knowledge.load_state(self.graph)
         self.assertEqual(registry_sha, hydrated.manifest["registry_sha256"])
@@ -449,13 +386,68 @@ class KnowledgeGraphTest(unittest.TestCase):
             knowledge.glob_matches_path(Path("nested/a.md"), "**/*.md")
         )
 
-    def test_registry_node_id_over_output_limit_is_rejected(self) -> None:
-        payload = json.loads(self.registry.read_text(encoding="utf-8"))
-        payload["fields"][0]["id"] = "a" * 257
-        self.registry.write_text(json.dumps(payload), encoding="utf-8")
+    def test_source_registry_rejects_unknown_keys(self) -> None:
+        original = json.loads(self.registry.read_text(encoding="utf-8"))
+        top_level = copy.deepcopy(original)
+        top_level["fields"] = [{"id": "analysis", "label": "Analysis"}]
+        per_source = copy.deepcopy(original)
+        per_source["sources"][0]["listed"] = True
+        for payload, key in ((top_level, "fields"), (per_source, "listed")):
+            with self.subTest(key=key):
+                self.registry.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaisesRegex(knowledge.KnowledgeError, f"unknown .*'{key}'"):
+                    knowledge.load_sources(self.repo, self.registry)
+                with self.assertRaisesRegex(knowledge.KnowledgeError, f"'{key}'"):
+                    self.sync()
 
-        with self.assertRaisesRegex(knowledge.KnowledgeError, "invalid field id"):
-            self.sync()
+    def test_sync_rebuilds_properties_outside_the_retained_set(self) -> None:
+        state, _, _ = self.sync()
+        properties = state.nodes["sigma-algebra"]["properties"]
+        properties.update(
+            {"course": "demo", "fields": ["analysis"], "typst_name": "$sigma$", "topic": "demo"}
+        )
+        state.nodes["sigma-algebra"]["provenance"]["web"] = "https://example.test/demo"
+        knowledge.write_artifacts(
+            self.graph,
+            knowledge.make_artifacts(state, dict(state.manifest["source_hashes"])),
+        )
+        self.assertIn("course", knowledge.load_state(self.graph).nodes["sigma-algebra"]["properties"])
+
+        state, _, _ = self.sync()
+        node = state.nodes["sigma-algebra"]
+        for key in ("course", "fields", "typst_name", "topic"):
+            self.assertNotIn(key, node["properties"])
+        self.assertNotIn("web", node["provenance"])
+        self.assertEqual("typst", node["properties"]["source_format"])
+        self.assertEqual("pending", node["properties"]["curation_status"])
+
+    def test_reviewed_display_name_and_conditions_survive_sync(self) -> None:
+        self.sync()
+        delta = self.repo / ".knowledge/build/reviewed-properties.json"
+        delta.parent.mkdir(parents=True, exist_ok=True)
+        delta.write_text(
+            json.dumps(
+                {
+                    "schema": "kgdistiller-agent-delta-v1",
+                    "nodes": [
+                        {
+                            "id": "sigma-algebra",
+                            "properties": {
+                                "display_name": "Sigma field",
+                                "conditions": ["X nonempty"],
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        knowledge.apply_delta(self.graph, delta)
+
+        state, _, _ = self.sync()
+        properties = state.nodes["sigma-algebra"]["properties"]
+        self.assertEqual("Sigma field", properties["display_name"])
+        self.assertEqual(["X nonempty"], properties["conditions"])
 
     def test_scanned_node_label_over_output_limit_is_rejected(self) -> None:
         oversized = self.source_root / "chapters/oversized.md"
@@ -481,7 +473,7 @@ class KnowledgeGraphTest(unittest.TestCase):
                     encoding="utf-8",
                 )
                 with self.assertRaisesRegex(knowledge.KnowledgeError, message):
-                    knowledge.apply_delta(self.graph, self.typst_registry, delta)
+                    knowledge.apply_delta(self.graph, delta)
 
     def test_agent_snapshot_is_self_contained_and_deterministic(self) -> None:
         self.sync()
@@ -513,7 +505,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         state = knowledge.load_state(self.graph)
 
         first = knowledge.make_agent_snapshot(state, "paper:fixture")
@@ -625,7 +617,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertIn(r"\u03c3", result.stdout)
         payload = json.loads(result.stdout)
         self.assertEqual("σ-algebra", payload["node"]["label"])
-        self.assertIn("𝜎", payload["node"]["properties"]["label_html"])
+        self.assertEqual("typst", payload["node"]["properties"]["source_format"])
 
     def test_entries_are_read_from_markdown_without_graph_body_copies(self) -> None:
         self.sync()
@@ -650,7 +642,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
 
         self.assertEqual({path.name for path in self.graph.iterdir()}, {"manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"})
         serialized = next(
@@ -663,45 +655,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         hydrated = knowledge.load_state(self.graph).nodes["sigma-algebra"]
         self.assertEqual("A family of sets closed under the defining operations.", hydrated["text"])
         self.assertEqual("Used as the measurable event system.", hydrated["entry"]["context"])
-
-    def test_source_marks_research_nodes_for_square_rendering(self) -> None:
-        payload = json.loads(self.registry.read_text(encoding="utf-8"))
-        payload["sources"][0]["knowledge_origin"] = "research"
-        self.registry.write_text(json.dumps(payload), encoding="utf-8")
-
-        state, _, _ = self.sync()
-
-        self.assertEqual("research", state.nodes["sigma-algebra"]["properties"]["knowledge_origin"])
-
-    def test_agent_can_add_node_specific_cross_field_membership(self) -> None:
-        self.sync()
-        delta = self.repo / ".knowledge/build/cross-field.json"
-        delta.parent.mkdir(parents=True, exist_ok=True)
-        delta.write_text(
-            json.dumps(
-                {
-                    "schema": "kgdistiller-agent-delta-v1",
-                    "nodes": [
-                        {
-                            "id": "sigma-algebra",
-                            "properties": {"additional_fields": ["geometry"]},
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
-
-        state, _, _ = self.sync(
-            files=[Path("notes/math/demo/chapters/01-foundations.typ")]
-        )
-
-        self.assertEqual(
-            ["analysis", "demo-methods", "geometry"],
-            state.nodes["sigma-algebra"]["properties"]["fields"],
-        )
-        self.assertIn(("geometry", "contains", "sigma-algebra"), state.edges)
 
     def test_changed_file_orphans_without_erasing_meta_or_edges_then_rehomes(self) -> None:
         self.sync()
@@ -730,7 +683,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
 
         self.chapter.write_text(
             self.chapter.read_text(encoding="utf-8").replace(
@@ -777,7 +730,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, entry)
+        knowledge.apply_delta(self.graph, entry)
 
         renamed = self.chapter.with_name("02-重定位.typ")
         subprocess.run(
@@ -840,42 +793,6 @@ class KnowledgeGraphTest(unittest.TestCase):
             ):
                 knowledge.git_source_context(self.repo, "b" * 40, specs)
 
-    def test_typst_success_with_missing_or_invalid_output_is_structured(self) -> None:
-        def state() -> object:
-            return knowledge.GraphState(
-                nodes={
-                    "measurable-space": {
-                        "id": "measurable-space",
-                        "type": "knowledge",
-                        "properties": {"typst_name": "$cal(M)$"},
-                    }
-                },
-                edges={},
-                references=[],
-                manifest={},
-            )
-
-        completed = subprocess.CompletedProcess([], 0, b"", b"")
-        with (
-            patch.object(knowledge.subprocess, "run", return_value=completed),
-            self.assertRaisesRegex(
-                knowledge.KnowledgeError, "cannot read rendered knowledge labels"
-            ),
-        ):
-            knowledge.render_typst_labels(state())
-
-        def write_invalid(
-            arguments: list[str], **kwargs: object
-        ) -> subprocess.CompletedProcess[bytes]:
-            Path(arguments[-1]).write_bytes(b"\xff")
-            return completed
-
-        with (
-            patch.object(knowledge.subprocess, "run", side_effect=write_invalid),
-            self.assertRaisesRegex(knowledge.KnowledgeError, "not valid UTF-8"),
-        ):
-            knowledge.render_typst_labels(state())
-
     def test_definition_change_marks_entries_and_edges_for_review(self) -> None:
         self.sync()
         delta = self.repo / ".knowledge/build/reviewed.json"
@@ -900,7 +817,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         self.chapter.write_text(
             self.chapter.read_text(encoding="utf-8").replace(
                 "A family of sets closed under complement and countable union.",
@@ -920,7 +837,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(["sigma-algebra"], edge["stale_endpoints"])
         self.assertEqual({"nodes": 1, "edges": 1}, report["needs_review"])
 
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         refreshed = knowledge.load_state(self.graph)
         self.assertEqual("current", refreshed.nodes["sigma-algebra"]["properties"]["curation_status"])
         self.assertEqual(
@@ -944,7 +861,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         self.chapter.write_text(
             self.chapter.read_text(encoding="utf-8").replace(
                 "Later we use #ref[measure space].\n", ""
@@ -973,7 +890,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         state = knowledge.load_state(self.graph)
         result = knowledge.reconcile_node_name(
             state, self.identities, "sigma-algebra", "sigma field"
@@ -1016,20 +933,6 @@ class KnowledgeGraphTest(unittest.TestCase):
             state.nodes["seminorm"]["provenance"]["line"],
         )
 
-    def test_typst_registry_includes_authored_reference_spellings(self) -> None:
-        self.chapter.write_text(
-            "#definition(title: [#kn[concept #strong[one,\ntwo]]])[Authority.]\n"
-            "By #ref[concept #strong[one, two]], continue.\n",
-            encoding="utf-8",
-        )
-
-        self.sync()
-
-        registry = self.typst_registry.read_text(encoding="utf-8")
-        self.assertIn("names: (", registry)
-        self.assertIn("[concept #strong[one,\ntwo]]", registry)
-        self.assertIn("[concept #strong[one, two]]", registry)
-
     def test_mixed_markdown_and_latex_sources_share_one_graph(self) -> None:
         markdown = self.source_root / "chapters/02-cache.md"
         markdown.write_text(
@@ -1054,16 +957,9 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(4, report["references"])
         self.assertEqual("markdown", state.nodes["cache-line"]["properties"]["source_format"])
         self.assertEqual("latex", state.nodes["cache-locality-theorem"]["properties"]["source_format"])
-        self.assertNotIn("typst_name", state.nodes["cache-line"]["properties"])
-        self.assertEqual(
-            "https://example.test/demo/chapters/02-cache/#kn-cache-line",
-            state.nodes["cache-line"]["provenance"]["web"],
-        )
         cache_refs = [item for item in state.references if item["target"] == "cache-line"]
         self.assertEqual(2, len(cache_refs))
         self.assertEqual({"markdown", "latex"}, {item["source_format"] for item in cache_refs})
-        registry = self.typst_registry.read_text(encoding="utf-8")
-        self.assertIn('name: [#text("cache line")]', registry)
 
     def test_same_stem_mixed_sources_keep_distinct_native_entry_sources(self) -> None:
         markdown = self.source_root / "chapters/same.md"
@@ -1091,7 +987,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         state = knowledge.load_state(self.graph)
 
         markdown_path = state.nodes["markdown-authority"]["properties"]["entry_source"]
@@ -1115,54 +1011,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual("new-reference", next(
             item["target"] for item in state.references if item["label"] == "new reference"
         ))
-
-    def test_markdown_publish_syncs_then_blocks_missing_agent_entry(self) -> None:
-        self.sync()
-        markdown = self.source_root / "chapters/02-publication.md"
-        markdown.write_text(
-            "# Publication\n\n> **Definition: --[[publication concept]]--**\n",
-            encoding="utf-8",
-        )
-        command = [
-            sys.executable,
-            str(MODULE_PATH),
-            "--repo-root",
-            str(self.repo),
-            "publish",
-            "--format",
-            "markdown",
-        ]
-
-        blocked = subprocess.run(command, check=False, capture_output=True, text=True)
-
-        self.assertEqual(1, blocked.returncode)
-        report = json.loads(blocked.stdout)
-        self.assertEqual(1, report["synchronized_files"])
-        self.assertEqual(["missing-node-entry"], [item["code"] for item in report["errors"]])
-        self.assertIn("publication-concept", knowledge.load_state(self.graph).nodes)
-
-        delta = self.repo / ".knowledge/build/publication-entry.json"
-        delta.parent.mkdir(parents=True, exist_ok=True)
-        delta.write_text(
-            json.dumps(
-                {
-                    "schema": "kgdistiller-agent-delta-v1",
-                    "nodes": [
-                        {
-                            "id": "publication-concept",
-                            "text": "A source-grounded entry prepared before publication.",
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
-
-        ready = subprocess.run(command, check=False, capture_output=True, text=True)
-
-        self.assertEqual(0, ready.returncode, ready.stderr or ready.stdout)
-        self.assertEqual([], json.loads(ready.stdout)["errors"])
 
     def test_markdown_escaped_double_brackets_are_literal_text(self) -> None:
         markdown = self.source_root / "chapters/02-escaped.md"
@@ -1209,9 +1057,6 @@ class KnowledgeGraphTest(unittest.TestCase):
             ["notes/math/demo/chapters/01-foundations.typ"],
             report["curation"]["pending_authorities"],
         )
-        self.assertEqual([], report["quality"]["knowledge_nodes_without_field"])
-        self.assertEqual(2, report["quality"]["knowledge_nodes_with_multiple_fields"])
-        self.assertEqual({"2": 2}, report["topology"]["field_membership_histogram"])
 
         delta = self.repo / ".knowledge/build/audit.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
@@ -1235,7 +1080,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, delta)
+        knowledge.apply_delta(self.graph, delta)
         report = knowledge.audit_report(knowledge.load_state(self.graph))
 
         self.assertEqual(2, report["counts"]["entries"])
@@ -1271,23 +1116,23 @@ class KnowledgeGraphTest(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(knowledge.KnowledgeError, "prerequisite-for cycle"):
-            knowledge.apply_delta(self.graph, self.typst_registry, delta)
+            knowledge.apply_delta(self.graph, delta)
 
     def test_explicit_delta_can_remove_obsolete_meta_root(self) -> None:
         self.sync()
         state = knowledge.load_state(self.graph)
         state.nodes["obsolete-discipline"] = {
             "id": "obsolete-discipline",
-            "type": "field",
+            "type": "knowledge",
             "label": "Obsolete Discipline",
             "text": "A removable meta root.",
-            "properties": {"kind": "field", "source_status": "meta"},
+            "properties": {"source_status": "meta", "curation_status": "current"},
         }
-        state.edges[("obsolete-discipline", "contains", "demo-foundations")] = {
+        state.edges[("obsolete-discipline", "implies", "measure-space")] = {
             "source": "obsolete-discipline",
-            "relation": "contains",
-            "target": "demo-foundations",
-            "origin": "agent-taxonomy",
+            "relation": "implies",
+            "target": "measure-space",
+            "origin": "agent",
             "confidence": "high",
             "evidence": "legacy root",
         }
@@ -1312,7 +1157,6 @@ class KnowledgeGraphTest(unittest.TestCase):
 
         report = knowledge.apply_delta(
             self.graph,
-            self.typst_registry,
             delta,
         )
 
@@ -1348,7 +1192,6 @@ class KnowledgeGraphTest(unittest.TestCase):
         with self.assertRaisesRegex(knowledge.KnowledgeError, "unsupported node type"):
             knowledge.apply_delta(
                 self.graph,
-                self.typst_registry,
                 delta,
             )
 
@@ -1377,7 +1220,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, entries)
+        knowledge.apply_delta(self.graph, entries)
 
         application = self.source_root / "chapters/02-application.typ"
         application.write_text(
@@ -1412,7 +1255,7 @@ class KnowledgeGraphTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        knowledge.apply_delta(self.graph, self.typst_registry, relation)
+        knowledge.apply_delta(self.graph, relation)
 
         application_authority = "notes/math/demo/chapters/02-application.typ"
         state = knowledge.load_state(self.graph)

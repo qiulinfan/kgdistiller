@@ -296,7 +296,7 @@ def _registry_lock(home: Path | None = None) -> Iterator[Path]:
         handle.close()
 
 
-def _write_registry(home: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def _write_vault_registry(home: Path, payload: dict[str, Any]) -> dict[str, Any]:
     validated = validate_registry(payload)
     _atomic_write_json(home / REGISTRY_FILENAME, validated, private=True)
     return validated
@@ -357,7 +357,7 @@ def register_vault(
         registry["vaults"].append(record)
         if registry["default_vault_id"] is None:
             registry["default_vault_id"] = vault_id
-        _write_registry(registry_home, registry)
+        _write_vault_registry(registry_home, registry)
     status = "registered" if previous is None else (
         "unchanged" if previous == record else "updated"
     )
@@ -396,7 +396,7 @@ def set_default_vault(selector: str | None, home: Path | None = None) -> dict[st
         registry = load_registry(registry_home)
         record = None if selector is None else _record_by_selector(registry, selector)
         registry["default_vault_id"] = None if record is None else record["id"]
-        _write_registry(registry_home, registry)
+        _write_vault_registry(registry_home, registry)
     return {
         "schema": "kgdistiller-vault-default-v1",
         "default_vault_id": registry["default_vault_id"],
@@ -414,7 +414,7 @@ def unregister_vault(selector: str, home: Path | None = None) -> dict[str, Any]:
         ]
         if registry["default_vault_id"] == record["id"]:
             registry["default_vault_id"] = None
-        _write_registry(registry_home, registry)
+        _write_vault_registry(registry_home, registry)
     return {
         "schema": "kgdistiller-vault-registration-v1",
         "status": "unregistered",

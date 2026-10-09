@@ -60,7 +60,6 @@ packages = ["src/kgdistiller"]
 include = [
   "src/kgdistiller/**/*.py",
   "src/kgdistiller/schemas/*.json",
-  "src/kgdistiller/static/*",
   "skills/**",
   "workflows/**",
   ".codex/agents/*.toml",

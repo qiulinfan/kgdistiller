@@ -109,12 +109,9 @@ class DerivationPlacementTest(unittest.TestCase):
                 vault,
                 vault / ".knowledge/sources.json",
                 vault / ".knowledge/graph",
-                vault / ".knowledge/build/knowledge-registry.typ",
                 identities=vault / ".knowledge/identities.json",
                 alignments=vault / ".knowledge/alignments.json",
                 files=[],
-                course=None,
-                subject=None,
                 write=True,
             )
             self.assertEqual(

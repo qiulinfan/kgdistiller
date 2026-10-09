@@ -99,24 +99,11 @@ def _graph_bytes(graph_dir: Path) -> dict[str, str]:
 def _registry() -> dict[str, Any]:
     return {
         "schema": "kgdistiller-sources-v1",
-        "fields": [
-            {
-                "id": "stress-testing",
-                "label": "Stress Testing",
-                "text": "Synthetic concepts used only by a disposable stress fixture.",
-            }
-        ],
         "sources": [
             {
                 "id": "stress:fixture",
-                "subject": "stress",
-                "course": "fixture",
-                "knowledge_origin": "personal-note",
-                "fields": ["stress-testing"],
                 "root": "notes/stress",
                 "files": ["*.md", "*.typ", "*.tex"],
-                "web": "https://example.invalid/stress",
-                "topics": [],
             }
         ],
     }
@@ -164,18 +151,14 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
         graph_dir=root / ".knowledge/graph",
         identities=root / ".knowledge/identities.json",
         alignments=alignments,
-        typst_registry=root / ".knowledge/build/knowledge-registry.typ",
     )
     synchronize(
         root,
         registry,
         paths.graph_dir,
-        paths.typst_registry,
         identities=paths.identities,
         alignments=paths.alignments,
         files=[],
-        course=None,
-        subject=None,
         write=True,
     )
 
@@ -205,7 +188,7 @@ def _build_repository(root: Path, nodes: int) -> tuple[IngestPaths, list[str], d
             "remove_edges": [],
         },
     )
-    apply_delta(paths.graph_dir, paths.typst_registry, delta)
+    apply_delta(paths.graph_dir, delta)
     return paths, ids, by_format
 
 
@@ -420,12 +403,9 @@ def run(nodes: int, query_samples: int, *, transaction: bool, fault_injection: b
             root,
             paths.registry,
             paths.graph_dir,
-            paths.typst_registry,
             identities=paths.identities,
             alignments=paths.alignments,
             files=[Path("notes/stress/concepts.md")],
-            course=None,
-            subject=None,
             write=True,
         )
         digest_after_incremental = load_state(paths.graph_dir).manifest["graph_sha256"]

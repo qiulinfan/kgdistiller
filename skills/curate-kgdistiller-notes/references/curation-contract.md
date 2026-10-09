@@ -11,8 +11,7 @@ stop and report it; curation never migrates a graph.
 
 Use the selected source's registered `document_type` profile, exposed by
 `scan --file`, for its `node_kinds` and `extraction_guidance`. Profiles are
-user data in `.knowledge/sources.json`; file format and fields/topics do not
-choose them. Read native sources directly. Markdown atomic entries can cite
+user data in `.knowledge/sources.json`; file format does not choose them. Read native sources directly. Markdown atomic entries can cite
 `.md`, `.typ` or `.tex` evidence without a converted source copy.
 
 For source-level curation, treat one complete source file as the curation unit.
@@ -111,12 +110,11 @@ use the narrowest supported direct source-grounded relation:
 - `generalizes`: the source strictly extends the target;
 - `derived-from`: the source construction or assertion is obtained from the
   target;
-- `contrasts-with`: the source explicitly distinguishes the endpoints;
-- `contains`: configured field/topic classification only.
+- `contrasts-with`: the source explicitly distinguishes the endpoints.
 
 Read every edge literally as `source relation target`. Record concrete evidence.
 Do not store transitive closure, chronology, topical proximity, keyword
-co-occurrence, or similarity. Keep `contains` and `prerequisite-for` acyclic.
+co-occurrence, or similarity. Keep `prerequisite-for` acyclic.
 
 A worked example or experiment is a typed use/application relation record:
 retain its review reference and declared relation type, applied knowledge

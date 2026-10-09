@@ -109,7 +109,7 @@ with real links to the actual committed metadata. Record receipt/revision and
 item-level linked/unapplied state without implying that a receipt proves a
 scientific claim. Preserve authored references and unrelated source files.
 Return proposal, receipt and sheet paths, verified target state and remaining
-gaps. Git backup, export and publication retain their existing boundaries.
+gaps. Git backup retains its existing boundary.
 
 This contract describes authoring and projections. New canonical fields or
 adapters require separately scoped product work and round-trip validation; the

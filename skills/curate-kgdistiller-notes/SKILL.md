@@ -1,6 +1,6 @@
 ---
 name: curate-kgdistiller-notes
-description: Extract and review source-grounded knowledge from registered Markdown, Typst, or LaTeX notes, resolve existing identities through query-kgdistiller, preserve native authority and reference markers, and hand one bounded update to ingest-kgdistiller. Use for raw-note ingestion, changed-note curation, missing entries or direct relations, marker cleanup, and note-to-static-export workflows in any kgdistiller knowledge project, including when the user asks to file or ingest a document into their kgdistiller (kgd/kgdt) knowledge base.
+description: Extract and review source-grounded knowledge from registered Markdown, Typst, or LaTeX notes, resolve existing identities through query-kgdistiller, preserve native authority and reference markers, and hand one bounded update to ingest-kgdistiller. Use for raw-note ingestion, changed-note curation, missing entries or direct relations, and marker cleanup in any kgdistiller knowledge project, including when the user asks to file or ingest a document into their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Curate kgdistiller notes
@@ -42,8 +42,8 @@ or relabel a graph inside a curation transaction.
 Require each input to match exactly one pattern in `.knowledge/sources.json`.
 Use the smallest coherent registered file set, including both paths of a known
 rename. If a document is unregistered, propose the source ID, root, format glob,
-optional user-selected field classification or registered `document_type`, and destination;
-obtain review before moving it or expanding a glob. `scan --file` returns
+optional registered `document_type`, and destination; obtain review before
+moving it or expanding a glob. `scan --file` returns
 `sources[].document_type` and the selected `document_types` profiles. Follow
 the user's `node_kinds` and `extraction_guidance`; document type is separate from
 file format and knowledge domain. Do not hardcode document classes or infer
@@ -111,30 +111,16 @@ kgdistiller --repo-root PROJECT curate-check --file RELATIVE_AUTHORITY
 kgdistiller --repo-root PROJECT check
 ```
 
-If the caller needs host-consumable data, create a separate static export only
-after these gates pass:
-
-```sh
-kgdistiller --repo-root PROJECT export site --output EXPORT_DIR \
-  --product-commit FULL_PRODUCT_COMMIT \
-  --source-repository SOURCE_REPOSITORY
-```
-
-If `EXPORT_DIR` is an already verified adopted bundle, add `--replace` to
-build and verify its successor before an atomic, rollback-safe directory swap.
-Never delete the prior bundle as a preparation step.
-
-The export receipt is derived data. It does not authorize Git operations or
-replace the authored notes.
+Publishing the notes belongs to the repository that owns them; kgdistiller has
+no publishing surface.
 
 ## Deliver
 
 Return the registered source scope, query digests, reviewed identities, source
-and delta paths, committed ingest receipt, validation results, and optional
-static-export receipt. Report deferred ambiguity and separately reviewed
+and delta paths, committed ingest receipt, and validation results. Report deferred ambiguity and separately reviewed
 content conflicts explicitly.
 Identify unsupported relation/application records and any unapplied scope.
 Refresh source-scoped link sheets only from verified committed metadata; never
 fabricate accepted entries or links for deferred proposals.
-Do not claim publication, remote synchronization, or retrieval readiness unless
-the corresponding verified receipt proves it.
+Do not claim remote synchronization or retrieval readiness unless the
+corresponding verified receipt proves it.

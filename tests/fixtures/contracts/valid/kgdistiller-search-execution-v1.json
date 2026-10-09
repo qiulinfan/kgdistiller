@@ -34,7 +34,6 @@
     "results": [
       {
         "node_id": "synthetic-theorem",
-        "node_type": "knowledge",
         "label": "Synthetic theorem",
         "lanes": {
           "identity": {"rank": 1, "score": 1.0},

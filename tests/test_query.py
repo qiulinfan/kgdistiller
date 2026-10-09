@@ -253,7 +253,7 @@ class QueryTest(unittest.TestCase):
         with self.assertRaisesRegex(QueryError, "bounded provenance"):
             GraphView.from_snapshot(personal)
 
-    def test_snapshot_allows_personal_taxonomy_nodes_without_authority(self) -> None:
+    def test_snapshot_rejects_non_knowledge_types(self) -> None:
         field = {
             "id": "analysis",
             "type": "field",
@@ -261,8 +261,8 @@ class QueryTest(unittest.TestCase):
             "text": "",
             "properties": {"aliases": []},
         }
-        view = GraphView.from_snapshot(snapshot_with([field], []))
-        self.assertEqual("field", view.nodes["analysis"]["type"])
+        with self.assertRaisesRegex(QueryError, "unsupported type"):
+            GraphView.from_snapshot(snapshot_with([field], []))
 
     def test_snapshot_rejects_malformed_provenance_and_status(self) -> None:
         for target, key, value, message in (
@@ -698,15 +698,13 @@ class QueryTest(unittest.TestCase):
             {row["node"]["id"] for row in ranking["results"]},
         )
 
-    def test_bfs_applies_type_stale_and_orphan_filters_to_neighbors(self) -> None:
+    def test_bfs_applies_stale_and_orphan_filters_to_neighbors(self) -> None:
         seed = copy.deepcopy(fixture_nodes()[0])
         seed["id"] = "seed"
         seed["label"] = "Seed"
         active = copy.deepcopy(fixture_nodes()[1])
         active["id"] = "active-node"
         active["label"] = "Active node"
-        field = copy.deepcopy(active)
-        field.update({"id": "field-node", "type": "field", "label": "Field node"})
         stale = copy.deepcopy(active)
         stale.update({"id": "stale-node", "label": "Stale node"})
         stale["properties"]["curation_status"] = "needs-review"
@@ -722,22 +720,20 @@ class QueryTest(unittest.TestCase):
                 "evidence": f"Seed reaches {node['id']}.",
                 "curation_status": "current",
             }
-            for node in (active, field, stale, orphan)
+            for node in (active, stale, orphan)
         ]
         view = GraphView.from_snapshot(
-            snapshot_with([seed, active, field, stale, orphan], edges)
+            snapshot_with([seed, active, stale, orphan], edges)
         )
 
         default = expand(
             view,
             ["seed"],
-            node_types=["knowledge"],
             edge_types=["derived-from"],
         )
         inclusive = expand(
             view,
             ["seed"],
-            node_types=["knowledge"],
             edge_types=["derived-from"],
             include_stale=True,
             include_orphaned=True,
@@ -751,7 +747,6 @@ class QueryTest(unittest.TestCase):
             {"seed", "active-node", "stale-node", "orphan-node"},
             {row["node"]["id"] for row in inclusive["nodes"]},
         )
-        self.assertNotIn("field-node", {edge["target"] for edge in inclusive["edges"]})
 
     def test_ppr_honors_direction_and_reports_only_accepted_seeds(self) -> None:
         outgoing = personalized_pagerank(
@@ -933,13 +928,6 @@ class QueryTest(unittest.TestCase):
         self.assertEqual({"seed", "high"}, {row["node"]["id"] for row in ppr["results"]})
         self.assertEqual("declared-high-with-evidence", gated["policy"]["confidence_gate"])
         self.assertEqual(1, ppr["allowed_edge_count"])
-        # Taxonomy evidence is optional in the source contract, but an empty
-        # statement must not satisfy the declared high-confidence gate.
-        field = {"id": "field", "type": "field", "label": "Field", "properties": {}}
-        taxonomy = {"source": "field", "relation": "contains", "target": "high", "confidence": "high", "curation_status": "current", "evidence": " "}
-        tax_view = GraphView.from_snapshot(snapshot_with([field, nodes[1]], [taxonomy]))
-        self.assertEqual(2, len(expand(tax_view, ["field"], include_taxonomy=True)["nodes"]))
-        self.assertEqual(1, len(expand(tax_view, ["field"], include_taxonomy=True, edge_policy="high-confidence")["nodes"]))
 
     def test_contrasts_are_symmetric_and_paths_preserve_authored_direction(self) -> None:
         edge = {"source": "sigma-algebra", "relation": "contrasts-with", "target": "measure", "evidence": "Fixture comparison.", "curation_status": "current"}
@@ -991,26 +979,19 @@ class QueryTest(unittest.TestCase):
         self.assertLessEqual(bundle["budget"]["estimated_tokens"], 2000)
 
     def test_context_filters_nodes_and_edges_by_explicit_policy(self) -> None:
-        field_node = {
-            "id": "field-node",
-            "type": "field",
-            "label": "Field node",
-            "text": "",
-            "properties": {"aliases": []},
-        }
-        nodes = fixture_nodes() + [field_node]
+        nodes = fixture_nodes()
         edges = fixture_edges()
         edges.append(
             {
-                "source": "field-node",
-                "relation": "contains",
+                "source": "sigma-algebra",
+                "relation": "implies",
                 "target": "measure",
-                "evidence": "Taxonomy membership.",
+                "evidence": "Fixture implication.",
                 "curation_status": "current",
             }
         )
         view = GraphView.from_snapshot(snapshot_with(nodes, edges))
-        selected = ["sigma-algebra", "measure", "field-node"]
+        selected = ["sigma-algebra", "measure"]
 
         self.assertEqual(
             [], context(view, selected, edge_types=[], token_budget=5000)["edges"]
@@ -1021,13 +1002,13 @@ class QueryTest(unittest.TestCase):
             edge_types=["prerequisite-for"],
             token_budget=5000,
         )
-        taxonomy = context(
-            view, selected, edge_types=["contains"], token_budget=5000
+        implication = context(
+            view, selected, edge_types=["implies"], token_budget=5000
         )
         self.assertEqual(
             ["prerequisite-for"], [edge["relation"] for edge in prerequisite["edges"]]
         )
-        self.assertEqual(["contains"], [edge["relation"] for edge in taxonomy["edges"]])
+        self.assertEqual(["implies"], [edge["relation"] for edge in implication["edges"]])
 
         stale_edges = copy.deepcopy(edges)
         stale_edges[0]["curation_status"] = "needs-review"
@@ -1057,25 +1038,21 @@ class QueryTest(unittest.TestCase):
             ],
         )
 
-        field = copy.deepcopy(fixture_nodes()[1])
-        field.update({"id": "field-node", "type": "field", "label": "Field node"})
         orphan = copy.deepcopy(fixture_nodes()[2])
         orphan.update({"id": "orphan-node", "label": "Orphan node"})
         orphan["properties"]["source_status"] = "orphaned"
         orphan["provenance"]["active"] = False
         filtered_view = GraphView.from_snapshot(
-            snapshot_with([fixture_nodes()[0], field, orphan], [])
+            snapshot_with([fixture_nodes()[0], orphan], [])
         )
         filtered = context(
             filtered_view,
-            ["sigma-algebra", "field-node", "orphan-node"],
-            node_types=["knowledge"],
+            ["sigma-algebra", "orphan-node"],
             token_budget=5000,
         )
         inclusive = context(
             filtered_view,
-            ["sigma-algebra", "field-node", "orphan-node"],
-            node_types=["knowledge"],
+            ["sigma-algebra", "orphan-node"],
             include_orphaned=True,
             token_budget=5000,
         )

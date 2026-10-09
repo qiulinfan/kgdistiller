@@ -31,7 +31,7 @@ class CompiledRetrievalError(ValueError):
 
 
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
-_NODE_TEXT = ("name", "kind", "layer", "course", "statement", "formal", "inputs_outputs")
+_NODE_TEXT = ("name", "kind", "layer", "statement", "formal", "inputs_outputs")
 _SURFACE_TEXT = ("gloss", "sense_key")
 _SURFACE_LISTS = ("head_terms", "query_forms", "zh", "symbols", "not_this")
 

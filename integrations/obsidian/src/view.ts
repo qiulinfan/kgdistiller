@@ -12,7 +12,6 @@ import {
 
 import { isSafeVaultPath, parseGraphContract, type KgGraphContract } from "./contract";
 import {
-  fieldOptions,
   graphElements,
   openTarget,
   relationOptions,
@@ -48,7 +47,6 @@ export class KgdistillerGraphView extends ItemView {
     super(leaf);
     this.filters = {
       relation: "",
-      field: "",
       showSources: host.settings.showSources,
       showDefinitions: host.settings.showDefinitions,
       showReferences: host.settings.showReferences,
@@ -136,7 +134,7 @@ export class KgdistillerGraphView extends ItemView {
       this.loadedStamp = await this.graphStamp(configuredPath);
       if (!(await adapter.exists(configuredPath))) {
         throw new Error(
-          `No semantic graph exists at ${configuredPath}. Run kgdistiller export obsidian --replace.`,
+          `No semantic graph exists at ${configuredPath}. Run kgdistiller export obsidian.`,
         );
       }
       this.graph = await parseGraphContract(await adapter.read(configuredPath));
@@ -145,9 +143,6 @@ export class KgdistillerGraphView extends ItemView {
       this.filters.showReferences = this.host.settings.showReferences;
       if (this.filters.relation && !relationOptions(this.graph).includes(this.filters.relation)) {
         this.filters.relation = "";
-      }
-      if (this.filters.field && !fieldOptions(this.graph).includes(this.filters.field)) {
-        this.filters.field = "";
       }
       this.renderToolbar();
       this.renderGraph();
@@ -181,10 +176,6 @@ export class KgdistillerGraphView extends ItemView {
         this.renderGraph();
       },
     );
-    this.addSelect("Field", "All fields", fieldOptions(this.graph), this.filters.field, (value) => {
-      this.filters.field = value;
-      this.renderGraph();
-    });
     this.addToggle("Sources", this.filters.showSources, (value) => {
       this.filters.showSources = value;
       this.renderGraph();
@@ -372,7 +363,6 @@ export class KgdistillerGraphView extends ItemView {
     this.detailEl.createEl("h3", { text: data.label });
     if (data.conceptId) this.detailRow("Concept ID", data.conceptId);
     if (data.relation) this.detailRow("Relation", data.relation);
-    if (data.fields) this.detailRow("Fields", data.fields);
     if (data.status) this.detailRow("Curation", data.status);
     if (data.authority) this.detailRow("Authority", data.authority);
     if (data.line) {

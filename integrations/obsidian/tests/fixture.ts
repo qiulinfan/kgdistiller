@@ -23,26 +23,21 @@ export async function graphFixture(): Promise<KgGraphContract> {
       {
         id: "sigma-algebra",
         label: "Sigma algebra",
-        note_path: "concepts/Sigma algebra.md",
         authority: "notes/chapter.md",
         curation_status: "current",
         aliases: ["Sigma algebra"],
-        fields: ["mathematics"],
       },
       {
         id: "measure",
         label: "Measure",
-        note_path: "concepts/Measure.md",
         authority: "notes/chapter.md",
         curation_status: "pending",
         aliases: ["Measure"],
-        fields: ["probability"],
       },
     ],
     sources: [
       {
         authority: "notes/chapter.md",
-        note_path: "sources/notes/chapter.md.md",
       },
     ],
     semantic_edges: [

@@ -39,7 +39,6 @@ class JsonStoreTest(unittest.TestCase):
         self.graph = self.source / ".knowledge/graph"
         self.identities = self.source / ".knowledge/identities.json"
         self.alignments = self.source / ".knowledge/alignments.json"
-        self.typst_registry = self.source / ".knowledge/build/knowledge-registry.typ"
         initialize_project(
             self.source,
             self.registry,
@@ -65,12 +64,9 @@ class JsonStoreTest(unittest.TestCase):
             self.source,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[],
-            course=None,
-            subject=None,
             write=True,
         )
         delta = self.source / ".knowledge/build/entry.delta.json"
@@ -91,7 +87,6 @@ class JsonStoreTest(unittest.TestCase):
         )
         apply_delta(
             self.graph,
-            self.typst_registry,
             delta,
             repo_root=self.source,
         )
@@ -161,20 +156,16 @@ class JsonStoreTest(unittest.TestCase):
         with self.assertRaisesRegex(StoreError, "entry authority"):
             verify_store(self.output)
 
-    def test_optional_classification_contract_is_validated(self) -> None:
+    def test_document_record_contract_is_validated(self) -> None:
         self.snapshot()
         record = json.loads((self.output / ".knowledge/documents.jsonl").read_text().splitlines()[0])
         validate_contract(record)
-        validate_contract(dict(record, subject="measure-theory", course="seminar"))
-        with self.assertRaises(ContractError):
-            validate_contract(dict(record, subject=""))
+        with self.assertRaisesRegex(ContractError, "unknown property"):
+            validate_contract(dict(record, course="seminar"))
         with self.assertRaisesRegex(ContractError, "format must match"):
             validate_contract(dict(record, format="latex"))
 
-    def test_snapshot_preserves_user_classifications_and_reviewed_alignments(self) -> None:
-        registry = json.loads(self.registry.read_text())
-        registry["sources"][0].update(subject="measure-theory", course="seminar")
-        self.registry.write_text(json.dumps(registry), encoding="utf-8")
+    def test_snapshot_preserves_reviewed_alignments(self) -> None:
         reviewed = {
             "schema": "kgdistiller-alignments-v1",
             "mappings": [{
@@ -187,15 +178,12 @@ class JsonStoreTest(unittest.TestCase):
         }
         self.alignments.write_text(json.dumps(reviewed), encoding="utf-8")
         synchronize(
-            self.source, self.registry, self.graph, self.typst_registry,
+            self.source, self.registry, self.graph,
             identities=self.identities, alignments=self.alignments,
-            files=[], course=None, subject=None, write=True,
+            files=[], write=True,
         )
         alignment_bytes = self.alignments.read_bytes()
         self.snapshot()
-        record = json.loads((self.output / ".knowledge/documents.jsonl").read_text().splitlines()[0])
-        self.assertEqual("measure-theory", record["subject"])
-        self.assertEqual("seminar", record["course"])
         self.assertEqual(alignment_bytes, (self.output / ".knowledge/alignments.json").read_bytes())
         self.assertEqual(alignment_bytes, self.alignments.read_bytes())
         self.assertEqual("verified", verify_store(self.output)["status"])
@@ -241,12 +229,9 @@ class JsonStoreTest(unittest.TestCase):
             self.source,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[],
-            course=None,
-            subject=None,
             write=True,
         )
         delta = self.source / ".knowledge/build/typst-entry.delta.json"
@@ -262,7 +247,7 @@ class JsonStoreTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.source)
+        apply_delta(self.graph, delta, repo_root=self.source)
 
         self.snapshot()
 
@@ -289,9 +274,9 @@ class JsonStoreTest(unittest.TestCase):
         for path, text in native_sources.values():
             (self.source / path).write_text(text, encoding="utf-8")
         synchronize(
-            self.source, self.registry, self.graph, self.typst_registry,
+            self.source, self.registry, self.graph,
             identities=self.identities, alignments=self.alignments,
-            files=[], course=None, subject=None, write=True,
+            files=[], write=True,
         )
         delta = self.source / ".knowledge/build/native-entries.delta.json"
         delta.write_text(json.dumps({
@@ -301,7 +286,7 @@ class JsonStoreTest(unittest.TestCase):
                 for node_id in native_sources
             ],
         }), encoding="utf-8")
-        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.source, registry=self.registry)
+        apply_delta(self.graph, delta, repo_root=self.source, registry=self.registry)
         self.snapshot()
         verify_store(self.output)
         restored_registry = json.loads((self.output / ".knowledge/sources.json").read_text(encoding="utf-8"))
@@ -530,7 +515,7 @@ class JsonStoreTest(unittest.TestCase):
 
         try:
             registry = json.loads(original_registry)
-            registry["sources"][0]["subject"] = "changed-without-sync"
+            registry["sources"][0]["files"] = ["**/*.md"]
             self.registry.write_text(json.dumps(registry), encoding="utf-8")
             with self.assertRaisesRegex(StoreError, "source registry is out of sync"):
                 self.snapshot()
@@ -557,7 +542,7 @@ class JsonStoreTest(unittest.TestCase):
         self.snapshot()
         portable_registry = self.output / ".knowledge/sources.json"
         payload = json.loads(portable_registry.read_text(encoding="utf-8"))
-        payload["sources"][0]["subject"] = "tampered-generation"
+        payload["sources"][0]["files"] = ["**/*.md"]
         portable_registry.write_text(json.dumps(payload), encoding="utf-8")
 
         with self.assertRaisesRegex(StoreError, "source registry is out of sync"):
@@ -585,7 +570,6 @@ class JsonStoreTest(unittest.TestCase):
         victim_graph = victim / ".knowledge/graph"
         victim_identities = victim / ".knowledge/identities.json"
         victim_alignments = victim / ".knowledge/alignments.json"
-        victim_typst = victim / ".knowledge/build/knowledge-registry.typ"
         initialize_project(
             victim,
             victim_registry,
@@ -600,12 +584,9 @@ class JsonStoreTest(unittest.TestCase):
             victim,
             victim_registry,
             victim_graph,
-            victim_typst,
             identities=victim_identities,
             alignments=victim_alignments,
             files=[],
-            course=None,
-            subject=None,
             write=True,
         )
         snapshot_store(
@@ -641,12 +622,9 @@ class JsonStoreTest(unittest.TestCase):
             self.source,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[],
-            course=None,
-            subject=None,
             write=True,
         )
         refreshed = self.snapshot()

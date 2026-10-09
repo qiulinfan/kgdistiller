@@ -80,7 +80,7 @@ def lookup(target, terms, run=None, *, read=False):
                 if match.get('overflow'):
                     row['identity_overflow'] = True
                 if not ids:
-                    hits = call('search', term, '--type', 'knowledge', '--limit', '5', '--depth', '0')['result']['results']
+                    hits = call('search', term, '--limit', '5', '--depth', '0')['result']['results']
                     if re.fullmatch(r'[A-Za-z]{2,5}', term) and (term.isupper() or re.search(r'[a-z][A-Z]', term)):
                         pattern = re.compile(r'(?<![A-Za-z])' + re.escape(term) + r'(?![A-Za-z])', re.I)
                         hits = [h for h in hits if pattern.search(h.get('label', ''))]

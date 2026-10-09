@@ -109,10 +109,10 @@ store consists of:
     └── references.jsonl    # source occurrences used for navigation and backlinks
 ```
 
-New source registration needs only its `id`, `root` and `files` plus the registry
-schema. Do not prefill an invented general field, empty topics, web settings or
-classification policies. User-selected fields/topics and extraction profiles
-remain optional data; source registration does not create knowledge nodes.
+A source registration holds only its `id`, `root`, `files` and an optional
+`document_type`; the registry adds only optional `document_types` extraction
+profiles. Any other key is rejected. Source registration does not create
+knowledge nodes.
 
 `kgdistiller-graph-v2` stores entry content only in the Markdown authorities.
 The loader reads their manifest-bound content and returns hydrated
@@ -123,10 +123,10 @@ graph schema; any other discriminator fails closed.
 Create `identities.json` only for reviewed renames/aliases and `alignments.json`
 only for accepted cross-namespace mappings. Existing nonempty registries remain
 knowledge state. `documents.jsonl` and `store.json` belong to an explicitly
-requested portable snapshot; daily capture, ordinary Git clones and exports do
-not require them. `build/` is transient work. Static and Obsidian exports exist
-only for chosen consumers and must be retained or rebuilt when those consumers
-still use them. These optional artifacts are not mandatory core directories.
+requested portable snapshot; daily capture and ordinary Git clones do not
+require them. `build/` is transient work, including the Obsidian plugin's graph
+feed, which `kgdistiller export obsidian` rebuilds. These optional artifacts are
+not mandatory core directories.
 
 Graph records retain knowledge that source prose alone cannot reconstruct;
 never delete `graph/` as a cache. This compaction changes storage duplication,

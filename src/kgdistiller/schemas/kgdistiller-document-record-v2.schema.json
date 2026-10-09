@@ -5,16 +5,13 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "source_id", "knowledge_origin",
+    "schema", "source_id",
     "authority", "format", "source_sha256", "definition_ids", "reference_count"
   ],
   "properties": {
     "schema": {"const": "kgdistiller-document-record-v2"},
     "source_id": {"type": "string", "minLength": 1},
     "document_type": {"type": "string", "minLength": 1},
-    "subject": {"type": "string", "minLength": 1},
-    "course": {"type": "string", "minLength": 1},
-    "knowledge_origin": {"enum": ["personal-note", "research"]},
     "authority": {"type": "string", "minLength": 1},
     "format": {"enum": ["markdown", "typst", "latex"]},
     "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

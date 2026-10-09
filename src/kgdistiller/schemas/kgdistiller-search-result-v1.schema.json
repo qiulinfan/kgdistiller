@@ -24,7 +24,7 @@
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "nodeId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
-    "edgeType": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+    "edgeType": {"enum": ["prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
     "status": {"enum": ["enabled", "disabled", "degraded", "error"]},
     "reason": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9][a-z0-9._-]*$"},
     "queryLane": {
@@ -104,10 +104,9 @@
     "result": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["node_id", "node_type", "label", "lanes", "seed_evidence", "path_evidence", "fusion"],
+      "required": ["node_id", "label", "lanes", "seed_evidence", "path_evidence", "fusion"],
       "properties": {
         "node_id": {"$ref": "#/$defs/nodeId"},
-        "node_type": {"enum": ["knowledge", "field", "topic"]},
         "label": {"type": "string", "minLength": 1, "maxLength": 1024},
         "lanes": {"$ref": "#/$defs/resultLanes"},
         "seed_evidence": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/seedEvidence"}},

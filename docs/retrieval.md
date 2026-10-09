@@ -16,6 +16,10 @@ completeness is not certified.
 weight3, explicit global/paper-local/scoped alias text weight2, and complete
 definition, conditions, supported entry text and paper key weight1. Identical
 strings are deduplicated. Machine provenance paths and hashes are not indexed.
+`display_name` and `conditions` are reviewed node properties set through an
+ingest delta. Synchronization keeps them on source-backed nodes together with
+the kind, alias, curation and entry properties; any other delta property of a
+source-backed node is dropped at its next sync.
 
 Unicode word tokenization splits compound hyphens/apostrophes. Query terms remain
 bounded at128; document text has no query-term truncation. Identity normalization

@@ -31,7 +31,7 @@ class DistributionInventoryTest(unittest.TestCase):
             / "scripts"
             / "__pycache__"
         )
-        package_cache = REPO_ROOT / "src" / "kgdistiller" / "static" / "__pycache__"
+        package_cache = REPO_ROOT / "src" / "kgdistiller" / "schemas" / "__pycache__"
         product_probe = product_cache / "distribution-regression.cpython-313.pyc"
         package_probe = package_cache / "distribution-regression.cpython-313.pyc"
         for cache, probe in (
@@ -63,7 +63,7 @@ class DistributionInventoryTest(unittest.TestCase):
             "distribution-regression.cpython-313.pyc"
         ).as_posix()
         package_path = PurePosixPath(
-            "kgdistiller/static/__pycache__/"
+            "kgdistiller/schemas/__pycache__/"
             "distribution-regression.cpython-313.pyc"
         ).as_posix()
         self.assertNotIn(package_path, package)

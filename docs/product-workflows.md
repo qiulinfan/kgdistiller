@@ -1,14 +1,16 @@
 # kgdistiller product workflows
 
-kgdistiller owns the deterministic engine, native frontend, CLI/read-only MCP
-server, JSON Schemas, product Skills, per-runtime agent presets, and the
+kgdistiller owns the deterministic engine, CLI/read-only MCP server, JSON
+Schemas, product Skills, per-runtime agent presets, and the
 runtime workflow manifests `workflows/manifest.json` (Codex) and
 `workflows/claude-manifest.json` (Claude Code). Both manifests declare the
 same Skills and workflows; only linkers and agent-preset formats differ. A
 knowledge project owns its Markdown, Typst, and
 LaTeX identity authorities and directly linked source evidence,
 `.knowledge/entries/` atomic authorities, reviewed registries, the `kgdistiller-graph-v2` graph,
-optional `kgdistiller-store-v1` snapshot, and explicitly adopted downstream exports.
+and an optional `kgdistiller-store-v1` snapshot. Publishing the notes (websites,
+course registries, marker registries, HTML conversion) belongs to the
+repositories that own them; kgdistiller has no publishing surface.
 
 The manifests are the portable asset/workflow inventory. Install and validate
 the integration for the runtime you are using from a source checkout or
@@ -37,30 +39,11 @@ product changes; live link modes reflect source changes.
 
 ## Workflow boundaries
 
-### Native LaTeX rendering and exports
+### LaTeX sources
 
 For LaTeX knowledge sources, use the native `\kn{Name}` and `\knref{Name}`
-markers. `sync` renders mathematical names through the local
-`obsidian-latex-live` converter and stores passive HTML/MathML labels. The
-default executable is `latex-live-export`; `KGDISTILLER_LATEX_HTML_COMMAND`
-selects an explicit converter using a JSON argv array. A missing rich-name
-renderer is an actionable setup error, not permission to rewrite identity
-authorities into another format.
-
-From a synchronized knowledge project, `kgdistiller export latex-registry
---output .knowledge/build/knowledge-registry.tex` generates the native TeX
-marker/ID/link definitions. `kgdistiller export latex notes/main.tex --output
-.knowledge/build/main.html` renders a complete native document directly. Use
-`--replace` only for an existing generated result. Names, aliases and authored
-reference spellings map to established graph IDs; rendered text never decides
-identity. These commands do not ingest knowledge or publish a website.
-
-The notes repository's LaTeX web adapter uses this direct route. Retain
-separately requested format migration tools, but do not route LaTeX web export
-through Typst or Pandoc. Whole-document export currently supports pdfLaTeX and
-XeLaTeX and explicitly rejects LuaLaTeX. Read the packaged
-[LaTeX source contract](latex-sources.md) for setup, provenance, protocol,
-marker placement and failure behavior.
+markers. Read the packaged [LaTeX source contract](latex-sources.md) for
+marker placement and how a TeX source is chosen over a Typst sibling.
 
 ### Fast single-item capture
 
@@ -307,28 +290,16 @@ there is no profile, provider, database, or materialization step. Git
 initialization, commit, remote configuration, and push remain explicit separate
 actions.
 
-### Publish a static bundle
-
-Use `$deploy-kgdistiller` after source/graph checks; verify a portable store only
-when the input is an actual snapshot. `export site` requires the
-clean tracked instance inputs and exact producer/source provenance. Run the
-bundled `verify_export.py`; a consumer adopts those verified bytes and receipt,
-not the kgdistiller checkout.
-
-### Export Obsidian
+### Refresh the Obsidian graph feed
 
 Use `$deploy-kgdistiller` and open the knowledge-project root as the editor
-vault. Registered Markdown files and `.knowledge/entries/*.md` remain non-lossy
-authorities.
-Create the managed `kgdistiller-obsidian-projection-v1` subtree as a lossy downstream
-view; never register that subtree in `sources.json`, rescan it, feed it to
-candidate/ingest, or treat projected-note edits as round-trip authority. An
-external output is a browsing-only vault/projection. Rebuild either projection
-with `--replace` from the authority graph.
-The optional Obsidian plugin's semantic graph view consumes only the generated
-`kgdistiller-obsidian-graph-v1` `semantic-graph.json`; it preserves typed
-semantic edges and source definition/reference edges without changing this
-authority boundary.
+vault. Registered sources and `.knowledge/entries/*.md` remain the authorities.
+The optional Obsidian plugin's semantic graph view reads only
+`.knowledge/build/obsidian/semantic-graph.json`
+(`kgdistiller-obsidian-graph-v1`), which `kgdistiller export obsidian` writes
+atomically from the current graph generation. It preserves typed semantic edges
+and source definition/reference edges. Never register the feed in
+`sources.json`, rescan it, or feed it to candidate/ingest.
 
 ### Native indexing of a hidden knowledge folder
 
@@ -343,18 +314,12 @@ semantic graph path, or create a new source authority. See the
 exclusions, rescan behavior, desktop capability limits and upstream
 attribution.
 
-### Serve the native frontend
-
-`kgdistiller serve` uses self-contained packaged assets and binds to
-`127.0.0.1` by default. Network exposure is outside the normal local workflow
-and requires a separate explicit security decision.
-
 ## Handoffs
 
 Paper-reading handoffs lead with the explanation and linked artifacts. The graph
 branch carries concrete use records and graph, snapshot and alignment digests
 from its default read-only lookup. If lookup was explicitly omitted or unavailable,
 report that state instead of fabricated lookup results. Transaction
-handoffs add canonical request/plan/receipt digests. Store, Git, site export,
-Obsidian export, and network publication each have distinct status and
-authority; do not collapse them into a generic “deployed” result.
+handoffs add canonical request/plan/receipt digests. Store, Git and the
+Obsidian graph feed each have distinct status and authority; do not collapse
+them into a generic “deployed” result.

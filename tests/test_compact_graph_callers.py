@@ -16,7 +16,6 @@ from kgdistiller.retrieval import (
     legacy_retrieval_plan,
 )
 from kgdistiller.semantic_retrieval import SemanticRankingService
-from kgdistiller.web import load_graph_payload
 from tests import test_capture, test_semantic_retrieval
 
 
@@ -34,7 +33,7 @@ class CompactGraphCallersTest(unittest.TestCase):
         shutil.move(fixture.paths.graph_dir, self.graph)
         self.paths = replace(fixture.paths, graph_dir=self.graph)
 
-    def test_custom_graph_root_reaches_query_web_mcp_and_retrieval(self) -> None:
+    def test_custom_graph_root_reaches_query_mcp_and_retrieval(self) -> None:
         with self.assertRaisesRegex(QueryError, "explicit repo_root"):
             GraphView.load(self.graph)
         view = GraphView.load(self.graph, repo_root=self.root)
@@ -46,7 +45,6 @@ class CompactGraphCallersTest(unittest.TestCase):
             call_tool(self.graph, "kg_get_node", {"id": "beta"}, repo_root=self.root),
             result,
         )
-        self.assertIn(node, load_graph_payload(self.graph, repo_root=self.root)["nodes"])
         execution = execute_retrieval_plan(self.graph, legacy_retrieval_plan("Beta"), repo_root=self.root)
         self.assertTrue(any(row["node_id"] == "beta" for row in execution["result"]["results"]))
         self.assertEqual({path.name for path in self.graph.iterdir()}, {"manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"})
@@ -71,7 +69,6 @@ class CompactGraphCallersTest(unittest.TestCase):
         authority.write_text(authority.read_text().replace("transforms an input", "changes an input"))
         for read in (
             lambda: GraphView.load(self.graph, repo_root=self.root),
-            lambda: load_graph_payload(self.graph, repo_root=self.root),
             lambda: call_tool(self.graph, "kg_get_node", {"id": "beta"}, repo_root=self.root),
         ):
             with self.assertRaisesRegex(QueryError, "out of sync"):

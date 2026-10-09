@@ -267,7 +267,6 @@ class SemanticRetrievalTest(RetrievalFixture):
         for node_id, properties, type_ in (
             ("stale", {"curation_status": "needs-review"}, "knowledge"),
             ("orphan", {"source_status": "orphaned"}, "knowledge"),
-            ("field", {}, "field"),
         ):
             node = copy.deepcopy(nodes[1])
             node.update({"id": node_id, "label": node_id, "type": type_})
@@ -293,7 +292,6 @@ class SemanticRetrievalTest(RetrievalFixture):
         self.assertEqual(2, self.adapter.document_calls)
         manifests = [json.loads(path.read_text())["manifest"] for path in self.cache_dir.glob("*.json")]
         self.assertEqual({3, 5}, {len(manifest["documents"]) for manifest in manifests})
-        self.assertTrue(all("field" not in {record["node_id"] for record in manifest["documents"]} for manifest in manifests))
         with self.assertRaisesRegex(SemanticRetrievalError, "namespace-conflict"):
             self.service.rank(view, namespace="paper:other", question="test", eligible_ids=["measure"])
 
@@ -312,9 +310,9 @@ class SemanticRetrievalTest(RetrievalFixture):
         self.assertEqual(0, provenance["dimensions"])
         self.assertEqual(0, self.adapter.document_calls)
         self.assertEqual([], self.adapter.query_calls)
-        plan = semantic_plan()
-        plan["filters"]["node_types"] = ["topic"]
-        execution = self.execute(plan)
+        stale = copy.deepcopy(fixture_nodes()[1])
+        stale["properties"]["curation_status"] = "needs-review"
+        execution = self.execute(view=GraphView.from_snapshot(snapshot_with([stale], [])))
         self.assertEqual([], execution["result"]["results"])
         self.assertEqual(0, self.adapter.document_calls)
         self.assertEqual([], self.adapter.query_calls)
@@ -323,7 +321,7 @@ class SemanticRetrievalTest(RetrievalFixture):
 
     def test_excluded_source_text_never_reaches_embedding_adapter(self) -> None:
         nodes = fixture_nodes()
-        for node_id, type_ in (("stale", "knowledge"), ("orphan", "knowledge"), ("field", "field")):
+        for node_id, type_ in (("stale", "knowledge"), ("orphan", "knowledge")):
             node = copy.deepcopy(nodes[1])
             node.update({"id": node_id, "label": node_id, "type": type_, "text": "FORBIDDEN MODEL INPUT " + "large " * 1000})
             if node_id == "stale":
@@ -878,7 +876,7 @@ class RerankerTest(RetrievalFixture):
 
     def test_reranker_filters_and_legacy_mode_keep_original_question_and_candidates(self) -> None:
         nodes = fixture_nodes()
-        for node_id, type_ in (("stale", "knowledge"), ("orphan", "knowledge"), ("field", "field")):
+        for node_id, type_ in (("stale", "knowledge"), ("orphan", "knowledge")):
             node = copy.deepcopy(nodes[1])
             node.update({"id": node_id, "label": node_id, "type": type_})
             if node_id == "stale":

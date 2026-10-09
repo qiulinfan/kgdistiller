@@ -43,12 +43,8 @@ class CaptureTest(unittest.TestCase):
         self.registry.parent.mkdir()
         self.registry.write_text(json.dumps({
             "schema": SOURCE_SCHEMA,
-            "fields": [{"id": "demo", "label": "Demo", "text": "Demo field."}],
             "sources": [{
-                "id": "notes:demo", "subject": "demo", "course": "demo",
-                "knowledge_origin": "personal-note", "fields": ["demo"],
-                "root": "notes", "files": ["*.md", "*.typ", "*.tex"],
-                "web": "https://example.test/notes", "topics": [],
+                "id": "notes:demo", "root": "notes", "files": ["*.md", "*.typ", "*.tex"],
             }],
         }), encoding="utf-8")
         self.alignments = self.root / ".knowledge/alignments.json"
@@ -58,12 +54,11 @@ class CaptureTest(unittest.TestCase):
             graph_dir=self.root / ".knowledge/graph",
             identities=self.root / ".knowledge/identities.json",
             alignments=self.alignments,
-            typst_registry=self.root / ".knowledge/build/knowledge-registry.typ",
         )
         synchronize(
-            self.root, self.registry, self.paths.graph_dir, self.paths.typst_registry,
+            self.root, self.registry, self.paths.graph_dir,
             identities=self.paths.identities, alignments=self.alignments,
-            files=[], course=None, subject=None, write=True,
+            files=[], write=True,
         )
         self.output = self.root / ".knowledge/build/captures"
 
@@ -253,9 +248,9 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual({"kind": "custom-structure"}, request["delta"]["nodes"][0]["properties"])
         apply_ingest(self.paths, request)
         synchronize(
-            self.root, self.registry, self.paths.graph_dir, self.paths.typst_registry,
+            self.root, self.registry, self.paths.graph_dir,
             identities=self.paths.identities, alignments=self.alignments,
-            files=[], course=None, subject=None, write=True,
+            files=[], write=True,
         )
         properties = load_state(self.paths.graph_dir).nodes["beta"]["properties"]
         self.assertEqual("custom-structure", properties["kind"])

@@ -109,7 +109,6 @@ class IngestPaths:
     graph_dir: Path
     identities: Path
     alignments: Path
-    typst_registry: Path
 
 
 @dataclass
@@ -581,7 +580,6 @@ def _validate_preconditions(
         ("graph", paths.graph_dir),
         ("identities", paths.identities),
         ("alignments", paths.alignments),
-        ("typst_registry", paths.typst_registry),
     ):
         _config_relative(paths, path, field)
     state = load_state(paths.graph_dir, repo_root=paths.repo_root)
@@ -810,7 +808,6 @@ def _shadow_paths(paths: IngestPaths, root: Path) -> IngestPaths:
         graph_dir=shadow(paths.graph_dir, "graph"),
         identities=shadow(paths.identities, "identities"),
         alignments=shadow(paths.alignments, "alignments"),
-        typst_registry=shadow(paths.typst_registry, "typst_registry"),
     )
 
 
@@ -866,7 +863,7 @@ def _validate_marker_expectations(
     shadow: IngestPaths, request: dict[str, Any], selected: list[Path]
 ) -> None:
     specs = load_sources(shadow.repo_root, shadow.registry)
-    pairs, _, _ = select_scope(shadow.repo_root, specs, selected, None, None)
+    pairs, _, _ = select_scope(shadow.repo_root, specs, selected)
     # The private shadow already contains the reviewed entry/source patches;
     # marker validation runs before synchronize records their new digests.
     state = load_state(shadow.graph_dir, repo_root=shadow.repo_root, verify_entries=False)
@@ -982,12 +979,9 @@ def _stage_ingest(
                     shadow.repo_root,
                     shadow.registry,
                     shadow.graph_dir,
-                    shadow.typst_registry,
                     identities=shadow.identities,
                     alignments=shadow.alignments,
                     files=selected,
-                    course=None,
-                    subject=None,
                     write=True,
                 )
             except (KnowledgeError, OSError, ValueError) as error:
@@ -1014,7 +1008,6 @@ def _stage_ingest(
             try:
                 delta_report = apply_delta(
                     shadow.graph_dir,
-                    shadow.typst_registry,
                     delta_path,
                     repo_root=shadow.repo_root,
                 )
@@ -1029,12 +1022,9 @@ def _stage_ingest(
                 shadow.repo_root,
                 shadow.registry,
                 shadow.graph_dir,
-                shadow.typst_registry,
                 identities=shadow.identities,
                 alignments=shadow.alignments,
                 files=selected,
-                course=None,
-                subject=None,
                 write=True,
             )
         except (KnowledgeError, OSError, ValueError) as error:
@@ -1089,12 +1079,9 @@ def _stage_ingest(
                 shadow.repo_root,
                 shadow.registry,
                 shadow.graph_dir,
-                shadow.typst_registry,
                 identities=shadow.identities,
                 alignments=shadow.alignments,
                 files=[],
-                course=None,
-                subject=None,
                 write=False,
             )
         except (KnowledgeError, OSError, ValueError) as error:
@@ -1623,7 +1610,6 @@ def _validate_journal(
         ("graph", paths.graph_dir, "directory"),
         ("entries", knowledge_root(paths.repo_root) / "entries", "directory"),
         ("alignments", paths.alignments, "file"),
-        ("typst_registry", paths.typst_registry, "file"),
     ):
         relative = _configured_journal_target(
             paths, target, field=field, stage=stage
@@ -1917,7 +1903,7 @@ def _install_staged(
     targets: list[Path] = []
     for patch in staged.request["authority_patches"]:
         targets.append(paths.repo_root / str(patch["path"]))
-    targets.extend([paths.graph_dir, paths.alignments, paths.typst_registry])
+    targets.extend([paths.graph_dir, paths.alignments])
     targets.append(knowledge_root(paths.repo_root) / "entries")
     unique_targets: list[Path] = []
     seen: set[str] = set()
@@ -1972,9 +1958,6 @@ def _install_staged(
         )
         _install_directory(staged.paths.graph_dir, paths.graph_dir, staged.request_sha256)
         _invoke(failure_injector, "installed-graph")
-        if staged.paths.typst_registry.is_file():
-            _atomic_copy(staged.paths.typst_registry, paths.typst_registry)
-        _invoke(failure_injector, "installed-registry")
         return journal
     except BaseException as error:
         _restore_journal(paths, journal)

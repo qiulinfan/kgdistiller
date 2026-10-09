@@ -49,7 +49,7 @@ describe("kgdistiller Obsidian graph contract", () => {
   it("rejects unsafe paths and dangling semantic endpoints", async () => {
     const unsafe = (await graphFixture()) as unknown as Record<string, unknown>;
     const unsafeConcepts = unsafe.concepts as Array<Record<string, unknown>>;
-    unsafeConcepts[0]!.note_path = "../outside.md";
+    unsafeConcepts[0]!.authority = "../outside.md";
     unsafe.bundle_sha256 = await calculateBundleDigest(unsafe);
     await expect(parseGraphContract(JSON.stringify(unsafe))).rejects.toThrow(
       "safe vault-relative path",

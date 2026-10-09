@@ -22,7 +22,6 @@ class DocumentTypesTest(unittest.TestCase):
         (self.repo / ".knowledge").mkdir()
         self.registry = self.repo / ".knowledge/sources.json"
         self.graph = self.repo / ".knowledge/graph"
-        self.render_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
         self.profile = {
             "node_kinds": ["construction", "measurement protocol"],
             "extraction_guidance": "Extract explained constructions. Leave unexplained terms pending.\nObservations are relations.",
@@ -30,9 +29,8 @@ class DocumentTypesTest(unittest.TestCase):
         self.payload = {
             "schema": cli.SOURCE_SCHEMA,
             "document_types": {"实验日志": self.profile},
-            "fields": [{"id": "geometry", "label": "Geometry", "text": ""}],
             "sources": [{"id": "reading", "root": "sources", "files": ["*.md", "*.typ", "*.tex"],
-                         "fields": ["geometry"], "document_type": "实验日志"}],
+                         "document_type": "实验日志"}],
         }
         self.save_registry()
 
@@ -40,9 +38,7 @@ class DocumentTypesTest(unittest.TestCase):
         self.registry.write_text(json.dumps(self.payload, ensure_ascii=False), encoding="utf-8")
 
     def sync(self):
-        with patch("kgdistiller.cli.render_source_labels"):
-            return cli.synchronize(self.repo, self.registry, self.graph, self.render_registry,
-                                   files=[], course=None, subject=None, write=True)[0]
+        return cli.synchronize(self.repo, self.registry, self.graph, files=[], write=True)[0]
 
     def apply_kind(self, node_id: str, kind: object, *, text: str | None = None) -> None:
         delta = self.repo / "delta.json"
@@ -51,8 +47,7 @@ class DocumentTypesTest(unittest.TestCase):
             node["text"] = text
         delta.write_text(json.dumps({"schema": cli.DELTA_SCHEMA,
                                      "nodes": [node]}), encoding="utf-8")
-        with patch("kgdistiller.cli.render_source_labels"):
-            cli.apply_delta(self.graph, self.render_registry, delta, repo_root=self.repo, registry=self.registry)
+        cli.apply_delta(self.graph, delta, repo_root=self.repo, registry=self.registry)
 
     def test_user_profile_is_independent_of_format_and_domain(self) -> None:
         sources = {
@@ -73,7 +68,6 @@ class DocumentTypesTest(unittest.TestCase):
                 self.assertEqual(definition.document_type, "实验日志")
                 node = cli.source_node(definition, None)
                 self.assertEqual(node["properties"]["document_type"], "实验日志")
-                self.assertEqual(node["properties"]["fields"], ["geometry"])
                 # Profile kinds guide reviewed extraction, not syntax scanning.
                 self.assertEqual(node["properties"]["kind"], definition.kind)
                 self.assertNotIn("source_kind", node["properties"])
@@ -246,8 +240,7 @@ class DocumentTypesTest(unittest.TestCase):
                     {"id": "test-object", "text": text, "properties": {"kind": "construction"}},
                     {"id": "test-object", "properties": {"kind": "measurement protocol"}},
                 ]}), encoding="utf-8")
-                with patch("kgdistiller.cli.render_source_labels"):
-                    cli.apply_delta(self.graph, self.render_registry, delta, repo_root=self.repo, registry=self.registry)
+                cli.apply_delta(self.graph, delta, repo_root=self.repo, registry=self.registry)
                 parsed = parse_entry(entry)
                 self.assertEqual(parsed["entry"]["summary"], text)
                 self.assertEqual(parsed["metadata"]["kgd_kind"], "measurement protocol")

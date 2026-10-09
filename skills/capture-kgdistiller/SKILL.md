@@ -31,8 +31,8 @@ kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY
 
 Use `sources[].document_type` and its entry in `document_types` to select the
 user-registered `node_kinds` and `extraction_guidance`. File format selects the
-native reader; document type guides extraction; fields/topics describe knowledge
-domain. Do not infer one from another or substitute a built-in type list. If the
+native reader; document type guides extraction. Do not infer one from the other
+or substitute a built-in type list. If the
 source has no profile, use the user's explicit extraction scope without silently
 registering one. Read `.md`, `.typ` or `.tex` directly; no source-to-source
 conversion is required. The accepted knowledge entry remains Markdown.

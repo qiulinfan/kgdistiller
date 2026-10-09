@@ -33,20 +33,12 @@ CONTRACT_SCHEMAS = {
         "kgdistiller-document-record-v2",
         "kgdistiller-store-v1",
         "kgdistiller-store-report-v1",
-        "kgdistiller-obsidian-projection-v1",
         "kgdistiller-obsidian-graph-v1",
-        "kgdistiller-obsidian-export-report-v1",
-        "kgdistiller-static-export-v1",
-        "kgdistiller-static-export-report-v1",
-        "kgdistiller-site-graph-v1",
     )
 }
 SELF_DIGEST_FIELDS = {
     "kgdistiller-store-v1": "store_sha256",
-    "kgdistiller-obsidian-projection-v1": "projection_sha256",
     "kgdistiller-obsidian-graph-v1": "bundle_sha256",
-    "kgdistiller-static-export-v1": "export_sha256",
-    "kgdistiller-site-graph-v1": "graph_sha256",
 }
 
 
@@ -228,7 +220,7 @@ def _validate_graph_path(path: dict[str, Any], node_id: str) -> None:
         raise ContractError("graph path must connect a root to its result")
     if [item["node_id"] for item in path["node_bindings"]] != nodes or path["edge_types"] != [step["relation"] for step in steps]:
         raise ContractError("graph path bindings must match all nodes and edges")
-    purposes = {"prerequisite-for": "learning-prerequisite", "derived-from": "source-derivation", "contrasts-with": "comparison", "contains": "taxonomy-navigation"}
+    purposes = {"prerequisite-for": "learning-prerequisite", "derived-from": "source-derivation", "contrasts-with": "comparison"}
     for index, step in enumerate(steps):
         left, right = (step["source"], step["target"]) if step["direction"] == "outgoing" else (step["target"], step["source"])
         if (left, right) != (nodes[index], nodes[index + 1]):
@@ -365,12 +357,6 @@ def _validate_obsidian_graph(payload: dict[str, Any]) -> None:
         raise ContractError("Obsidian graph contains duplicate source authorities")
     concept_set = set(concept_ids)
     source_set = set(source_authorities)
-    note_paths = [
-        str(item["note_path"])
-        for item in [*concepts, *sources]
-    ]
-    if len(note_paths) != len(set(note_paths)):
-        raise ContractError("Obsidian graph contains duplicate note paths")
     if any(str(item["authority"]) not in source_set for item in concepts):
         raise ContractError("Obsidian graph concept has an unknown source authority")
     edge_keys: set[tuple[str, str, str]] = set()

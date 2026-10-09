@@ -11,20 +11,16 @@ explicit versioned schema and release boundary.
 kgdistiller is a local, single-user engine. It validates bounded registered
 paths, rejects traversal and unsafe entry authority paths, checks one complete
 JSON generation before exposing a `GraphView`, bounds MCP and query inputs, and
-serializes transactional writers. MCP is read-only. The packaged browser binds
-to `127.0.0.1` by default, rejects misdirected `Host`/`Origin` values, serves
-only packaged asset names, and binds every source excerpt to the graph snapshot
-and authority hash that selected it. It is still not an authenticated
-multi-user service.
+serializes transactional writers. MCP is read-only. kgdistiller has no web
+server and no publishing surface, and it is not an authenticated multi-user
+service.
 
 Version 0.4 has no model-provider, credential, vector, database, or machine-
 profile runtime. Native Markdown, Typst, and LaTeX authorities remain the only
-knowledge source. Static-site and Obsidian outputs are downstream projections;
-never register or rescan them as authority. The knowledge-project root may be
-opened as an Obsidian editor vault without changing the authority boundary;
-registered Markdown files there remain native authority. Only the managed
-Obsidian subtree (or an external browsing-only output) is lossy and may omit
-source evidence or format semantics.
+knowledge source. The Obsidian plugin's graph feed is derived; never register or
+rescan it as authority. The knowledge-project root may be opened as an Obsidian
+editor vault without changing the authority boundary; registered Markdown files
+there remain native authority.
 
 The user-level vault registry is a machine-local locator, not authority. It
 contains absolute local paths and therefore may disclose directory names; do
@@ -35,15 +31,13 @@ before a command uses a registered path.
 
 Authority repositories may contain private data. Do not attach authorities,
 private graph snapshots, transaction journals, receipts, portable stores,
-static exports, Obsidian projections, or Codex configuration to a public issue.
-Produce a minimal synthetic reproducer. Treat an explicitly configured
-non-loopback browser host and any publication/export destination as separate
-security decisions.
+Obsidian graph feeds, or Codex configuration to a public issue. Produce a
+minimal synthetic reproducer.
 
 ## Reporting
 
 Report a suspected vulnerability privately to the repository owner before
 public disclosure. Include the affected version, operating system, minimal
-synthetic reproduction, impact, and whether an untrusted repository or
-non-loopback service was involved. Never include private authority text or a
+synthetic reproduction, impact, and whether an untrusted repository was
+involved. Never include private authority text or a
 live credential.

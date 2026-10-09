@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import copy
 import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from kgdistiller import cli as knowledge
 from kgdistiller.ingest import IngestPaths, _prepare_shadow
@@ -15,7 +13,6 @@ from kgdistiller.obsidian_export import (
     _require_fresh_authorities,
 )
 from kgdistiller.query import load_graph_view
-from kgdistiller.static_export import StaticExportError, build_site_graph
 from kgdistiller.store import StoreError, _document_inventory
 
 
@@ -29,26 +26,16 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         self.registry.parent.mkdir()
         self.graph = self.root / ".knowledge/graph"
         self.identities = self.root / ".knowledge/identities.json"
-        self.generated = self.root / ".knowledge/build/knowledge-registry.typ"
-        self.write_registry(["**/*.typ", "**/*.tex", "**/*.md"])
-        def labels(state, _root):
-            for node in state.nodes.values():
-                if node["type"] == "knowledge":
-                    node["properties"]["label_html"] = "<span>Fixture label</span>"
-
-        self.labels = patch("kgdistiller.cli.render_source_labels", side_effect=labels)
-        self.labels.start()
-        self.addCleanup(self.labels.stop)
+        self.write_sources(["**/*.typ", "**/*.tex", "**/*.md"])
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def write_registry(self, patterns: list[str]) -> None:
+    def write_sources(self, patterns: list[str]) -> None:
         self.registry.write_text(
             json.dumps({
                 "schema": knowledge.SOURCE_SCHEMA,
-                "fields": [{"id": "math", "label": "Mathematics"}],
-                "sources": [{"id": "notes", "root": "notes", "files": patterns, "fields": ["math"]}],
+                "sources": [{"id": "notes", "root": "notes", "files": patterns}],
             }),
             encoding="utf-8",
         )
@@ -61,8 +48,8 @@ class PairedSourcePreferenceTest(unittest.TestCase):
 
     def sync(self, *files: Path):
         return knowledge.synchronize(
-            self.root, self.registry, self.graph, self.generated,
-            identities=self.identities, files=list(files), course=None, subject=None, write=True,
+            self.root, self.registry, self.graph,
+            identities=self.identities, files=list(files), write=True,
         )
 
     def spec(self):
@@ -76,7 +63,7 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         latex = self.write("chapter.tex", "\\section{Not an identity}\n\\kn{shared}\n\\knref{shared}\n")
         for patterns in (["**/*.typ", "**/*.tex"], ["**/*.tex", "**/*.typ"]):
             with self.subTest(patterns=patterns):
-                self.write_registry(patterns)
+                self.write_sources(patterns)
                 self.assertEqual([latex], knowledge.expand_source(self.spec()))
                 state, _, report = self.sync()
                 self.assertEqual(1, report["definitions"])
@@ -101,7 +88,7 @@ class PairedSourcePreferenceTest(unittest.TestCase):
     def test_unregistered_tex_sibling_does_not_expand_registry_bounds(self) -> None:
         typst = self.write("chapter.typ", "#kn[registered]\n")
         latex = self.write("chapter.tex", "\\kn{unregistered}\n")
-        self.write_registry(["**/*.typ"])
+        self.write_sources(["**/*.typ"])
         self.assertEqual([typst], knowledge.expand_source(self.spec()))
         state, _, _ = self.sync()
         self.assertEqual({"registered"}, self.knowledge_ids(state))
@@ -113,7 +100,7 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         latex = self.write("chapter.tex", "\\kn{shared}\n")
         for files in ([typst], [latex], [typst, latex], [latex, typst], [self.sources]):
             with self.subTest(files=files):
-                pairs, keys, full = knowledge.select_scope(self.root, [self.spec()], files, None, None)
+                pairs, keys, full = knowledge.select_scope(self.root, [self.spec()], files)
                 self.assertEqual([latex], [path for _, path in pairs])
                 self.assertEqual({"notes/chapter.tex"}, keys)
                 self.assertFalse(full)
@@ -157,11 +144,9 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         old_id = next(iter(self.knowledge_ids(before)))
         self.write("chapter.tex", f"\\kn{{{converted_name}}}\n\\knref{{{converted_name}}}\n")
         before_files = {path.relative_to(self.graph): path.read_bytes() for path in self.graph.rglob("*") if path.is_file()}
-        generated = self.generated.read_bytes()
         with self.assertRaisesRegex(knowledge.KnowledgeError, "explicit alias"):
             self.sync()
         self.assertEqual(before_files, {path.relative_to(self.graph): path.read_bytes() for path in self.graph.rglob("*") if path.is_file()})
-        self.assertEqual(generated, self.generated.read_bytes())
 
         self.identities.write_text(json.dumps({
             "schema": knowledge.IDENTITY_SCHEMA,
@@ -200,65 +185,6 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         documents, _ = _document_inventory(self.root, self.registry, state)
         self.assertEqual(["notes/chapter.tex"], [item["authority"] for item in documents])
 
-    def test_paired_typst_names_survive_in_registry_without_becoming_graph_authorities(self) -> None:
-        typst = self.write("chapter.typ", "#kn[$sigma$-algebra]\n#ref[#strong[$sigma$-algebra]]\n")
-        self.write("chapter.tex", "\\kn{$\\sigma$-algebra}\n\\knref{$\\sigma$-algebra}\n")
-        original_typst = typst.read_bytes()
-        state, _, _ = self.sync()
-        original_state = copy.deepcopy(state)
-        names = knowledge.typst_rendering_names(self.root, [self.spec()], state)
-        self.assertEqual({"sigma-algebra": ["$sigma$-algebra", "#strong[$sigma$-algebra]"]}, names)
-        registry = self.generated.read_text(encoding="utf-8")
-        self.assertIn("name: [$sigma$-algebra]", registry)
-        self.assertIn("[#strong[$sigma$-algebra]]", registry)
-        self.assertEqual(registry, knowledge.typst_registry_text(state, names))
-        self.assertEqual(original_state, state)
-        self.assertEqual(original_typst, typst.read_bytes())
-        self.assertEqual({"notes/chapter.tex"}, set(state.manifest["source_hashes"]))
-        self.assertNotIn("typst_name", state.nodes["sigma-algebra"]["properties"])
-        self.assertEqual({"latex"}, {reference["source_format"] for reference in state.references})
-
-    def test_typst_rendering_names_require_explicit_identity_even_for_matching_generated_slug(self) -> None:
-        self.write("chapter.typ", "#kn[alpha+beta]\n#ref[alpha+beta]\n")
-        self.write("chapter.tex", "\\kn{alpha beta}\n")
-        state, _, _ = self.sync()
-        self.assertEqual({"alpha-beta"}, self.knowledge_ids(state))
-        self.assertEqual({}, knowledge.typst_rendering_names(self.root, [self.spec()], state))
-        self.assertNotIn("alpha+beta", self.generated.read_text(encoding="utf-8"))
-
-    def test_typst_rendering_definition_must_belong_to_paired_tex_but_known_refs_can_cross_files(self) -> None:
-        self.write("chapter.typ", "#kn[#strong[elsewhere]]\n#ref[#emph[elsewhere]]\n")
-        self.write("chapter.tex", "\\kn{here}\n")
-        self.write("other.tex", "\\kn{elsewhere}\n")
-        state, _, _ = self.sync()
-        self.assertEqual(
-            {"elsewhere": ["#emph[elsewhere]"]},
-            knowledge.typst_rendering_names(self.root, [self.spec()], state),
-        )
-        state.nodes["elsewhere"]["provenance"]["active"] = False
-        self.assertEqual({}, knowledge.typst_rendering_names(self.root, [self.spec()], state))
-
-    def test_unregistered_typst_is_not_read_for_rendering_names(self) -> None:
-        self.write("chapter.typ", "#kn[unclosed")
-        self.write("chapter.tex", "\\kn{registered}\n")
-        self.write_registry(["**/*.tex"])
-        state, _, _ = self.sync()
-        self.assertEqual({}, knowledge.typst_rendering_names(self.root, [self.spec()], state))
-        self.assertEqual({"notes/chapter.tex"}, set(state.manifest["source_hashes"]))
-
-    def test_paired_rendering_parse_failure_does_not_install_new_graph_generation(self) -> None:
-        typst = self.write("chapter.typ", "#kn[shared]\n")
-        latex = self.write("chapter.tex", "\\kn{shared}\n")
-        self.sync()
-        before = {path.relative_to(self.graph): path.read_bytes() for path in self.graph.rglob("*") if path.is_file()}
-        registry_before = self.generated.read_bytes()
-        typst.write_text("#kn[unclosed", encoding="utf-8")
-        latex.write_text("\\kn{shared} revised definition.\n", encoding="utf-8")
-        with self.assertRaisesRegex(knowledge.KnowledgeError, "paired Typst rendering"):
-            self.sync()
-        self.assertEqual(before, {path.relative_to(self.graph): path.read_bytes() for path in self.graph.rglob("*") if path.is_file()})
-        self.assertEqual(registry_before, self.generated.read_bytes())
-
     def test_exports_reject_old_typst_generation_until_pair_is_synchronized(self) -> None:
         self.write("chapter.typ", "#kn[shared]\n#ref[shared]\n")
         before, _, _ = self.sync()
@@ -267,11 +193,9 @@ class PairedSourcePreferenceTest(unittest.TestCase):
             _require_fresh_authorities(self.root, self.registry, load_graph_view(self.graph))
         with self.assertRaisesRegex(StoreError, "run kgdistiller sync"):
             _document_inventory(self.root, self.registry, before)
-        with self.assertRaisesRegex(StaticExportError, "authority.*registered"):
-            build_site_graph(self.root, self.registry, before)
         after, _, _ = self.sync()
         _require_fresh_authorities(self.root, self.registry, load_graph_view(self.graph))
-        build_site_graph(self.root, self.registry, after)
+        _document_inventory(self.root, self.registry, after)
 
     def test_ingest_shadow_preserves_both_registered_variants_for_fallback(self) -> None:
         self.write("chapter.typ", "#kn[shared]\n")
@@ -279,7 +203,6 @@ class PairedSourcePreferenceTest(unittest.TestCase):
         paths = IngestPaths(
             self.root, self.registry, self.graph,
             self.root / ".knowledge/identities.json", self.root / ".knowledge/alignments.json",
-            self.generated,
         )
         with tempfile.TemporaryDirectory(prefix="kgdistiller-pair-shadow-") as directory:
             shadow = _prepare_shadow(paths, Path(directory).resolve())

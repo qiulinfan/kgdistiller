@@ -98,7 +98,7 @@ class DistillHelpersTests(unittest.TestCase):
                 reads.append(cmd[1])
                 return {'node':{'label':'Unitary matrix','text':'Q* Q = I.',
                                 'entry':{'context':'Complex square matrix.'},
-                                'provenance':{'web':'https://example.test/note'}}}
+                                'provenance':{'authority':'notes/note.md','line':3}}}
             raise AssertionError(cmd)
         searched=lookup.lookup(['--vault','test'],terms,run)
         self.assertEqual(91,len(searched['candidates']))
@@ -107,7 +107,7 @@ class DistillHelpersTests(unittest.TestCase):
         selected=lookup.lookup(['--vault','test'],['unitary-matrix','unitary-matrix'],run,read=True)
         self.assertEqual(['unitary-matrix'],reads)
         self.assertEqual('Complex square matrix.',selected['entries'][0]['details']['context'])
-        self.assertEqual('https://example.test/note',selected['entries'][0]['provenance']['web'])
+        self.assertEqual('notes/note.md',selected['entries'][0]['provenance']['authority'])
 
     def test_explicit_read_has_no_twenty_entry_cutoff_and_reports_truncation(self):
         def run(args):

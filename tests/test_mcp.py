@@ -83,11 +83,9 @@ class MCPTest(unittest.TestCase):
             {
                 "ids",
                 "namespace",
-                "node_types",
                 "edge_types",
                 "direction",
                 "limit",
-                "include_taxonomy",
                 "include_stale",
                 "include_orphaned",
             },

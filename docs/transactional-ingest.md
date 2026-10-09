@@ -89,8 +89,8 @@ The engine:
 4. synchronizes stable marker-derived identities, applies the reviewed delta
    and mappings, and runs scoped plus global deterministic validation;
 5. backs up every live target and records a recovery journal;
-6. installs identity authorities, `.knowledge/entries/`, registries, graph
-   artifacts, and the generated Typst registry while holding the writer lock;
+6. installs identity authorities, `.knowledge/entries/`, registries and graph
+   artifacts while holding the writer lock;
 7. persists the canonical receipt, marks the journal committed, and removes
    the backup.
 
@@ -128,7 +128,7 @@ deterministic JSON generation. If an existing snapshot is not refreshed, report
 it as stale and verify it before using it as a backup. Do not create
 `documents.jsonl` or `store.json` for ordinary capture or merely to satisfy a
 check; `check` and `agent status` validate the live knowledge project.
-Git commit, remote push, static export, and Obsidian projection remain separate
+Git commit, remote push, and the Obsidian graph feed remain separate
 authorities and require explicit scope.
 
 ## Stable failure behavior

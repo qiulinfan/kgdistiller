@@ -304,9 +304,6 @@ def _document_inventory(
             {
                 "schema": DOCUMENT_RECORD_SCHEMA,
                 "source_id": spec.id,
-                **({"subject": spec.subject} if spec.subject else {}),
-                **({"course": spec.course} if spec.course else {}),
-                "knowledge_origin": spec.knowledge_origin,
                 "authority": str(authority),
                 "format": source_format(source),
                 "source_sha256": str(digest),

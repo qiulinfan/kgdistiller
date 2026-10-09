@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  fieldOptions,
   graphElements,
   openTarget,
   relationOptions,
@@ -14,7 +13,6 @@ describe("typed graph model", () => {
     const graph = await graphFixture();
     const elements = graphElements(graph, {
       relation: "",
-      field: "",
       showSources: true,
       showDefinitions: true,
       showReferences: true,
@@ -27,25 +25,10 @@ describe("typed graph model", () => {
     expect(kinds.filter((kind) => kind === "reference")).toHaveLength(1);
   });
 
-  it("filters by field and can hide the provenance layer", async () => {
+  it("filters by relation and can hide the provenance layer", async () => {
     const graph = await graphFixture();
-    const probability = graphElements(graph, {
-      relation: "",
-      field: "probability",
-      showSources: true,
-      showDefinitions: true,
-      showReferences: true,
-    });
-    expect(probability.map((element) => element.data.kind).sort()).toEqual([
-      "concept",
-      "definition",
-      "reference",
-      "source",
-    ]);
-
     const semanticOnly = graphElements(graph, {
       relation: "prerequisite-for",
-      field: "",
       showSources: false,
       showDefinitions: true,
       showReferences: true,
@@ -60,14 +43,12 @@ describe("typed graph model", () => {
   it("builds stable filter options", async () => {
     const graph = await graphFixture();
     expect(relationOptions(graph)).toEqual(["prerequisite-for"]);
-    expect(fieldOptions(graph)).toEqual(["mathematics", "probability"]);
   });
 
   it("opens concept entries and source authorities, never build/ projections", async () => {
     const graph = await graphFixture();
     const elements = graphElements(graph, {
       relation: "",
-      field: "",
       showSources: true,
       showDefinitions: true,
       showReferences: true,

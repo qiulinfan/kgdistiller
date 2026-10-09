@@ -12,7 +12,6 @@
     "strategy": "hybrid"
   },
   "filters": {
-    "node_types": ["knowledge"],
     "include_stale": false,
     "include_orphaned": false
   },

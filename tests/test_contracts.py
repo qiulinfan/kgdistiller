@@ -27,8 +27,6 @@ FIXTURE_CONTRACTS = (
     "kgdistiller-search-result-v1",
     "kgdistiller-search-execution-v1",
     "kgdistiller-document-record-v2",
-    "kgdistiller-static-export-v1",
-    "kgdistiller-site-graph-v1",
 )
 
 
@@ -101,39 +99,6 @@ def minimal_query_status() -> dict:
     }
 
 
-def minimal_obsidian() -> dict:
-    digest = "b" * 64
-    return finalize_self_digest(
-        {
-            "schema": "kgdistiller-obsidian-projection-v1",
-            "status": "ready",
-            "source": {
-                "graph_schema": "kgdistiller-graph-v2",
-                "graph_sha256": digest,
-                "snapshot_sha256": digest,
-                "source_hashes_sha256": digest,
-            },
-            "policy": {
-                "nodes": "active-knowledge",
-                "edges": "current-semantic",
-                "edge_semantics_in_obsidian_graph": "lossy",
-                "plugin_graph": "typed",
-                "authority_links": "vault-relative",
-            },
-            "counts": {"concepts": 0, "sources": 0, "links": 0},
-            "artifacts": [
-                {
-                    "kind": "semantic-graph",
-                    "path": "semantic-graph.json",
-                    "bytes": 0,
-                    "sha256": digest,
-                }
-            ],
-        },
-        "projection_sha256",
-    )
-
-
 def minimal_obsidian_graph() -> dict:
     digest = "9" * 64
     return finalize_self_digest(
@@ -156,19 +121,12 @@ def minimal_obsidian_graph() -> dict:
                 {
                     "id": "measure",
                     "label": "Measure",
-                    "note_path": "concepts/Measure.md",
                     "authority": "notes/chapter.md",
                     "curation_status": "current",
                     "aliases": ["Measure"],
-                    "fields": ["mathematics"],
                 }
             ],
-            "sources": [
-                {
-                    "authority": "notes/chapter.md",
-                    "note_path": "sources/notes/chapter.md.md",
-                }
-            ],
+            "sources": [{"authority": "notes/chapter.md"}],
             "semantic_edges": [],
             "definitions": [
                 {
@@ -210,75 +168,6 @@ def minimal_store_report() -> dict:
     }
 
 
-def minimal_obsidian_report() -> dict:
-    digest = "e" * 64
-    return {
-        "schema": "kgdistiller-obsidian-export-report-v1",
-        "status": "verified",
-        "artifact_schema": "kgdistiller-obsidian-projection-v1",
-        "projection_sha256": digest,
-        "source": {
-            "graph_schema": "kgdistiller-graph-v2",
-            "graph_sha256": digest,
-            "snapshot_sha256": digest,
-            "source_hashes_sha256": digest,
-        },
-        "policy": {
-            "nodes": "active-knowledge",
-            "edges": "current-semantic",
-            "edge_semantics_in_obsidian_graph": "lossy",
-            "plugin_graph": "typed",
-            "authority_links": "vault-relative",
-        },
-        "counts": {"concepts": 0, "sources": 0, "links": 0},
-        "output": "/tmp/obsidian",
-        "changed": False,
-    }
-
-
-def minimal_static_report() -> dict:
-    digest = "f" * 64
-    counts = {"nodes": 0, "edges": 0, "references": 0}
-    return {
-        "schema": "kgdistiller-static-export-report-v1",
-        "status": "exported",
-        "artifact_schema": "kgdistiller-static-export-v1",
-        "committed": True,
-        "cleanup_status": "complete",
-        "warnings": [],
-        "recovery_paths": [],
-        "output": "/tmp/site",
-        "export_sha256": digest,
-        "producer": {
-            "name": "kgdistiller",
-            "repository": "https://github.com/example/kgdistiller",
-            "version": "0.4.0",
-            "commit": "a" * 40,
-        },
-        "source": {
-            "repository": "https://github.com/example/notes",
-            "revision": "b" * 40,
-            "digest": digest,
-            "published_digest": digest,
-        },
-        "graph": {
-            "private_schema": "kgdistiller-graph-v2",
-            "private_sha256": digest,
-            "private_counts": counts,
-            "public_schema": "kgdistiller-site-graph-v1",
-            "public_sha256": digest,
-            "public_counts": counts,
-        },
-        "visibility": {
-            "policy": "explicit-publish",
-            "published_sources": [],
-            "excluded_sources": 0,
-        },
-        "replaced": False,
-        "replaces_export_sha256": None,
-    }
-
-
 class ContractTest(unittest.TestCase):
     def test_current_contract_catalog_is_packaged(self) -> None:
         self.assertEqual(
@@ -301,12 +190,7 @@ class ContractTest(unittest.TestCase):
                 "kgdistiller-document-record-v2",
                 "kgdistiller-store-v1",
                 "kgdistiller-store-report-v1",
-                "kgdistiller-obsidian-projection-v1",
                 "kgdistiller-obsidian-graph-v1",
-                "kgdistiller-obsidian-export-report-v1",
-                "kgdistiller-static-export-v1",
-                "kgdistiller-static-export-report-v1",
-                "kgdistiller-site-graph-v1",
             },
             set(CONTRACT_SCHEMAS),
         )
@@ -323,10 +207,7 @@ class ContractTest(unittest.TestCase):
                 minimal_query_status(),
                 minimal_store(),
                 minimal_store_report(),
-                minimal_obsidian(),
                 minimal_obsidian_graph(),
-                minimal_obsidian_report(),
-                minimal_static_report(),
             ]
         )
         for payload in payloads:
@@ -362,11 +243,7 @@ class ContractTest(unittest.TestCase):
     def test_current_wrapper_contracts_reject_unknown_graph_schema(self) -> None:
         cases = [
             (minimal_query_status(), ("graph_schema",)),
-            (minimal_obsidian(), ("source", "graph_schema")),
             (minimal_obsidian_graph(), ("source", "graph_schema")),
-            (minimal_obsidian_report(), ("source", "graph_schema")),
-            (minimal_static_report(), ("graph", "private_schema")),
-            (fixture("kgdistiller-static-export-v1"), ("graph", "private_schema")),
         ]
         for payload, path in cases:
             target = payload
@@ -383,7 +260,6 @@ class ContractTest(unittest.TestCase):
     def test_store_and_obsidian_self_digests_detect_tampering(self) -> None:
         for payload, field in (
             (minimal_store(), "store_sha256"),
-            (minimal_obsidian(), "projection_sha256"),
             (minimal_obsidian_graph(), "bundle_sha256"),
         ):
             payload["status" if "status" in payload else "generator"] = "tampered"
@@ -434,29 +310,11 @@ class ContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "must be <= 128"):
             validate_contract(result)
 
-    def test_document_normalization_and_public_edge_privacy_are_enforced(self) -> None:
+    def test_document_normalization_is_enforced(self) -> None:
         document = fixture("kgdistiller-document-record-v2")
         document["format"] = "typst"
         with self.assertRaisesRegex(ContractError, "authority extension"):
             validate_contract(document)
-
-        graph = fixture("kgdistiller-site-graph-v1")
-        graph["nodes"] = [
-            {"id": "a", "type": "knowledge", "label": "A"},
-            {"id": "b", "type": "knowledge", "label": "B"},
-        ]
-        graph["edges"] = [
-            {
-                "source": "a",
-                "relation": "derived-from",
-                "target": "b",
-                "evidence": "must remain private",
-            }
-        ]
-        graph["counts"] = {"nodes": 2, "edges": 1, "references": 0}
-        graph = finalize_self_digest(graph, "graph_sha256")
-        with self.assertRaisesRegex(ContractError, "unknown property"):
-            validate_contract(graph)
 
     def test_schema_loading_and_json_parsing_fail_closed(self) -> None:
         with (

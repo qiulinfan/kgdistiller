@@ -282,7 +282,7 @@ describe("graph view loading", () => {
     Object.assign(view, {
       app: { vault: { adapter, getAbstractFileByPath: vi.fn(() => null), read: vi.fn() } },
       host: { settings: { ...DEFAULT_SETTINGS, graphPath } },
-      filters: { relation: "", field: "", showSources: true, showDefinitions: true, showReferences: true },
+      filters: { relation: "", showSources: true, showDefinitions: true, showReferences: true },
       graph: null, toolbarEl: {}, graphEl: { empty: vi.fn(), createDiv: vi.fn() }, statusEl: {}, refreshQueue: Promise.resolve(),
       renderToolbar: vi.fn(), renderGraph: vi.fn(), setStatus: vi.fn(),
     });
@@ -356,7 +356,7 @@ describe("graph view loading", () => {
     expect(adapter.read).not.toHaveBeenCalled();
     expect(view.graph).toBeNull();
     expect((view.graphEl as { createDiv: ReturnType<typeof vi.fn> }).createDiv).toHaveBeenCalledWith(expect.objectContaining({
-      text: "No semantic graph exists at .knowledge/build/obsidian/semantic-graph.json. Run kgdistiller export obsidian --replace.",
+      text: "No semantic graph exists at .knowledge/build/obsidian/semantic-graph.json. Run kgdistiller export obsidian.",
     }));
   });
 });

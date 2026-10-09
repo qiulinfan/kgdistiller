@@ -17,9 +17,13 @@ only kgdistiller knowledge root.
   `build` to open review drafts there. Leading and trailing slashes are dropped
   (`build/` means `build`). Changing the list rescans the folder without writing
   or deleting any file.
-- The plugin accepts only `kgdistiller-graph-v2` graphs and rejects
-  `kgdistiller-graph-v1`. Re-export the projection from a graph-v2 project
-  with `kgdistiller export obsidian --replace`.
+- The plugin reads only `.knowledge/build/obsidian/semantic-graph.json`,
+  regenerated with `kgdistiller export obsidian`. The feed no longer carries
+  note paths or fields, the **Field** filter is removed, and older feeds are
+  rejected until they are regenerated. Only `kgdistiller-graph-v2` sources are
+  accepted. Whenever a product update changes the feed contract, reinstall the
+  plugin with `kgdistiller obsidian install --replace` before or together with
+  `kgdistiller export obsidian`; an older installed plugin rejects the new feed.
 - Open buttons target accepted entries (`.knowledge/entries/<node-id>.md`) for
   concepts and the source authority file for sources, definitions and
   references. Open targets exist only for a graph under the vault-root

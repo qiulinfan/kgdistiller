@@ -277,9 +277,9 @@ class HarvestTest(unittest.TestCase):
         sheet = self.root / "notes/chapter-defs.md"
         original = "---\r\ntitle: Reading\r\n---\r\n\r\n# Definitions\r\n\r\nMy annotation.  \r\n"
         sheet.write_bytes(original.encode())
-        synchronize(self.root, self.registry, self.paths.graph_dir, self.paths.typst_registry,
+        synchronize(self.root, self.registry, self.paths.graph_dir,
                     identities=self.paths.identities, alignments=self.alignments,
-                    files=[], course=None, subject=None, write=True)
+                    files=[], write=True)
         self.assertIn("notes/chapter-defs.md", load_state(self.paths.graph_dir).manifest["source_hashes"])
         self.prepare()
         self.assertTrue(sheet.read_bytes().startswith(b"---\r\ntitle: Reading\r\n---\r\n"))

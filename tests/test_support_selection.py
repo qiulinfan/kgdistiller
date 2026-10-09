@@ -121,22 +121,21 @@ class SupportSelectionTest(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(RetrievalError, "stale-generation"):
                 validate_support_selection(self.view, self.execution, self.plan, forged)
 
-    def test_current_filters_control_type_staleness_and_orphaned_sources(self) -> None:
+    def test_current_filters_control_staleness_and_orphaned_sources(self) -> None:
         nodes = fixture_nodes()
         stale = copy.deepcopy(nodes[0]); stale["id"] = "stale"; stale["properties"]["curation_status"] = "needs-review"
         orphan = copy.deepcopy(nodes[0]); orphan["id"] = "orphan"; orphan["properties"]["source_status"] = "orphaned"; orphan["provenance"]["active"] = False
-        field = {"id": "field", "type": "field", "label": "Field", "properties": {}}
-        view = GraphView.from_snapshot(snapshot_with([*nodes, stale, orphan, field], []))
+        view = GraphView.from_snapshot(snapshot_with([*nodes, stale, orphan], []))
         execution = execute_retrieval_plan(view, self.plan)
-        for node_id in ("stale", "orphan", "field"):
+        for node_id in ("stale", "orphan"):
             selected = [{"node_id": node_id, "requirement_ids": ["hq001-r1"], "reason": "Explicit hypothesis."}]
             with self.subTest(node_id=node_id), self.assertRaisesRegex(RetrievalError, "excluded"):
                 make_support_selection(view, execution, self.plan, selected)
-        plan = copy.deepcopy(self.plan); plan["filters"].update(include_stale=True, include_orphaned=True, node_types=["knowledge", "field"])
+        plan = copy.deepcopy(self.plan); plan["filters"].update(include_stale=True, include_orphaned=True)
         execution = execute_retrieval_plan(view, plan)
-        selected = [{"node_id": node_id, "requirement_ids": ["hq001-r1"], "reason": "Explicit inclusive support."} for node_id in ("stale", "orphan", "field")]
+        selected = [{"node_id": node_id, "requirement_ids": ["hq001-r1"], "reason": "Explicit inclusive support."} for node_id in ("stale", "orphan")]
         manifest = make_support_selection(view, execution, plan, selected)
-        self.assertEqual(3, len(validate_support_selection(view, execution, plan, manifest)))
+        self.assertEqual(2, len(validate_support_selection(view, execution, plan, manifest)))
 
     def test_altered_source_and_coherent_snapshot_mutation_cannot_claim_old_generation(self) -> None:
         manifest = self.make()

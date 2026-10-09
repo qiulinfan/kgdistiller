@@ -39,12 +39,10 @@ def _expected_package_files() -> set[str]:
         relative = path.relative_to(PACKAGE_ROOT)
         if _is_python_cache(relative):
             continue
-        if path.suffix == ".py" or relative.parts[0] in {"schemas", "static"}:
+        if path.suffix == ".py" or relative.parts[0] == "schemas":
             expected.add(PurePosixPath("kgdistiller", *relative.parts).as_posix())
     if not any(name.startswith("kgdistiller/schemas/") for name in expected):
         raise RuntimeError("source schema inventory is empty")
-    if not any(name.startswith("kgdistiller/static/") for name in expected):
-        raise RuntimeError("source static-asset inventory is empty")
     return expected
 
 
@@ -171,7 +169,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"distribution check failed: {error}", file=sys.stderr)
         return 1
     schemas = sum(name.startswith("kgdistiller/schemas/") for name in expected)
-    static = sum(name.startswith("kgdistiller/static/") for name in expected)
     modules = sum(name.endswith(".py") for name in expected)
     product = sum(name.startswith("kgdistiller/product/") for name in expected)
     obsidian = sum(
@@ -179,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"distribution check passed: modules={modules} schemas={schemas} "
-        f"static={static} product={product} obsidian={obsidian} "
+        f"product={product} obsidian={obsidian} "
         f"wheel={wheel.name} sdist={sdist.name}"
     )
     return 0

@@ -54,7 +54,6 @@ DEFAULT_SEMANTIC_RELATIONS = {
     "contrasts-with",
     "derived-from",
 }
-ALL_RELATIONS = {*DEFAULT_SEMANTIC_RELATIONS, "contains"}
 MAX_LIMIT = 500
 MAX_BATCH_CONCEPTS = 512
 MAX_GRAPH_SEEDS = 128
@@ -198,7 +197,7 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "snapshot node label must be a non-empty string of at most "
                 f"{MAX_NODE_LABEL_LENGTH} characters"
             )
-        if node.get("type") not in {"knowledge", "field", "topic"}:
+        if node.get("type") != "knowledge":
             raise QueryError("snapshot node has an unsupported type")
         for field in ("properties", "provenance", "entry"):
             if field in node and not isinstance(node[field], dict):
@@ -211,24 +210,17 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             not isinstance(alias, str) for alias in aliases
         ):
             raise QueryError("snapshot node aliases must be an array of strings")
-        if node.get("type") == "knowledge":
-            if "curation_status" in properties and properties["curation_status"] not in {
-                "current",
-                "pending",
-                "needs-review",
-            }:
-                raise QueryError("snapshot node curation status is invalid")
-            if "source_status" in properties and properties["source_status"] not in {
-                "active",
-                "orphaned",
-            }:
-                raise QueryError("snapshot node source status is invalid")
-        else:
-            for field in ("curation_status", "source_status"):
-                if field in properties and (
-                    not isinstance(properties[field], str) or not properties[field]
-                ):
-                    raise QueryError(f"snapshot taxonomy node {field} is invalid")
+        if "curation_status" in properties and properties["curation_status"] not in {
+            "current",
+            "pending",
+            "needs-review",
+        }:
+            raise QueryError("snapshot node curation status is invalid")
+        if "source_status" in properties and properties["source_status"] not in {
+            "active",
+            "orphaned",
+        }:
+            raise QueryError("snapshot node source status is invalid")
         provenance = node.get("provenance") or {}
         if "authority" in provenance and (
             not isinstance(provenance["authority"], str)
@@ -256,8 +248,7 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
                 raise QueryError("snapshot node source location is invalid")
         if "active" in provenance and not isinstance(provenance["active"], bool):
             raise QueryError("snapshot node provenance.active must be boolean")
-        requires_source = namespace != "personal" or node.get("type") == "knowledge"
-        if requires_source and (
+        if (
             not isinstance(provenance.get("authority"), str)
             or not provenance["authority"]
             or not any(
@@ -270,10 +261,6 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     if len(node_ids) != len(set(node_ids)):
         raise QueryError("snapshot contains duplicate node IDs")
     known = set(node_ids)
-    node_types = {
-        str(node["id"]): str(node["type"])
-        for node in rows["nodes"]
-    }
     edge_keys: set[tuple[str, str, str]] = set()
     for edge in rows["edges"]:
         if not isinstance(edge, dict):
@@ -287,7 +274,7 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             or not isinstance(target, str)
             or not ID_RE.fullmatch(target)
             or not isinstance(relation, str)
-            or relation not in ALL_RELATIONS
+            or relation not in DEFAULT_SEMANTIC_RELATIONS
         ):
             raise QueryError("snapshot contains an invalid edge")
         key = (source, relation, target)
@@ -295,19 +282,13 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             raise QueryError("snapshot contains a dangling edge")
         if key in edge_keys:
             raise QueryError("snapshot contains an invalid or duplicate edge")
-        if relation != "contains" and (
+        if (
             not isinstance(edge.get("evidence"), str)
             or not edge["evidence"].strip()
         ):
             raise QueryError("snapshot semantic edge has no evidence")
         if "evidence" in edge and not isinstance(edge["evidence"], str):
             raise QueryError("snapshot edge evidence must be a string")
-        if relation == "contains" and (node_types[source], node_types[target]) not in {
-            ("field", "topic"),
-            ("field", "knowledge"),
-            ("topic", "knowledge"),
-        }:
-            raise QueryError("snapshot contains edge has invalid node types")
         edge_keys.add(key)
     reference_ids: set[str] = set()
     for reference in rows["references"]:
@@ -787,7 +768,6 @@ def search(
     query: str,
     *,
     namespace: str = "personal",
-    node_types: list[str] | None = None,
     limit: int = 20,
     include_stale: bool = False,
     include_orphaned: bool = False,
@@ -801,7 +781,6 @@ def search(
     terms = set(_tokens(query)[:MAX_QUERY_TERMS])
     if not terms:
         return []
-    allowed_types = set(node_types or [])
     ranked: list[tuple[float, str, list[dict[str, Any]]]] = []
     scoped_by_node: dict[str, list[str]] = defaultdict(list)
     for surface, records in view.scoped_aliases.items():
@@ -809,8 +788,6 @@ def search(
             scoped_by_node[str(record["node_id"])].append(surface)
     documents: dict[str, Counter[str]] = {}
     for node_id, node in view.nodes.items():
-        if allowed_types and node.get("type") not in allowed_types:
-            continue
         if not _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned):
             continue
         label, aliases, body = _node_search_fields(node)
@@ -890,12 +867,10 @@ def expand(
     seed_ids: list[str],
     *,
     namespace: str = "personal",
-    node_types: list[str] | None = None,
     direction: str = "both",
     edge_types: list[str] | None = None,
     max_depth: int = 1,
     limit: int = 50,
-    include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
     edge_policy: str = "current",
@@ -918,15 +893,10 @@ def expand(
         raise QueryError(f"unknown graph seed: {namespace}:{unknown}")
     if len(seeds) > limit:
         raise QueryError("graph seed batch exceeds the result limit")
-    allowed_types = set(node_types or [])
     relations = set(edge_types) if edge_types is not None else set(DEFAULT_SEMANTIC_RELATIONS)
-    if edge_types is None and include_taxonomy:
-        relations.add("contains")
     visited: dict[str, tuple[int, list[dict[str, Any]], str]] = {}
     queue: deque[tuple[str, int, list[dict[str, Any]], str]] = deque()
     for seed in seeds:
-        if allowed_types and view.nodes[seed].get("type") not in allowed_types:
-            raise QueryError(f"graph seed is excluded by filters: {namespace}:{seed}")
         if not _allowed(view.nodes[seed], include_stale=include_stale, include_orphaned=include_orphaned):
             raise QueryError(f"graph seed is excluded by filters: {namespace}:{seed}")
         visited[seed] = (0, [], seed)
@@ -952,8 +922,6 @@ def expand(
             if edge.get("relation") not in relations or not _edge_allowed(edge, include_stale=include_stale, edge_policy=edge_policy):
                 continue
             node = view.nodes[neighbor]
-            if allowed_types and node.get("type") not in allowed_types:
-                continue
             if not _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned):
                 continue
             key = (str(edge["source"]), str(edge["relation"]), str(edge["target"]))
@@ -982,11 +950,9 @@ def expand(
         "seeds": seeds,
         "policy": {
             "direction": direction,
-            "node_types": sorted(allowed_types),
             "edge_types": sorted(relations),
             "max_depth": max_depth,
             "limit": limit,
-            "include_taxonomy": include_taxonomy,
             "include_stale": include_stale,
             "include_orphaned": include_orphaned,
             "edge_policy": edge_policy,
@@ -1003,10 +969,8 @@ def personalized_pagerank(
     seeds: Mapping[str, float],
     *,
     namespace: str = "personal",
-    node_types: list[str] | None = None,
     edge_types: list[str] | None = None,
     direction: str = "out",
-    include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
     edge_policy: str = "current",
@@ -1050,14 +1014,10 @@ def personalized_pagerank(
     ):
         raise QueryError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH} or None")
     relations = set(edge_types) if edge_types is not None else set(DEFAULT_SEMANTIC_RELATIONS)
-    if edge_types is None and include_taxonomy:
-        relations.add("contains")
-    allowed_types = set(node_types or [])
     valid_nodes = {
         node_id: node
         for node_id, node in view.nodes.items()
-        if (not allowed_types or node.get("type") in allowed_types)
-        and _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned)
+        if _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned)
     }
     positive: dict[str, float] = {}
     for node_id, raw_weight in seeds.items():
@@ -1079,7 +1039,7 @@ def personalized_pagerank(
     scaled = {node_id: weight / weight_scale for node_id, weight in positive.items()}
     scaled_total = math.fsum(scaled.values())
     valid_adjacency: dict[str, dict[str, float]] = {node_id: {} for node_id in valid_nodes}
-    weights = {"prerequisite-for": 1.0, "implies": 1.0, "generalizes": 0.9, "derived-from": 0.9, "contrasts-with": 0.7, "contains": 0.3}
+    weights = {"prerequisite-for": 1.0, "implies": 1.0, "generalizes": 0.9, "derived-from": 0.9, "contrasts-with": 0.7}
     valid_edges: list[dict[str, Any]] = []
     for edge in view.edges:
         source_id, target_id, relation = str(edge["source"]), str(edge["target"]), str(edge["relation"])
@@ -1173,7 +1133,6 @@ def personalized_pagerank(
             "tolerance": tolerance,
             "edge_types": sorted(relations),
             "direction": direction,
-            "include_taxonomy": include_taxonomy,
             "edge_policy": edge_policy,
             "confidence_gate": "declared-high-with-evidence" if edge_policy == "high-confidence" else "none",
             "max_depth": max_depth,
@@ -1221,7 +1180,6 @@ def context(
     node_ids: list[str],
     *,
     namespace: str = "personal",
-    node_types: list[str] | None = None,
     edge_types: list[str] | None = None,
     include_stale: bool = False,
     include_orphaned: bool = False,
@@ -1233,14 +1191,12 @@ def context(
     _namespace(view, namespace)
     if isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 1:
         raise QueryError("token_budget must be positive")
-    allowed_types = set(node_types or [])
     allowed_relations = None if edge_types is None else set(edge_types)
     selected = list(
         dict.fromkeys(
             node_id
             for node_id in node_ids
             if node_id in view.nodes
-            and (not allowed_types or view.nodes[node_id].get("type") in allowed_types)
             and _allowed(
                 view.nodes[node_id],
                 include_stale=include_stale,

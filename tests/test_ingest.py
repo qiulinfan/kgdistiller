@@ -62,20 +62,11 @@ class TransactionalIngestTest(unittest.TestCase):
             json.dumps(
                 {
                     "schema": SOURCE_SCHEMA,
-                    "fields": [
-                        {"id": "demo", "label": "Demo", "text": "Fixture field."}
-                    ],
                     "sources": [
                         {
                             "id": "notes:demo",
-                            "subject": "demo",
-                            "course": "demo",
-                            "knowledge_origin": "personal-note",
-                            "fields": ["demo"],
                             "root": "notes/demo",
                             "files": ["*.md", "*.typ", "*.tex"],
-                            "web": "https://example.test/demo",
-                            "topics": [],
                         }
                     ],
                 }
@@ -88,25 +79,20 @@ class TransactionalIngestTest(unittest.TestCase):
         self.alignments.write_text(
             json.dumps(empty_alignment_set()), encoding="utf-8"
         )
-        self.typst_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
         self.paths = IngestPaths(
             repo_root=self.repo,
             registry=self.registry,
             graph_dir=self.graph,
             identities=self.identities,
             alignments=self.alignments,
-            typst_registry=self.typst_registry,
         )
         synchronize(
             self.repo,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[],
-            course=None,
-            subject=None,
             write=True,
         )
         baseline_delta = self.repo / ".knowledge/build/baseline.delta.json"
@@ -125,17 +111,14 @@ class TransactionalIngestTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        apply_delta(self.graph, self.typst_registry, baseline_delta)
+        apply_delta(self.graph, baseline_delta)
         synchronize(
             self.repo,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[self.authority.relative_to(self.repo)],
-            course=None,
-            subject=None,
             write=True,
         )
 
@@ -287,7 +270,6 @@ class TransactionalIngestTest(unittest.TestCase):
         values: dict[str, str | None] = {
             "authority": sha256_file(self.authority),
             "alignments": sha256_file(self.alignments),
-            "registry": sha256_file(self.typst_registry),
         }
         for path in sorted(self.graph.rglob("*")):
             if path.is_file():
@@ -373,9 +355,9 @@ class TransactionalIngestTest(unittest.TestCase):
                 encoding="utf-8",
             )
         synchronize(
-            self.repo, self.registry, self.graph, self.typst_registry,
+            self.repo, self.registry, self.graph,
             identities=self.identities, alignments=self.alignments,
-            files=[], course=None, subject=None, write=True,
+            files=[], write=True,
         )
         node = self.candidate["nodes"][0]
         node.update({"id": "alpha", "label": "Alpha", "text": "Alpha is the first concept."})
@@ -507,9 +489,9 @@ class TransactionalIngestTest(unittest.TestCase):
                 encoding="utf-8",
             )
         synchronize(
-            self.repo, self.registry, self.graph, self.typst_registry,
+            self.repo, self.registry, self.graph,
             identities=self.identities, alignments=self.alignments,
-            files=[], course=None, subject=None, write=True,
+            files=[], write=True,
         )
         edge = {
             "source": "gamma", "relation": "prerequisite-for", "target": "beta",
@@ -521,7 +503,7 @@ class TransactionalIngestTest(unittest.TestCase):
                 "schema": DELTA_SCHEMA, "nodes": [], "edges": [edge],
                 "remove_nodes": [], "remove_edges": [],
             }), encoding="utf-8")
-            apply_delta(self.graph, self.typst_registry, delta_path)
+            apply_delta(self.graph, delta_path)
         else:
             request["delta"]["edges"] = [edge]
         state = load_state(self.graph)
@@ -752,7 +734,6 @@ class TransactionalIngestTest(unittest.TestCase):
             "installed-authorities",
             "installed-alignments",
             "installed-graph",
-            "installed-registry",
             "receipt-written",
         ]
         baseline = self.material_hashes()
@@ -777,12 +758,9 @@ class TransactionalIngestTest(unittest.TestCase):
             self.repo,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[],
-            course=None,
-            subject=None,
             write=True,
         )
         self.assertFalse((self.repo / ".knowledge/entries").exists())

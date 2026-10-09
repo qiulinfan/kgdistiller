@@ -45,7 +45,6 @@ def retrieval_plan() -> dict:
             "strategy": "hybrid",
         },
         "filters": {
-            "node_types": ["knowledge"],
             "include_stale": False,
             "include_orphaned": False,
         },
@@ -86,11 +85,9 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("graph", measure["lanes"])
         self.assertIn("ppr", measure["lanes"])
 
-    def test_graph_lane_filters_neighbor_type_staleness_and_orphan_status(self) -> None:
+    def test_graph_lane_filters_neighbor_staleness_and_orphan_status(self) -> None:
         seed = copy.deepcopy(fixture_nodes()[0])
         active = copy.deepcopy(fixture_nodes()[1])
-        field = copy.deepcopy(active)
-        field.update({"id": "field-node", "type": "field", "label": "Field node"})
         stale = copy.deepcopy(active)
         stale.update({"id": "stale-node", "label": "Stale node"})
         stale["properties"]["curation_status"] = "needs-review"
@@ -106,10 +103,10 @@ class RetrievalTest(unittest.TestCase):
                 "evidence": f"Seed reaches {node['id']}.",
                 "curation_status": "current",
             }
-            for node in (active, field, stale, orphan)
+            for node in (active, stale, orphan)
         ]
         view = GraphView.from_snapshot(
-            snapshot_with([seed, active, field, stale, orphan], edges)
+            snapshot_with([seed, active, stale, orphan], edges)
         )
         plan = retrieval_plan()
         plan["identity_queries"] = []
@@ -134,9 +131,6 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(
             {"sigma-algebra", "measure", "stale-node", "orphan-node"},
             {row["node_id"] for row in inclusive["result"]["results"]},
-        )
-        self.assertNotIn(
-            "field-node", {row["node_id"] for row in inclusive["result"]["results"]}
         )
 
     def test_identity_duplicates_keep_best_rank_and_exact_precedes_alias(self) -> None:
@@ -457,32 +451,22 @@ class RetrievalTest(unittest.TestCase):
 
     def test_context_obeys_plan_edge_types_and_stale_policy(self) -> None:
         snapshot = fixture_snapshot()
-        field = {
-            "id": "measure-theory",
-            "type": "field",
-            "label": "Measure theory",
-            "text": "",
-            "properties": {"aliases": []},
-        }
-        snapshot["nodes"].append(field)
         snapshot["edges"].append(
             {
-                "source": field["id"],
-                "relation": "contains",
+                "source": "sigma-algebra",
+                "relation": "implies",
                 "target": "measure",
-                "evidence": "Taxonomy membership.",
+                "evidence": "Fixture implication.",
                 "curation_status": "current",
             }
         )
-        snapshot["graph"]["counts"]["nodes"] += 1
         snapshot["graph"]["counts"]["edges"] += 1
         snapshot.pop("snapshot_sha256")
         snapshot["snapshot_sha256"] = sha256_json(snapshot)
         view = GraphView.from_snapshot(snapshot)
         plan = retrieval_plan()
-        plan["identity_queries"] = ["Measure theory", "Measure"]
+        plan["identity_queries"] = ["Sigma algebra", "Measure"]
         plan["lexical_queries"] = []
-        plan["filters"]["node_types"] = ["field", "knowledge"]
         plan["graph"].update(
             {"seed_ids": [], "edge_types": [], "max_depth": 0, "strategy": "bfs"}
         )
@@ -493,12 +477,12 @@ class RetrievalTest(unittest.TestCase):
         )
         self.assertEqual([], empty["edges"])
 
-        plan["graph"]["edge_types"] = ["contains"]
+        plan["graph"]["edge_types"] = ["implies"]
         execution = execute_retrieval_plan(view, plan)
-        taxonomy = build_context_from_execution(
+        implication = build_context_from_execution(
             view, execution, plan=plan, token_budget=5000
         )
-        self.assertEqual(["contains"], [edge["relation"] for edge in taxonomy["edges"]])
+        self.assertEqual(["implies"], [edge["relation"] for edge in implication["edges"]])
 
         stale_snapshot = copy.deepcopy(snapshot)
         stale_snapshot["edges"][0]["curation_status"] = "needs-review"

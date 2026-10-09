@@ -28,7 +28,7 @@
       "required": ["id", "type", "label", "provenance"],
       "properties": {
         "id": {"$ref": "#/$defs/id"},
-        "type": {"enum": ["knowledge", "field", "topic"]},
+        "type": {"enum": ["knowledge"]},
         "label": {"type": "string", "minLength": 1, "maxLength": 1024},
         "text": {"type": "string"},
         "entry": {"type": "object"},
@@ -52,7 +52,7 @@
       "required": ["source", "relation", "target"],
       "properties": {
         "source": {"$ref": "#/$defs/id"},
-        "relation": {"enum": ["contains", "prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+        "relation": {"enum": ["prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
         "target": {"$ref": "#/$defs/id"},
         "origin": {"type": "string"},
         "confidence": {"type": "string"},

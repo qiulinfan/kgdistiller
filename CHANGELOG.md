@@ -34,7 +34,7 @@ require incrementing the affected contract version.
   `kgdistiller-agent-delta-v1` at the persisted core boundary; rebuild derived
   graph artifacts from native authorities when upgrading.
 - Replace the disposable SQLite Agent index with a generation-checked in-memory
-  `GraphView` used by CLI, MCP, and the native frontend.
+  `GraphView` used by CLI and MCP.
 - Remove embedding, vector, model-provider, machine-profile, database override,
   and store-materialization runtime paths without a compatibility shim.
 - Add deterministic `kgdistiller-retrieval-plan-v1`, `kgdistiller-search-result-v1`, and
@@ -62,21 +62,25 @@ require incrementing the affected contract version.
 - Add strict
   `kgdistiller-ingest-receipt-v1`, which records the JSON-memory query backend and no
   index-rebuild stage.
-- Package a self-contained native frontend and preserve loopback binding by
-  default.
-- Add `kgdistiller-static-export-v1` so the persisted bundle binds its private
-  source to `kgdistiller-graph-v2`; 0.4 does not read pre-0.4 bundle manifests.
-- Add `kgdistiller-obsidian-projection-v1` as a lossy, disposable downstream export
-  that is never registered, rescanned, or used for round-trip authoring.
-- Add a read-only Obsidian plugin and the digest-bound
-  `kgdistiller-obsidian-graph-v1` projection. The custom view keeps semantic
+- Remove every publishing surface: `serve` and its static app, `publish`,
+  `export site`, `export latex` and `export latex-registry`, the sync-time Typst knowledge
+  registry and label rendering, the concept-note projection copies of
+  `export obsidian`, and the course, field and topic taxonomy with its
+  `contains` relation, `sync --course/--subject`, `--type` and
+  `--include-taxonomy`. Each `sources.json` source now holds only `id`, `root`,
+  `files` and an optional `document_type`; other keys are rejected. Publishing
+  belongs to consuming repositories.
+- Add a read-only Obsidian plugin and its digest-bound
+  `kgdistiller-obsidian-graph-v1` graph feed, which `kgdistiller export
+  obsidian` writes atomically to `.knowledge/build/obsidian/semantic-graph.json`.
+  The feed is never registered or rescanned. The custom view keeps semantic
   edge type, direction, and evidence distinct from source definition/reference
   edges while native Obsidian backlinks continue to work independently.
 - Package that plugin in the Python distribution and add cross-platform
   `kgdistiller obsidian install`, with atomic replacement, settings preservation,
   and registered-vault selection from any working directory. Give the plugin a
-  dedicated distillation icon and record the opt-in source-to-projection
-  hot-update pipeline as future work.
+  dedicated distillation icon and record the opt-in source-to-feed hot-update
+  pipeline as future work.
 - Remove superseded 0.3 database/vector design specifications; Git history is
   their archive.
 - Make the hidden `.knowledge/` tree the only knowledge root; `kgdistiller init`

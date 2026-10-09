@@ -4,7 +4,6 @@ import { KNOWLEDGE_DIRECTORY, type KgGraphContract } from "./contract";
 
 export interface GraphFilters {
   relation: string;
-  field: string;
   showSources: boolean;
   showDefinitions: boolean;
   showReferences: boolean;
@@ -17,7 +16,6 @@ export interface GraphElementData {
   authority?: string;
   conceptId?: string;
   status?: string;
-  fields?: string;
   relation?: string;
   evidence?: string;
   line?: number;
@@ -70,42 +68,25 @@ export function relationOptions(graph: KgGraphContract): string[] {
   return [...new Set(graph.semantic_edges.map((edge) => edge.relation))].sort();
 }
 
-export function fieldOptions(graph: KgGraphContract): string[] {
-  return [...new Set(graph.concepts.flatMap((concept) => concept.fields))].sort();
-}
-
 export function graphElements(
   graph: KgGraphContract,
   filters: GraphFilters,
 ): ElementDefinition[] {
-  const selectedConcepts = new Set(
-    graph.concepts
-      .filter((concept) => !filters.field || concept.fields.includes(filters.field))
-      .map((concept) => concept.id),
-  );
-  const elements: ElementDefinition[] = graph.concepts
-    .filter((concept) => selectedConcepts.has(concept.id))
-    .map((concept) => ({
-      data: {
-        id: `concept:${concept.id}`,
-        label: concept.label,
-        kind: "concept",
-        authority: concept.authority,
-        conceptId: concept.id,
-        status: concept.curation_status,
-        fields: concept.fields.join(", "),
-      } satisfies GraphElementData,
-    }));
+  const elements: ElementDefinition[] = graph.concepts.map((concept) => ({
+    data: {
+      id: `concept:${concept.id}`,
+      label: concept.label,
+      kind: "concept",
+      authority: concept.authority,
+      conceptId: concept.id,
+      status: concept.curation_status,
+    } satisfies GraphElementData,
+  }));
 
   if (filters.showSources) {
-    const usedAuthorities = new Set<string>();
-    for (const concept of graph.concepts) {
-      if (selectedConcepts.has(concept.id)) usedAuthorities.add(concept.authority);
-    }
+    const usedAuthorities = new Set(graph.concepts.map((concept) => concept.authority));
     if (filters.showReferences) {
-      for (const reference of graph.references) {
-        if (selectedConcepts.has(reference.target)) usedAuthorities.add(reference.source_authority);
-      }
+      for (const reference of graph.references) usedAuthorities.add(reference.source_authority);
     }
     elements.push(
       ...graph.sources
@@ -122,13 +103,7 @@ export function graphElements(
   }
 
   for (const [index, edge] of graph.semantic_edges.entries()) {
-    if (
-      !selectedConcepts.has(edge.source) ||
-      !selectedConcepts.has(edge.target) ||
-      (filters.relation && edge.relation !== filters.relation)
-    ) {
-      continue;
-    }
+    if (filters.relation && edge.relation !== filters.relation) continue;
     elements.push({
       data: {
         id: `semantic:${index}:${edge.source}:${edge.relation}:${edge.target}`,
@@ -145,7 +120,6 @@ export function graphElements(
 
   if (filters.showSources && filters.showDefinitions) {
     for (const definition of graph.definitions) {
-      if (!selectedConcepts.has(definition.target)) continue;
       elements.push({
         data: {
           id: `definition:${definition.target}`,
@@ -163,7 +137,6 @@ export function graphElements(
 
   if (filters.showSources && filters.showReferences) {
     for (const reference of graph.references) {
-      if (!selectedConcepts.has(reference.target)) continue;
       elements.push({
         data: {
           id: `reference:${reference.id}`,

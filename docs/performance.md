@@ -43,7 +43,7 @@ Cover at least:
    recovery, and concurrent readers;
 6. `store snapshot`, `store verify`, cold clone verification, and immediate
    query without a materialization step;
-7. native frontend and MCP smoke tests over the same generation.
+7. MCP smoke tests over the same generation.
 
 Report measurements as machine-specific baselines. When a target is missed,
 record the finding and workload instead of silently relaxing it. A future index

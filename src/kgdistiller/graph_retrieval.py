@@ -55,7 +55,7 @@ def _node_binding(view: GraphView, node_id: str) -> dict[str, str]:
 
 
 def _purpose(relation: str) -> str:
-    return {"prerequisite-for": "learning-prerequisite", "derived-from": "source-derivation", "contrasts-with": "comparison", "contains": "taxonomy-navigation"}.get(relation, "relation-navigation")
+    return {"prerequisite-for": "learning-prerequisite", "derived-from": "source-derivation", "contrasts-with": "comparison"}.get(relation, "relation-navigation")
 
 
 def _bound_path(view: GraphView, lane: str, row: Mapping[str, Any]) -> dict[str, Any]:
@@ -105,7 +105,7 @@ def graph_lanes(
     degraded = None
     if not effective or graph_plan["max_depth"] == 0:
         return graph_rows, ppr_rows, effective, metadata, degraded
-    expansion = expand(view, effective, namespace=plan["namespace"], node_types=filters["node_types"], direction=graph_plan["direction"], edge_types=graph_plan["edge_types"], max_depth=graph_plan["max_depth"], limit=500, include_taxonomy="contains" in graph_plan["edge_types"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], edge_policy=policy.edge_policy)
+    expansion = expand(view, effective, namespace=plan["namespace"], direction=graph_plan["direction"], edge_types=graph_plan["edge_types"], max_depth=graph_plan["max_depth"], limit=500, include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], edge_policy=policy.edge_policy)
     by_id = {str(row["node"]["id"]): row for row in expansion["nodes"] if row["depth"] > 0 and str(row["node"]["id"]) not in effective}
     # Multi-source BFS visits every root at depth zero. That must not erase
     # an actual comparison/dependency edge between two independently recalled
@@ -136,7 +136,7 @@ def graph_lanes(
     if graph_plan["strategy"] in {"bfs", "hybrid"}:
         graph_rows = [lane_row("graph", node_id, 1.0 / (1 + int(row["depth"]))) for node_id, row in by_id.items()]
     if graph_plan["strategy"] in {"ppr", "hybrid"}:
-        ranking = personalized_pagerank(view, {node_id: 1.0 for node_id in effective}, namespace=plan["namespace"], node_types=filters["node_types"], edge_types=graph_plan["edge_types"], direction=graph_plan["direction"], include_taxonomy="contains" in graph_plan["edge_types"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], edge_policy=policy.edge_policy, max_depth=graph_plan["max_depth"], max_iterations=256, limit=500)
+        ranking = personalized_pagerank(view, {node_id: 1.0 for node_id in effective}, namespace=plan["namespace"], edge_types=graph_plan["edge_types"], direction=graph_plan["direction"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], edge_policy=policy.edge_policy, max_depth=graph_plan["max_depth"], max_iterations=256, limit=500)
         converged = bool(ranking["converged"])
         metadata["ppr"] = {"status": "enabled" if converged else "degraded", "iterations": ranking["iterations"], "converged": converged, "final_l1_residual": ranking["l1_residual"], "stationary_error_bound": ranking["stationary_error_bound"], "probability_mass": ranking["probability_mass"], "reachable_node_count": ranking["reachable_node_count"], "allowed_edge_count": ranking["allowed_edge_count"], "tolerance": ranking["policy"]["tolerance"], "discarded_results": 0 if converged else len(ranking["results"])}
         if converged:

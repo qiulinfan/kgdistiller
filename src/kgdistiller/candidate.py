@@ -20,7 +20,6 @@ NAMESPACE_RE = re.compile(
     r"(?::[a-z0-9][a-z0-9._-]*)*"
 )
 RELATIONS = {
-    "contains",
     "prerequisite-for",
     "implies",
     "generalizes",
@@ -83,7 +82,7 @@ def validate_candidate_graph(payload: Any) -> dict[str, Any]:
             raise CandidateError(f"candidate node has no bounded source location: {node_id}")
     seen_edges: set[tuple[str, str, str]] = set()
     adjacency: dict[str, dict[str, set[str]]] = {
-        relation: {} for relation in ("contains", "prerequisite-for")
+        relation: {} for relation in ("prerequisite-for",)
     }
     for edge in edges:
         key = (str(edge["source"]), str(edge["relation"]), str(edge["target"]))
@@ -96,7 +95,7 @@ def validate_candidate_graph(payload: Any) -> dict[str, Any]:
         if key[1] == "contrasts-with" and (key[2], key[1], key[0]) in seen_edges:
             raise CandidateError(f"duplicate symmetric candidate edge: {key}")
         seen_edges.add(key)
-        if key[1] != "contains" and not str(edge.get("evidence", "")).strip():
+        if not str(edge.get("evidence", "")).strip():
             raise CandidateError(f"semantic candidate edge has no evidence: {key}")
         if key[1] in adjacency:
             adjacency[key[1]].setdefault(key[0], set()).add(key[2])

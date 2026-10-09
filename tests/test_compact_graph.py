@@ -29,7 +29,6 @@ class CompactGraphTest(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve()
         self.registry = self.root / ".knowledge/sources.json"
         self.graph = self.root / ".knowledge/graph"
-        self.typst = self.root / ".knowledge/build/registry.typ"
         initialize_project(self.root, self.registry, source_root=Path("notes"))
         (self.root / "notes/chapter.md").write_text(
             "--[[Alpha]]--\nAlpha is the first object.\n\n--[[Beta]]--\nBeta uses [[Alpha]].\n",
@@ -52,14 +51,14 @@ class CompactGraphTest(unittest.TestCase):
 
     def sync(self):
         return synchronize(
-            self.root, self.registry, self.graph, self.typst,
-            files=[], course=None, subject=None, write=True,
+            self.root, self.registry, self.graph,
+            files=[], write=True,
         )
 
     def delta(self, payload: dict) -> None:
         path = self.root / "delta.json"
         path.write_text(json.dumps({"schema": "kgdistiller-agent-delta-v1", **payload}), encoding="utf-8")
-        apply_delta(self.graph, self.typst, path, repo_root=self.root)
+        apply_delta(self.graph, path, repo_root=self.root)
 
     def test_only_markdown_contains_reviewed_body_and_read_preserves_status(self) -> None:
         state = load_state(self.graph)
@@ -73,7 +72,7 @@ class CompactGraphTest(unittest.TestCase):
             {"manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"},
             {path.name for path in self.graph.iterdir()},
         )
-        for key in ("node_types", "relations", "statuses", "curation_statuses", "knowledge_origins"):
+        for key in ("relations", "statuses", "curation_statuses"):
             self.assertNotIn(key, state.manifest)
         old_properties = copy.deepcopy(state.nodes["alpha"]["properties"])
         source = self.root / "notes/chapter.md"
@@ -145,7 +144,8 @@ class CompactGraphTest(unittest.TestCase):
     def test_non_entry_backed_content_remains_self_contained(self) -> None:
         graph = self.root / "standalone"
         state = GraphState({
-            "field": {"id": "field", "type": "field", "label": "Field", "text": "An optional field.", "properties": {}},
+            "note": {"id": "note", "type": "knowledge", "label": "Note", "text": "A text-only summary.",
+                     "properties": {"source_status": "meta", "curation_status": "current"}},
             "concept": {"id": "concept", "type": "knowledge", "label": "Concept", "text": "Inline summary.",
                         "entry": {"summary": "Inline summary.", "context": "Inline context."},
                         "properties": {"source_status": "meta", "curation_status": "current"}},
@@ -155,5 +155,5 @@ class CompactGraphTest(unittest.TestCase):
         self.assertEqual(1, serialized.count("Inline summary."))
         loaded = load_state(graph)
         self.assertEqual("Inline summary.", loaded.nodes["concept"]["text"])
-        self.assertEqual("An optional field.", loaded.nodes["field"]["text"])
+        self.assertEqual("A text-only summary.", loaded.nodes["note"]["text"])
         make_agent_snapshot(loaded)

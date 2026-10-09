@@ -169,7 +169,6 @@
     },
     "edgeType": {
       "enum": [
-        "contains",
         "prerequisite-for",
         "implies",
         "generalizes",
@@ -191,9 +190,7 @@
         },
         "type": {
           "enum": [
-            "knowledge",
-            "field",
-            "topic"
+            "knowledge"
           ]
         },
         "label": {

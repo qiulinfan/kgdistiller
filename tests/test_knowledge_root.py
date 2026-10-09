@@ -82,7 +82,7 @@ class KnowledgeRootDefaultsTest(unittest.TestCase):
                 ("agent", "status"),
                 ("agent", "resolve", "beta"),
                 ("audit",),
-                ("export", "obsidian", "--replace"),
+                ("export", "obsidian"),
                 ("init",),
             ):
                 with self.subTest(arguments=arguments):

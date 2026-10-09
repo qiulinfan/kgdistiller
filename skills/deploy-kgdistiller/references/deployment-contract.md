@@ -13,15 +13,15 @@ root, and graph v2 is the only accepted graph schema.
 
 `documents.jsonl` and `store.json` package an explicitly requested portable
 snapshot. They are not live canonical knowledge or prerequisites for capture,
-query, export or ordinary Git cloning. Never generate a snapshot merely because
+query, the Obsidian graph feed or ordinary Git cloning. Never generate a snapshot merely because
 a checker expects one. Existing derived evidence is retained only where used.
 Opening the knowledge project as an Obsidian vault changes none of these roles.
-The product checkout and generated projections are not authority or backup roots.
+The product checkout and the Obsidian graph feed are not authority or backup
+roots.
 
 Keep `.knowledge/build/`, journals, plans, receipts, credentials and query logs
-local and ignored. Exports are optional chosen consumer outputs; retain or
-rebuild those still used by a site or local plugin. No database materialization
-is required.
+local and ignored. The Obsidian graph feed under `.knowledge/build/obsidian/` is
+rebuilt on demand. No database materialization is required.
 
 Any other graph schema, including pre-0.4 graphs and SQLite artifacts, fails
 closed. Stop and report it to the user; do not relabel or migrate it.
@@ -51,15 +51,15 @@ or computing classes. For example, using placeholder values:
 }
 ```
 
-This is a fragment of `.knowledge/sources.json`; preserve its schema and other
-actual registry/source fields. Without extraction profiles, minimal registration
-needs only `id`, `root` and `files`. Omit unused document types, fields, topics,
-web settings and classification policies; do not invent a general field. `node_kinds` is a nonempty list of unique user-defined
-names, and `extraction_guidance` contains the user's extraction rules. A source
+This is a fragment of `.knowledge/sources.json`, whose top level holds only
+`schema`, `sources` and the optional `document_types`. Each source holds only
+`id`, `root`, `files` and an optional `document_type`; any other key is
+rejected. Omit unused document types. `node_kinds` is a nonempty list of unique
+user-defined names, and `extraction_guidance` contains the user's extraction
+rules. A source
 selects a registered profile by exact name; a submitted semantic `kind` must
 belong to that profile. Registration never reclassifies existing identities.
-Its file extension selects the reader; fields/topics describe knowledge domain.
-If different files need different profiles, register separate bounded file sets.
+Its file extension selects the reader. If different files need different profiles, register separate bounded file sets.
 An omitted `document_type` leaves a source unclassified; do not silently assign
 one. Read the original `.md`, `.typ` or `.tex` source instead of converting it.
 Knowledge entries and def/pending link sheets remain Markdown.
@@ -73,7 +73,7 @@ makes no RAG or vector-index choice.
 
 ## Required checks
 
-Before snapshot or export, run `check` and `agent status`. For a requested
+Before a snapshot or a graph feed refresh, run `check` and `agent status`. For a requested
 snapshot, run `store snapshot` then `store verify`; for a separate snapshot,
 verify its output root. Before restoring an actual existing snapshot, verify
 it. An ordinary clone without a snapshot needs source/graph checks, not a newly
@@ -84,27 +84,17 @@ Never run `sync` to mask a verification mismatch and never hand-edit manifests,
 invent digests, or delete an interrupted ingest journal. Restore a known-good
 generation or repair the native authority on its owning machine.
 
-## Product and publication provenance
+## Product provenance and authorities
 
 Record installed kgdistiller version and full product commit when discoverable.
-A static publication must be a `kgdistiller-static-export-v1` bundle produced by
-`export site` and verified by its packaged dependency-free verifier. Its
-receipt binds producer, clean source repository revision/digests, visibility
-policy, private/public graph digests, and exact artifact bytes. Public edges
-contain only the structural `source`, `relation`, and `target` triple.
-
-Refreshing a managed static bundle requires `--replace`: verify the predecessor,
-generate and verify a successor in staging, then use the rollback-safe swap.
-Never pre-delete an adopted bundle.
 
 The knowledge-project root may be the Obsidian editor vault; registered
-Markdown files and `.knowledge/entries/*.md` remain authority. An Obsidian export is a managed
-`kgdistiller-obsidian-projection-v1` downstream subtree, or an external browsing-only
-vault/projection. It is lossy, disposable, and never a source. Do not add its
-root to the source registry or feed any projected note to scan, sync, candidate,
-or ingest.
+Markdown files and `.knowledge/entries/*.md` remain authority. The Obsidian
+graph feed `.knowledge/build/obsidian/semantic-graph.json` is derived and never
+a source. Do not add it to the source registry or feed it to scan, sync,
+candidate, or ingest. kgdistiller has no publishing surface; websites, course
+registries and HTML conversion belong to the repositories that own the notes.
 
-Installing, linking, snapshotting, exporting, committing, pushing, and making
-data network-public are separate authorities. Never place private sources or
-secrets in a product repository, receipt, command output, Codex configuration,
-or public export.
+Installing, linking, snapshotting, committing and pushing are separate
+authorities. Never place private sources or secrets in a product repository,
+receipt, command output or Codex configuration.

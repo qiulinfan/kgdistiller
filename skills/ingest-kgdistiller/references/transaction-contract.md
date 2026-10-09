@@ -30,8 +30,8 @@ content-addressed request only after review.
 
 Authority SHA-256 values use UTF-8 text with CRLF/CR normalized to LF. The
 writer holds one bounded lock, revalidates all preconditions, atomically
-installs identity authorities, `.knowledge/entries/` Markdown, registries,
-generated Typst registry, and the compact `kgdistiller-graph-v2` graph, then returns a canonical
+installs identity authorities, `.knowledge/entries/` Markdown, registries and
+the compact `kgdistiller-graph-v2` graph, then returns a canonical
 `kgdistiller-ingest-receipt-v1`.
 
 Reject unknown request, delta, registry, and graph discriminators. The writer
@@ -62,12 +62,11 @@ contains identity authorities, entry Markdown and evidence, registries,
 graph artifacts and a document inventory. None of its inventory files is
 required for live graph queries or ordinary Git backup.
 
-Static-site and Obsidian exports are separate downstream actions. The project
-root may be an editor vault whose registered Markdown files remain authority;
-only the managed Obsidian subtree or external browsing-only vault/projection is
-lossy and must not be scanned or ingested back.
+Refreshing the Obsidian graph feed is a separate action. The project root may
+be an editor vault whose registered Markdown files remain authority; the feed
+under `.knowledge/build/obsidian/` is derived and must not be scanned or
+ingested back.
 
 Return request/plan paths and digests, precondition digests, reviewed findings,
 canonical receipt, post-commit checks, store state, and blocked operations. A
-committed ingest receipt does not authorize Git actions, remote publication,
-network exposure, or export adoption.
+committed ingest receipt does not authorize Git actions or remote pushes.

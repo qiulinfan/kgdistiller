@@ -17,7 +17,6 @@ from kgdistiller.entry_markdown import (
     render_entry,
     resolve_entry_source,
 )
-from kgdistiller.obsidian_export import build_obsidian_projection
 from kgdistiller.project import initialize_project
 from kgdistiller.query import get
 
@@ -30,7 +29,6 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         self.graph = self.repo / ".knowledge/graph"
         self.identities = self.repo / ".knowledge/identities.json"
         self.alignments = self.repo / ".knowledge/alignments.json"
-        self.typst_registry = self.repo / ".knowledge/build/knowledge-registry.typ"
         initialize_project(
             self.repo,
             self.registry,
@@ -46,12 +44,9 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             self.repo,
             self.registry,
             self.graph,
-            self.typst_registry,
             identities=self.identities,
             alignments=self.alignments,
             files=[],
-            course=None,
-            subject=None,
             write=write,
         )
 
@@ -68,7 +63,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
                 "nodes": [{"id": "measure-space", **update}],
             }
         )
-        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
+        apply_delta(self.graph, delta, repo_root=self.repo)
 
     def test_learning_metadata_round_trips_without_creating_prerequisite_nodes(self) -> None:
         authority = self.repo / "notes/chapter.md"
@@ -90,19 +85,6 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
         self.assertEqual(entry, queried["entry"])
         self.assertEqual("current", queried["properties"]["curation_status"])
         self.assertNotIn("sigma-algebra", load_state(self.graph).nodes)
-
-        output = self.repo / ".knowledge/build/obsidian"
-        build_obsidian_projection(
-            self.repo,
-            output,
-            registry=self.registry,
-            graph_dir=self.graph,
-            identities=self.identities,
-        )
-        exported = (output / "concepts/Measure space.md").read_text(encoding="utf-8")
-        self.assertIn("### Understanding\n\nnot-yet-understood", exported)
-        self.assertIn("### Pending prerequisites", exported)
-        self.assertIn(entry["pending_prerequisites"][0], exported)
 
     def test_absent_learning_state_stays_unknown_after_curation(self) -> None:
         authority = self.repo / "notes/chapter.md"
@@ -244,7 +226,6 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
 
         apply_delta(
             self.graph,
-            self.typst_registry,
             delta,
             repo_root=self.repo,
         )
@@ -282,7 +263,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
                 "nodes": [{"id": "measure-space", "text": "Original summary."}],
             }
         )
-        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
+        apply_delta(self.graph, delta, repo_root=self.repo)
         entry = self.repo / ".knowledge/entries/measure-space.md"
         entry.write_text(
             entry.read_text(encoding="utf-8").replace(
@@ -349,12 +330,12 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             }
         )
         with self.assertRaisesRegex(KnowledgeError, "derived/by-source/notes/chapter.typ.md"):
-            apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
+            apply_delta(self.graph, delta, repo_root=self.repo)
 
         derived = self.repo / ".knowledge/derived/by-source/notes/chapter.typ.md"
         derived.parent.mkdir(parents=True, exist_ok=True)
         derived.write_text("# Converted chapter\n", encoding="utf-8")
-        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
+        apply_delta(self.graph, delta, repo_root=self.repo)
         self.apply_entry(text="An updated summary retains its explicit evidence link.")
         parsed = parse_entry(self.repo / ".knowledge/entries/measure-space.md")
         self.assertEqual(".knowledge/derived/by-source/notes/chapter.typ.md", parsed["metadata"]["kgd_source"])
@@ -474,7 +455,7 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
                 }],
             }
         )
-        apply_delta(self.graph, self.typst_registry, delta, repo_root=self.repo)
+        apply_delta(self.graph, delta, repo_root=self.repo)
 
         pdf.write_bytes(b"%PDF-version-two")
         install_derivation(pdf, converted, replace=True)

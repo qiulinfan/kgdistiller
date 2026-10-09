@@ -32,8 +32,8 @@
   discriminator fails closed. The graph retains stable identities, aliases,
   orphan state, accepted edges and reference occurrences; it is not a
   disposable cache.
-  Identity/alignment registries, portable snapshots and consumer exports are
-  optional and must not be created merely to fill a default directory layout.
+  Identity/alignment registries and portable snapshots are optional and must
+  not be created merely to fill a default directory layout.
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain. Follow the registration contract in
   `docs/concepts-and-relations.md`; do not hardcode the owner's example types
@@ -43,13 +43,11 @@
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.
-- The local server must bind to `127.0.0.1` by default and prevent path traversal.
 - Maintain compatibility with all three authority formats: Markdown, Typst, and
   LaTeX.
-- Native LaTeX scanning, mathematical labels, TeX registries and direct HTML
-  integration follow [docs/latex-sources.md](docs/latex-sources.md). Keep the
-  renderer in obsidian-latex-live; the graph core only resolves explicit names
-  and validates the local converter protocol.
+- Native LaTeX scanning follows [docs/latex-sources.md](docs/latex-sources.md).
+- Publishing (websites, course registries, marker registries, HTML conversion)
+  belongs to consuming repositories; kgdistiller has no publishing surface.
 - Implementation changes pass these gates: the complete unit test suite
   (`uv run --locked python -m unittest discover -s tests`),
   `uv run --locked ruff check src tests scripts`, `uv build` with

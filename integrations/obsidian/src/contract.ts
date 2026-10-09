@@ -23,16 +23,13 @@ export interface GraphCounts {
 export interface ConceptRecord {
   id: string;
   label: string;
-  note_path: string;
   authority: string;
   curation_status: CurationStatus;
   aliases: string[];
-  fields: string[];
 }
 
 export interface SourceRecord {
   authority: string;
-  note_path: string;
 }
 
 export interface SemanticEdgeRecord {
@@ -141,14 +138,8 @@ function keysWithOptional(
   }
 }
 
-function uniqueStrings(values: unknown, label: string, pattern?: RegExp): string[] {
-  const result = asArray(values, label).map((value, index) => {
-    const item = asString(value, `${label}[${index}]`);
-    if (pattern && !pattern.test(item)) {
-      fail(`${label}[${index}] has an invalid value`);
-    }
-    return item;
-  });
+function uniqueStrings(values: unknown, label: string): string[] {
+  const result = asArray(values, label).map((value, index) => asString(value, `${label}[${index}]`));
   if (new Set(result).size !== result.length) {
     fail(`${label} contains duplicates`);
   }
@@ -264,42 +255,33 @@ export async function parseGraphContract(text: string): Promise<KgGraphContract>
   }
 
   const conceptIds = new Set<string>();
-  const conceptPaths = new Set<string>();
   const conceptAuthorities = new Map<string, string>();
   for (const [index, raw] of asArray(root.concepts, "concepts").entries()) {
     const concept = asRecord(raw, `concepts[${index}]`);
     exactKeys(
       concept,
-      ["id", "label", "note_path", "authority", "curation_status", "aliases", "fields"],
+      ["id", "label", "authority", "curation_status", "aliases"],
       `concepts[${index}]`,
     );
     const id = asString(concept.id, `concepts[${index}].id`);
     if (!ID_RE.test(id) || conceptIds.has(id)) fail(`concepts[${index}].id is invalid or duplicated`);
     conceptIds.add(id);
     asString(concept.label, `concepts[${index}].label`);
-    const notePath = safePath(concept.note_path, `concepts[${index}].note_path`, /\.md$/);
-    if (conceptPaths.has(notePath)) fail(`concepts[${index}].note_path is duplicated`);
-    conceptPaths.add(notePath);
     const authority = safePath(concept.authority, `concepts[${index}].authority`, AUTHORITY_RE);
     conceptAuthorities.set(id, authority);
     if (!["current", "pending", "needs-review"].includes(String(concept.curation_status))) {
       fail(`concepts[${index}].curation_status is invalid`);
     }
     uniqueStrings(concept.aliases, `concepts[${index}].aliases`);
-    uniqueStrings(concept.fields, `concepts[${index}].fields`, ID_RE);
   }
 
   const sourceAuthorities = new Set<string>();
-  const allPaths = new Set(conceptPaths);
   for (const [index, raw] of asArray(root.sources, "sources").entries()) {
     const sourceRecord = asRecord(raw, `sources[${index}]`);
-    exactKeys(sourceRecord, ["authority", "note_path"], `sources[${index}]`);
+    exactKeys(sourceRecord, ["authority"], `sources[${index}]`);
     const authority = safePath(sourceRecord.authority, `sources[${index}].authority`, AUTHORITY_RE);
     if (sourceAuthorities.has(authority)) fail(`sources[${index}].authority is duplicated`);
     sourceAuthorities.add(authority);
-    const notePath = safePath(sourceRecord.note_path, `sources[${index}].note_path`, /\.md$/);
-    if (allPaths.has(notePath)) fail(`sources[${index}].note_path is duplicated`);
-    allPaths.add(notePath);
   }
   for (const authority of conceptAuthorities.values()) {
     if (!sourceAuthorities.has(authority)) fail("a concept has an unknown source authority");
@@ -314,7 +296,6 @@ export async function parseGraphContract(text: string): Promise<KgGraphContract>
     const to = asString(edge.target, `semantic_edges[${index}].target`);
     asString(edge.evidence, `semantic_edges[${index}].evidence`);
     if (!conceptIds.has(from) || !conceptIds.has(to)) fail(`semantic_edges[${index}] has an unknown endpoint`);
-    if (relation === "contains") fail(`semantic_edges[${index}] cannot contain a structural edge`);
     const key = `${from}\u0000${relation}\u0000${to}`;
     if (edgeKeys.has(key)) fail(`semantic_edges[${index}] is duplicated`);
     edgeKeys.add(key);

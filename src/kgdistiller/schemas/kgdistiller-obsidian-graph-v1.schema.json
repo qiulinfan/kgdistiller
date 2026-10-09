@@ -27,22 +27,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "label", "note_path", "authority", "curation_status", "aliases", "fields"],
+        "required": ["id", "label", "authority", "curation_status", "aliases"],
         "properties": {
           "id": {"$ref": "#/$defs/id"},
           "label": {"type": "string", "minLength": 1},
-          "note_path": {"$ref": "#/$defs/note_path"},
           "authority": {"$ref": "#/$defs/authority"},
           "curation_status": {"enum": ["current", "pending", "needs-review"]},
           "aliases": {
             "type": "array",
             "uniqueItems": true,
             "items": {"type": "string", "minLength": 1}
-          },
-          "fields": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {"$ref": "#/$defs/id"}
           }
         }
       }
@@ -52,10 +46,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["authority", "note_path"],
+        "required": ["authority"],
         "properties": {
-          "authority": {"$ref": "#/$defs/authority"},
-          "note_path": {"$ref": "#/$defs/note_path"}
+          "authority": {"$ref": "#/$defs/authority"}
         }
       }
     },
@@ -67,7 +60,7 @@
         "required": ["source", "relation", "target", "evidence"],
         "properties": {
           "source": {"$ref": "#/$defs/id"},
-          "relation": {"type": "string", "minLength": 1, "not": {"const": "contains"}},
+          "relation": {"enum": ["prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
           "target": {"$ref": "#/$defs/id"},
           "evidence": {"type": "string", "minLength": 1}
         }
@@ -112,11 +105,6 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.(?:[mM][dD]|[tT][yY][pP]|[tT][eE][xX])$"
-    },
-    "note_path": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.md$"
     },
     "counts": {
       "type": "object",

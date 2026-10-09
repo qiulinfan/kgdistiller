@@ -27,7 +27,7 @@ Do not assume a paper corpus, paper-reading vault or prior sheet layout.
 Run `kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY` for each
 selected source. Read its `sources[].document_type` and matching `document_types`
 profile: `node_kinds` and `extraction_guidance` are user-registered extraction
-rules, independent of `.md`/`.typ`/`.tex` and fields/topics. Do not impose a fixed
+rules, independent of `.md`/`.typ`/`.tex`. Do not impose a fixed
 catalog of document classes. An unassigned source keeps the explicitly requested
 scope until the user registers a profile. Read the native source directly;
 source conversion is not a prerequisite for metadata or its link sheets.

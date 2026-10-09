@@ -1,6 +1,6 @@
 ---
 name: deploy-kgdistiller
-description: Create, refresh, verify, clone, and restore a small personal kgdistiller knowledge base as a portable file-based Git-friendly store. Use when setting up kgdistiller on a machine, protecting Markdown entries and their Markdown, Typst, LaTeX, or derived PDF evidence against machine loss, synchronizing them across computers, verifying kgdistiller-store-v1, serving the self-contained local frontend, or producing static-site and lossy Obsidian downstream exports.
+description: Create, refresh, verify, clone, and restore a small personal kgdistiller knowledge base as a portable file-based Git-friendly store. Use when setting up kgdistiller on a machine, protecting Markdown entries and their Markdown, Typst, LaTeX, or derived PDF evidence against machine loss, synchronizing them across computers, verifying kgdistiller-store-v1, or refreshing the Obsidian plugin's graph feed.
 ---
 
 # Deploy kgdistiller
@@ -29,7 +29,8 @@ credentials, or exports in the kgdistiller product repository.
 An ordinary knowledge project needs its native sources, `.knowledge/sources.json`,
 `vault.json`, entry Markdown and graph records. Optional identity/alignment
 registries exist only for actual reviewed content. It does not need
-`documents.jsonl` or `store.json` for capture, query, export or Git backup.
+`documents.jsonl` or `store.json` for capture, query, the Obsidian graph feed or
+Git backup.
 Never create an empty registry or snapshot merely to fill the directory tree.
 
 When the user requests a portable snapshot, choose:
@@ -106,42 +107,32 @@ remote, or push only when explicitly requested. Track registered authorities,
 actually referenced by accepted entries. Track `documents.jsonl` and `store.json`
 only for a deliberately maintained snapshot.
 Ignore `.knowledge/build/`, journals, plans, receipts, credentials, query logs,
-and disposable projections.
+and the Obsidian graph feed.
 
 Say `store verified locally` only after verify succeeds, `committed locally`
 only after inspecting the commit, and `remote confirmed` only after a
 successful push whose remote ref contains that commit.
 
-## Serve and export
+## Refresh the Obsidian graph feed
 
-`kgdistiller serve` uses packaged native assets and binds to `127.0.0.1` by
-default. Do not expose it on a network without an explicit separate decision.
-
-For a static consumer, create `export site`, run the bundled standalone
-verifier, and report the `kgdistiller-static-export-report-v1` operation result plus
-the bundle's `kgdistiller-static-export-v1` manifest digest. The consumer adopts the
-verified bundle, not the engine checkout.
-
-For editor-plus-browser use, open `PROJECT` itself as the Obsidian vault and
-keep the projection at its ignored default:
+Open `PROJECT` itself as the Obsidian vault. The kgdistiller plugin reads one
+derived file, `.knowledge/build/obsidian/semantic-graph.json`
+(`kgdistiller-obsidian-graph-v1`). Regenerate it after a sync or ingest:
 
 ```sh
-kgdistiller --repo-root PROJECT export obsidian --replace
+kgdistiller --repo-root PROJECT export obsidian
 ```
 
-`PROJECT` is the editor vault, and registered Markdown plus
-`.knowledge/entries/*.md` remain non-lossy authorities. The managed `kgdistiller-obsidian-projection-v1`
-subtree is lossy and disposable. Never register that subtree in `sources.json`,
-scan/ingest it, or treat projected-note edits as round-trip authority. Source
-proxies for Typst and LaTeX navigate to their native files. An explicit external
-`--output VAULT` is a browsing-only vault/projection and links back to authority
-files. Regenerate either projection from the native authority graph.
+The command writes the file atomically and refuses a graph that is out of sync
+with its authorities or registries. Registered sources and
+`.knowledge/entries/*.md` remain the authorities; never register the feed in
+`sources.json` or scan it. kgdistiller has no publishing surface; websites and
+their registries belong to the repositories that own the notes.
 
 ## Return a deployment receipt
 
 Summarize absolute roots, chosen layout, graph generation, installed
 version/commit, verified Git state, optional snapshot schema/generation/document
-count only when created or verified, and any
-static/Obsidian export path and digest. Never include full authority content,
-credentials, or unbounded excerpts. Keep snapshot, Git, export, and network
-publication as separate authorities.
+count only when created or verified, and the Obsidian graph feed path when it
+was refreshed. Never include full authority content, credentials, or unbounded
+excerpts. Keep snapshot and Git as separate authorities.

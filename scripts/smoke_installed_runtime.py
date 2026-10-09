@@ -151,19 +151,21 @@ def main() -> int:
         require(store.get("schema") == "kgdistiller-store-report-v1", "store-v1 snapshot failed")
         require(store.get("artifact_schema") == "kgdistiller-store-v1", "store-v1 report mismatch")
         require(run(root, "store", "verify").get("status") == "verified", "store verify failed")
-        projection = run(root, "export", "obsidian")
-        require(projection.get("schema") == "kgdistiller-obsidian-export-report-v1", "Obsidian export failed")
-        require(projection.get("artifact_schema") == "kgdistiller-obsidian-projection-v1", "Obsidian report mismatch")
+        feed = run(root, "export", "obsidian")
+        require(feed.get("status") == "exported", "Obsidian graph feed export failed")
+        feed_path = root / ".knowledge/build/obsidian/semantic-graph.json"
+        require(feed_path.is_file(), "Obsidian graph feed is missing")
         require(
-            (root / ".knowledge/build/obsidian/concepts/Measure.md").is_file(),
-            "raw Markdown Wikilink target projection missing",
+            json.loads(feed_path.read_text(encoding="utf-8")).get("schema")
+            == "kgdistiller-obsidian-graph-v1",
+            "Obsidian graph feed schema mismatch",
         )
 
         require(not any(root.rglob("*.sqlite")), "self-contained runtime created SQLite")
 
     print(
         "installed global command, vault registry, Obsidian plugin, JSON runtime, "
-        "store-v1, and Obsidian projection smoke passed"
+        "store-v1, and Obsidian graph feed smoke passed"
     )
     return 0
 

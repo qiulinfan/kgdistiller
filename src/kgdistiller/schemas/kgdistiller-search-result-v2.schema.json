@@ -85,7 +85,6 @@
     },
     "edgeType": {
       "enum": [
-        "contains",
         "prerequisite-for",
         "implies",
         "generalizes",
@@ -324,7 +323,6 @@
       "additionalProperties": false,
       "required": [
         "node_id",
-        "node_type",
         "label",
         "lanes",
         "seed_evidence",
@@ -334,13 +332,6 @@
       "properties": {
         "node_id": {
           "$ref": "#/$defs/nodeId"
-        },
-        "node_type": {
-          "enum": [
-            "knowledge",
-            "field",
-            "topic"
-          ]
         },
         "label": {
           "type": "string",

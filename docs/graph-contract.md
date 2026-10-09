@@ -7,8 +7,8 @@ identity. Original source files provide evidence directly, and every
 curated atomic entry is an Obsidian-compatible Markdown authority under
 `.knowledge/entries/`. Graph records retain durable identity state and accepted semantic relationships;
 they are not a disposable cache or a second editable copy of entry content.
-In-memory query views, HTML, static sites and managed Obsidian projections do
-not become another authority.
+In-memory query views and the Obsidian graph feed do not become another
+authority.
 
 Generated source-side definition sheets declare
 `<!-- kgdistiller-projection: definition-sheet -->` as the first nonblank content
@@ -64,9 +64,8 @@ to those entries. Rich n-ary relations, applications and complete gap-state
 records are authoring targets, not additional `kgdistiller-agent-delta-v1` capabilities.
 Unsupported updates remain review proposals rather than invented graph data.
 
-`field` nodes form a flat overlapping facet layer. `topic` nodes are curated
-clusters. Subject names and directory names do not automatically become graph
-nodes. Multiple field memberships are valid.
+Every graph node is a `knowledge` node. Directory and file names never become
+graph nodes.
 
 ## References
 
@@ -138,11 +137,7 @@ Markdown, Typst and LaTeX entries default to their original identity source as
 evidence. Capture and ingest do not require a converted Markdown companion.
 Explicit existing Markdown evidence links remain supported and checked;
 conversion is never an automatic fallback when a source is missing.
-Rich LaTeX knowledge names use the local obsidian-latex-live converter to
-produce passive HTML/MathML labels while preserving native TeX spellings.
-Native TeX registries and direct HTML document exports are derived views; see
-[the LaTeX source contract](latex-sources.md). They do not change identity or
-entry authority and do not route documents through Typst.
+See [the LaTeX source contract](latex-sources.md) for native TeX scanning.
 The older explicitly invoked derivation command remains available for existing
 imports, including PDFs; these are not native PDF graph authorities. Its
 Markdown result must be explicitly registered if it is to be scanned. New
@@ -164,7 +159,6 @@ graph.
 
 Supported relations are:
 
-- `contains`: field/topic classification only;
 - `prerequisite-for`: a direct learning dependency;
 - `implies`: direct logical entailment;
 - `generalizes`: the target is recovered as a special case;
@@ -226,7 +220,7 @@ kgdistiller curate-check --file notes/chapter.typ
 kgdistiller check
 ```
 
-Repository, subject, course, directory, and file scopes are supported. A scoped
+Repository, directory, and file scopes are supported. A scoped
 sync replaces only definition and reference occurrences from the selected
 authorities and retains unrelated state. An explicit file must match exactly
 one bounded registry pattern; a shared directory root alone is not source
@@ -234,10 +228,10 @@ registration, and overlapping source ownership is rejected.
 
 The graph manifest records the last usable Git revision alongside the complete
 source hash map and canonical digests of the source registry and optional
-identity registry. Registry ownership, subject/origin metadata, authored-name
-changes, and reviewed aliases therefore belong to the same generation as the
-hydrated graph. Store and downstream export operations fail closed when those
-registries are newer than the graph. A later sync includes deleted authorities
+identity registry. Registry ownership, authored-name changes, and reviewed
+aliases therefore belong to the same generation as the hydrated graph. Store
+verification and the Obsidian graph feed fail closed when those registries are
+newer than the graph. A later sync includes deleted authorities
 and both sides of a staged Git rename; full sync also compares the previous
 source map, so rename handling does not depend on Git similarity detection. An
 exact-content rename can be paired before staging. A file path is provenance,
@@ -248,7 +242,7 @@ Markdown, Typst, or LaTeX file as UTF-8 with universal-newline translation,
 represent CRLF and lone CR as LF, then SHA-256 the resulting UTF-8 bytes. All
 other characters, including a final newline, remain significant. Scan/rename
 matching, sync, transactional ingest, `check`, portable-store verification,
-and static export share this one function, so Git's checkout newline policy
+and the Obsidian graph feed share this one function, so Git's checkout newline policy
 cannot create a false source change. Raw-byte hashing remains reserved for
 binary and byte-stable artifacts.
 
@@ -262,13 +256,13 @@ statement (or the smallest conservative source block when no formal statement
 wrapper exists). If that hash changes, an existing curated entry becomes
 `needs-review`. Semantic edges retain the endpoint hashes against which their
 evidence was reviewed and likewise become `needs-review` if an endpoint changes
-or becomes orphaned. The data is retained for review, while `curate-check` and
-publication reject stale curation. Reapplying reviewed node and edge deltas
+or becomes orphaned. The data is retained for review, while `curate-check`
+rejects stale curation. Reapplying reviewed node and edge deltas
 refreshes those fingerprints.
 
 ## Read-only graph view
 
-CLI, MCP, and the native frontend query the committed JSON artifacts through a
+CLI and MCP query the committed JSON artifacts through a
 fully hydrated `GraphView`; they do not maintain a secondary database. The
 loader validates the manifest before and after loading the graph, snapshot, and
 alignments. If the generation changes, it retries a bounded number of times or
@@ -283,24 +277,17 @@ rank candidates but never create identity or semantic edges.
 lanes. It has no semantic/vector lane. Read-only results bind their snapshot
 and graph digests so a later transaction can reject a stale decision.
 
-## Derived projections
+## Obsidian graph feed
 
-`kgdistiller-static-export-v1` is a privacy-filtered consumer bundle.
-`kgdistiller-obsidian-projection-v1` is a lossy, disposable managed downstream view.
-The project root may be the editor vault, where registered Markdown and
-`.knowledge/entries/*.md` remain native authorities; the managed projection
-subtree is not authority. It must never be registered in
-`.knowledge/sources.json`, scanned, or ingested back; regenerate it from the
-Markdown, Typst, or LaTeX authorities and the deterministic graph.
-
-Every Obsidian projection includes one `kgdistiller-obsidian-graph-v1` JSON
-artifact. It closes concept IDs, source authorities, semantic endpoints,
-definition endpoints, and reference endpoints; binds the originating graph,
-snapshot, and source inventory digests; and has its own canonical
-`bundle_sha256`. This is the only supported input to the Obsidian plugin. The
-plugin must not parse `nodes.jsonl`, `edges.jsonl`, or `references.jsonl`
-directly. The native graph remains a no-plugin, lossy link projection, while
-the plugin graph retains semantic relation labels, direction, and evidence.
+`kgdistiller export obsidian` writes one `kgdistiller-obsidian-graph-v1` file,
+`.knowledge/build/obsidian/semantic-graph.json` by default. It closes concept
+IDs, source authorities, semantic endpoints, definition endpoints, and
+reference endpoints; binds the originating graph, snapshot, and source
+inventory digests; and has its own canonical `bundle_sha256`. Edges awaiting
+review are left out. This is the only supported input to the Obsidian plugin.
+The plugin must not parse `nodes.jsonl`, `edges.jsonl`, or `references.jsonl`
+directly. The feed is derived: never register it in `.knowledge/sources.json`,
+scan it, or ingest it back.
 
 ## Required invariants
 
@@ -308,11 +295,7 @@ the plugin graph retains semantic relation labels, direction, and evidence.
 - deterministic graph artifacts and stable IDs;
 - one generation-consistent `GraphView` per independent query;
 - no dangling semantic edge endpoints;
-- no cycles in `contains` or `prerequisite-for`;
-- no field-to-field `contains` edges;
-- when field classifications are configured, active knowledge nodes satisfy the
-  explicit classification policy; unclassified projects need no invented field;
-- Typst label HTML contains no active or unsafe content;
+- no cycles in `prerequisite-for`;
 - entry Markdown authorities are manifest-bound and are the only persisted entry
   bodies in graph v2; hydration is read-only and rejects missing or changed entries;
 - unresolved references and orphaned nodes remain visible diagnostics;
@@ -325,5 +308,5 @@ the plugin graph retains semantic relation labels, direction, and evidence.
 Diagnostics are computed at load; the graph persists no diagnostics file or
 unused manifest classification counters.
 
-Run `kgdistiller audit` for entry coverage, topology, relation counts,
-cross-course bridges, field memberships, and edge metadata completeness.
+Run `kgdistiller audit` for entry coverage, topology, relation counts, and edge
+metadata completeness.

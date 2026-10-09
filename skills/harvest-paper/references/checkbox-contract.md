@@ -119,8 +119,7 @@ Do not bypass a stale or ambiguous identity check.
 
 Unsupported scientific relations/application records remain review proposals;
 this adapter does not expand the underlying ingest model. Report concrete errors
-or remaining draft scope. Git backup, frontend export and publication are
-separate operations.
+or remaining draft scope. Git backup is a separate operation.
 
 
 ## Correct a pending draft

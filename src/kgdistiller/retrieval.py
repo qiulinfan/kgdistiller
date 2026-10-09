@@ -168,7 +168,7 @@ def _validated_plan(payload: Any) -> dict[str, Any]:
     edge_types = graph.get("edge_types")
     if not isinstance(seeds, list) or len(seeds) > MAX_PLAN_GRAPH_SEEDS or len(seeds) != len(set(seeds)) or any(not isinstance(item, str) or not item for item in seeds):
         raise RetrievalError("invalid-plan", "plan graph.seed_ids is invalid")
-    if not isinstance(edge_types, list) or len(edge_types) > 16 or len(edge_types) != len(set(edge_types)) or any(item not in {*DEFAULT_SEMANTIC_RELATIONS, "contains"} for item in edge_types):
+    if not isinstance(edge_types, list) or len(edge_types) > 16 or len(edge_types) != len(set(edge_types)) or any(item not in DEFAULT_SEMANTIC_RELATIONS for item in edge_types):
         raise RetrievalError("invalid-plan", "plan graph.edge_types is invalid")
     if graph.get("direction") not in {"out", "in", "both"} or graph.get("strategy") not in {"bfs", "ppr", "hybrid"}:
         raise RetrievalError("invalid-plan", "plan graph direction or strategy is invalid")
@@ -176,12 +176,9 @@ def _validated_plan(payload: Any) -> dict[str, Any]:
     if isinstance(depth, bool) or not isinstance(depth, int) or not 0 <= depth <= 8:
         raise RetrievalError("invalid-plan", "plan graph.max_depth is invalid")
     filters = payload.get("filters")
-    expected_filters = {"node_types", "include_stale", "include_orphaned"}
+    expected_filters = {"include_stale", "include_orphaned"}
     if not isinstance(filters, dict) or set(filters) != expected_filters:
         raise RetrievalError("invalid-plan", f"{RETRIEVAL_PLAN_SCHEMA} filters requires exactly: {', '.join(sorted(expected_filters))}")
-    node_types = filters.get("node_types")
-    if not isinstance(node_types, list) or len(node_types) > 16 or len(node_types) != len(set(node_types)) or any(item not in {"knowledge", "field", "topic"} for item in node_types):
-        raise RetrievalError("invalid-plan", "plan filters.node_types is invalid")
     if not all(isinstance(filters.get(key), bool) for key in ("include_stale", "include_orphaned")):
         raise RetrievalError("invalid-plan", "plan filter flags must be booleans")
     limit = payload.get("limit")
@@ -210,17 +207,15 @@ def legacy_retrieval_plan(
     query: str,
     *,
     namespace: str = "personal",
-    node_types: list[str] | None = None,
     limit: int = 20,
     max_depth: int = 1,
-    include_taxonomy: bool = False,
     include_stale: bool = False,
     include_orphaned: bool = False,
     graph_strategy: str = "hybrid",
 ) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip() or len(query) > 4096:
         raise RetrievalError("invalid-retrieval-request", "legacy retrieval query is invalid")
-    edge_types = sorted(DEFAULT_SEMANTIC_RELATIONS | ({"contains"} if include_taxonomy else set()))
+    edge_types = sorted(DEFAULT_SEMANTIC_RELATIONS)
     return _validated_plan(
         {
             "schema": RETRIEVAL_PLAN_SCHEMA,
@@ -229,7 +224,7 @@ def legacy_retrieval_plan(
             "identity_queries": [query[:2048]],
             "lexical_queries": [query[:2048]],
             "graph": {"seed_ids": [], "edge_types": edge_types, "direction": "both", "max_depth": max_depth, "strategy": graph_strategy},
-            "filters": {"node_types": sorted(set(node_types or [])), "include_stale": include_stale, "include_orphaned": include_orphaned},
+            "filters": {"include_stale": include_stale, "include_orphaned": include_orphaned},
             "limit": limit,
         }
     )
@@ -280,9 +275,6 @@ def _add_lane(
 
 
 def _passes_filters(node: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
-    node_types = set(filters["node_types"])
-    if node_types and node.get("type") not in node_types:
-        return False
     properties = node.get("properties")
     properties = properties if isinstance(properties, Mapping) else {}
     provenance = node.get("provenance")
@@ -380,7 +372,7 @@ def execute_retrieval_plan(
 
         lexical_best: dict[str, float] = {}
         for query in plan["lexical_queries"]:
-            for result in search(view, query, namespace=namespace_value, node_types=filters["node_types"], limit=MAX_INTERNAL_LANE_RESULTS, include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"]):
+            for result in search(view, query, namespace=namespace_value, limit=MAX_INTERNAL_LANE_RESULTS, include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"]):
                 node_id = str(result["node"]["id"])
                 score = float(result["reasons"][0]["score"])
                 lexical_best[node_id] = max(lexical_best.get(node_id, 0.0), score)
@@ -418,7 +410,7 @@ def execute_retrieval_plan(
             strategy = plan["graph"]["strategy"]
             bfs_seed_ids = seed_ids
             if bfs_seed_ids and strategy in {"bfs", "hybrid"}:
-                expansion = expand(view, bfs_seed_ids, namespace=namespace_value, node_types=filters["node_types"], direction=plan["graph"]["direction"], edge_types=plan["graph"]["edge_types"], max_depth=plan["graph"]["max_depth"], limit=MAX_INTERNAL_LANE_RESULTS, include_taxonomy="contains" in plan["graph"]["edge_types"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"])
+                expansion = expand(view, bfs_seed_ids, namespace=namespace_value, direction=plan["graph"]["direction"], edge_types=plan["graph"]["edge_types"], max_depth=plan["graph"]["max_depth"], limit=MAX_INTERNAL_LANE_RESULTS, include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"])
                 for row in expansion["nodes"]:
                     if not _passes_filters(row["node"], filters):
                         continue
@@ -429,7 +421,7 @@ def execute_retrieval_plan(
             ppr_rows: list[tuple[str, float, list[dict[str, Any]], list[dict[str, Any]]]] = []
             ppr_degraded_reason: str | None = None
             if seed_ids and strategy in {"ppr", "hybrid"}:
-                ranking = personalized_pagerank(view, {node_id: 1.0 for node_id in seed_ids}, namespace=namespace_value, node_types=filters["node_types"], edge_types=plan["graph"]["edge_types"], direction=plan["graph"]["direction"], max_depth=plan["graph"]["max_depth"], include_taxonomy="contains" in plan["graph"]["edge_types"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], max_iterations=256, limit=MAX_INTERNAL_LANE_RESULTS)
+                ranking = personalized_pagerank(view, {node_id: 1.0 for node_id in seed_ids}, namespace=namespace_value, edge_types=plan["graph"]["edge_types"], direction=plan["graph"]["direction"], max_depth=plan["graph"]["max_depth"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], max_iterations=256, limit=MAX_INTERNAL_LANE_RESULTS)
                 if ranking.get("converged") is False:
                     ppr_degraded_reason = "not-converged"
                 accepted_ppr_seed_ids = [str(node_id) for node_id in ranking["seeds"]]
@@ -465,7 +457,7 @@ def execute_retrieval_plan(
             navigation_lanes = {name: value for name, value in evidence["lanes"].items() if name in {"graph", "ppr"}}
             if navigation_lanes:
                 navigation_rows.append({
-                    "node_id": node_id, "node_type": view.nodes[node_id].get("type", "knowledge"),
+                    "node_id": node_id,
                     "label": view.nodes[node_id].get("label", node_id),
                     "lanes": navigation_lanes, "seed_evidence": evidence["seed_evidence"][:32],
                     "path_evidence": evidence["path_evidence"][:32],
@@ -487,7 +479,6 @@ def execute_retrieval_plan(
             explanation.insert(0, f"authoritative {kind} identity match")
         row = {
             "node_id": node_id,
-            "node_type": node.get("type", "knowledge"),
             "label": node.get("label", node_id),
             "lanes": ranking_lanes,
             "seed_evidence": [] if graph_policy is not None else evidence["seed_evidence"][:32],
@@ -702,7 +693,6 @@ def build_context_from_execution(
             view,
             selected_ids,
             namespace=plan["namespace"],
-            node_types=plan["filters"]["node_types"],
             edge_types=plan["graph"]["edge_types"],
             include_stale=plan["filters"]["include_stale"],
             include_orphaned=plan["filters"]["include_orphaned"],
