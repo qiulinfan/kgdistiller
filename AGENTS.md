@@ -22,6 +22,11 @@
   capture; explicit whole-source distillation is typically for authored notes
   or familiar material. Harvest uses Obsidian def-sheet task selections and
   deterministic ingest; checking a task does not imply understanding.
+- Source document types are user-registered extraction profiles, independent
+  of file format and knowledge domain. Follow the target contract in
+  `docs/concepts-and-relations.md`; do not hardcode the owner's example types
+  or require source-to-source Markdown/Typst/LaTeX conversion. The registry is
+  an agreed design direction, not yet an implemented API; RAG remains open.
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

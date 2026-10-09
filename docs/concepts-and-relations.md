@@ -5,6 +5,61 @@ computer-science notes, blogs and project documents supply knowledge through the
 same model. The accepted knowledge lives in the project's visible `knowledge/`
 root; source-scoped sheets are views of that metadata.
 
+## Source document types: user-owned extraction rules
+
+The source model separates three independent concerns:
+
+| Concern | Meaning |
+|---|---|
+| File format | How the original source is stored and read, such as Markdown, Typst or LaTeX |
+| Document type | A user-registered extraction profile: which knowledge objects to extract and how to recognize them |
+| Knowledge domain | The subject matter of the source or an individual knowledge entry |
+
+Document types belong to the user's knowledge base, not a built-in enumeration
+in kgdistiller. A user might register `airesearch`, `math-notes` and `cs-notes`;
+these are examples, not required names or product defaults. Each profile declares
+the node types to look for and extraction rules, including what should instead
+be represented as a relation/application or left as a direct pending dependency.
+The shared evidence and identity requirements still apply.
+
+The minimum conceptual registration is a type name, its intended node types,
+and human-readable extraction rules. Use `document_type` for the source's
+association with a registered profile; existing evidence fields named
+`source_type` and `source_kind` have other meanings. A node has its own knowledge
+type; it is not typed merely as `airesearch` because its source uses that profile.
+For example, an AI research source may explain an architecture and also state
+a theorem if its registered profile allows both. The profile guides extraction;
+it neither supplies missing scientific content nor creates knowledge identity.
+
+Document type selection must not be inferred from the extension, folder name
+or topic alone. Mathematical notes and AI research documents can both be `.md`
+and discuss linear algebra while using different extraction rules. An agent
+can propose a source classification from its content; the selected profile and
+its user-owned rules must be explicit when applying structured extraction.
+Registering a new type should require editing knowledge-base data, not changing
+the product code or adding a new hardcoded extraction branch.
+
+Sources remain in their original files. Source-to-source conversion between
+Markdown, Typst and LaTeX is outside this target workflow: no normalized Markdown
+copy or equivalent-format companion is a prerequisite for extraction. Reading
+the original source, preserving evidence locations and linking accepted entries
+to that evidence remain necessary. A def sheet displays metadata links and is
+not a converted copy of the source. Optional rendering or downstream views do
+not become a source-conversion stage in the knowledge model.
+
+This is the agreed target data contract, not an implemented type-registry API.
+The current `SourceSpec` and source registry do not carry an extraction profile.
+`entry_markdown.resolve_entry_source` and the capture path still require
+Markdown evidence, including derived Markdown for non-Markdown authorities;
+that requirement must be decoupled before this workflow is implemented.
+Format scanners also infer `properties.kind` from source syntax and overwrite
+it during synchronization. Source syntax must not override an accepted semantic
+knowledge type. These are implementation gaps, not requirements of the target
+model. This document does not migrate existing sources or claim the registry
+is already available.
+RAG architecture is still open. Source types must not silently impose hard
+retrieval filters or choose an embedding/index backend.
+
 ## Sources, metadata and views
 
 Native Markdown, Typst and LaTeX markers establish explicit knowledge identity.
