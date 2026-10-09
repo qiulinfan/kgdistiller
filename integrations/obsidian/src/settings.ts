@@ -1,10 +1,14 @@
-import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Platform, Plugin, PluginSettingTab, Setting } from "obsidian";
+
+import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
 
 export interface KgdistillerSettings {
   graphPath: string;
   showSources: boolean;
   showDefinitions: boolean;
   showReferences: boolean;
+  hiddenKnowledgeEnabled: boolean;
+  hiddenKnowledgeFolder: string;
 }
 
 export const DEFAULT_SETTINGS: KgdistillerSettings = {
@@ -12,15 +16,20 @@ export const DEFAULT_SETTINGS: KgdistillerSettings = {
   showSources: true,
   showDefinitions: true,
   showReferences: true,
+  hiddenKnowledgeEnabled: false,
+  hiddenKnowledgeFolder: ".knowledge",
 };
 
 export interface SettingsHost {
   settings: KgdistillerSettings;
+  hiddenKnowledgeStatus: HiddenKnowledgeStatus;
   savePluginSettings(): Promise<void>;
   refreshGraphViews(): Promise<void>;
+  rescanHiddenKnowledge(): Promise<void>;
 }
 
 export class KgdistillerSettingTab extends PluginSettingTab {
+  private hiddenStatusSetting?: Setting;
   constructor(app: App, private readonly host: SettingsHost & Plugin) {
     super(app, host);
   }
@@ -76,5 +85,69 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           await this.host.refreshGraphViews();
         }),
       );
+
+    new Setting(containerEl).setName("Hidden knowledge folder").setHeading();
+    new Setting(containerEl)
+      .setName("Index hidden knowledge folder")
+      .setDesc("On desktop, include this folder in native editing, links, backlinks, search and graph indexing. Uses internal Obsidian APIs; incompatible versions are reported below.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.host.settings.hiddenKnowledgeEnabled)
+          .setDisabled(Platform.isMobile)
+          .onChange(async (value) => {
+            this.host.settings.hiddenKnowledgeEnabled = value;
+            await this.host.savePluginSettings();
+            this.refreshHiddenKnowledgeStatus();
+          }),
+      );
+
+    let folder = this.host.settings.hiddenKnowledgeFolder;
+    new Setting(containerEl)
+      .setName("Hidden folder path")
+      .setDesc("Vault-relative hidden folder. Applying this setting changes indexing only; it does not move knowledge data or change the semantic graph path.")
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.hiddenKnowledgeFolder)
+          .setValue(folder)
+          .setDisabled(Platform.isMobile)
+          .onChange((value) => { folder = value.trim(); }),
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("Apply")
+          .setDisabled(Platform.isMobile)
+          .onClick(async () => {
+            this.host.settings.hiddenKnowledgeFolder = folder;
+            await this.host.savePluginSettings();
+            this.refreshHiddenKnowledgeStatus();
+          }),
+      );
+
+    this.hiddenStatusSetting = new Setting(containerEl)
+      .setName("Indexing status")
+      .addButton((button) =>
+        button
+          .setButtonText("Rescan")
+          .setDisabled(Platform.isMobile)
+          .onClick(async () => {
+            await this.host.rescanHiddenKnowledge();
+            this.refreshHiddenKnowledgeStatus();
+          }),
+      );
+    this.refreshHiddenKnowledgeStatus();
+  }
+
+  refreshHiddenKnowledgeStatus(): void {
+    const status = this.host.hiddenKnowledgeStatus;
+    const messages: Record<HiddenKnowledgeStatus["state"], string> = {
+      disabled: "Disabled. Hidden knowledge files are not indexed by this plugin.",
+      enabled: `Indexed: ${status.root}.`,
+      missing: `Folder not found: ${status.root}. Create it, then rescan.`,
+      unsupported: "Hidden folder indexing is unavailable in this environment.",
+      invalid: "The hidden folder path is invalid.",
+      error: "Hidden folder indexing failed.",
+      disposed: "Hidden folder indexing has stopped.",
+    };
+    this.hiddenStatusSetting?.setDesc(status.message || messages[status.state]);
   }
 }

@@ -319,10 +319,21 @@ view; never register that subtree in `sources.json`, rescan it, feed it to
 candidate/ingest, or treat projected-note edits as round-trip authority. An
 external output is a browsing-only vault/projection. Rebuild either projection
 with `--replace` from the authority graph.
-The optional Obsidian plugin consumes only the generated
+The optional Obsidian plugin's semantic graph view consumes only the generated
 `kgdistiller-obsidian-graph-v1` `semantic-graph.json`; it preserves typed
 semantic edges and source definition/reference edges without changing this
 authority boundary.
+
+### Native indexing of a hidden knowledge folder
+
+The Obsidian plugin also offers an optional desktop indexer for one configured
+hidden folder, `.knowledge` by default. **Index hidden knowledge folder** is
+off by default. It exposes the folder through Obsidian's normal file and
+metadata cache so supported files participate in editing, links, backlinks,
+search and the native graph. It does not move the current `knowledge/` store,
+change the semantic graph path, or create a new source authority. See the
+[hidden knowledge folder guide](obsidian-hidden-knowledge.md) for settings,
+rescan behavior, desktop capability limits and upstream attribution.
 
 ### Serve the native frontend
 

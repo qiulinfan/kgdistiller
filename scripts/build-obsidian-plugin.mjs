@@ -23,6 +23,9 @@ for (const folder of [root, integration]) {
   const metadata = await json(join(folder, "package.json"));
   assert.equal(metadata.version, manifest.version, "Plugin package/manifest versions differ");
   assert.equal(metadata.license, "MIT");
+  const lock = await json(join(folder, "package-lock.json"));
+  assert.equal(lock.version, manifest.version, "Plugin lock/manifest versions differ");
+  assert.equal(lock.packages[""].version, manifest.version, "Plugin lock root/manifest versions differ");
 }
 assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
 if (tagAt >= 0) assert.equal(tag, manifest.version, "Release tag must exactly match manifest.version (no v prefix)");
@@ -37,7 +40,9 @@ if (!verifyOnly) {
   }
   const bundle = await readFile(join(integration, "main.js"), "utf8");
   const license = (await readFile(join(root, "LICENSE"), "utf8")).trim();
+  const notices = (await readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")).trim();
   assert.ok(bundle.includes(license), "Plugin bundle must retain its full MIT license");
+  assert.ok(bundle.includes(notices), "Plugin bundle must retain the full third-party notices, licenses and source revisions");
   assert.ok((await readFile(join(integration, "styles.css"), "utf8")).includes(license), "Plugin stylesheet must retain its full MIT license");
   assert.ok(bundle.includes("Copyright (c) 2016-2026, The Cytoscape Consortium."));
   assert.ok(bundle.includes("Permission is hereby granted"));

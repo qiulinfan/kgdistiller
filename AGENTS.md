@@ -56,6 +56,11 @@
   plugin name. The root clean
   builder explicitly installs integration devDependencies, including when the
   caller sets `NODE_ENV=production`; this is required to reproduce release assets.
+- Optional native indexing of a configured hidden knowledge folder follows
+  [docs/obsidian-hidden-knowledge.md](docs/obsidian-hidden-knowledge.md). Keep it
+  disabled by default, desktop-capability guarded and scoped to that subtree;
+  do not migrate the core storage root or enable competing hidden-folder indexers.
+  Preserve the complete upstream MIT notice and pinned source revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by
   `workflows/claude-manifest.json`, installs Skills, Claude Code agent presets

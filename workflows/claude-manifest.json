@@ -10,7 +10,8 @@
   "workflow_resources": [
     "docs/concepts-and-relations.md",
     "docs/paper-sheets-upstream.md",
-    "docs/latex-sources.md"
+    "docs/latex-sources.md",
+    "docs/obsidian-hidden-knowledge.md"
   ],
   "linkers": [
     {
