@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import copy
 import difflib
 import tempfile
@@ -102,7 +104,7 @@ def _prepare_capture_record(
         validate_node_kind(kind, owner.document_type, load_document_types(paths.registry))
     if any(output == spec.root or output.is_relative_to(spec.root) for spec in specs):
         raise CaptureError("output_dir must be outside registered source roots")
-    for protected in (paths.graph_dir.resolve(), root / ENTRY_ROOT, root / DERIVED_SOURCE_ROOT):
+    for protected in (paths.graph_dir.resolve(), knowledge_root(root) / "entries", knowledge_root(root) / "derived/by-source"):
         if output == protected or output.is_relative_to(protected):
             raise CaptureError("output_dir must be outside committed knowledge and derived evidence")
     if "source_content" in payload and "source_content_file" in payload:
@@ -120,9 +122,9 @@ def _prepare_capture_record(
     else:
         raise CaptureError("a new source needs complete proposed source content")
     content = content.replace("\r\n", "\n").replace("\r", "\n")
-    state = load_state(paths.graph_dir)
+    state = load_state(paths.graph_dir, repo_root=paths.repo_root)
     identities = build_identity_index(state, load_identity_registry(paths.identities))
-    view = GraphView.load(paths.graph_dir, paths.alignments)
+    view = GraphView.load(paths.graph_dir, paths.alignments, repo_root=paths.repo_root)
     if state.manifest["graph_sha256"] != view.snapshot["graph"]["sha256"]:
         raise CaptureError("knowledge changed while preparing; retry capture")
     relative = source.relative_to(root)
@@ -232,10 +234,10 @@ def prepare_captures(
     definitions = [record["definition"] for record in records]
     if len({definition.id for definition in definitions}) != len(definitions):
         raise CaptureError("selected captures contain duplicate native identities")
-    view = GraphView.load(paths.graph_dir, paths.alignments)
+    view = GraphView.load(paths.graph_dir, paths.alignments, repo_root=paths.repo_root)
     if any(record["base_graph"] != view.snapshot["graph"]["sha256"] for record in records):
         raise CaptureError("knowledge changed while preparing; retry capture")
-    state = load_state(paths.graph_dir)
+    state = load_state(paths.graph_dir, repo_root=paths.repo_root)
     identities = build_identity_index(state, load_identity_registry(paths.identities))
     specs = load_sources(root, paths.registry)
     authority_patches = []

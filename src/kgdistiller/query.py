@@ -30,6 +30,8 @@ from .alignment import (
 from .cli import (
     DELTA_SCHEMA,
     GRAPH_SCHEMA,
+    GRAPH_SCHEMAS,
+    _entry_repo_root,
     ID_RE,
     MAX_NODE_ID_LENGTH,
     MAX_NODE_LABEL_LENGTH,
@@ -157,7 +159,7 @@ def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(claimed, str) or not _SHA256_RE.fullmatch(claimed) or digest != claimed:
         raise QueryError("snapshot digest does not match its content")
     graph = snapshot.get("graph")
-    if not isinstance(graph, dict) or graph.get("schema") != GRAPH_SCHEMA:
+    if not isinstance(graph, dict) or graph.get("schema") not in GRAPH_SCHEMAS:
         raise QueryError(f"snapshot has no valid {GRAPH_SCHEMA} graph identity")
     if set(graph) != {"schema", "sha256", "counts"}:
         raise QueryError("snapshot graph identity has unsupported fields")
@@ -415,6 +417,7 @@ class GraphView:
     aliases: dict[str, tuple[str, ...]]
     scoped_aliases: dict[str, tuple[dict[str, Any], ...]]
     source_hashes: dict[str, str]
+    repo_root: Path | None = None
 
     @classmethod
     def load(
@@ -423,6 +426,7 @@ class GraphView:
         alignments: Path | None = None,
         *,
         max_attempts: int = 3,
+        repo_root: Path | None = None,
     ) -> "GraphView":
         graph_dir = Path(graph_dir)
         if max_attempts < 1 or max_attempts > 10:
@@ -432,7 +436,7 @@ class GraphView:
             before = _manifest_payload(graph_dir)
             token = _generation_token(before)
             try:
-                state = load_state(graph_dir)
+                state = load_state(graph_dir, repo_root=repo_root)
                 snapshot = make_agent_snapshot(state)
                 validate_agent_snapshot(snapshot)
                 alignment_payload = _load_alignments(alignments)
@@ -452,6 +456,12 @@ class GraphView:
                 alignment_payload,
                 generation=token,
                 source_hashes=dict(before.get("source_hashes") or {}),
+                repo_root=(
+                    _entry_repo_root(graph_dir, repo_root)
+                    if before.get("schema") == GRAPH_SCHEMA
+                    and before.get("entry_authorities", {}).get("entries")
+                    else repo_root
+                ),
             )
         raise QueryError(
             "authority graph generation changed while loading; retry the query"
@@ -484,6 +494,7 @@ class GraphView:
         *,
         generation: str,
         source_hashes: dict[str, str],
+        repo_root: Path | None = None,
     ) -> "GraphView":
         nodes = {
             str(node["id"]): copy.deepcopy(node)
@@ -537,6 +548,7 @@ class GraphView:
             scoped_by_surface[str(alias["normalized_surface"])].append(alias)
         return cls(
             graph_dir=graph_dir,
+            repo_root=Path(repo_root).resolve() if repo_root is not None else None,
             snapshot=copy.deepcopy(snapshot),
             alignments=copy.deepcopy(alignments),
             generation=generation,
@@ -572,9 +584,10 @@ def _load_alignments(path: Path | None) -> dict[str, Any]:
 
 
 def load_graph_view(
-    graph_dir: Path, alignments: Path | None = None, *, max_attempts: int = 3
+    graph_dir: Path, alignments: Path | None = None, *, max_attempts: int = 3,
+    repo_root: Path | None = None,
 ) -> GraphView:
-    return GraphView.load(graph_dir, alignments, max_attempts=max_attempts)
+    return GraphView.load(graph_dir, alignments, max_attempts=max_attempts, repo_root=repo_root)
 
 
 def _view(source: GraphView | Path, alignments: Path | None = None) -> GraphView:

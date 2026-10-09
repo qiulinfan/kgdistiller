@@ -13,7 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kgdistiller.cli import apply_delta, synchronize  # noqa: E402
-from kgdistiller.contracts import canonical_json, sha256_json  # noqa: E402
+from kgdistiller.contracts import canonical_json, sha256_json, validate_contract, ContractError  # noqa: E402
+from kgdistiller.query import GraphView  # noqa: E402
 from kgdistiller.project import initialize_project  # noqa: E402
 from kgdistiller.store import StoreError, snapshot_store, verify_store  # noqa: E402
 
@@ -116,6 +117,17 @@ class JsonStoreTest(unittest.TestCase):
         )
         self.assertFalse(any(self.output.rglob("*.sqlite")))
         self.assertFalse((self.output / "knowledge/embeddings").exists())
+        self.assertFalse((self.output / "knowledge/graph/entries").exists())
+        self.assertFalse((self.output / "knowledge/graph/diagnostics.json").exists())
+        self.assertFalse((self.output / "knowledge/alignments.json").exists())
+        view = GraphView.load(self.output / "knowledge/graph", repo_root=self.output)
+        self.assertEqual(
+            "A family of sets closed under the defining operations.",
+            view.nodes["sigma-algebra"]["text"],
+        )
+        documents = [json.loads(line) for line in (self.output / "knowledge/documents.jsonl").read_text().splitlines()]
+        self.assertTrue(all(record["schema"] == "kgdistiller-document-record-v2" for record in documents))
+        self.assertTrue(all("subject" not in record and "course" not in record for record in documents))
         store_manifest = json.loads(
             (self.output / "knowledge/store.json").read_text(encoding="utf-8")
         )
@@ -129,6 +141,85 @@ class JsonStoreTest(unittest.TestCase):
         self.assertEqual("knowledge/vault.json", store_manifest["paths"]["vault"])
         self.assertEqual(store_manifest["registry_sha256"], graph_manifest["registry_sha256"])
         self.assertEqual(store_manifest["identity_sha256"], graph_manifest["identity_sha256"])
+
+    def test_legacy_store_fixture_is_readable_without_modification(self) -> None:
+        # Generated with the pre-compaction published writer, not rebuilt by
+        # today's implementation: graph v1 + shards + document records v1.
+        fixture = REPO_ROOT / "tests/fixtures/store-v1"
+        legacy = Path(self.temporary.name) / "legacy"
+        shutil.copytree(fixture, legacy)
+        before = {
+            path.relative_to(legacy): path.read_bytes()
+            for path in legacy.rglob("*") if path.is_file()
+        }
+        self.assertEqual("verified", verify_store(legacy)["status"])
+        view = GraphView.load(legacy / "knowledge/graph", repo_root=legacy)
+        self.assertEqual("A set with finitely many elements.", view.nodes["finite-set"]["text"])
+        copied = Path(self.temporary.name) / "legacy-copy"
+        snapshot_store(
+            legacy, copied,
+            registry=legacy / "knowledge/sources.json",
+            graph_dir=legacy / "knowledge/graph",
+            identities=legacy / "knowledge/identities.json",
+            alignments=legacy / "knowledge/alignments.json",
+        )
+        self.assertEqual("verified", verify_store(copied)["status"])
+        after = {
+            path.relative_to(legacy): path.read_bytes()
+            for path in legacy.rglob("*") if path.is_file()
+        }
+        self.assertEqual(before, after)
+        copied_manifest = json.loads((copied / "knowledge/graph/manifest.json").read_text())
+        self.assertEqual("kgdistiller-graph-v1", copied_manifest["schema"])
+
+    def test_compact_store_requires_its_copied_entry_authority(self) -> None:
+        self.snapshot()
+        entry = self.output / "knowledge/entries/sigma-algebra.md"
+        entry.unlink()
+        with self.assertRaisesRegex(StoreError, "entry authority"):
+            verify_store(self.output)
+
+    def test_optional_classification_contract_preserves_legacy_validation(self) -> None:
+        self.snapshot()
+        record = json.loads((self.output / "knowledge/documents.jsonl").read_text().splitlines()[0])
+        validate_contract(record)
+        legacy = dict(record, schema="kgdistiller-document-record-v1")
+        with self.assertRaises(ContractError):
+            validate_contract(legacy)
+        validate_contract(dict(legacy, subject="measure-theory", course="seminar"))
+        with self.assertRaises(ContractError):
+            validate_contract(dict(record, subject=""))
+        with self.assertRaisesRegex(ContractError, "format must match"):
+            validate_contract(dict(record, format="latex"))
+
+    def test_snapshot_preserves_user_classifications_and_reviewed_alignments(self) -> None:
+        registry = json.loads(self.registry.read_text())
+        registry["sources"][0].update(subject="measure-theory", course="seminar")
+        self.registry.write_text(json.dumps(registry), encoding="utf-8")
+        reviewed = {
+            "schema": "kgdistiller-alignments-v1",
+            "mappings": [{
+                "subject": {"namespace": "personal", "node_id": "sigma-algebra"},
+                "object": {"namespace": "reference", "node_id": "sigma-field"},
+                "predicate": "exact-match", "status": "reviewed",
+                "mapping_justification": ["Reviewed equivalent definitions."],
+                "evidence": [{"authority": "notes/concepts.md"}],
+            }],
+        }
+        self.alignments.write_text(json.dumps(reviewed), encoding="utf-8")
+        synchronize(
+            self.source, self.registry, self.graph, self.typst_registry,
+            identities=self.identities, alignments=self.alignments,
+            files=[], course=None, subject=None, write=True,
+        )
+        alignment_bytes = self.alignments.read_bytes()
+        self.snapshot()
+        record = json.loads((self.output / "knowledge/documents.jsonl").read_text().splitlines()[0])
+        self.assertEqual("measure-theory", record["subject"])
+        self.assertEqual("seminar", record["course"])
+        self.assertEqual(alignment_bytes, (self.output / "knowledge/alignments.json").read_bytes())
+        self.assertEqual(alignment_bytes, self.alignments.read_bytes())
+        self.assertEqual("verified", verify_store(self.output)["status"])
 
     def test_cloned_snapshot_remains_self_contained_and_verifiable(self) -> None:
         self.snapshot()
@@ -311,12 +402,12 @@ class JsonStoreTest(unittest.TestCase):
         with self.assertRaisesRegex(StoreError, "registry and graph semantics"):
             verify_store(self.output)
 
-    def test_verify_rejects_tampered_graph_diagnostics(self) -> None:
+    def test_verify_rejects_unmanaged_graph_diagnostics(self) -> None:
         self.snapshot()
         diagnostics = self.output / "knowledge/graph/diagnostics.json"
         diagnostics.write_text('{"forged": true}\n', encoding="utf-8")
 
-        with self.assertRaisesRegex(StoreError, "graph artifact digest mismatch"):
+        with self.assertRaisesRegex(StoreError, "graph artifact inventory mismatch"):
             verify_store(self.output)
 
     def test_verify_accepts_git_metadata_but_refresh_refuses_to_delete_it(self) -> None:

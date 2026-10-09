@@ -77,7 +77,7 @@ class CandidateBuilderTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual("kgdistiller-agent-snapshot-v1", first["schema"])
-        self.assertEqual("kgdistiller-graph-v1", first["graph"]["schema"])
+        self.assertEqual("kgdistiller-graph-v2", first["graph"]["schema"])
         self.assertEqual(
             ["first-concept", "second-concept"],
             [node["id"] for node in first["nodes"]],

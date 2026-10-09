@@ -75,7 +75,8 @@ class DocumentTypesTest(unittest.TestCase):
                 self.assertEqual(node["properties"]["document_type"], "实验日志")
                 self.assertEqual(node["properties"]["fields"], ["geometry"])
                 # Profile kinds guide reviewed extraction, not syntax scanning.
-                self.assertEqual(node["properties"]["source_kind"], definition.kind)
+                self.assertEqual(node["properties"]["kind"], definition.kind)
+                self.assertNotIn("source_kind", node["properties"])
         self.assertEqual(load_document_types(self.registry), {"实验日志": self.profile})
 
     def test_scan_exposes_selected_profile_before_any_markers_exist(self) -> None:
@@ -180,6 +181,45 @@ class DocumentTypesTest(unittest.TestCase):
         node = self.sync().nodes["test-object"]
         self.assertEqual(node["properties"]["kind"], "theorem")
         self.assertNotIn("kind_origin", node["properties"])
+        self.assertNotIn("source_kind", node["properties"])
+
+    def test_removing_reviewed_kind_restores_scanner_kind_without_redundant_metadata(self) -> None:
+        source = self.repo / "sources/item.md"
+        source.write_text("Definition --[[Test object]]--\nFirst body.\n", encoding="utf-8")
+        self.sync()
+        self.apply_kind("test-object", "construction", text="Reviewed definition.")
+        # The original syntax is retained immediately, before any later scan.
+        self.assertEqual("definition", cli.load_state(self.graph).nodes["test-object"]["properties"]["source_kind"])
+        entry = self.repo / "knowledge/entries/test-object.md"
+        entry.write_text(entry.read_text().replace('kgd_kind: "construction"\n', ""), encoding="utf-8")
+        node = self.sync().nodes["test-object"]
+        self.assertEqual("definition", node["properties"]["kind"])
+        self.assertNotIn("kind_origin", node["properties"])
+        self.assertNotIn("source_kind", node["properties"])
+        before = {path.name: path.read_bytes() for path in self.graph.iterdir() if path.is_file()}
+        self.sync()
+        self.assertEqual(before, {path.name: path.read_bytes() for path in self.graph.iterdir() if path.is_file()})
+
+    def test_reviewed_kind_equal_to_scanner_kind_still_preserves_reset_semantics(self) -> None:
+        self.payload["sources"][0].pop("document_type")
+        self.save_registry()
+        source = self.repo / "sources/item.md"
+        source.write_text("Definition --[[Test object]]--\nFirst body.\n", encoding="utf-8")
+        self.sync()
+        self.apply_kind("test-object", "definition", text="Reviewed definition.")
+        properties = self.sync().nodes["test-object"]["properties"]
+        self.assertEqual("reviewed", properties["kind_origin"])
+        self.assertEqual("definition", properties["source_kind"])
+        source.write_text("Theorem --[[Test object]]--\nFirst body.\n", encoding="utf-8")
+        properties = self.sync().nodes["test-object"]["properties"]
+        self.assertEqual("definition", properties["kind"])
+        self.assertEqual("theorem", properties["source_kind"])
+        entry = self.repo / "knowledge/entries/test-object.md"
+        entry.write_text(entry.read_text().replace('kgd_kind: "definition"\n', ""), encoding="utf-8")
+        properties = self.sync().nodes["test-object"]["properties"]
+        self.assertEqual("theorem", properties["kind"])
+        self.assertNotIn("source_kind", properties)
+        self.assertNotIn("kind_origin", properties)
 
     def test_kind_without_accepted_content_cannot_live_only_in_generated_graph(self) -> None:
         source = self.repo / "sources/item.md"

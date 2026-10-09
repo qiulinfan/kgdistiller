@@ -63,7 +63,8 @@ The block above is the value of `document_types`, not a replacement for the
 whole source registry. Add `"document_type": "worked-notes"` to the relevant
 existing source record. That record can cover a bounded set of files of any
 supported native format. Separate source records can use different profiles.
-Names and kinds are caller-supplied; new projects start with an empty mapping.
+Names and kinds are caller-supplied; new projects omit this optional mapping until
+the user registers a profile.
 Existing registries without profiles remain unclassified. Explicit unknown
 profile names or malformed registrations are errors.
 
@@ -73,9 +74,12 @@ This works before a source has any knowledge markers, so an agent can read the
 extraction rules before choosing nodes. Capture accepts an optional reviewed
 `kind`; when supplied, it must belong to the source's registered profile.
 The accepted type is stored in entry frontmatter as `kgd_kind`, and projected
-as `properties.kind` with `kind_origin: reviewed`. Scanner syntax is retained
-separately in `source_kind`; subsequent synchronization does not overwrite the
-reviewed type. Old entries without an explicit reviewed kind remain readable.
+as `properties.kind` with `kind_origin: reviewed`. Only reviewed nodes retain
+scanner syntax separately in `source_kind`, so synchronization preserves the
+reviewed type. Without a reviewed kind, `kind` already records the source syntax
+and no duplicate `source_kind` is stored. Removing `kgd_kind` restores `kind`
+from that source syntax and removes the separate `source_kind`. Old entries
+without an explicit reviewed kind remain readable.
 
 Entries now default to original Markdown, Typst or LaTeX evidence. Explicit
 historical Markdown evidence links still work; no automatic conversion or
@@ -87,6 +91,47 @@ and explicitly requested older import commands are separate from extraction.
 
 RAG architecture is still open. Source types must not silently impose hard
 retrieval filters or choose an embedding/index backend.
+
+## Minimum stored metadata
+
+Keep the existing `knowledge/` root. The normal knowledge store consists of:
+
+```text
+knowledge/
+├── vault.json              # stable vault identity for registration
+├── sources.json            # bounded source registration; optional document types
+├── entries/<node-id>.md    # one editable body per accepted knowledge entry
+└── graph/
+    ├── manifest.json       # generation and source/entry bindings
+    ├── nodes.jsonl         # durable identities, metadata, aliases and orphan state
+    ├── edges.jsonl         # accepted typed relationships
+    └── references.jsonl    # source occurrences used for navigation and backlinks
+```
+
+New source registration needs only its `id`, `root` and `files` plus the registry
+schema. Do not prefill an invented general field, empty topics, web settings or
+classification policies. User-selected fields/topics and extraction profiles
+remain optional data; source registration does not create knowledge nodes.
+
+`kgdistiller-graph-v2` stores entry content only in the Markdown authorities.
+The loader reads their manifest-bound content and returns the same hydrated
+`text`/`entry` API fields; it does not create JSONL body copies. New generations
+omit `graph/entries/`, `entry_store`, per-node `entry_path`, persisted diagnostics
+and unused classification counters. Read-only loading still accepts existing
+public graph v1; an explicit synchronization or writer produces graph v2 and
+preserves IDs, aliases, accepted relations and source content.
+
+Create `identities.json` only for reviewed renames/aliases and `alignments.json`
+only for accepted cross-namespace mappings. Existing nonempty registries remain
+knowledge state. `documents.jsonl` and `store.json` belong to an explicitly
+requested portable snapshot; daily capture, ordinary Git clones and exports do
+not require them. `build/` is transient work. Static and Obsidian exports exist
+only for chosen consumers and must be retained or rebuilt when those consumers
+still use them. These optional artifacts are not mandatory core directories.
+
+Graph records retain knowledge that source prose alone cannot reconstruct;
+never delete `graph/` as a cache. This compaction changes storage duplication,
+not graph identity, scientific content or the unresolved RAG architecture.
 
 ## Sources, metadata and views
 

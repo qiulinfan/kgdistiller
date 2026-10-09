@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import json
 import os
 import stat
@@ -113,30 +115,16 @@ def initialize_project(
     sources = [
         {
             "id": "local:notes",
-            "subject": "local",
-            "course": "notes",
-            "knowledge_origin": "personal-note",
-            "fields": ["general"],
             "root": configured_root,
             "files": ["**/*.md", "**/*.typ", "**/*.tex"],
-            "web": "",
-            "topics": [],
         }
     ]
     payload = {
         "schema": "kgdistiller-sources-v1",
-        "document_types": {},
-        "fields": [
-            {
-                "id": "general",
-                "label": "General Knowledge",
-                "text": "Knowledge that has not yet been assigned a more specific field.",
-            }
-        ],
         "sources": sources,
     }
     registry.parent.mkdir(parents=True, exist_ok=True)
-    default_knowledge = project_root / "knowledge"
+    default_knowledge = knowledge_root(project_root)
     (default_knowledge / "entries").mkdir(parents=True, exist_ok=True)
     ensure_knowledge_gitignore(default_knowledge / ".gitignore")
     if registry.parent.resolve() != default_knowledge.resolve():
@@ -145,16 +133,5 @@ def initialize_project(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    alignment_path = alignments or registry.parent / "alignments.json"
-    # Reviewed mappings are user curation. Even --force must not erase them.
-    if not alignment_path.exists():
-        alignment_path.parent.mkdir(parents=True, exist_ok=True)
-        alignment_path.write_text(
-            json.dumps(
-                {"schema": "kgdistiller-alignments-v1", "mappings": []},
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+    # Reviewed mappings are optional user curation. Initialization neither
+    # creates an empty registry nor touches an existing one, even with --force.

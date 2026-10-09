@@ -15,7 +15,7 @@
       "additionalProperties": false,
       "required": ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
       "properties": {
-        "graph_schema": {"const": "kgdistiller-graph-v1"},
+        "graph_schema": {"enum": ["kgdistiller-graph-v1", "kgdistiller-graph-v2"]},
         "graph_sha256": {"$ref": "#/$defs/sha256"},
         "snapshot_sha256": {"$ref": "#/$defs/sha256"},
         "source_hashes_sha256": {"$ref": "#/$defs/sha256"}

@@ -3,9 +3,10 @@
 Use this contract for Markdown, Typst, and LaTeX authorities registered in a
 kgdistiller project.
 
-Require a current `kgdistiller-graph-v1` graph and prepare only `kgdistiller-agent-delta-v1`.
-Superseded core registries and graphs belong to the explicit deployment/rebuild
-workflow, not curation.
+Require `kgdistiller-graph-v2` or an existing public `kgdistiller-graph-v1`
+generation and prepare only `kgdistiller-agent-delta-v1`. Explicit writers emit
+v2 and preserve accepted state. Unsupported pre-0.4 registries and graphs
+belong to the explicit deployment/rebuild workflow, not curation.
 
 ## Authority and identity
 
@@ -72,7 +73,8 @@ Use `properties.kind` for its reviewed semantic kind, following the source's
 registered `node_kinds` when it has a document profile. Preserve reviewed kinds
 on later sync; native statement syntax is not a semantic reclassification.
 Keep longer dossiers outside node properties; the engine stores reviewed entry
-bodies in authority-scoped shards.
+bodies only in `knowledge/entries/<node-id>.md`. Graph v2 hydrates the unchanged
+API content from these bound Markdown authorities without JSONL body copies.
 
 ## Personal understanding and direct gaps
 
@@ -102,7 +104,7 @@ can provide such an assertion without adding a node. Separate independent
 assertions when conditions or epistemic states differ. Review status and
 scientific epistemic status are distinct.
 
-For assertions that the current graph-v1 edge adapter can faithfully represent,
+For assertions that the current direct-edge adapter can faithfully represent,
 use the narrowest supported direct source-grounded relation:
 
 - `prerequisite-for`: understanding the target directly requires the source;
@@ -150,7 +152,7 @@ The extraction handoff contains:
    package and may have `delta_ready: false`;
 6. unresolved decisions and unsupported relation/application records, with
    exact unapplied scope; ambiguity blocks its affected apply, and unsupported
-   records remain deferred rather than becoming fabricated graph-v1 writes.
+   records remain deferred rather than becoming fabricated direct-edge writes.
 
 Use `$query-kgdistiller` for identity and retrieval and
 `$ingest-kgdistiller` for mutation. Never edit generated graph artifacts or

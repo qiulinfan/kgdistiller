@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgdistiller.dev/schemas/kgdistiller-document-record-v2.schema.json",
+  "title": "kgdistiller portable document record v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "source_id", "knowledge_origin",
+    "authority", "format", "source_sha256", "definition_ids", "reference_count"
+  ],
+  "properties": {
+    "schema": {"const": "kgdistiller-document-record-v2"},
+    "source_id": {"type": "string", "minLength": 1},
+    "document_type": {"type": "string", "minLength": 1},
+    "subject": {"type": "string", "minLength": 1},
+    "course": {"type": "string", "minLength": 1},
+    "knowledge_origin": {"enum": ["personal-note", "research"]},
+    "authority": {"type": "string", "minLength": 1},
+    "format": {"enum": ["markdown", "typst", "latex"]},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "definition_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"}
+    },
+    "reference_count": {"type": "integer", "minimum": 0}
+  }
+}

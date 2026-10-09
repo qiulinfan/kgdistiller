@@ -289,6 +289,8 @@ class EntryMarkdownAuthorityTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+        with self.assertRaisesRegex(KnowledgeError, "out of sync"):
+            load_state(self.graph)
         state, _, _ = self.sync()
 
         self.assertEqual("Edited directly in Obsidian.", state.nodes["measure-space"]["text"])

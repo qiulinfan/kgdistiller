@@ -17,7 +17,7 @@ keys and action codes, and raw errors unchanged.
 
 ## Keep the boundary read-only
 
-- Never open `knowledge/graph/*.jsonl`, derived entry shards, or atomic entry
+- Never open `knowledge/graph/*.jsonl`, any legacy entry shards, or atomic entry
   Markdown; use the bounded query interface.
 - Never edit an authority, identity/alignment registry, or graph artifact.
 - Never run `apply`, `sync`, `reconcile`, `ingest`, or another writer.
@@ -36,8 +36,11 @@ Start with `kg_status` or:
 kgdistiller --repo-root PROJECT agent status
 ```
 
-Require `kgdistiller-query-status-v1`, `kgdistiller-agent-snapshot-v1`, `kgdistiller-graph-v1`,
+Require `kgdistiller-query-status-v1`, `kgdistiller-agent-snapshot-v1`, a supported
+`kgdistiller-graph-v2` or existing public `kgdistiller-graph-v1` generation,
 `kgdistiller-alignments-v1`, and the `json-memory`/`read-only-query-v3` capabilities.
+A v1 read never authorizes a write or upgrade. The query layer hydrates entry
+Markdown internally; use its bounded results rather than opening those files.
 Record `snapshot_sha256`, `graph_sha256`, and `alignment_sha256` so a later
 transactional writer can reject a stale decision.
 

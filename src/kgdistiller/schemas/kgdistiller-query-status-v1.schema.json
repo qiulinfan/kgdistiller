@@ -15,7 +15,7 @@
     "snapshot_schema": {"const": "kgdistiller-agent-snapshot-v1"},
     "namespace": {"$ref": "#/$defs/namespace"},
     "snapshot_sha256": {"$ref": "#/$defs/sha256"},
-    "graph_schema": {"const": "kgdistiller-graph-v1"},
+    "graph_schema": {"enum": ["kgdistiller-graph-v1", "kgdistiller-graph-v2"]},
     "graph_sha256": {"$ref": "#/$defs/sha256"},
     "generation": {"$ref": "#/$defs/sha256"},
     "counts": {"$ref": "#/$defs/counts"},

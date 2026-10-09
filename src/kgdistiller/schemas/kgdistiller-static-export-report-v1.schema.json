@@ -69,7 +69,7 @@
       "additionalProperties": false,
       "required": ["private_schema", "private_sha256", "private_counts", "public_schema", "public_sha256", "public_counts"],
       "properties": {
-        "private_schema": {"const": "kgdistiller-graph-v1"},
+        "private_schema": {"enum": ["kgdistiller-graph-v1", "kgdistiller-graph-v2"]},
         "private_sha256": {"$ref": "#/$defs/sha256"},
         "private_counts": {"$ref": "#/$defs/counts"},
         "public_schema": {"const": "kgdistiller-site-graph-v1"},

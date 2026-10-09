@@ -302,6 +302,7 @@ class ContractTest(unittest.TestCase):
                 "kgdistiller-source-evidence-context-v1",
                 "kgdistiller-source-reference-result-v1",
                 "kgdistiller-document-record-v1",
+                "kgdistiller-document-record-v2",
                 "kgdistiller-store-v1",
                 "kgdistiller-store-report-v1",
                 "kgdistiller-obsidian-projection-v1",

@@ -5,8 +5,10 @@
 Authority is layered. Configured `.md`, `.typ`, and `.tex` markers define
 identity. Original source files provide evidence directly, and every
 curated atomic entry is an Obsidian-compatible Markdown authority under
-`knowledge/entries/`. Generated graph artifacts, in-memory query views, HTML,
-static sites, and managed Obsidian projections never become another authority.
+`knowledge/entries/`. Graph records retain durable identity state and accepted semantic relationships;
+they are not a disposable cache or a second editable copy of entry content.
+In-memory query views, HTML, static sites and managed Obsidian projections do
+not become another authority.
 
 Generated source-side definition sheets declare
 `<!-- kgdistiller-projection: definition-sheet -->` as the first nonblank content
@@ -59,7 +61,7 @@ as a diagnostic, not a general node limit.
 
 Accepted entries live in `knowledge/`; source def sheets are lightweight links
 to those entries. Rich n-ary relations, applications and complete gap-state
-records are authoring targets, not additional graph-v1 delta capabilities.
+records are authoring targets, not additional `kgdistiller-agent-delta-v1` capabilities.
 Unsupported updates remain review proposals rather than invented graph data.
 
 `field` nodes form a flat overlapping facet layer. `topic` nodes are curated
@@ -81,8 +83,15 @@ Every curated active knowledge node has a concise, source-grounded
 `kgdistiller-entry-v1` frontmatter contract. The entry improves search and
 explanation but does not replace the identity marker or its statement/proof.
 The entry records its native or explicitly selected evidence, evidence digest, and reviewed
-definition digest. The JSONL copy in `knowledge/graph/entries/` is derived and
-must never be edited as authority.
+definition digest. Graph v2 keeps the body only here. Its manifest binds the
+entry Markdown and source evidence; the loader validates and reads that content
+to populate the unchanged hydrated `text` and `entry` API fields. It writes no
+`knowledge/graph/entries/` copy, `entry_store` or per-node `entry_path`.
+
+Existing public `kgdistiller-graph-v1` generations remain readable without
+mutation, including their legacy shards. An explicit sync or writer emits
+`kgdistiller-graph-v2`, preserving established identities and accepted semantic
+state. This is separate from unsupported pre-0.4 graphs and databases.
 
 ```markdown
 ---
@@ -104,10 +113,13 @@ A measurable space equipped with a measure.
 ```
 
 Optional `kgd_kind` preserves the reviewed semantic knowledge type. In the
-graph this is `properties.kind` with `kind_origin: reviewed`; the independent
-`source_kind` records what the native scanner inferred. A source sync must not
-overwrite a reviewed kind with a statement-environment or heading label.
-Entries without this optional field remain readable.
+graph this is `properties.kind` with `kind_origin: reviewed`; only these reviewed
+nodes retain `source_kind` for the native scanner's syntax type. A source sync
+must not overwrite a reviewed kind with a statement-environment or heading
+label. Without a reviewed kind, `kind` already records that source type and
+`source_kind` is omitted. Removing `kgd_kind` restores the source type as `kind`
+then drops the separate `source_kind`. Entries without this optional field
+remain readable.
 A type-only edit of an existing entry preserves its content-review fingerprints
 and stale status. A reviewed type needs an accepted entry or simultaneously
 reviewed content; it is not stored solely on an uncurated scanner node.
@@ -244,10 +256,9 @@ and static export share this one function, so Git's checkout newline policy
 cannot create a false source change. Raw-byte hashing remains reserved for
 binary and byte-stable artifacts.
 
-Generated graph JSON/JSONL and derived entry shards are serialized with LF.
-Hydration and `check` read those text projections with the same universal-
-newline behavior before comparing their manifest digests and canonical
-serialization. Thus an otherwise clean CRLF checkout still represents the
+Generated graph JSON/JSONL is serialized with LF. Hydration and `check` read
+those records and the bound entry Markdown with universal-newline behavior
+before comparing their manifest digests and canonical serialization. Thus an otherwise clean CRLF checkout still represents the
 same graph generation; semantic text changes continue to invalidate it.
 
 Every definition stores a hash and source span for its enclosing authored
@@ -303,16 +314,20 @@ the plugin graph retains semantic relation labels, direction, and evidence.
 - no dangling semantic edge endpoints;
 - no cycles in `contains` or `prerequisite-for`;
 - no field-to-field `contains` edges;
-- every active knowledge node resolves to at least one field;
+- when field classifications are configured, active knowledge nodes satisfy the
+  explicit classification policy; unclassified projects need no invented field;
 - Typst label HTML contains no active or unsafe content;
-- entry Markdown authorities are manifest-bound and their derived shards are
-  bounded and referenced from the manifest;
+- entry Markdown authorities are manifest-bound and are the only persisted entry
+  bodies in graph v2; hydration is read-only and rejects missing or changed entries;
 - unresolved references and orphaned nodes remain visible diagnostics;
 - changed definitions and their affected semantic edges remain visible review
   diagnostics rather than being silently trusted or deleted;
 - a scoped sync never rewrites unrelated source state;
 - an explicit file scope has exactly one bounded registry owner;
 - examples and headings create no implicit nodes.
+
+Diagnostics are computed from the loaded graph when needed; graph v2 does not
+persist `diagnostics.json` or unused manifest classification counters.
 
 Run `kgdistiller audit` for entry coverage, topology, relation counts,
 cross-course bridges, field memberships, and edge metadata completeness.

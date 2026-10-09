@@ -459,12 +459,13 @@ class StaticSiteExportTests(unittest.TestCase):
             graph_manifest,
             self.source_hashes,
         )
-        declared_shards = {
-            self.graph / str(shard["path"])
-            for shard in graph_manifest["entry_store"]["shards"]
+        entry_authorities = {
+            self.repo / str(entry["path"])
+            for entry in graph_manifest["entry_authorities"]["entries"]
         }
-        self.assertTrue(declared_shards)
-        self.assertTrue(declared_shards.issubset(set(inputs)))
+        self.assertNotIn("entry_store", graph_manifest)
+        self.assertIn(self.graph / "nodes.jsonl", inputs)
+        self.assertTrue(entry_authorities.issubset(set(inputs)))
 
         output = self.export("crlf")
         manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))

@@ -77,7 +77,7 @@ target already authorized by the user, or obtain confirmation for that scope.
 Do not bootstrap or migrate a knowledge project or edit raw graph files.
 
 Atomic entries support simple direct pending prerequisites and understanding.
-Current graph-v1 ingest does not support full n-ary/application records or rich
+Current `kgdistiller-agent-delta-v1` ingest does not support full n-ary/application records or rich
 gap history. Keep unsupported proposals in the review area, report the exact adapter
 gap and defer them. Do not invent storage formats, commands, accepted entries or
 links to make a sheet look complete. A read-only compiled library is not a write

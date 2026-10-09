@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from kgdistiller.cli import GRAPH_SCHEMA
+
 
 def executable() -> Path:
     name = "kgdistiller.exe" if os.name == "nt" else "kgdistiller"
@@ -70,7 +72,7 @@ def main() -> int:
 
         synchronized = run(root, "sync")
         require(synchronized.get("definitions") == 1, "sync omitted authority definition")
-        require(run_text(root, "check").startswith("OK: kgdistiller-graph-v1"), "graph check failed")
+        require(run_text(root, "check").startswith(f"OK: {GRAPH_SCHEMA}"), "graph check failed")
 
         status = run(root, "agent", "status")
         require(status.get("backend") == "json-memory", "wrong query backend")

@@ -8,6 +8,8 @@ current machine.
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import json
 import os
 import tempfile
@@ -50,7 +52,7 @@ def registry_path(home: Path | None = None) -> Path:
 
 
 def vault_manifest_path(root: Path) -> Path:
-    return Path(root).resolve(strict=False) / VAULT_MANIFEST
+    return knowledge_root(Path(root).resolve(strict=False)) / "vault.json"
 
 
 def _canonical_uuid(value: Any, field: str) -> str:
@@ -445,11 +447,11 @@ def resolve_registered_vault(selector: str, home: Path | None = None) -> Path:
 def _nearest_project_root(cwd: Path) -> Path | None:
     resolved = cwd.resolve(strict=False)
     for candidate in (resolved, *resolved.parents):
-        manifest = candidate / VAULT_MANIFEST
+        manifest = vault_manifest_path(candidate)
         if manifest.exists() or manifest.is_symlink():
             load_vault_manifest(candidate)
             return candidate
-        if (candidate / "knowledge/sources.json").is_file():
+        if (knowledge_root(candidate) / "sources.json").is_file():
             return candidate
     return None
 

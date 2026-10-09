@@ -219,7 +219,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual({"nodes": 0, "edges": 0, "references": 0}, report["delta"])
         manifest = json.loads(first["manifest.json"])
-        self.assertEqual("kgdistiller-graph-v1", manifest["schema"])
+        self.assertEqual("kgdistiller-graph-v2", manifest["schema"])
         self.assertRegex(manifest["graph_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             knowledge.source_registry_sha256(self.registry),
@@ -236,7 +236,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         legacy["schema"] = "legacy-graph-v0"
         manifest_path.write_text(json.dumps(legacy), encoding="utf-8")
         legacy_bytes = manifest_path.read_bytes()
-        with self.assertRaisesRegex(knowledge.KnowledgeError, "expected kgdistiller-graph-v1"):
+        with self.assertRaisesRegex(knowledge.KnowledgeError, "expected kgdistiller-graph-v2"):
             self.sync()
         self.assertEqual(legacy_bytes, manifest_path.read_bytes())
 
@@ -627,7 +627,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         self.assertEqual("σ-algebra", payload["node"]["label"])
         self.assertIn("𝜎", payload["node"]["properties"]["label_html"])
 
-    def test_entries_are_sharded_by_authority_and_hydrated_on_load(self) -> None:
+    def test_entries_are_read_from_markdown_without_graph_body_copies(self) -> None:
         self.sync()
         delta = self.repo / "knowledge/build/structured-entry.json"
         delta.parent.mkdir(parents=True, exist_ok=True)
@@ -653,21 +653,17 @@ class KnowledgeGraphTest(unittest.TestCase):
         knowledge.apply_delta(self.graph, self.typst_registry, delta)
 
         manifest = json.loads((self.graph / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual("kgdistiller-entry-shards-v1", manifest["entry_store"]["schema"])
-        self.assertEqual(3, manifest["entry_store"]["entries"])
-        shard = next(
-            item
-            for item in manifest["entry_store"]["shards"]
-            if item["path"].startswith("entries/by-source/")
-        )
-        self.assertIn("entries/by-source/notes/math/demo/chapters/01-foundations.typ.jsonl", shard["path"])
+        self.assertNotIn("entry_store", manifest)
+        self.assertFalse((self.graph / "entries").exists())
+        self.assertFalse((self.graph / "diagnostics.json").exists())
         serialized = next(
             json.loads(line)
             for line in (self.graph / "nodes.jsonl").read_text(encoding="utf-8").splitlines()
             if json.loads(line)["id"] == "sigma-algebra"
         )
         self.assertNotIn("text", serialized)
-        self.assertEqual(shard["path"], serialized["properties"]["entry_path"])
+        self.assertNotIn("entry", serialized)
+        self.assertNotIn("entry_path", serialized["properties"])
         hydrated = knowledge.load_state(self.graph).nodes["sigma-algebra"]
         self.assertEqual("A family of sets closed under the defining operations.", hydrated["text"])
         self.assertEqual("Used as the measurable event system.", hydrated["entry"]["context"])
@@ -1078,7 +1074,7 @@ class KnowledgeGraphTest(unittest.TestCase):
         registry = self.typst_registry.read_text(encoding="utf-8")
         self.assertIn('name: [#text("cache line")]', registry)
 
-    def test_same_stem_mixed_sources_use_distinct_entry_shards(self) -> None:
+    def test_same_stem_mixed_sources_keep_distinct_native_entry_sources(self) -> None:
         markdown = self.source_root / "chapters/same.md"
         markdown.write_text("--[[markdown authority]]--\n", encoding="utf-8")
         latex = self.source_root / "chapters/same.tex"
@@ -1107,10 +1103,10 @@ class KnowledgeGraphTest(unittest.TestCase):
         knowledge.apply_delta(self.graph, self.typst_registry, delta)
         state = knowledge.load_state(self.graph)
 
-        markdown_path = state.nodes["markdown-authority"]["properties"]["entry_path"]
-        latex_path = state.nodes["latex-authority"]["properties"]["entry_path"]
-        self.assertTrue(markdown_path.endswith("same.md.jsonl"))
-        self.assertTrue(latex_path.endswith("same.tex.jsonl"))
+        markdown_path = state.nodes["markdown-authority"]["properties"]["entry_source"]
+        latex_path = state.nodes["latex-authority"]["properties"]["entry_source"]
+        self.assertTrue(markdown_path.endswith("same.md"))
+        self.assertTrue(latex_path.endswith("same.tex"))
         self.assertNotEqual(markdown_path, latex_path)
 
     def test_markdown_requires_explicit_authority_dashes(self) -> None:

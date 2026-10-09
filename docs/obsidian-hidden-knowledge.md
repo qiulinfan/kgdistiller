@@ -29,9 +29,11 @@ watching behavior.
 
 This setting changes indexing only. It does not move an existing knowledge
 base, rename `knowledge/`, rewrite source links, or change the **Semantic graph
-path** setting. The core's current storage root remains `knowledge/`. Choosing
-a different canonical storage root is a separate data migration and requires
-its own scope and verification.
+path** setting. The core locates the project's single `knowledge/` or
+`.knowledge/` tree; new projects still default to `knowledge/`. Both trees
+cannot coexist. Moving an existing tree requires an explicit migration that
+updates entry evidence paths, graph inventories, source-sheet links and
+consumer configuration. The indexing toggle never performs that migration.
 
 ## Compatibility and boundaries
 

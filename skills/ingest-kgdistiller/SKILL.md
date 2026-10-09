@@ -75,7 +75,7 @@ store, check, and export.
 
 5. Accept only `kgdistiller-ingest-receipt-v1` with `status: committed`, a valid
    canonical digest, and after-digests matching fresh `agent status`.
-6. If `knowledge/store.json` exists, refresh and verify it:
+6. If maintaining an explicitly requested portable snapshot, refresh and verify it:
 
    ```sh
    kgdistiller --repo-root PROJECT store snapshot
@@ -83,8 +83,11 @@ store, check, and export.
    ```
 
    This records the file-based `kgdistiller-store-v1` generation, including entry
-   Markdown and its evidence. If no store exists,
-   report `local-only`; do not silently initialize Git, commit, or push.
+   Markdown and its evidence. A live knowledge project does not require
+   `documents.jsonl` or `store.json`; do not create them for ordinary capture.
+   Report an existing snapshot as stale if it was not refreshed, and verify it
+   before using it as backup. Report Git state separately; never silently
+   initialize Git, commit, or push.
 7. Create a static-site or lossy Obsidian projection only when explicitly in
    scope. Neither export is authority, and the managed Obsidian subtree or an
    external browsing-only vault/projection must never be rescanned or ingested.

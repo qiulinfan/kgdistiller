@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import copy
 import hashlib
 import json
@@ -16,7 +18,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .cli import (
-    GRAPH_SCHEMA,
     GraphState,
     KnowledgeError,
     atomic_write,
@@ -85,11 +86,11 @@ def _require_graph_generation_bindings(
         )
 
 
-def _require_same_graph_generation(graph_dir: Path, expected: GraphState) -> GraphState:
+def _require_same_graph_generation(graph_dir: Path, expected: GraphState, *, repo_root: Path) -> GraphState:
     """Reload and validate the graph before committing a generated export."""
 
     try:
-        current = load_state(graph_dir)
+        current = load_state(graph_dir, repo_root=repo_root)
         make_agent_snapshot(current)
     except (KnowledgeError, OSError, UnicodeError, ValueError) as error:
         raise StaticExportError(f"cannot reload the authority graph: {error}") from error
@@ -851,7 +852,7 @@ def _verified_existing_export(output: Path) -> dict[str, Any]:
 def _export_recovery_root(repo_root: Path, output: Path) -> Path:
     identity = os.path.normcase(os.path.abspath(output)).encode("utf-8")
     key = hashlib.sha256(identity).hexdigest()[:32]
-    return repo_root / "knowledge" / "build" / EXPORT_RECOVERY_DIRECTORY / key
+    return knowledge_root(repo_root) / "build" / EXPORT_RECOVERY_DIRECTORY / key
 
 
 def _safe_recovery_directory(repo_root: Path, recovery_root: Path) -> None:
@@ -1071,7 +1072,7 @@ def export_site_bundle(
     registry = registry.resolve()
     graph_dir = graph_dir.resolve()
     identities = (
-        (repo_root / "knowledge/identities.json").resolve()
+        (knowledge_root(repo_root) / "identities.json").resolve()
         if identities is None
         else identities.resolve()
     )
@@ -1096,7 +1097,7 @@ def export_site_bundle(
     source_repository = _safe_repository_url(source_repository, "source repository")
     assert source_repository is not None
     producer_commit = resolve_product_commit(product_commit)
-    state = load_state(graph_dir)
+    state = load_state(graph_dir, repo_root=repo_root)
     _require_graph_generation_bindings(state, registry, identities)
     graph_payload, filtered_state, published_hashes, published_ids, source_count = (
         build_site_graph(repo_root, registry, state)
@@ -1176,7 +1177,7 @@ def export_site_bundle(
                 "excluded_sources": source_count - len(published_ids),
             },
             "graph": {
-                "private_schema": GRAPH_SCHEMA,
+                "private_schema": state.manifest["schema"],
                 "private_sha256": str(state.manifest["graph_sha256"]),
                 "private_counts": private_counts,
                 "public_schema": SITE_GRAPH_SCHEMA,
@@ -1193,7 +1194,7 @@ def export_site_bundle(
         validate_contract(manifest)
         atomic_write(staging / "manifest.json", pretty_json(manifest))
         verify_export(staging)
-        current_state = _require_same_graph_generation(graph_dir, state)
+        current_state = _require_same_graph_generation(graph_dir, state, repo_root=repo_root)
         _require_graph_generation_bindings(current_state, registry, identities)
         install = _install_export(
             staging,

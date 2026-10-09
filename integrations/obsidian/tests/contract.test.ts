@@ -24,6 +24,16 @@ describe("kgdistiller Obsidian graph contract", () => {
     expect(parsed.references[0]?.source_authority).toBe("notes/chapter.md");
   });
 
+  it("accepts compact graph storage while retaining legacy projections", async () => {
+    for (const schema of ["kgdistiller-graph-v1", "kgdistiller-graph-v2"] as const) {
+      const graph = await graphFixture();
+      graph.source.graph_schema = schema;
+      graph.bundle_sha256 = await calculateBundleDigest({ ...graph });
+      const parsed = await parseGraphContract(JSON.stringify(graph));
+      expect(parsed.source.graph_schema).toBe(schema);
+    }
+  });
+
   it("rejects digest tampering", async () => {
     const graph = await graphFixture();
     graph.concepts[0]!.label = "Tampered";

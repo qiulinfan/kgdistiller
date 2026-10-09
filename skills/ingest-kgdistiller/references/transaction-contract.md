@@ -31,20 +31,22 @@ content-addressed request only after review.
 Authority SHA-256 values use UTF-8 text with CRLF/CR normalized to LF. The
 writer holds one bounded lock, revalidates all preconditions, atomically
 installs identity authorities, `knowledge/entries/` Markdown, registries,
-generated Typst registry, and the deterministic `kgdistiller-graph-v1` graph, then returns a canonical
+generated Typst registry, and the compact `kgdistiller-graph-v2` graph, then returns a canonical
 `kgdistiller-ingest-receipt-v1`.
 
-Reject unknown request, delta, registry, and graph discriminators. Ingest is
-not a migration boundary: use the deployment workflow to establish a Git
-rollback point, write current reviewed registry discriminators, and derive
-`kgdistiller-graph-v1` from native authorities before preparing a transaction.
+Reject unknown request, delta, registry, and graph discriminators. Existing
+public graph v1 remains readable; an explicit transaction writes graph v2 while
+preserving IDs, aliases and accepted relationships. Entry bodies persist once
+in Markdown and are hydrated by readers. For unsupported pre-0.4 graphs, use
+the deployment workflow to establish a rollback point and rebuild from native
+authorities and reviewed metadata before preparing a transaction.
 
 Accept success only when `status` is `committed` and after-digests match a fresh
 generation-checked `agent status`. Reusing the exact request is idempotent;
 changing it requires a new canonical digest and review.
 
 Do not compose `apply`, `sync`, or `reconcile` as a substitute, and do not edit
-graph JSON/JSONL, derived entry shards, identities, or alignments directly.
+graph JSON/JSONL, legacy entry shards, identities, or alignments directly.
 Atomic entry Markdown is changed only through the reviewed transaction. There is no
 secondary database, embedding, provider, or materialization boundary. Extraction
 profiles are source-registry data within the existing knowledge project.
@@ -53,10 +55,13 @@ and recover from them or a known-good Git revision.
 
 ## Downstream state and handoff
 
-If a `kgdistiller-store-v1` manifest already exists, refresh with `store snapshot` and
-confirm with `store verify`. A store snapshot contains identity authorities,
-entry Markdown and its evidence, registries, deterministic graph artifacts, and
-canonical document inventory.
+A portable snapshot is optional. When explicitly maintaining one for this
+update, refresh it with `store snapshot` and confirm with `store verify`.
+Otherwise report an existing outdated snapshot as stale and verify it before
+using it as backup; do not create one during ordinary capture. A snapshot
+contains identity authorities, entry Markdown and evidence, registries,
+graph artifacts and a document inventory. None of its inventory files is
+required for live graph queries or ordinary Git backup.
 
 Static-site and Obsidian exports are separate downstream actions. The project
 root may be an editor vault whose registered Markdown files remain authority;

@@ -96,9 +96,9 @@ def _graph_payload(view: GraphView) -> dict[str, Any]:
     }
 
 
-def load_graph_payload(graph_dir: Path) -> dict[str, Any]:
+def load_graph_payload(graph_dir: Path, *, repo_root: Path | None = None) -> dict[str, Any]:
     """Load one complete, digest-checked graph generation for the browser."""
-    return _graph_payload(load_graph_view(graph_dir))
+    return _graph_payload(load_graph_view(graph_dir, repo_root=repo_root))
 
 
 def source_excerpt(
@@ -163,7 +163,7 @@ def create_graph_server(
     """Create the local graph HTTP server without starting its event loop."""
     static_root = Path(__file__).with_name("static")
     # Fail before binding a port if the initial generation is incomplete.
-    load_graph_payload(graph_dir)
+    load_graph_payload(graph_dir, repo_root=project_root)
     resolved_project_root = project_root.resolve()
     allowed_hostnames = _allowed_hostnames(host)
 
@@ -219,7 +219,7 @@ def create_graph_server(
             parsed = urlparse(self.path)
             if parsed.path == "/api/graph.json":
                 try:
-                    self.send_json(load_graph_payload(graph_dir))
+                    self.send_json(load_graph_payload(graph_dir, repo_root=resolved_project_root))
                 except (OSError, UnicodeError, ValueError) as error:
                     self.send_json({"error": str(error)}, 409)
                 return
@@ -227,7 +227,7 @@ def create_graph_server(
                 query = parse_qs(parsed.query)
                 authority = query.get("path", [""])[0]
                 try:
-                    view = load_graph_view(graph_dir)
+                    view = load_graph_view(graph_dir, repo_root=resolved_project_root)
                     requested_snapshot = query.get("snapshot", [""])[0]
                     if not requested_snapshot:
                         raise ValueError("source request has no graph snapshot generation")

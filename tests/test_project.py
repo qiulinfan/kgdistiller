@@ -18,7 +18,7 @@ from kgdistiller.vault_registry import VAULT_SCHEMA  # noqa: E402
 
 
 class ProjectInitializationTest(unittest.TestCase):
-    def test_init_creates_empty_alignment_registry_without_erasing_review_data(self) -> None:
+    def test_init_creates_minimal_registry_without_erasing_review_data(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
             root = Path(temporary)
             registry = root / "knowledge/sources.json"
@@ -37,8 +37,8 @@ class ProjectInitializationTest(unittest.TestCase):
                 {"local:notes"},
                 {source["id"] for source in sources["sources"]},
             )
-            self.assertEqual({}, sources["document_types"])
-            self.assertNotIn("document_type", sources["sources"][0])
+            self.assertEqual({"schema", "sources"}, set(sources))
+            self.assertEqual({"id", "root", "files"}, set(sources["sources"][0]))
             self.assertTrue((root / "knowledge/entries").is_dir())
             self.assertFalse((root / "knowledge/derived").exists())
             vault_manifest = json.loads(
@@ -49,10 +49,7 @@ class ProjectInitializationTest(unittest.TestCase):
                 vault_manifest["vault_id"],
                 r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
             )
-            self.assertEqual(
-                {"schema": "kgdistiller-alignments-v1", "mappings": []},
-                json.loads(alignments.read_text(encoding="utf-8")),
-            )
+            self.assertFalse(alignments.exists())
             self.assertEqual(
                 "build/\n",
                 (root / "knowledge/.gitignore").read_text(encoding="utf-8"),
@@ -62,16 +59,21 @@ class ProjectInitializationTest(unittest.TestCase):
                 "mappings": [{"preserved": True}],
             }
             alignments.write_text(json.dumps(reviewed), encoding="utf-8")
+            before = registry.read_bytes()
+            with self.assertRaises(FileExistsError):
+                initialize_project(root, registry, source_root=Path("replacement"))
+            self.assertEqual(before, registry.read_bytes())
             gitignore = root / "knowledge/.gitignore"
             gitignore.write_text("build/\nlocal-secret/\n", encoding="utf-8")
             initialize_project(
                 root,
                 registry,
-                source_root=Path("notes"),
+                source_root=Path("replacement"),
                 alignments=alignments,
                 force=True,
             )
             self.assertEqual(reviewed, json.loads(alignments.read_text(encoding="utf-8")))
+            self.assertEqual("replacement", json.loads(registry.read_text())["sources"][0]["root"])
             self.assertEqual(
                 "build/\nlocal-secret/\n",
                 gitignore.read_text(encoding="utf-8"),

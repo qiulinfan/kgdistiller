@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import copy
 import json
 import os
@@ -582,7 +584,7 @@ def _validate_preconditions(
         ("typst_registry", paths.typst_registry),
     ):
         _config_relative(paths, path, field)
-    state = load_state(paths.graph_dir)
+    state = load_state(paths.graph_dir, repo_root=paths.repo_root)
     graph_sha = str(state.manifest.get("graph_sha256", ""))
     if graph_sha != request["base_graph_sha256"]:
         raise IngestError(
@@ -824,7 +826,7 @@ def _prepare_shadow(paths: IngestPaths, root: Path) -> IngestPaths:
             _filesystem_path(paths.graph_dir),
             _filesystem_path(shadow.graph_dir),
         )
-    for relative in (Path("knowledge/entries"), Path("knowledge/derived")):
+    for relative in (knowledge_relative(paths.repo_root, "knowledge/entries"), knowledge_relative(paths.repo_root, "knowledge/derived")):
         source_root = paths.repo_root / relative
         target_root = root / relative
         if source_root.is_dir():
@@ -833,7 +835,7 @@ def _prepare_shadow(paths: IngestPaths, root: Path) -> IngestPaths:
                 _filesystem_path(target_root),
                 dirs_exist_ok=True,
             )
-    (root / "knowledge/entries").mkdir(parents=True, exist_ok=True)
+    (root / knowledge_relative(paths.repo_root, "knowledge/entries")).mkdir(parents=True, exist_ok=True)
     for spec in specs:
         relative_root = relative_path(paths.repo_root, spec.root)
         (root / relative_root).mkdir(parents=True, exist_ok=True)
@@ -866,7 +868,9 @@ def _validate_marker_expectations(
 ) -> None:
     specs = load_sources(shadow.repo_root, shadow.registry)
     pairs, _, _ = select_scope(shadow.repo_root, specs, selected, None, None)
-    state = load_state(shadow.graph_dir)
+    # The private shadow already contains the reviewed entry/source patches;
+    # marker validation runs before synchronize records their new digests.
+    state = load_state(shadow.graph_dir, repo_root=shadow.repo_root, verify_entries=False)
     identities = build_identity_index(
         state, load_identity_registry(shadow.identities)
     )
@@ -1053,6 +1057,7 @@ def _stage_ingest(
                     justification=str(decision["justification"]),
                     evidence=str(decision["evidence"]),
                     target_namespace=str(decision.get("target_namespace", "personal")),
+                    repo_root=shadow.repo_root,
                 )
             except (KnowledgeError, AlignmentError, OSError, ValueError) as error:
                 raise IngestError("alignment-failed", str(error), stage="alignment") from error
@@ -1321,7 +1326,7 @@ def plan_ingest(
 
 
 def _state_dir(paths: IngestPaths) -> Path:
-    return paths.repo_root / "knowledge/build/kgdistiller-ingest"
+    return knowledge_root(paths.repo_root) / "build/kgdistiller-ingest"
 
 
 def _receipt_path(paths: IngestPaths, request_sha256: str) -> Path:
@@ -1617,7 +1622,7 @@ def _validate_journal(
     configured: dict[str, str] = {}
     for field, target, kind in (
         ("graph", paths.graph_dir, "directory"),
-        ("entries", paths.repo_root / "knowledge/entries", "directory"),
+        ("entries", knowledge_root(paths.repo_root) / "entries", "directory"),
         ("alignments", paths.alignments, "file"),
         ("typst_registry", paths.typst_registry, "file"),
     ):
@@ -1914,7 +1919,7 @@ def _install_staged(
     for patch in staged.request["authority_patches"]:
         targets.append(paths.repo_root / str(patch["path"]))
     targets.extend([paths.graph_dir, paths.alignments, paths.typst_registry])
-    targets.append(paths.repo_root / "knowledge/entries")
+    targets.append(knowledge_root(paths.repo_root) / "entries")
     unique_targets: list[Path] = []
     seen: set[str] = set()
     for target in targets:
@@ -1925,7 +1930,7 @@ def _install_staged(
     records: list[dict[str, Any]] = []
     directory_targets = {
         paths.graph_dir.resolve(strict=False),
-        (paths.repo_root / "knowledge/entries").resolve(strict=False),
+        (knowledge_root(paths.repo_root) / "entries").resolve(strict=False),
     }
     for target in unique_targets:
         records.append(
@@ -1962,8 +1967,8 @@ def _install_staged(
             _atomic_copy(staged.paths.alignments, paths.alignments)
         _invoke(failure_injector, "installed-alignments")
         _install_directory(
-            staged.paths.repo_root / "knowledge/entries",
-            paths.repo_root / "knowledge/entries",
+            knowledge_root(staged.paths.repo_root) / "entries",
+            knowledge_root(paths.repo_root) / "entries",
             staged.request_sha256,
         )
         _install_directory(staged.paths.graph_dir, paths.graph_dir, staged.request_sha256)

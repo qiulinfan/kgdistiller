@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from kgdistiller.knowledge_paths import knowledge_root, knowledge_relative
+
 import argparse
 import codecs
 import copy
@@ -22,15 +24,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-GRAPH_SCHEMA = "kgdistiller-graph-v1"
+GRAPH_SCHEMA = "kgdistiller-graph-v2"
+LEGACY_GRAPH_SCHEMA = "kgdistiller-graph-v1"
+GRAPH_SCHEMAS = {LEGACY_GRAPH_SCHEMA, GRAPH_SCHEMA}
 SOURCE_SCHEMA = "kgdistiller-sources-v1"
 DELTA_SCHEMA = "kgdistiller-agent-delta-v1"
 IDENTITY_SCHEMA = "kgdistiller-identities-v1"
-ENTRY_STORE_SCHEMA = "kgdistiller-entry-shards-v1"
 ENTRY_AUTHORITY_SCHEMA = "kgdistiller-entry-index-v1"
 ENTRY_SOURCE_INDEX_SCHEMA = "kgdistiller-entry-source-index-v1"
 AGENT_SNAPSHOT_SCHEMA = "kgdistiller-agent-snapshot-v1"
-ENTRY_SHARD_LIMIT = 48 * 1024 * 1024
 KNOWLEDGE_ORIGINS = {"personal-note", "research"}
 MAX_NODE_ID_LENGTH = 256
 MAX_NODE_LABEL_LENGTH = 1024
@@ -431,7 +433,7 @@ def _is_managed_build_path(path: Path) -> bool:
     """Keep disposable projections out of authority discovery unconditionally."""
     parts = tuple(part.casefold() for part in path.resolve().parts)
     return any(
-        parts[index : index + 2] == ("knowledge", "build")
+        parts[index] in {"knowledge", ".knowledge"} and parts[index + 1] == "build"
         for index in range(max(0, len(parts) - 1))
     )
 
@@ -1267,29 +1269,11 @@ def scan_source(
     return scanner(repo_root, spec, path, identities)
 
 
-def load_state(graph_dir: Path) -> GraphState:
-    manifest_path = graph_dir / "manifest.json"
-    if not manifest_path.exists():
-        if manifest_path.is_symlink():
-            raise KnowledgeError(f"graph manifest path is a broken symlink: {manifest_path}")
-        return GraphState({}, {}, [], {})
-    if not manifest_path.is_file():
-        raise KnowledgeError(f"graph manifest is not a file: {manifest_path}")
-    try:
-        manifest = read_json(manifest_path, {})
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise KnowledgeError(f"invalid graph manifest JSON: {manifest_path}") from error
-    if not isinstance(manifest, dict):
-        raise KnowledgeError(f"graph manifest must be a JSON object: {manifest_path}")
-    if manifest.get("schema") != GRAPH_SCHEMA:
-        raise KnowledgeError(
-            f"expected {GRAPH_SCHEMA} graph manifest: {manifest_path}; "
-            f"got {manifest.get('schema')!r}"
-        )
-    nodes = {item["id"]: item for item in read_jsonl(graph_dir / "nodes.jsonl")}
+def _load_legacy_entries(graph_dir: Path, nodes: dict[str, dict[str, Any]], manifest: dict[str, Any]) -> None:
+    """Read existing v1 shards until an explicit write replaces this layout."""
     entry_store = manifest.get("entry_store") or {}
     if entry_store:
-        if entry_store.get("schema") != ENTRY_STORE_SCHEMA:
+        if entry_store.get("schema") != "kgdistiller-entry-shards-v1":
             raise KnowledgeError("unsupported knowledge entry store schema")
         entries: dict[str, dict[str, Any]] = {}
         for shard in entry_store.get("shards", []):
@@ -1301,7 +1285,7 @@ def load_state(graph_dir: Path) -> GraphState:
                 raise KnowledgeError(f"missing knowledge entry shard: {relative}")
             content = path.read_text(encoding="utf-8")
             size = len(content.encode("utf-8"))
-            if size > ENTRY_SHARD_LIMIT:
+            if size > 48 * 1024 * 1024:
                 raise KnowledgeError(f"knowledge entry shard exceeds 48 MiB: {relative}")
             if shard.get("bytes") is not None and int(shard["bytes"]) != size:
                 raise KnowledgeError(f"knowledge entry shard size mismatch: {relative}")
@@ -1322,13 +1306,120 @@ def load_state(graph_dir: Path) -> GraphState:
             node["text"] = str(record.get("text", ""))
             if isinstance(record.get("entry"), dict) and record["entry"]:
                 node["entry"] = record["entry"]
-    # In-memory source nodes always carry a text field, including pending
-    # authorities whose entry is still empty. The committed JSONL projection
-    # omits that empty value. Rehydrate it here so snapshots built directly
-    # during sync and snapshots rebuilt from committed artifacts are identical;
-    # otherwise a fresh read-only GraphView would differ from the sync snapshot.
+
+
+def _entry_repo_root(graph_dir: Path, repo_root: Path | None) -> Path:
+    if repo_root is not None:
+        return repo_root.resolve()
+    graph = graph_dir.resolve()
+    if graph.name == "graph" and graph.parent.name in {"knowledge", ".knowledge"}:
+        return graph.parent.parent
+    raise KnowledgeError("entry-backed custom graph directories require explicit repo_root")
+
+
+def _load_compact_entries(
+    graph_dir: Path,
+    nodes: dict[str, dict[str, Any]],
+    manifest: dict[str, Any],
+    *,
+    repo_root: Path | None,
+    verify_entries: bool,
+) -> None:
+    from kgdistiller.entry_markdown import EntryMarkdownError, authority_sha256, parse_entry
+
+    inventory = manifest.get("entry_authorities") or {}
+    if inventory and inventory.get("schema") != ENTRY_AUTHORITY_SCHEMA:
+        raise KnowledgeError("unsupported entry authority inventory")
+    records = inventory.get("entries", [])
+    if not isinstance(records, list):
+        raise KnowledgeError("entry authority inventory must be an array")
+    expected: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+            raise KnowledgeError("invalid entry authority inventory record")
+        path, digest = record["path"], record["sha256"]
+        if not isinstance(path, str) or not path or path in expected:
+            raise KnowledgeError("duplicate or invalid entry authority path")
+        relative = Path(path)
+        if relative.is_absolute() or ".." in relative.parts or relative.suffix != ".md":
+            raise KnowledgeError(f"unsafe entry authority path: {path}")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise KnowledgeError(f"invalid entry authority digest: {path}")
+        expected[path] = digest
+    linked: dict[str, dict[str, Any]] = {}
     for node in nodes.values():
-        node.setdefault("text", "")
+        path = (node.get("properties") or {}).get("entry_authority")
+        if path:
+            if not isinstance(path, str) or path in linked:
+                raise KnowledgeError("duplicate or invalid node entry authority")
+            if "text" in node or "entry" in node:
+                raise KnowledgeError(f"entry-backed node duplicates Markdown content: {path}")
+            linked[path] = node
+    if set(linked) != set(expected):
+        raise KnowledgeError("entry authority inventory does not match graph nodes")
+    if not expected:
+        return
+    root = _entry_repo_root(graph_dir, repo_root)
+    for relative, node in linked.items():
+        path = root / relative
+        try:
+            path.resolve().relative_to(root)
+        except ValueError as error:
+            raise KnowledgeError(f"entry authority escapes repository: {relative}") from error
+        if any(part.is_symlink() for part in (path, *path.parents) if part != root):
+            raise KnowledgeError(f"entry authority must not use symlinks: {relative}")
+        if not path.is_file():
+            if not verify_entries:
+                # Explicit synchronization can accept deletion of an entry.
+                continue
+            raise KnowledgeError(f"missing entry authority: {relative}; run kgdistiller sync")
+        try:
+            content_digest = authority_sha256(path)
+            if verify_entries and content_digest != expected[relative]:
+                raise KnowledgeError(f"entry authority is out of sync: {relative}; run kgdistiller sync")
+            parsed = parse_entry(path)
+        except (EntryMarkdownError, OSError, UnicodeError) as error:
+            raise KnowledgeError(str(error)) from error
+        if parsed["metadata"]["kgd_id"] != node["id"]:
+            raise KnowledgeError(f"entry authority identity mismatch: {relative}")
+        # Read only the accepted body. Curation status and evidence freshness are
+        # updated by synchronization, never as a side effect of a query.
+        node["entry"] = parsed["entry"]
+        node["text"] = str(parsed["entry"].get("summary", ""))
+
+
+def load_state(
+    graph_dir: Path,
+    *,
+    repo_root: Path | None = None,
+    verify_entries: bool = True,
+) -> GraphState:
+    """Load accepted graph data; mutation paths alone may accept edited entries."""
+    manifest_path = graph_dir / "manifest.json"
+    if not manifest_path.exists():
+        if manifest_path.is_symlink():
+            raise KnowledgeError(f"graph manifest path is a broken symlink: {manifest_path}")
+        return GraphState({}, {}, [], {})
+    if not manifest_path.is_file():
+        raise KnowledgeError(f"graph manifest is not a file: {manifest_path}")
+    try:
+        manifest = read_json(manifest_path, {})
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise KnowledgeError(f"invalid graph manifest JSON: {manifest_path}") from error
+    if not isinstance(manifest, dict):
+        raise KnowledgeError(f"graph manifest must be a JSON object: {manifest_path}")
+    if manifest.get("schema") not in GRAPH_SCHEMAS:
+        raise KnowledgeError(
+            f"expected {GRAPH_SCHEMA} or {LEGACY_GRAPH_SCHEMA} graph manifest: {manifest_path}; "
+            f"got {manifest.get('schema')!r}"
+        )
+    nodes = {item["id"]: item for item in read_jsonl(graph_dir / "nodes.jsonl")}
+    if manifest["schema"] == LEGACY_GRAPH_SCHEMA:
+        _load_legacy_entries(graph_dir, nodes, manifest)
+    else:
+        _load_compact_entries(graph_dir, nodes, manifest, repo_root=repo_root, verify_entries=verify_entries)
+    for node in nodes.values():
+        node.setdefault("text", str((node.get("entry") or {}).get("summary", "")))
     edges = {
         (item["source"], item["relation"], item["target"]): item
         for item in read_jsonl(graph_dir / "edges.jsonl")
@@ -1639,11 +1730,13 @@ def source_node(definition: DefinitionOccurrence, existing: dict[str, Any] | Non
     old_label = str(previous.get("label", ""))
     if old_label and old_label != definition.label and old_label not in aliases:
         aliases.append(old_label)
-    if properties.get("kind_origin") != "reviewed":
+    if properties.get("kind_origin") == "reviewed":
+        properties["source_kind"] = definition.kind
+    else:
         properties["kind"] = definition.kind
+        properties.pop("source_kind", None)
     properties.update(
         {
-            "source_kind": definition.kind,
             "aliases": aliases,
             "origin": "authored",
             "source_status": "active",
@@ -2102,7 +2195,6 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                     node=cycle[0],
                 )
             )
-    field_memberships = knowledge_field_memberships(state)
     for node in state.nodes.values():
         properties = node.get("properties") or {}
         curation_status = properties.get("curation_status")
@@ -2128,19 +2220,6 @@ def validate_state(state: GraphState) -> dict[str, list[dict[str, Any]]]:
                     "missing-label-html",
                     "LaTeX-authored knowledge node has no rendered HTML label",
                     node=node["id"],
-                )
-            )
-        if (
-            node.get("type") == "knowledge"
-            and (node.get("provenance") or {}).get("active")
-            and not field_memberships.get(str(node.get("id", "")))
-        ):
-            errors.append(
-                diagnostic(
-                    "unclassified-knowledge",
-                    "active knowledge node has no field membership",
-                    source=(node.get("provenance") or {}).get("authority"),
-                    node=str(node.get("id", "")),
                 )
             )
         if properties.get("source_status") == "orphaned":
@@ -2184,8 +2263,8 @@ def make_agent_snapshot(
     """Create the deterministic, self-contained Agent snapshot contract."""
     if not NAMESPACE_RE.fullmatch(namespace):
         raise KnowledgeError(f"invalid Agent snapshot namespace: {namespace!r}")
-    if state.manifest.get("schema") != GRAPH_SCHEMA:
-        raise KnowledgeError(f"expected a {GRAPH_SCHEMA} graph before snapshot export")
+    if state.manifest.get("schema") not in GRAPH_SCHEMAS:
+        raise KnowledgeError(f"expected a supported graph before snapshot export")
     graph_sha256 = str(state.manifest.get("graph_sha256", ""))
     if not re.fullmatch(r"[0-9a-f]{64}", graph_sha256):
         raise KnowledgeError("authority graph has no valid graph_sha256")
@@ -2222,20 +2301,12 @@ def make_agent_snapshot(
         raise KnowledgeError(
             "authority graph manifest counts do not match the exported snapshot"
         )
-    computed_artifacts = make_artifacts(
-        copy.deepcopy(state),
-        dict(state.manifest.get("source_hashes") or {}),
-        entry_hashes={
-            str(item.get("path")): str(item.get("sha256"))
-            for item in ((state.manifest.get("entry_authorities") or {}).get("entries", []))
-            if item.get("path") and item.get("sha256")
-        },
-        registry_sha256=str(state.manifest.get("registry_sha256", "")) or None,
-        identity_sha256=str(state.manifest.get("identity_sha256", "")) or None,
-        git_revision=str(state.manifest.get("git_revision", "")) or None,
+    computed_digest = (
+        _legacy_graph_digest(state)
+        if state.manifest["schema"] == LEGACY_GRAPH_SCHEMA
+        else _compact_graph_digest(state)
     )
-    computed_manifest = json.loads(computed_artifacts["manifest.json"])
-    if computed_manifest.get("graph_sha256") != graph_sha256:
+    if computed_digest != graph_sha256:
         raise KnowledgeError(
             "authority graph digest does not match its hydrated graph content"
         )
@@ -2244,7 +2315,7 @@ def make_agent_snapshot(
         "schema": AGENT_SNAPSHOT_SCHEMA,
         "namespace": namespace,
         "graph": {
-            "schema": GRAPH_SCHEMA,
+            "schema": state.manifest["schema"],
             "sha256": graph_sha256,
             "counts": counts,
         },
@@ -2255,6 +2326,63 @@ def make_agent_snapshot(
     }
     snapshot["snapshot_sha256"] = sha256_text(json_text(snapshot))
     return snapshot
+
+
+def _entry_inventory_hashes(manifest: dict[str, Any], key: str) -> dict[str, str]:
+    return {
+        str(item["path"]): str(item["sha256"])
+        for item in ((manifest.get(key) or {}).get("entries", []))
+    }
+
+
+def _graph_digest_suffix(manifest: dict[str, Any]) -> str:
+    return "".join(
+        path + digest
+        for key in ("entry_authorities", "entry_sources")
+        for path, digest in sorted(_entry_inventory_hashes(manifest, key).items())
+    )
+
+
+def _compact_graph_digest(state: GraphState) -> str:
+    # Bind the hydrated scientific content, although its only disk authority is
+    # Markdown. In-memory edits cannot hide behind an unchanged file hash.
+    nodes = []
+    for node in sorted(state.nodes.values(), key=lambda item: item["id"]):
+        normalized = copy.deepcopy(node)
+        normalized.setdefault("text", str((normalized.get("entry") or {}).get("summary", "")))
+        (normalized.get("properties") or {}).pop("entry_path", None)
+        nodes.append(normalized)
+    edges = sorted(state.edges.values(), key=lambda item: (item["source"], item["relation"], item["target"]))
+    references = sorted(state.references, key=lambda item: (item.get("authority", ""), item.get("line", 0), item["target"]))
+    return sha256_text(jsonl(nodes) + jsonl(edges) + jsonl(references) + _graph_digest_suffix(state.manifest))
+
+
+def _legacy_graph_digest(state: GraphState) -> str:
+    """Verify an existing v1 generation using its historical representation."""
+    nodes = []
+    shards: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for node in sorted(state.nodes.values(), key=lambda item: item["id"]):
+        serialized = copy.deepcopy(node)
+        text = str(serialized.pop("text", ""))
+        entry = serialized.pop("entry", None)
+        properties = dict(serialized.get("properties") or {})
+        if text or entry:
+            path = str(properties.get("entry_path", ""))
+            if not path:
+                raise KnowledgeError("legacy graph content has no entry shard")
+            record: dict[str, Any] = {"id": node["id"], "text": text}
+            if isinstance(entry, dict) and entry:
+                record["entry"] = entry
+            shards[path].append(record)
+        else:
+            properties.pop("entry_path", None)
+        serialized["properties"] = properties
+        nodes.append(serialized)
+    edges = sorted(state.edges.values(), key=lambda item: (item["source"], item["relation"], item["target"]))
+    references = sorted(state.references, key=lambda item: (item.get("authority", ""), item.get("line", 0), item["target"]))
+    content = jsonl(nodes) + jsonl(edges) + jsonl(references)
+    content += "".join(path + jsonl(records) for path, records in sorted(shards.items()))
+    return sha256_text(content + _graph_digest_suffix(state.manifest))
 
 
 def make_artifacts(
@@ -2269,136 +2397,40 @@ def make_artifacts(
     if registry_sha256 is None:
         registry_sha256 = str(state.manifest.get("registry_sha256", "")) or None
     if entry_hashes is None:
-        entry_hashes = {
-            str(item.get("path")): str(item.get("sha256"))
-            for item in ((state.manifest.get("entry_authorities") or {}).get("entries", []))
-            if item.get("path") and item.get("sha256")
-        }
+        entry_hashes = _entry_inventory_hashes(state.manifest, "entry_authorities")
     refresh_node_curation_defaults(state)
     nodes = sorted(state.nodes.values(), key=lambda item: item["id"])
-    edges = sorted(
-        state.edges.values(),
-        key=lambda item: (item["source"], item["relation"], item["target"]),
-    )
-    references = sorted(
-        state.references,
-        key=lambda item: (item.get("authority", ""), item.get("line", 0), item["target"]),
-    )
-    diagnostics = validate_state(state)
+    edges = sorted(state.edges.values(), key=lambda item: (item["source"], item["relation"], item["target"]))
+    references = sorted(state.references, key=lambda item: (item.get("authority", ""), item.get("line", 0), item["target"]))
     entry_source_hashes: dict[str, str] = {}
+    serialized_nodes = []
     for node in nodes:
         properties = node.get("properties") or {}
+        properties.pop("entry_path", None)
         path = str(properties.get("entry_source", ""))
-        digest_value = str(properties.get("entry_source_current_sha256", ""))
-        if not path or not digest_value:
-            continue
-        previous_digest = entry_source_hashes.setdefault(path, digest_value)
-        if previous_digest != digest_value:
-            raise KnowledgeError(f"inconsistent entry source digest: {path}")
-    entry_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    serialized_nodes: list[dict[str, Any]] = []
-    for node in nodes:
+        digest = str(properties.get("entry_source_current_sha256", ""))
+        if path and digest:
+            previous = entry_source_hashes.setdefault(path, digest)
+            if previous != digest:
+                raise KnowledgeError(f"inconsistent entry source digest: {path}")
         serialized = copy.deepcopy(node)
-        text_value = str(serialized.pop("text", ""))
-        structured_entry = serialized.pop("entry", None)
-        properties = dict(serialized.get("properties") or {})
-        if text_value or structured_entry:
-            authority = str((node.get("provenance") or {}).get("authority", ""))
-            if authority:
-                authority_path = Path(authority)
-                shard_path = (
-                    Path("entries/by-source")
-                    / authority_path.parent
-                    / f"{authority_path.name}.jsonl"
-                ).as_posix()
-            else:
-                subject = generated_id(str(properties.get("subject") or "global"))
-                course = generated_id(str(properties.get("course") or "unscoped"))
-                shard_path = f"entries/meta/{subject}/{course}.jsonl"
-            record: dict[str, Any] = {"id": node["id"], "text": text_value}
-            if isinstance(structured_entry, dict) and structured_entry:
-                record["entry"] = structured_entry
-            entry_groups[shard_path].append(record)
-            properties["entry_path"] = shard_path
-        else:
-            properties.pop("entry_path", None)
-        serialized["properties"] = properties
+        if properties.get("entry_authority"):
+            serialized.pop("text", None)
+            serialized.pop("entry", None)
+        elif serialized.get("text", "") == (serialized.get("entry") or {}).get("summary", ""):
+            serialized.pop("text", None)
         serialized_nodes.append(serialized)
-    nodes_text = jsonl(serialized_nodes)
-    edges_text = jsonl(edges)
-    references_text = jsonl(references)
-    diagnostics_text = pretty_json(diagnostics)
-    entry_artifacts: dict[str, str] = {}
-    entry_shards: list[dict[str, Any]] = []
-    for path, records in sorted(entry_groups.items()):
-        content = jsonl(sorted(records, key=lambda item: item["id"]))
-        size = len(content.encode("utf-8"))
-        if size > ENTRY_SHARD_LIMIT:
-            raise KnowledgeError(
-                f"knowledge entry shard exceeds 48 MiB; split the authority file: {path}"
-            )
-        entry_artifacts[path] = content
-        entry_shards.append(
-            {
-                "path": path,
-                "count": len(records),
-                "bytes": size,
-                "sha256": sha256_text(content),
-            }
-        )
-    digest_input = nodes_text + edges_text + references_text
-    digest_input += "".join(path + entry_artifacts[path] for path in sorted(entry_artifacts))
-    digest_input += "".join(path + entry_hashes[path] for path in sorted(entry_hashes))
-    digest_input += "".join(
-        path + entry_source_hashes[path] for path in sorted(entry_source_hashes)
-    )
-    digest = sha256_text(digest_input)
-    node_types = Counter(item["type"] for item in nodes)
-    relations = Counter(item["relation"] for item in edges)
-    statuses = Counter((item.get("properties") or {}).get("source_status", "") for item in nodes)
-    curation_statuses = Counter(
-        (item.get("properties") or {}).get("curation_status", "")
-        for item in nodes
-        if item.get("type") == "knowledge"
-    )
-    knowledge_origins = Counter(
-        (item.get("properties") or {}).get("knowledge_origin", "personal-note")
-        for item in nodes
-        if item.get("type") == "knowledge"
-    )
     manifest = {
         "schema": GRAPH_SCHEMA,
-        "generator": "kgdistiller",
-        "graph_sha256": digest,
-        "counts": {
-            "nodes": len(nodes),
-            "edges": len(edges),
-            "references": len(references),
-        },
-        "node_types": dict(sorted(node_types.items())),
-        "relations": dict(sorted(relations.items())),
-        "statuses": dict(sorted(statuses.items())),
-        "curation_statuses": dict(sorted(curation_statuses.items())),
-        "knowledge_origins": dict(sorted(knowledge_origins.items())),
+        "counts": {"nodes": len(nodes), "edges": len(edges), "references": len(references)},
         "source_hashes": dict(sorted(source_hashes.items())),
-        "entry_store": {
-            "schema": ENTRY_STORE_SCHEMA,
-            "entries": sum(item["count"] for item in entry_shards),
-            "shards": entry_shards,
-        },
         "entry_authorities": {
             "schema": ENTRY_AUTHORITY_SCHEMA,
-            "entries": [
-                {"path": path, "sha256": digest}
-                for path, digest in sorted(entry_hashes.items())
-            ],
+            "entries": [{"path": path, "sha256": digest} for path, digest in sorted(entry_hashes.items())],
         },
         "entry_sources": {
             "schema": ENTRY_SOURCE_INDEX_SCHEMA,
-            "entries": [
-                {"path": path, "sha256": digest}
-                for path, digest in sorted(entry_source_hashes.items())
-            ],
+            "entries": [{"path": path, "sha256": digest} for path, digest in sorted(entry_source_hashes.items())],
         },
     }
     if registry_sha256:
@@ -2407,33 +2439,44 @@ def make_artifacts(
         manifest["identity_sha256"] = identity_sha256
     if git_revision:
         manifest["git_revision"] = git_revision
+    manifest["graph_sha256"] = _compact_graph_digest(GraphState(state.nodes, state.edges, state.references, manifest))
     return {
         "manifest.json": pretty_json(manifest),
-        "nodes.jsonl": nodes_text,
-        "edges.jsonl": edges_text,
-        "references.jsonl": references_text,
-        "diagnostics.json": diagnostics_text,
-    } | entry_artifacts
+        "nodes.jsonl": jsonl(serialized_nodes),
+        "edges.jsonl": jsonl(edges),
+        "references.jsonl": jsonl(references),
+    }
 
 
 def write_artifacts(graph_dir: Path, artifacts: dict[str, str]) -> None:
     graph_dir.mkdir(parents=True, exist_ok=True)
     previous_manifest = read_json(graph_dir / "manifest.json", {})
-    previous_shards = {
-        str(item.get("path", ""))
-        for item in ((previous_manifest.get("entry_store") or {}).get("shards", []))
-        if item.get("path")
-    }
-    current_shards = {name for name in artifacts if name.startswith("entries/")}
+    retired = ([Path("diagnostics.json")]
+               if previous_manifest.get("schema") in GRAPH_SCHEMAS else [])
+    if previous_manifest.get("schema") == LEGACY_GRAPH_SCHEMA:
+        for item in ((previous_manifest.get("entry_store") or {}).get("shards", [])):
+            relative = Path(str(item.get("path", "")))
+            if (relative.is_absolute() or ".." in relative.parts
+                    or len(relative.parts) < 2 or relative.parts[0] != "entries"):
+                raise KnowledgeError(f"unsafe retired knowledge entry shard path: {relative}")
+            retired.append(relative)
+    for relative in retired:
+        path = graph_dir / relative
+        if any(part.is_symlink() for part in (path, *path.parents) if part == graph_dir or graph_dir in part.parents):
+            raise KnowledgeError(f"retired graph artifact must not use symlinks: {relative}")
     for name, content in artifacts.items():
         atomic_write(graph_dir / name, content)
-    for name in sorted(previous_shards - current_shards):
-        relative = Path(name)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise KnowledgeError(f"unsafe stale knowledge entry shard path: {name}")
+    for relative in retired:
         path = graph_dir / relative
         if path.is_file():
             path.unlink()
+        parent = path.parent
+        while parent != graph_dir:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
 
 
 def typst_string(value: str) -> str:
@@ -2672,7 +2715,7 @@ def synchronize(
 ) -> tuple[GraphState, dict[str, str], dict[str, Any]]:
     fields = load_fields(registry)
     specs = load_sources(repo_root, registry)
-    previous = load_state(graph_dir)
+    previous = load_state(graph_dir, repo_root=repo_root, verify_entries=False)
     registered_identities = load_identity_registry(identities)
     git_context = git_source_context(
         repo_root,
@@ -2825,7 +2868,7 @@ def synchronize(
         identity_sha256=identity_registry_sha256(identities),
         git_revision=git_revision,
     )
-    diagnostics = json.loads(artifacts["diagnostics.json"])
+    diagnostics = validate_state(state)
     if diagnostics["errors"]:
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
     old_counts = previous.manifest.get("counts") or {"nodes": 0, "edges": 0, "references": 0}
@@ -2873,7 +2916,7 @@ def synchronize(
         write_artifacts(graph_dir, artifacts)
         # All readers load and validate this committed JSON generation
         # directly. There is no second runtime generation to publish.
-        state = load_state(graph_dir)
+        state = load_state(graph_dir, repo_root=repo_root)
         write_registry(typst_registry, state, rendering_names)
     return state, artifacts, report
 
@@ -2890,12 +2933,8 @@ def apply_delta(
     delta = read_json(delta_path, {})
     if delta.get("schema") != DELTA_SCHEMA:
         raise KnowledgeError(f"expected {DELTA_SCHEMA} delta: {delta_path}")
-    state = load_state(graph_dir)
-    repo_root = (
-        repo_root.resolve(strict=False)
-        if repo_root is not None
-        else graph_dir.resolve(strict=False).parent.parent
-    )
+    repo_root = _entry_repo_root(graph_dir, repo_root)
+    state = load_state(graph_dir, repo_root=repo_root, verify_entries=False)
     from kgdistiller.entry_markdown import (
         EntryMarkdownError,
         authority_sha256,
@@ -2922,7 +2961,7 @@ def apply_delta(
         if existing.get("type") == "knowledge" and (existing.get("provenance") or {}).get("active"):
             raise KnowledgeError(f"cannot remove active authored knowledge node: {node_id}")
         state.nodes.pop(node_id)
-        entry_deletes.add(repo_root / entry_relative(node_id))
+        entry_deletes.add(repo_root / entry_relative(node_id, repo_root))
         removed_nodes += 1
         state.edges = {
             key: edge
@@ -2951,7 +2990,7 @@ def apply_delta(
                 from kgdistiller.document_types import load_document_types, validate_node_kind
 
                 if kind_profiles is None:
-                    kind_registry = registry or repo_root / "knowledge/sources.json"
+                    kind_registry = registry or knowledge_root(repo_root) / "sources.json"
                     has_registry = registry is not None or kind_registry.is_file()
                     kind_profiles = load_document_types(kind_registry) if has_registry else {}
                     kind_specs = load_sources(repo_root, kind_registry) if has_registry else []
@@ -2961,6 +3000,9 @@ def apply_delta(
                 owner = (unique_source_for_path(kind_specs, source_path)
                          if source_path and matching_sources(kind_specs, source_path) else None)
                 document_type = owner.document_type if owner else ""
+                original_properties = existing.get("properties") or {}
+                if original_properties.get("kind_origin") != "reviewed" and "kind" in original_properties:
+                    properties["source_kind"] = original_properties["kind"]
                 properties["kind"] = validate_node_kind(properties["kind"], document_type, kind_profiles)
                 properties["kind_origin"] = "reviewed"
         else:
@@ -3018,7 +3060,7 @@ def apply_delta(
                 f"reviewed kind requires an existing knowledge entry or reviewed content: {node_id}"
             )
         if node_type == "knowledge" and reviewed_kind and not reviewed_content:
-            entry_path = repo_root / entry_relative(node_id)
+            entry_path = repo_root / entry_relative(node_id, repo_root)
             if entry_path not in entry_writes and not entry_path.is_file():
                 raise KnowledgeError(
                     f"reviewed kind requires an existing knowledge entry or reviewed content: {node_id}"
@@ -3032,7 +3074,7 @@ def apply_delta(
             entry_deletes.discard(entry_path)
             continue
         if node_type == "knowledge" and reviewed_content:
-            entry_path = repo_root / entry_relative(node_id)
+            entry_path = repo_root / entry_relative(node_id, repo_root)
             if not text_value.strip() and not raw_entry:
                 entry_deletes.add(entry_path)
                 entry_writes.pop(entry_path, None)
@@ -3101,7 +3143,7 @@ def apply_delta(
         identity_sha256=state.manifest.get("identity_sha256"),
         git_revision=state.manifest.get("git_revision"),
     )
-    diagnostics = json.loads(artifacts["diagnostics.json"])
+    diagnostics = validate_state(state)
     if diagnostics["errors"]:
         raise KnowledgeError("\n".join(item["message"] for item in diagnostics["errors"]))
     state.manifest = json.loads(artifacts["manifest.json"])
@@ -3113,7 +3155,7 @@ def apply_delta(
         if registry is not None else None
     )
     write_artifacts(graph_dir, artifacts)
-    state = load_state(graph_dir)
+    state = load_state(graph_dir, repo_root=repo_root)
     write_registry(typst_registry, state, rendering_names)
     after = state.manifest["counts"]
     return {
@@ -3201,9 +3243,10 @@ def reconcile_alignment_mapping(
     justification: str,
     evidence: str,
     target_namespace: str,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Persist one reviewed cross-namespace decision with content fingerprints."""
-    from kgdistiller.query import align, get
+    from kgdistiller.query import align, get, load_graph_view
     from kgdistiller.alignment import (
         load_alignment_set,
         make_reviewed_mapping,
@@ -3211,8 +3254,9 @@ def reconcile_alignment_mapping(
     )
 
     candidate_namespace = str(candidate_snapshot.get("namespace", ""))
+    view = load_graph_view(graph_dir, alignment_path, repo_root=repo_root)
     align(
-        graph_dir,
+        view,
         candidate_snapshot,
         alignments=alignment_path,
         target_namespace=target_namespace,
@@ -3231,7 +3275,7 @@ def reconcile_alignment_mapping(
             f"candidate snapshot has no node {candidate_namespace}:{candidate_id}"
         )
     target = get(
-        graph_dir,
+        view,
         target_id,
         alignments=alignment_path,
         namespace=target_namespace,
@@ -4401,6 +4445,12 @@ def main() -> int:
             home=args.kgdistiller_home,
             use_default=args.command != "init",
         )
+        for option in ("registry", "graph", "identities", "alignments", "typst_registry"):
+            flag = "--" + option.replace("_", "-")
+            if not any(arg == flag or arg.startswith(flag + "=") for arg in sys.argv[1:]):
+                setattr(args, option, str(knowledge_relative(repo_root, getattr(args, option))))
+        if args.command == "export" and args.export_command == "obsidian" and not any(arg == "--output" or arg.startswith("--output=") for arg in sys.argv[1:]):
+            args.output = knowledge_relative(repo_root, args.output)
         if args.command == "obsidian":
             from .obsidian_plugin import ObsidianPluginError, install_obsidian_plugin
 
@@ -4439,7 +4489,7 @@ def main() -> int:
                 from kgdistiller.latex_registry import latex_registry_text
 
                 try:
-                    state = load_state(graph_dir)
+                    state = load_state(graph_dir, repo_root=repo_root)
                     if not state.manifest or state.manifest.get("registry_sha256") != source_registry_sha256(registry):
                         raise LatexHtmlError("source registry is out of sync; run kgdistiller sync")
                     problems = validate_state(state)["errors"]
@@ -4773,7 +4823,7 @@ def main() -> int:
 
                 specs = load_sources(repo_root, registry)
                 profiles = load_document_types(registry)
-                state = load_state(graph_dir)
+                state = load_state(graph_dir, repo_root=repo_root)
                 pairs, selected, full = select_scope(
                     repo_root, specs, pairs_files, args.course, args.subject
                 )
@@ -4861,7 +4911,7 @@ def main() -> int:
             )
             return 0
         if args.command == "reconcile":
-            state = load_state(graph_dir)
+            state = load_state(graph_dir, repo_root=repo_root)
             if args.reconcile_command == "rename-node":
                 print(
                     pretty_json(
@@ -4889,6 +4939,7 @@ def main() -> int:
                             justification=args.justification,
                             evidence=args.evidence,
                             target_namespace=args.target_namespace,
+                            repo_root=repo_root,
                         )
                     ),
                     end="",
@@ -4944,7 +4995,7 @@ def main() -> int:
                     subject=None,
                     write=True,
                 )
-            state = load_state(graph_dir)
+            state = load_state(graph_dir, repo_root=repo_root)
             authorities = {
                 relative_path(repo_root, path) for path in selected_paths
             }
@@ -4975,7 +5026,7 @@ def main() -> int:
             except RetrievalError as error:
                 print(pretty_json(error.to_payload()), end="", file=sys.stderr)
                 return 1
-            serve_stdio(graph_dir, alignments=alignments, ranking_service=ranking_service)
+            serve_stdio(graph_dir, alignments=alignments, ranking_service=ranking_service, repo_root=repo_root)
             return 0
         if args.command == "agent":
             from kgdistiller.query import (
@@ -4988,6 +5039,7 @@ def main() -> int:
                 propose,
                 query_status,
                 resolve_concepts,
+                load_graph_view,
             )
             from kgdistiller.retrieval import (
                 RetrievalError,
@@ -4998,7 +5050,7 @@ def main() -> int:
             )
 
             def current_authority_graph_sha256() -> str:
-                authority_state = load_state(graph_dir)
+                authority_state = load_state(graph_dir, repo_root=repo_root)
                 digest = str(authority_state.manifest.get("graph_sha256", ""))
                 if not re.fullmatch(r"[0-9a-f]{64}", digest):
                     raise KnowledgeError("authority graph has no valid graph_sha256")
@@ -5029,10 +5081,10 @@ def main() -> int:
                     print(pretty_json(error.to_payload()), end="", file=sys.stderr)
                     return 1
             elif args.agent_command == "status":
-                result = query_status(graph_dir, alignments=alignments)
+                result = query_status(load_graph_view(graph_dir, alignments, repo_root=repo_root))
             elif args.agent_command == "resolve":
                 result = resolve_concepts(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     list(args.concept),
                     alignments=alignments,
                     namespace=args.namespace,
@@ -5072,20 +5124,21 @@ def main() -> int:
                         expected_graph_sha256=expected_graph_sha256,
                         ranking_service=make_ranking_service(args, graph_dir=graph_dir, repo_root=repo_root),
                         graph_policy=make_graph_retrieval_policy(args),
+                        repo_root=repo_root,
                     )
                 except RetrievalError as error:
                     print(pretty_json(error.to_payload()), end="", file=sys.stderr)
                     return 1
             elif args.agent_command == "get":
                 result = get(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     args.id,
                     alignments=alignments,
                     namespace=args.namespace,
                 )
             elif args.agent_command == "expand":
                 result = expand(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     list(args.id),
                     alignments=alignments,
                     namespace=args.namespace,
@@ -5099,7 +5152,7 @@ def main() -> int:
                 )
             elif args.agent_command == "ppr":
                 result = personalized_pagerank(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     {str(node_id): 1.0 for node_id in args.id},
                     alignments=alignments,
                     namespace=args.namespace,
@@ -5148,6 +5201,7 @@ def main() -> int:
                         expected_graph_sha256=expected_graph_sha256,
                         ranking_service=make_ranking_service(args, graph_dir=graph_dir, repo_root=repo_root),
                         graph_policy=make_graph_retrieval_policy(args),
+                        repo_root=repo_root,
                     )
                     result = build_context_from_execution(
                         graph_dir,
@@ -5157,6 +5211,7 @@ def main() -> int:
                         token_budget=args.budget,
                         namespace=execution_namespace,
                         context_projection=args.context_projection,
+                        repo_root=repo_root,
                         support_selection=load_support_selection(args.support_selection, repo_root) if args.support_selection else None,
                     )
                 except RetrievalError as error:
@@ -5169,7 +5224,7 @@ def main() -> int:
                     else (repo_root / args.candidate).resolve()
                 )
                 alignment_report = align(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     read_json(candidate_path, {}),
                     alignments=alignments,
                     target_namespace=args.target_namespace,
@@ -5199,7 +5254,7 @@ def main() -> int:
                     else (repo_root / args.candidate).resolve()
                 )
                 result = compare(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     read_json(candidate_path, {}),
                     alignments=alignments,
                     target_namespace=args.target_namespace,
@@ -5211,7 +5266,7 @@ def main() -> int:
                     else (repo_root / args.candidate).resolve()
                 )
                 proposal = propose(
-                    graph_dir,
+                    load_graph_view(graph_dir, alignments, repo_root=repo_root),
                     read_json(candidate_path, {}),
                     alignments=alignments,
                     target_namespace=args.target_namespace,
@@ -5250,7 +5305,7 @@ def main() -> int:
                 )
             print(pretty_json(result), end="")
             return 0
-        state = load_state(graph_dir)
+        state = load_state(graph_dir, repo_root=repo_root)
         if args.command == "search":
             print(pretty_json(search_graph(state, args.query, args.limit)), end="")
         elif args.command == "show":

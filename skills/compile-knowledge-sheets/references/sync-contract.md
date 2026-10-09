@@ -78,7 +78,7 @@ deltas, plan/apply and receipt contracts. A sheet navigation reference is not a
 native definition marker or canonical node ID. Do not hand-edit entries as a
 transaction substitute or edit graph files, identity registries or alignments.
 
-The current graph-v1 direct-edge adapter does not losslessly support full n-ary
+The current `kgdistiller-agent-delta-v1` direct-edge adapter does not losslessly support full n-ary
 relations, application records or rich dependency-gap history. Simple direct
 gaps and understanding use the atomic-entry fields above. The
 caller-supplied compiled library is a read-only retrieval input, not a write

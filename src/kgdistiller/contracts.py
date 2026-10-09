@@ -32,6 +32,7 @@ CONTRACT_SCHEMAS = {
         "kgdistiller-source-evidence-context-v1",
         "kgdistiller-source-reference-result-v1",
         "kgdistiller-document-record-v1",
+        "kgdistiller-document-record-v2",
         "kgdistiller-store-v1",
         "kgdistiller-store-report-v1",
         "kgdistiller-obsidian-projection-v1",
@@ -128,7 +129,9 @@ def _format_violation(error: SchemaViolation) -> str:
 
 
 def _validate_document_record(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "kgdistiller-document-record-v1":
+    if payload.get("schema") not in {
+        "kgdistiller-document-record-v1", "kgdistiller-document-record-v2"
+    }:
         return
     authority = str(payload.get("authority", ""))
     expected_suffix = {

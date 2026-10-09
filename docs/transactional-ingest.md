@@ -3,7 +3,7 @@
 `transactional-ingest-v1` is kgdistiller's only high-level personal-knowledge
 write API. It accepts reviewed semantic decisions and commits identity
 authorities, Markdown atomic entries, reviewed registries, and one deterministic
-`kgdistiller-graph-v1` JSON generation as a single client-visible transaction.
+`kgdistiller-graph-v2` JSON generation as a single client-visible transaction.
 
 Ingest does not discover concepts or decide ambiguous identities. Resolve and
 compare through the generation-checked read-only query surface first.
@@ -115,7 +115,8 @@ Reapplying an identical canonical request returns its stored receipt. Reusing a
 derived local state below `knowledge/build/` and must not contain authority
 bodies, credentials, or model configuration.
 
-When `knowledge/store.json` exists, refresh and verify the portable generation:
+Portable snapshots are optional. For a snapshot explicitly maintained with this
+update, refresh and verify its generation:
 
 ```sh
 kgdistiller --repo-root PROJECT store snapshot
@@ -123,7 +124,10 @@ kgdistiller --repo-root PROJECT store verify
 ```
 
 This records identity authorities, Markdown entry/evidence authorities, and the
-deterministic JSON generation.
+deterministic JSON generation. If an existing snapshot is not refreshed, report
+it as stale and verify it before using it as a backup. Do not create
+`documents.jsonl` or `store.json` for ordinary capture or merely to satisfy a
+check; `check` and `agent status` validate the live knowledge project.
 Git commit, remote push, static export, and Obsidian projection remain separate
 authorities and require explicit scope.
 

@@ -31,8 +31,9 @@ reviewed transaction before the view is regenerated.
 Keep `knowledge/` visible for Obsidian. Its entries, registries and previously
 accepted semantic relationships are durable state, alongside generated artifacts.
 Graph generation preserves accepted semantic relationships; this state cannot
-be reconstructed from definition prose alone. Back it up according to the
-portable-store contract. `knowledge/build/` remains transient.
+be reconstructed from definition prose alone. Preserve it with the entry authorities and sources in the knowledge project's
+backup. Portable snapshots are an optional packaging operation, not a second
+required daily store. `knowledge/build/` remains transient.
 
 A paper definition view contains explained source-scoped concepts, types, exact
 locations and actual metadata links. Full definitions, formulas, conditions,

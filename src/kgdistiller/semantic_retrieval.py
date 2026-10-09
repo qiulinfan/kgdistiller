@@ -152,29 +152,40 @@ def _source_state(view: GraphView, *, verify_filesystem: bool = False,
                 current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if sha256_json(current_manifest) != view.generation:
                 raise ValueError("filesystem generation changed")
-            paths = ["manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl", "diagnostics.json"]
-            paths.extend(shard["path"] for shard in current_manifest.get("entry_store", {}).get("shards", []))
-            signatures = []
-            for name in sorted(set(paths)):
+            names = ["manifest.json", "nodes.jsonl", "edges.jsonl", "references.jsonl"]
+            if current_manifest.get("schema") == "kgdistiller-graph-v1":
+                names.append("diagnostics.json")
+                names.extend(shard["path"] for shard in current_manifest.get("entry_store", {}).get("shards", []))
+            paths: dict[str, Path] = {}
+            for name in names:
                 relative = Path(name)
                 if relative.is_absolute() or ".." in relative.parts:
                     raise ValueError("unsafe source artifact path")
-                info = (view.graph_dir / relative).lstat()
+                paths["graph/" + name] = view.graph_dir / relative
+            if current_manifest.get("schema") == "kgdistiller-graph-v2":
+                for entry in current_manifest.get("entry_authorities", {}).get("entries", []):
+                    relative = Path(entry["path"])
+                    if relative.is_absolute() or ".." in relative.parts or view.repo_root is None:
+                        raise ValueError("unsafe or unrooted entry authority path")
+                    paths["entry/" + entry["path"]] = view.repo_root / relative
+            signatures = []
+            for name, path in sorted(paths.items()):
+                info = path.lstat()
                 if not stat.S_ISREG(info.st_mode):
                     raise ValueError("source artifact is not regular")
-                signatures.append((name, path_signature(view.graph_dir / relative, info)))
+                signatures.append((name, path_signature(path, info)))
             reusable = cached is not None and cached["signatures"] == signatures
             if reusable and (not verify_filesystem or cached["verified"]):
                 files = cached["files"]
                 if filesystem_cache is not None:
                     filesystem_cache.move_to_end(cache_key)
             else:
-                if verify_filesystem and load_graph_view(view.graph_dir).snapshot["snapshot_sha256"] != view.snapshot["snapshot_sha256"]:
+                if verify_filesystem and load_graph_view(view.graph_dir, repo_root=view.repo_root).snapshot["snapshot_sha256"] != view.snapshot["snapshot_sha256"]:
                     raise ValueError("loaded graph no longer matches filesystem source")
                 flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
                 for name, signature in signatures:
                     digest = hashlib.sha256()
-                    with os.fdopen(os.open(view.graph_dir / name, flags), "rb") as handle:
+                    with os.fdopen(os.open(paths[name], flags), "rb") as handle:
                         if descriptor_signature(handle.fileno()) != signature:
                             raise ValueError("source artifact changed while opening")
                         for chunk in iter(lambda: handle.read(65536), b""):

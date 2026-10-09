@@ -23,6 +23,16 @@
   capture; explicit whole-source distillation is typically for authored notes
   or familiar material. Harvest uses Obsidian def-sheet task selections and
   deterministic ingest; checking a task does not imply understanding.
+- The project's single metadata root can be `knowledge/` or `.knowledge/`;
+  resolve it through `knowledge_paths`, never create a second tree during reads
+  or writes. New projects default to the visible root. Hidden Obsidian indexing
+  still requires its explicit plugin setting and semantic graph path.
+- Keep metadata minimal: `knowledge/entries/` is the single persisted entry
+  body store. Graph v2 retains stable identities, aliases, orphan state,
+  accepted edges and reference occurrences; it is not a disposable cache.
+  Read existing public graph v1 without mutation; explicit writes produce v2.
+  Identity/alignment registries, portable snapshots and consumer exports are
+  optional and must not be created merely to fill a default directory layout.
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain. Follow the registration contract in
   `docs/concepts-and-relations.md`; do not hardcode the owner's example types

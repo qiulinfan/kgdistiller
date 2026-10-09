@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import copy
 import difflib
 import json
@@ -13,7 +15,7 @@ from typing import Any
 from urllib.parse import quote, unquote
 
 from .capture import CaptureError, _inside, _merge_source_content, prepare_capture, prepare_captures
-from .cli import (atomic_write, build_identity_index, load_identity_registry, load_sources, load_state,
+from .cli import (KnowledgeError, atomic_write, build_identity_index, load_identity_registry, load_sources, load_state,
                   mark_definition_projection, pretty_json, scan_source, sha256_authority_file, unique_source_for_path)
 from .contracts import sha256_json
 from .entry_markdown import DERIVED_SOURCE_ROOT, ENTRY_ROOT, _SECTIONS, entry_relative
@@ -35,7 +37,7 @@ def _sheet_path(paths: IngestPaths, value: Path) -> Path:
     sheet = _inside(root, value, "sheet")
     if sheet.suffix.lower() != ".md":
         raise HarvestError("a harvest sheet must be a Markdown file")
-    for protected in (paths.graph_dir.resolve(), root / ENTRY_ROOT, root / DERIVED_SOURCE_ROOT):
+    for protected in (paths.graph_dir.resolve(), knowledge_root(root) / "entries", knowledge_root(root) / "derived/by-source"):
         if sheet == protected or sheet.is_relative_to(protected):
             raise HarvestError("sheet must be outside committed knowledge and derived evidence")
     return sheet
@@ -92,10 +94,10 @@ def _load_manifest(path: Path, root: Path, sheet: Path) -> dict[str, Any]:
 
 
 def _node_state(paths: IngestPaths, node_id: str) -> dict[str, Any]:
-    node = load_state(paths.graph_dir).nodes.get(node_id)
+    node = load_state(paths.graph_dir, repo_root=paths.repo_root).nodes.get(node_id)
     authority = (node or {}).get("provenance") or {}
     properties = (node or {}).get("properties") or {}
-    entry_path = paths.repo_root / entry_relative(node_id)
+    entry_path = paths.repo_root / entry_relative(node_id, paths.repo_root)
     return {
         "node": None if node is None else {
             "id": node["id"], "label": node.get("label"), "type": node.get("type"),
@@ -134,7 +136,7 @@ def _draft(payload: dict[str, Any], before: dict[str, Any], base_source: str, ro
         new_kind = "未指定审定类型；原文语法类型仅供参考。"
     lines = [f"# {payload['name']} · REVIEW DRAFT", "",
              "> 这是待写入的审阅草稿。勾选后请求 harvest，才会写入知识库。", "",
-             f"目标知识库：{_link(draft, root / 'knowledge', root.name + '/knowledge/')}", "",
+             f"目标知识库：{_link(draft, knowledge_root(root), root.name + '/' + knowledge_root(root).name + '/')}", "",
              f"Source: `{payload['source']}`", "",
              "勾选只表示选择这次写入，不会改变 Understanding。", "",
              "## Knowledge type", "", f"- Before: {old_kind}", f"- After: {new_kind}", "",
@@ -185,7 +187,7 @@ def prepare_harvest(
         owners = [spec for spec in specs if sheet.is_relative_to(spec.root)]
         if owners:
             owner = unique_source_for_path(specs, sheet)
-            identities = build_identity_index(load_state(paths.graph_dir), load_identity_registry(paths.identities))
+            identities = build_identity_index(load_state(paths.graph_dir, repo_root=paths.repo_root), load_identity_registry(paths.identities))
             scanned = scan_source(root, owner, sheet, identities)
             if scanned.definitions or scanned.references or scanned.errors:
                 raise HarvestError("an existing native authority cannot become a harvest projection")
@@ -280,7 +282,7 @@ def _tasks(paths: IngestPaths, sheet: Path, text: str, manifest: dict[str, Any])
             allowed.append(_link(sheet, _inside(root, item["committed"], "entry"), item["payload"]["name"]))
         if token in active:
             if state is None:
-                state = load_state(paths.graph_dir)
+                state = load_state(paths.graph_dir, repo_root=paths.repo_root)
             entry = (state.nodes.get(item["node_id"], {}).get("properties") or {}).get("entry_authority")
             if entry:
                 allowed.append(_link(sheet, _inside(root, entry, "entry"), item["payload"]["name"]))
@@ -300,7 +302,11 @@ def _checked_payload(paths: IngestPaths, item: dict[str, Any], manifest: dict[st
     draft = _inside(root, item["draft"], "draft")
     if not draft.is_file() or draft.read_text(encoding="utf-8") != item["draft_content"]:
         raise HarvestError(f"{item['payload']['name']}: review draft changed; ask for a targeted re-review before harvest")
-    if _node_state(paths, item["node_id"]) != item["before"]:
+    try:
+        current = _node_state(paths, item["node_id"])
+    except KnowledgeError as error:
+        raise HarvestError(f"{item['payload']['name']}: selected knowledge entry changed after review; {error}") from error
+    if current != item["before"]:
         raise HarvestError(f"{item['payload']['name']}: selected knowledge entry changed after review; review it again")
     payload = copy.deepcopy(item["payload"])
     source = _inside(root, payload["source"], "source")
@@ -318,7 +324,7 @@ def _refresh_sheet(paths: IngestPaths, sheet: Path, manifest: dict[str, Any], se
     text = _read_sheet(sheet)
     tasks = _tasks(paths, sheet, text, manifest)
     lines = text.splitlines(keepends=True)
-    state = load_state(paths.graph_dir)
+    state = load_state(paths.graph_dir, repo_root=paths.repo_root)
     for token in selected:
         if token not in tasks:
             raise HarvestError("committed harvest task was removed; restore its binding to refresh the sheet")

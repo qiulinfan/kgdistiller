@@ -38,7 +38,7 @@
     },
     "graph_artifacts": {
       "type": "array",
-      "minItems": 5,
+      "minItems": 4,
       "uniqueItems": true,
       "items": {
         "type": "object",

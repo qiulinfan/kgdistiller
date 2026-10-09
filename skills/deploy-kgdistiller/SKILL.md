@@ -6,9 +6,9 @@ description: Create, refresh, verify, clone, and restore a small personal kgdist
 # Deploy kgdistiller
 
 Treat the knowledge project—not a product checkout or generated projection—as
-the portable authority store. Version 0.4 has no database, embedding, provider,
-or materialization step. User-registered extraction profiles belong in the
-source registry.
+the portable authority store. The live graph needs no database, model provider
+or materialization step. Optional retrieval caches are not canonical knowledge.
+User-registered extraction profiles belong in the source registry.
 
 ## Align language
 
@@ -24,19 +24,25 @@ completely before changing a project. Use
 product commit when known. Never place personal sources, generated graphs,
 credentials, or exports in the kgdistiller product repository.
 
-## Choose one store layout
+## Choose the requested operation
 
-- Refresh in place when the private notes repository is the backup unit.
-- Use `store snapshot --output STORE` when notes live elsewhere or the user
-  wants a separate private backup. `STORE` must be separate from and not nested
-  in `PROJECT`.
+An ordinary knowledge project needs its native sources, `knowledge/sources.json`,
+`vault.json`, entry Markdown and graph records. Optional identity/alignment
+registries exist only for actual reviewed content. It does not need
+`documents.jsonl` or `store.json` for capture, query, export or Git backup.
+Never create an empty registry or snapshot merely to fill the directory tree.
 
-Both layouts contain only registered, already-ingested Markdown, Typst, and
-LaTeX identity authorities, manifest-bound `knowledge/entries/` Markdown and
-its native source evidence (plus existing `knowledge/derived/` evidence when
-used), source/identity/alignment registries,
-deterministic graph artifacts, canonical document inventory, and
-`kgdistiller-store-v1` manifest.
+When the user requests a portable snapshot, choose:
+
+- an in-place snapshot if the notes repository is the intended backup package;
+- `store snapshot --output STORE` for a separate self-contained backup.
+  `STORE` must be separate from and not nested in `PROJECT`.
+
+Snapshots include registered, already-ingested native sources, bound entry
+Markdown and evidence, reviewed registries and graph state, plus document
+inventory and a `kgdistiller-store-v1` manifest. Preserve existing derived
+evidence only where an accepted entry still uses it. Do not create converted
+source copies or duplicate entry bodies.
 
 ## Create, refresh, and restore
 
@@ -68,35 +74,40 @@ kgdistiller --repo-root PROJECT store snapshot --output STORE
 kgdistiller --repo-root STORE store verify
 ```
 
-On clone or clean pull:
+On an ordinary knowledge-project clone or clean pull:
 
 ```sh
-kgdistiller --repo-root STORE store verify
-kgdistiller --repo-root STORE agent status
-kgdistiller --repo-root STORE agent resolve "KNOWN NAME"
+kgdistiller --repo-root PROJECT check
+kgdistiller --repo-root PROJECT agent status
+kgdistiller --repo-root PROJECT agent resolve "KNOWN NAME"
 ```
 
-A verified store is immediately queryable through generation-checked
-`GraphView`; do not call or emulate materialization. If verification fails,
-stop. Restore a known-good Git revision or repair the native authority on the
-owning machine and publish one complete new snapshot generation.
+When restoring an actual snapshot with `knowledge/store.json`, run
+`store verify` before accepting it. A missing optional snapshot is not a
+verification failure; do not create one simply to satisfy a checker. An existing
+snapshot that was not refreshed after source changes must be reported as stale
+and verified before use as backup.
 
-Version 0.4 has no legacy schema reader. Do not claim an old core generation
-can be retained. Before an upgrade, require a committed Git rollback point for
-native authorities and reviewed registries, and preserve entries and edges that
-need human re-review. Move the old generated `knowledge/graph/` outside the
-project or delete that exact directory after confirming the rollback commit.
-Write current registry discriminators, run an unscoped `sync` to derive
-`kgdistiller-graph-v1`, and re-author reviewed metadata as
-`kgdistiller-agent-delta-v1`.
+A valid graph is directly queryable through generation-checked `GraphView`;
+there is no materialization step. Verification failures require a known-good
+revision or repair of the native authority, not a sync that masks the mismatch.
+
+Existing public graph v1 remains readable without mutation; explicit writers
+produce graph v2 and preserve IDs, aliases and accepted relationships. Entry
+bodies persist once in Markdown. Never discard the graph as disposable cache.
+Unsupported pre-0.4 artifacts are a different recovery case: preserve native
+authorities and reviewed metadata, restore them with the earlier release if
+needed, then rebuild and review under current contracts. Do not silently
+relabel those artifacts or apply that recovery procedure to public v1 data.
 
 ## Initialize Git only with authorization
 
 Recommend private Git when appropriate, but run `git init`, commit, configure a
 remote, or push only when explicitly requested. Track registered authorities,
 `knowledge/sources.json`, optional `identities.json`/`alignments.json`,
-`knowledge/derived/`, `knowledge/entries/`, `knowledge/graph/`,
-`knowledge/documents.jsonl`, and `knowledge/store.json`.
+`knowledge/vault.json`, `knowledge/entries/`, `knowledge/graph/`, and all evidence
+actually referenced by accepted entries. Track `documents.jsonl` and `store.json`
+only for a deliberately maintained snapshot.
 Ignore `knowledge/build/`, journals, plans, receipts, credentials, query logs,
 and disposable projections.
 
@@ -131,8 +142,9 @@ files. Regenerate either projection from the native authority graph.
 
 ## Return a deployment receipt
 
-Summarize absolute roots, layout, `kgdistiller-store-v1` schema, graph/store generation
-digests, document count, installed version/commit, verified Git state, and any
+Summarize absolute roots, chosen layout, graph generation, installed
+version/commit, verified Git state, optional snapshot schema/generation/document
+count only when created or verified, and any
 static/Obsidian export path and digest. Never include full authority content,
 credentials, or unbounded excerpts. Keep snapshot, Git, export, and network
 publication as separate authorities.

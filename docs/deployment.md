@@ -1,32 +1,43 @@
 # Local-first deployment and recovery
 
 The knowledge project is the deployment and backup unit. It owns registered
-Markdown, Typst, and LaTeX identity authorities and their source evidence,
-Markdown atomic entries, reviewed registries, the deterministic `kgdistiller-graph-v1`
-graph, and the `kgdistiller-store-v1` manifest. The kgdistiller product
-checkout owns only engine code, schemas, native frontend assets, Skills, and
-workflow definitions.
+Markdown, Typst and LaTeX source authorities, one Markdown file per accepted
+entry, reviewed registries and graph state. The product checkout owns only
+engine code, schemas, frontend assets, Skills and workflow definitions.
 
-## Portable layout
+## Core and optional artifacts
 
 ```text
-personal-knowledge-store/
-├── notes/                         # native authorities
+personal-knowledge-project/
+├── notes/                         # original native sources
 └── knowledge/
-    ├── vault.json                 # portable kgdistiller-vault-v1 identity
-    ├── sources.json               # source registration and user document types
-    ├── identities.json            # optional reviewed renames/aliases
-    ├── alignments.json             # reviewed cross-namespace mappings
-    ├── entries/                    # kgdistiller-entry-v1 atomic authorities
-    ├── graph/                      # deterministic kgdistiller-graph-v1 generation
-    ├── documents.jsonl            # canonical authority inventory
-    ├── store.json                 # kgdistiller-store-v1
-    └── build/                      # ignored plans, receipts, journals, previews
+    ├── vault.json                 # stable vault identity
+    ├── sources.json               # source registration; optional document types
+    ├── entries/                   # sole persisted entry bodies, in Markdown
+    └── graph/                     # manifest, nodes, edges, reference occurrences
 ```
 
-There is no database, vector bundle, model provider, local profile, or
-materialized query index. A verified checkout is directly queryable through a
-generation-checked in-memory `GraphView`.
+`kgdistiller-graph-v2` reads entry content directly from its bound Markdown
+authorities. It has no entry JSONL shards or persisted diagnostic report.
+Graph records preserve stable IDs, aliases, orphan state and accepted semantic
+edges; source prose cannot reconstruct all of that state. Keep the graph with
+the sources and entries, rather than deleting it as a cache.
+
+Add artifacts only for actual uses:
+
+- `identities.json` for reviewed renames/aliases and `alignments.json` for
+  accepted cross-namespace mappings; absent registries are valid.
+- `documents.jsonl` and `store.json` for an explicitly requested portable
+  snapshot, not daily capture or ordinary Git backup.
+- `build/` for ignored plans, receipts, journals and previews.
+- Static or Obsidian exports for chosen consumers. Preserve or rebuild outputs
+  still adopted by a site or local plugin.
+
+A normal checkout is queryable through a generation-checked in-memory
+`GraphView`; it does not need a store snapshot, database or materialization
+step. Source registration requires `id`, `root` and `files`, plus its registry
+schema. Optional fields/topics, document types and display configuration are
+user decisions, not prefilled placeholder structures.
 
 ## Global command and machine-local registration
 
@@ -55,19 +66,24 @@ be registered at its new path by identity; `--replace` is required only when
 the old path still exists, which prevents accidentally treating a copied vault
 as a relocation.
 
-Version 0.4 has no legacy schema reader or automatic migration. Before
-upgrading an authority repository, commit native authorities and reviewed
-registries as a Git rollback point. Preserve any Agent-curated entries and
-semantic edges that need later human review. Then move the old generated
-`knowledge/graph/` outside the project, or delete that exact directory after
-confirming the rollback commit. Write the source and optional identity
-registries as `kgdistiller-sources-v1` and `kgdistiller-identities-v1`, then run
-an unscoped `sync` to derive `kgdistiller-graph-v1`. Re-review retained metadata
-before issuing it as `kgdistiller-agent-delta-v1`.
+## Existing graph generations
+
+The loader accepts current public `kgdistiller-graph-v1` and
+`kgdistiller-graph-v2` without changing files. Explicit synchronization or a
+reviewed writer produces v2, removes its own obsolete body shards/diagnostic
+artifact and preserves accepted identities, aliases, relations and source
+content. No manual graph replacement is needed for this transition.
+
+Pre-0.4 graphs and SQLite data remain unsupported. Recover their original
+sources and reviewed metadata with the earlier release, preserve a recoverable
+copy, then rebuild under current registries and review the retained semantics.
+Do not apply that pre-0.4 recovery procedure to a current public v1 graph.
 
 ## Create or refresh a store
 
-Refresh in place when the notes repository is the desired private backup unit:
+A portable snapshot is an optional self-contained backup package. Do not create
+one as a prerequisite for ordinary query, capture, export or Git clone. For an
+explicitly requested in-place snapshot:
 
 ```sh
 kgdistiller --repo-root PROJECT check
@@ -90,8 +106,9 @@ generation, and document inventory that describe them. Snapshot and verify
 never contact a network service.
 
 `store verify` validates the manifest schema and digest, safe managed paths,
-canonical inventory, all authority and entry hashes, registries, derived entry
-shards, graph and snapshot digests, and the combined store generation. It recomputes the document
+canonical inventory, all authority and entry hashes, registries, graph and
+snapshot digests, and the combined store generation. Existing public graph-v1
+snapshots additionally validate their bound legacy shards. It recomputes the document
 inventory from the copied authorities, source registry, and graph rather than
 trusting inventory rows in isolation. Source roots must resolve inside the
 project, including when a registered glob currently matches no files.
@@ -116,24 +133,30 @@ the user explicitly authorizes that action. Track:
 - optional `knowledge/identities.json` and `knowledge/alignments.json`;
 - `knowledge/entries/` and all evidence files they reference, including any
   explicitly retained older `knowledge/derived/` files;
-- `knowledge/graph/`, `knowledge/documents.jsonl`, and `knowledge/store.json`.
+- `knowledge/graph/`;
+- `knowledge/documents.jsonl` and `knowledge/store.json` only when maintaining
+  an actual portable snapshot.
 
 Ignore `knowledge/build/`, transaction staging and journals, plans, receipts,
 credentials, query logs, and generated exports unless an export is deliberately
 adopted by a consumer. Verification proves local integrity, not that a commit
 or remote synchronization happened.
 
-After clone or pull:
+After an ordinary knowledge-project clone or pull:
 
 ```sh
-kgdistiller --repo-root STORE store verify
-kgdistiller --repo-root STORE agent status
-kgdistiller --repo-root STORE agent resolve "KNOWN NAME"
+kgdistiller --repo-root PROJECT check
+kgdistiller --repo-root PROJECT agent status
+kgdistiller --repo-root PROJECT agent resolve "KNOWN NAME"
 ```
 
+If `knowledge/store.json` exists and the checkout is used as a portable
+snapshot, run `store verify` before accepting or restoring that snapshot.
+Do not generate a new snapshot merely to make an absent manifest pass a check.
 Do not run `sync` to hide a verification failure. Restore a known-good revision
-or repair the native authority on its owning machine, then create and transfer
-one complete new store generation.
+or repair the native authority, then explicitly refresh the intended snapshot.
+An existing snapshot left behind after source changes is stale until refreshed;
+that does not turn its optional inventory into live knowledge authority.
 
 Git metadata is ignored by `store verify`, but an external snapshot operation
 will never replace a store root that contains `.git`; that would discard
@@ -173,7 +196,8 @@ does not read private JSONL graph internals or write any authority.
 ## Deployment receipt
 
 Record the absolute project/store root, installed kgdistiller version and exact
-product commit when known, store schema and generation digests, document count,
+product commit when known, graph generation, optional snapshot schema/digests and
+document count only when a snapshot was created or verified,
 Git commit/remote state only when actually confirmed, and any static-export
 receipt. Never include full authority content, credentials, or unbounded source
 excerpts.

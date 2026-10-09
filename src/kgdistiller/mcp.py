@@ -230,6 +230,7 @@ def call_tool(
     raw_arguments: Any,
     *,
     alignments: Path | None = None,
+    repo_root: Path | None = None,
     ranking_service: Any = None,
 ) -> dict[str, Any]:
     """Execute one tool against exactly one complete, fresh GraphView."""
@@ -293,7 +294,7 @@ def call_tool(
             return result
         except SourceEvidenceError as error:
             raise RetrievalError(error.code, error.message) from error
-    view = load_graph_view(graph_dir, alignments)
+    view = load_graph_view(graph_dir, alignments, repo_root=repo_root)
     namespace = str(arguments.get("namespace", "personal"))
     if name == "kg_status":
         return query_status(view)
@@ -341,8 +342,9 @@ def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, 
 class MCPServer:
     """Small stateful MCP dispatcher for newline-delimited stdio transport."""
 
-    def __init__(self, graph_dir: Path, *, alignments: Path | None = None, ranking_service: Any = None):
+    def __init__(self, graph_dir: Path, *, alignments: Path | None = None, repo_root: Path | None = None, ranking_service: Any = None):
         self.graph_dir = Path(graph_dir)
+        self.repo_root = Path(repo_root) if repo_root is not None else None
         self.alignments = Path(alignments) if alignments is not None else None
         self.ranking_service = ranking_service
         self.initialized = False
@@ -382,7 +384,7 @@ class MCPServer:
                 return _protocol_error(request_id, -32602, "Invalid params")
             name = str(params.get("name", ""))
             try:
-                options = {"alignments": self.alignments}
+                options = {"alignments": self.alignments, "repo_root": self.repo_root}
                 if name in {"kg_search", "kg_build_context"}:
                     options["ranking_service"] = self.ranking_service
                 value = call_tool(self.graph_dir, name, params.get("arguments"), **options)
@@ -400,13 +402,14 @@ def serve_stdio(
     graph_dir: Path,
     *,
     alignments: Path | None = None,
+    repo_root: Path | None = None,
     ranking_service: Any = None,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
     source = input_stream or sys.stdin
     destination = output_stream or sys.stdout
-    server = MCPServer(graph_dir, alignments=alignments, ranking_service=ranking_service)
+    server = MCPServer(graph_dir, alignments=alignments, repo_root=repo_root, ranking_service=ranking_service)
     for raw_line, oversized in _bounded_input_lines(source):
         if oversized:
             destination.write(canonical_json(_protocol_error(None, -32700, "Parse error")) + "\n")

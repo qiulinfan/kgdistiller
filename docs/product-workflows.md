@@ -7,7 +7,7 @@ runtime workflow manifests `workflows/manifest.json` (Codex) and
 same Skills and workflows; only linkers and agent-preset formats differ. A
 knowledge project owns its Markdown, Typst, and
 LaTeX identity authorities and directly linked source evidence,
-`knowledge/entries/` atomic authorities, reviewed registries, `kgdistiller-graph-v1` graph,
+`knowledge/entries/` atomic authorities, reviewed registries, `kgdistiller-graph-v2` graph (with read-only support for existing public v1),
 optional `kgdistiller-store-v1` snapshot, and explicitly adopted downstream exports.
 
 The manifests are the portable asset/workflow inventory. Install and validate
@@ -296,15 +296,18 @@ review rather than inference from comparison output.
 
 ### Back up or restore a portable store
 
-Use `$deploy-kgdistiller` to run `check`, `agent status`, `store snapshot`, and
-`store verify`. A `kgdistiller-store-v1` clone is file-based and immediately queryable;
+When a portable backup is requested, use `$deploy-kgdistiller` to run `check`,
+`agent status`, `store snapshot`, and `store verify`. An ordinary knowledge-project
+clone needs source/graph checks without creating a snapshot. A verified
+`kgdistiller-store-v1` clone is file-based and immediately queryable;
 there is no profile, provider, database, or materialization step. Git
 initialization, commit, remote configuration, and push remain explicit separate
 actions.
 
 ### Publish a static bundle
 
-Use `$deploy-kgdistiller` after source/store checks. `export site` requires the
+Use `$deploy-kgdistiller` after source/graph checks; verify a portable store only
+when the input is an actual snapshot. `export site` requires the
 clean tracked instance inputs and exact producer/source provenance. Run the
 bundled `verify_export.py`; a consumer adopts those verified bytes and receipt,
 not the kgdistiller checkout.

@@ -86,7 +86,7 @@ def validate_source_evidence_manifest(payload: dict[str, Any]) -> None:
         parts = PurePosixPath(path).parts
         if not parts or PurePosixPath(path).as_posix() != path or PurePosixPath(path).is_absolute() or any(part in {"..", "."} for part in parts) or "\\" in path or "\x00" in path or re.match(r"^[A-Za-z]:", path):
             raise SourceEvidenceError("unsafe-source-path", "source paths must be relative POSIX paths without traversal")
-        if any(parts[index:index+2] == ("knowledge", "graph") for index in range(len(parts)-1)):
+        if any(parts[index] in {"knowledge", ".knowledge"} and parts[index+1] == "graph" for index in range(len(parts)-1)):
             raise SourceEvidenceError("unsafe-source-path", "derived graph artifacts are not original source evidence")
 
 
@@ -312,7 +312,7 @@ class SourceEvidenceIndex:
             root = root_candidate.resolve(strict=True)
         except (OSError,ValueError,RuntimeError) as error:
             raise SourceEvidenceError("source-unavailable", "source evidence root is unavailable") from error
-        if any(root.parts[index:index+2] == ("knowledge","graph") for index in range(len(root.parts)-1)):
+        if any(root.parts[index] in {"knowledge", ".knowledge"} and root.parts[index+1] == "graph" for index in range(len(root.parts)-1)):
             raise SourceEvidenceError("unsafe-source-path", "derived graph directories are not source evidence corpora")
         if not root.is_dir():
             raise SourceEvidenceError("unsafe-source-path", "manifest root must be a directory")

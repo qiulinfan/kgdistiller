@@ -298,6 +298,7 @@ def execute_retrieval_plan(
     plan_mode: str = "planned",
     namespace: str | None = None,
     alignments: Path | None = None,
+    repo_root: Path | None = None,
     expected_graph_sha256: str | None = None,
     ranking_service: SemanticRankingService | None = None,
     graph_policy: GraphRetrievalPolicy | None = None,
@@ -309,7 +310,7 @@ def execute_retrieval_plan(
     if namespace is not None and namespace != plan["namespace"]:
         raise RetrievalError("namespace-conflict", "request namespace conflicts with retrieval plan")
     try:
-        view = graph_dir if isinstance(graph_dir, GraphView) else load_graph_view(graph_dir, alignments)
+        view = graph_dir if isinstance(graph_dir, GraphView) else load_graph_view(graph_dir, alignments, repo_root=repo_root)
     except QueryError as error:
         raise RetrievalError("graph-unavailable", str(error)) from error
     if expected_graph_sha256 is not None and view.snapshot["graph"]["sha256"] != expected_graph_sha256:
@@ -602,6 +603,7 @@ def build_context_from_execution(
     token_budget: int = 6000,
     namespace: str | None = None,
     alignments: Path | None = None,
+    repo_root: Path | None = None,
     context_projection: str = "full",
     support_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -631,7 +633,7 @@ def build_context_from_execution(
     if execution.get("namespace") != plan["namespace"] or (namespace is not None and namespace != plan["namespace"]):
         raise RetrievalError("namespace-conflict", "context namespace conflicts with execution")
     try:
-        view = graph_dir if isinstance(graph_dir, GraphView) else load_graph_view(graph_dir, alignments)
+        view = graph_dir if isinstance(graph_dir, GraphView) else load_graph_view(graph_dir, alignments, repo_root=repo_root)
     except QueryError as error:
         raise RetrievalError("graph-unavailable", str(error)) from error
     if execution.get("snapshot_sha256") != view.snapshot["snapshot_sha256"]:

@@ -1,29 +1,32 @@
 # Deployment contract
 
-## Portable authority boundary
+## Knowledge and optional snapshot boundary
 
-The knowledge project owns registered Markdown, Typst, and LaTeX identity
-authorities, `knowledge/entries/` Markdown atomic authorities linked directly
-to native evidence, existing `knowledge/derived/` evidence where used, reviewed
-source/identity/alignment registries, the deterministic `kgdistiller-graph-v1` graph, canonical document inventory,
-and `kgdistiller-store-v1` manifest. Opening that
-project as an Obsidian vault does not change the authority boundary. The
-product checkout, local browser state, static site, and generated Obsidian
-projection directory are not authority or backup roots.
+The knowledge project owns native Markdown, Typst and LaTeX sources,
+`knowledge/entries/` Markdown atomic entries linked to evidence, source
+registration and durable graph records. Reviewed identities and alignments are
+optional; preserve nonempty registries and create them only when used.
+`kgdistiller-graph-v2` retains identity/alias/orphan state, accepted edges and
+reference occurrences. Entry content is read from the bound Markdown, not a
+second persisted JSONL body store. Existing public graph v1 is read-only
+compatible; explicit writes emit v2 while preserving accepted state.
 
-Keep `knowledge/build/`, journals, plans, receipts, credentials, query logs,
-and generated projections local and ignored. Version 0.4 has no database,
-embedding bundle, provider configuration, machine profile, or materialization
-contract.
+`documents.jsonl` and `store.json` package an explicitly requested portable
+snapshot. They are not live canonical knowledge or prerequisites for capture,
+query, export or ordinary Git cloning. Never generate a snapshot merely because
+a checker expects one. Existing derived evidence is retained only where used.
+Opening the knowledge project as an Obsidian vault changes none of these roles.
+The product checkout and generated projections are not authority or backup roots.
 
-Version 0.4 has no legacy schema reader. Do not silently relabel or preserve an
-older derived graph. First require a committed Git rollback point containing
-native authorities and reviewed registries, then preserve any entries and edges
-that need human re-review. Move the old generated `knowledge/graph/` outside
-the project or delete that exact directory after confirming the rollback
-commit. Write current registry discriminators, run an unscoped `sync` to derive
-`kgdistiller-graph-v1`, and re-author reviewed metadata under
-`kgdistiller-agent-delta-v1`.
+Keep `knowledge/build/`, journals, plans, receipts, credentials and query logs
+local and ignored. Exports are optional chosen consumer outputs; retain or
+rebuild those still used by a site or local plugin. No database materialization
+is required.
+
+Pre-0.4 core graphs and SQLite artifacts remain unsupported. Preserve their
+native authorities and reviewed metadata, recover with the earlier release
+when needed, then rebuild and review under current contracts. Do not relabel
+these artifacts or apply this recovery procedure to public graph v1 data.
 
 ## Source extraction profiles
 
@@ -51,7 +54,9 @@ or computing classes. For example, using placeholder values:
 ```
 
 This is a fragment of `knowledge/sources.json`; preserve its schema and other
-registry/source fields. `node_kinds` is a nonempty list of unique user-defined
+actual registry/source fields. Without extraction profiles, minimal registration
+needs only `id`, `root` and `files`. Omit unused document types, fields, topics,
+web settings and classification policies; do not invent a general field. `node_kinds` is a nonempty list of unique user-defined
 names, and `extraction_guidance` contains the user's extraction rules. A source
 selects a registered profile by exact name; a submitted semantic `kind` must
 belong to that profile. Registration never reclassifies existing identities.
@@ -70,10 +75,12 @@ makes no RAG or vector-index choice.
 
 ## Required checks
 
-Before snapshot or export, run `check` and `agent status`. Run `store snapshot`
-then `store verify`; for a separate snapshot, verify its output root. On restore,
-verify before any query. A verified clone is directly queryable through the
-generation-checked JSON `GraphView`.
+Before snapshot or export, run `check` and `agent status`. For a requested
+snapshot, run `store snapshot` then `store verify`; for a separate snapshot,
+verify its output root. Before restoring an actual existing snapshot, verify
+it. An ordinary clone without a snapshot needs source/graph checks, not a newly
+generated store. A valid graph is directly queryable through generation-checked
+`GraphView`. Report an existing unrefreshed snapshot as stale until verified.
 
 Never run `sync` to mask a verification mismatch and never hand-edit manifests,
 invent digests, or delete an interrupted ingest journal. Restore a known-good

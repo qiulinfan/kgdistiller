@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import hashlib
 import json
 import os
@@ -9,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .vault_registry import VAULT_MANIFEST, VaultRegistryError, load_vault_manifest
+from .vault_registry import vault_manifest_path, VaultRegistryError, load_vault_manifest
 
 
 DERIVED_SCHEMA = "kgdistiller-derived-markdown-v1"
@@ -26,7 +28,7 @@ def find_enclosing_vault(source: Path) -> Path | None:
     candidate = source.resolve(strict=False)
     current = candidate if candidate.is_dir() else candidate.parent
     for root in (current, *current.parents):
-        manifest = root / VAULT_MANIFEST
+        manifest = vault_manifest_path(root)
         if not manifest.exists() and not manifest.is_symlink():
             continue
         try:
@@ -40,7 +42,7 @@ def find_enclosing_vault(source: Path) -> Path | None:
 def _safe_output(vault: Path, relative: Path) -> tuple[str, Path]:
     if relative.is_absolute() or ".." in relative.parts or relative.suffix.casefold() != ".md":
         raise DerivationError("derived output must be a relative .md path under knowledge/derived")
-    if relative.parts[:2] != DERIVED_ROOT.parts:
+    if relative.parts[:2] != knowledge_relative(vault, DERIVED_ROOT).parts:
         raise DerivationError("derived output must be under knowledge/derived")
     root = vault.resolve()
     target = (root / relative).resolve(strict=False)
@@ -81,13 +83,13 @@ def plan_derivation(
         )
     if output is None:
         if external:
-            relative = DERIVED_ROOT / "imports" / f"{source.stem}.md"
+            relative = knowledge_relative(vault, DERIVED_ROOT) / "imports" / f"{source.stem}.md"
         else:
             source_relative = source.relative_to(vault)
-            relative = DERIVED_SOURCE_ROOT / Path(f"{source_relative.as_posix()}.md")
+            relative = knowledge_relative(vault, DERIVED_SOURCE_ROOT) / Path(f"{source_relative.as_posix()}.md")
     else:
         relative = output
-    required_root = DERIVED_ROOT / ("imports" if external else "by-source")
+    required_root = knowledge_relative(vault, DERIVED_ROOT) / ("imports" if external else "by-source")
     if required_root not in relative.parents:
         raise DerivationError(
             f"{'external' if external else 'in-vault'} derivation output must be under "

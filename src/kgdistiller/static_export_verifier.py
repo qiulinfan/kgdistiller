@@ -615,7 +615,7 @@ def _verify_export(path: str | Path) -> dict[str, Any]:
     }:
         raise ExportVerificationError("manifest graph record is invalid")
     if (
-        graph_manifest.get("private_schema") != "kgdistiller-graph-v1"
+        graph_manifest.get("private_schema") not in {"kgdistiller-graph-v1", "kgdistiller-graph-v2"}
         or graph_manifest.get("public_schema") != SITE_GRAPH_SCHEMA
     ):
         raise ExportVerificationError("manifest graph schemas are invalid")

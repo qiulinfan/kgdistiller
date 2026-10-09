@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .knowledge_paths import knowledge_root, knowledge_relative
+
 import hashlib
 import json
 import os
@@ -13,7 +15,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .cli import (
-    GRAPH_SCHEMA,
     KnowledgeError,
     expand_source,
     identity_registry_sha256,
@@ -602,7 +603,7 @@ def _require_fresh_registries(
 def _require_same_graph_generation(graph_dir: Path, view: GraphView) -> None:
     """Reject a build if its committed GraphView generation changed mid-export."""
     try:
-        current = load_graph_view(graph_dir)
+        current = load_graph_view(graph_dir, repo_root=view.repo_root)
     except (QueryError, OSError, UnicodeError, ValueError) as error:
         raise ObsidianExportError(f"cannot reload the authority graph: {error}") from error
     if current.generation != view.generation:
@@ -622,6 +623,7 @@ def _artifact_record(relative: str, content: bytes, kind: str) -> dict[str, Any]
 
 def _build_plugin_graph(
     *,
+    graph_schema: str,
     graph_sha256: str,
     snapshot_sha256: str,
     source_hashes_sha256: str,
@@ -715,7 +717,7 @@ def _build_plugin_graph(
     graph = {
         "schema": PLUGIN_GRAPH_SCHEMA,
         "source": {
-            "graph_schema": GRAPH_SCHEMA,
+            "graph_schema": graph_schema,
             "graph_sha256": graph_sha256,
             "snapshot_sha256": snapshot_sha256,
             "source_hashes_sha256": source_hashes_sha256,
@@ -858,7 +860,7 @@ def build_obsidian_projection(
     """Build, verify, and atomically install a private Obsidian projection."""
     repo_root = repo_root.resolve()
     identities = (
-        (repo_root / "knowledge/identities.json").resolve()
+        (knowledge_root(repo_root) / "identities.json").resolve()
         if identities is None
         else identities.resolve()
     )
@@ -867,7 +869,7 @@ def build_obsidian_projection(
     output = output.resolve()
     _validate_output_boundary(repo_root, output, registry)
     try:
-        view = load_graph_view(graph_dir)
+        view = load_graph_view(graph_dir, repo_root=repo_root)
     except (QueryError, OSError, UnicodeError, ValueError) as error:
         raise ObsidianExportError(f"cannot load the authority graph: {error}") from error
     _require_fresh_registries(graph_dir, registry, identities, view)
@@ -968,6 +970,7 @@ def build_obsidian_projection(
             artifacts.append(_artifact_record(relative.as_posix(), content, "source"))
             link_count += len(by_authority.get(authority, [])) + len(refs_by_authority.get(authority, []))
         plugin_graph = _build_plugin_graph(
+            graph_schema=snapshot["graph"]["schema"],
             graph_sha256=graph_sha,
             snapshot_sha256=str(snapshot["snapshot_sha256"]),
             source_hashes_sha256=source_hashes_sha,
@@ -988,7 +991,7 @@ def build_obsidian_projection(
             "schema": PROJECTION_SCHEMA,
             "status": "ready",
             "source": {
-                "graph_schema": GRAPH_SCHEMA,
+                "graph_schema": snapshot["graph"]["schema"],
                 "graph_sha256": graph_sha,
                 "snapshot_sha256": snapshot["snapshot_sha256"],
                 "source_hashes_sha256": source_hashes_sha,
