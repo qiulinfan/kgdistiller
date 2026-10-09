@@ -62,10 +62,24 @@ XeLaTeX and explicitly rejects LuaLaTeX. Read the packaged
 [LaTeX source contract](latex-sources.md) for setup, provenance, protocol,
 marker placement and failure behavior.
 
+### Fast single-item capture
+
+`$capture-kgdistiller` saves or updates one selected concept while reading. It
+uses the selected passage and necessary nearby context, one identity comparison,
+and supported transactional ingest. The deterministic preparation command builds
+the required transaction artifacts; the caller supplies source-backed content
+and reviewed identity intent. See [single-item capture](../skills/capture-kgdistiller/references/capture-contract.md).
+
+Entries preserve explicit `understanding` and one layer of
+`pending_prerequisites`. Full reading, successful retrieval and current curation
+do not establish personal mastery. A partial source remains partial and its
+unrelated uncurated concepts do not block the selected update. Full-source
+distillation remains a separate explicit request using the same knowledge model.
+
 ### Source-scoped knowledge sheets
 
 `$compile-knowledge-sheets` / `/compile-knowledge-sheets` creates or refreshes
-definition and pending link views for papers, mathematical notes, CS notes,
+partial or complete definition and pending link views for papers, mathematical notes, CS notes,
 blogs and project documents. Full knowledge content belongs in accepted
 `knowledge/` metadata; source sheets display names, types, locations and links.
 New or changed content first forms a reviewed metadata proposal and uses supported
@@ -132,8 +146,10 @@ skipping that lookup is not the same as a verified knowledge-base match.
 
 Distillation checks the established knowledge targets or registered default via
 read-only queries. Look up methods and prerequisites at actual use sites, rather
-than broad subjects. Verify definitions and conditions before treating a match
-as mastered; link that entry and its paper use without reteaching it. An item not
+than broad subjects. Verify definitions and conditions for applicability, then
+report personal
+understanding separately. Only the user's stated understanding allows treating
+an entry as mastered; preserve unknown or not-yet-understood state. An item not
 found in the queried store is not proof the user does not know it. A lookup error
 is not a negative match. Preserve paper/version meaning; shared vocabulary does
 not merge identities. Store mutations remain separately authorized transactions.
@@ -210,7 +226,8 @@ separate from original knowledge notes and short necessary excerpts.
 
 `distill-paper` produces paper/version-qualified candidates with definitions or
 mechanisms, essential conditions and source locations, in the same short note.
-They are not yet mastered knowledge or imported graph nodes. Distillation ends
+They are not imported graph nodes; candidate status does not establish personal
+understanding. Distillation ends
 with saved candidates, without opening a review or prompting for import. Only
 `$harvest-paper` / `/harvest-paper` starts that later phase: inspect bounded existing
 matches, write `harvest-review.md`, and show the proposals in the current conversation.

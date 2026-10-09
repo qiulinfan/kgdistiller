@@ -18,6 +18,11 @@ Match user-facing explanations, prompts, and handoffs to the user's language
 unless the user requests another language. Keep commands, identifiers,
 structured keys and action codes, and raw errors unchanged.
 
+For a request to save one selected item while reading, use
+`$capture-kgdistiller`; it shares the same entries and transaction boundary while
+leaving other concepts uncurated. The whole-file extraction below applies only
+to a requested source-level curation scope. A sheet may remain partial.
+
 ## Establish the bounded source scope
 
 Start with:

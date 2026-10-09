@@ -1,4 +1,4 @@
 interface:
   display_name: "Compile Knowledge Sheets"
-  short_description: "Create source-scoped links to accepted knowledge metadata"
+  short_description: "Create partial or complete knowledge link sheets"
   default_prompt: "Use $compile-knowledge-sheets to create or refresh definition and pending link sheets for this source, preparing reviewed metadata updates when needed."

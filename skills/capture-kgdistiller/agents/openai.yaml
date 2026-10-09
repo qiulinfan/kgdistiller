@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture Knowledge"
+  short_description: "Save one concept and its immediate learning gaps"
+  default_prompt: "Use $capture-kgdistiller to save this selected concept with its source, my understanding and direct pending prerequisites."

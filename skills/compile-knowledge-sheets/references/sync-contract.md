@@ -41,11 +41,19 @@ input/output states remain explicit. Do not flatten one comparison into
 unrelated edges; split independent findings when their conditions or epistemic
 states differ. Do not promote a hypothesis to fact or association to causation.
 
-Pending proposals preserve the required meaning, precise use sites, candidate
-defining sources and applicability evidence. Inspect the primary defining
-source and its conditions before proposing resolution. Unavailable, ambiguous
-or inapplicable definitions remain gaps; do not recursively expand a
-bibliography or substitute a nearby meaning.
+Atomic entries support `understanding` (`unknown`, `not-yet-understood`,
+`understood`) and `pending_prerequisites` (direct source-grounded gap strings).
+Absence means unknown; preserve omitted learning fields on updates. Only the
+user's stated understanding changes that status. A definition being found or
+an entry being current does not establish mastery.
+
+Pending proposals preserve the required meaning, precise use sites and any
+already known defining source. Record one dependency layer and stop. Inspect a
+primary defining source when the user chooses to resolve that gap, reviewing
+conditions before linking. Its newly exposed prerequisites belong to its own
+entry. Do not recursively expand a bibliography or conflate finding a definition
+with understanding it. Partial sheets retain their selected coverage and
+unselected existing rows; full-source distillation is explicitly requested.
 
 ## Bounded change and current adapters
 
@@ -64,7 +72,8 @@ native definition marker or canonical node ID. Do not hand-edit entries as a
 transaction substitute or edit graph files, identity registries or alignments.
 
 The current graph-v1 direct-edge adapter does not losslessly support full n-ary
-relations, application records or the complete dependency-gap model. The
+relations, application records or rich dependency-gap history. Simple direct
+gaps and understanding use the atomic-entry fields above. The
 caller-supplied compiled library is a read-only retrieval input, not a write
 API. Check actual request/delta capabilities before constructing a plan.
 

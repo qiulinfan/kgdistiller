@@ -25,6 +25,7 @@ from .alignment import (
     sha256_json,
 )
 from .cli import (
+    CROSS_FILE_REF_ENDPOINTS,
     DELTA_SCHEMA,
     GraphState,
     KnowledgeError,
@@ -912,6 +913,31 @@ def _duration(started: float) -> int:
     return max(0, round((time.monotonic() - started) * 1000))
 
 
+def _curation_node_ids(
+    before: GraphState,
+    after: GraphState,
+    request: dict[str, Any],
+) -> set[str]:
+    """Review changed knowledge without requiring the rest of a source to be curated."""
+    selected = {str(node["id"]) for node in request["delta"].get("nodes", [])}
+    authorities = {str(patch["path"]) for patch in request["authority_patches"]}
+    for node_id, node in after.nodes.items():
+        provenance = node.get("provenance") or {}
+        if (
+            node.get("type") != "knowledge"
+            or not provenance.get("active")
+            or provenance.get("authority") not in authorities
+        ):
+            continue
+        previous = (before.nodes.get(node_id) or {}).get("provenance") or {}
+        if (
+            not previous.get("active")
+            or previous.get("definition_sha256") != provenance.get("definition_sha256")
+        ):
+            selected.add(node_id)
+    return selected
+
+
 def _stage_ingest(
     paths: IngestPaths,
     request: dict[str, Any],
@@ -1033,7 +1059,17 @@ def _stage_ingest(
         validations.append({"stage": "alignment", "status": "passed"})
         _invoke(failure_injector, "staged-alignments")
         authorities = {str(patch["path"]) for patch in request["authority_patches"]}
-        curation = curation_report(after_state, authorities)
+        curation = curation_report(
+            after_state,
+            authorities,
+            node_ids=_curation_node_ids(before_state, after_state, request),
+            relation_node_ids={
+                str(edge[endpoints[0]])
+                for field in ("edges", "remove_edges")
+                for edge in request["delta"].get(field, [])
+                if (endpoints := CROSS_FILE_REF_ENDPOINTS.get(str(edge["relation"])))
+            },
+        )
         if curation["errors"]:
             raise IngestError(
                 "curation-failed",

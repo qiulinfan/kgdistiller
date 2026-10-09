@@ -101,9 +101,13 @@ large numbers when the source requires that distinction. If a broad theorem
 contains the needed special case, record why its conditions apply. Name matches
 with a different sense remain unresolved.
 
-Under the user's convention, an accurately matched applicable entry is mastered;
-the author should link it and skip its tutorial, keeping only the paper-specific
-application. Never generalize this to an entire discipline. An unavailable query
+An applicable match establishes available knowledge, not personal mastery.
+Return the entry's `understanding` separately: `unknown`, `not-yet-understood`
+or `understood`; absence means unknown. Skip a tutorial on the basis of mastery
+only when the user has stated understanding, while retaining the current use
+conditions. Surface direct `pending_prerequisites` without recursively expanding
+their ancestry. Finding a definition or a successful query never upgrades
+understanding. Never generalize a concept's status to an entire discipline. An unavailable query
 is not an unmatched concept, and an unmatched concept is not proof the user lacks
 the surrounding subject. Do not query generic subject names as substitutes for
 actual prerequisite uses.
@@ -179,4 +183,5 @@ For papers, return the paper scope, raw engine status, semantic comparison evide
 and bridge decision separately. Preserve the paper's own definition and mechanism
 in the author handoff; never copy a personal entry over it. Report operations used,
 result counts, ambiguity, omitted context, and target digests. Make no
-repository changes.
+repository changes. Return personal understanding and direct pending
+prerequisites separately from identity match and definition availability.

@@ -53,6 +53,23 @@ one bounded registered source, and use `.md`, `.typ`, or `.tex`.
 Authority digests use UTF-8 text after CRLF/CR is normalized to LF. Raw checkout
 bytes are not the transaction boundary.
 
+## Partial entry updates
+
+A transaction may curate one selected node while unrelated marked concepts in
+the same source remain pending. Entry completeness is checked for reviewed delta
+nodes and actually new or changed definitions. Changing a definition without its
+reviewed replacement entry still fails. Native marker expectations, required
+cross-file references and global graph validation remain enforced.
+
+`curate-check --file` retains whole-file checks; its result describes the marked
+nodes, not full-source reading or personal mastery. Entry `understanding` and
+`pending_prerequisites` are independent learning metadata. Omitted learning
+fields survive updates; a supplied empty pending list explicitly clears it.
+
+The [capture preparation helper](../skills/capture-kgdistiller/references/capture-contract.md) constructs one candidate comparison
+and finalized plan/apply requests from a reviewed single-item selection. It uses
+this same transaction boundary and never applies its prepared request itself.
+
 ## Atomic generation install
 
 The engine:

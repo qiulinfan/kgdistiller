@@ -268,11 +268,15 @@ def _entry_markdown(node: dict[str, Any]) -> list[str]:
     entry = node.get("entry") if isinstance(node.get("entry"), dict) else {}
     text = str(node.get("text", "")).strip()
     summary = str(entry.get("summary", "")).strip() or text
-    lines = ["## Entry", "", summary or "_No curated entry yet._", ""]
+    lines = [
+        "## Entry", "", summary or "_No curated entry yet._", "",
+        "### Understanding", "", str(entry.get("understanding", "unknown")), "",
+    ]
     labels = {
         "context": "Context",
         "role": "Role",
         "prerequisites": "Prerequisites",
+        "pending_prerequisites": "Pending prerequisites",
         "common_confusions": "Common confusions",
         "open_questions": "Open questions",
         "sources": "Sources",

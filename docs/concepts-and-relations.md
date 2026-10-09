@@ -30,6 +30,47 @@ This preserves both directions: knowledge records link to their source evidence,
 and source sheets link to the knowledge they explain or use. Nodes and complete
 relations supply retrieval content; sheets provide source-based navigation.
 
+## Partial coverage and personal understanding
+
+A def sheet can cover one selected concept, a section or a whole source. State
+that scope explicitly and preserve rows outside it. An omitted concept means
+unprocessed or outside the selected scope, not absent from the source. Reading
+or fully distilling a source does not establish mastery of its knowledge.
+
+Keep three questions independent: what source material was processed, whether
+a definition has been found and explained, and whether the user understands it.
+Atomic entries support `understanding` with `unknown`, `not-yet-understood` or
+`understood`; absence means unknown. Record the user's stated understanding and
+preserve it on unrelated updates. Neither retrieval matches, complete curation,
+a new defining source nor an agent-generated explanation automatically promotes
+it to understood.
+
+`pending_prerequisites` records only the current entry's direct gaps as concise
+source-grounded text: the term, required meaning and use context, including why
+it remains pending. A definition can already exist while the user still needs
+to learn it. Finding or linking it does not clear that learning gap. Unexplained
+terms have no invented canonical definition node.
+
+Each entry knows its immediate prerequisites. When the user later studies one
+of them, that entry can acquire its own direct gaps. Do not pre-expand the chain,
+copy all ancestors into the original entry, or recursively search their sources
+during ordinary capture. Existing graph traversal can follow reviewed direct
+links when a later task actually needs more context.
+
+## Two writing scopes
+
+Full source distillation is explicitly requested and checks the selected source
+as a whole, while still allowing unresolved dependencies and incomplete personal
+understanding. `$capture-kgdistiller` saves or updates one selected knowledge item
+while reading. It uses just the local evidence and necessary nearby context,
+compares identity once, then hands one bounded transaction to ingest. Additional
+reading or lookup is justified only by a concrete ambiguity or missing defining
+condition. The transaction may leave unrelated sibling entries pending.
+
+Both paths write the same knowledge entries and refresh the same source link
+views. Single-item capture leaves source coverage partial. There is no separate
+inbox knowledge model or later mandatory full-source rewrite.
+
 ## Knowledge nodes
 
 A node denotes a stable, independently meaningful knowledge object. Its content
@@ -102,8 +143,9 @@ library retains authored scientific attributes but still uses node-centric
 search and comparison-claim packing. It is not a canonical write protocol and
 has no general first-class relation/application retrieval API.
 
-A lossless adapter for full n-ary assertions, applications and dependency-gap
-state is not yet implemented. Preserve unsupported proposals in the review area
+Simple direct dependency gaps and personal understanding are supported in
+atomic entries. A lossless adapter for full n-ary assertions, applications and
+rich dependency-gap history is not yet implemented. Preserve unsupported proposals in the review area
 and identify exactly what remains unapplied. Do not invent accepted records,
 metadata links or commands, and do not claim a partial transaction synchronized
 a complete extraction. The shared model is the authoring direction; new storage

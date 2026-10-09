@@ -2872,6 +2872,14 @@ def apply_delta(
         raw_entry = raw.get("entry") if "entry" in raw else existing.get("entry")
         if raw_entry is not None and not isinstance(raw_entry, dict):
             raise KnowledgeError(f"structured entry must be an object: {node_id}")
+        if isinstance(raw_entry, dict):
+            raw_entry = copy.deepcopy(raw_entry)
+            if "entry" in raw:
+                for field in ("understanding", "pending_prerequisites"):
+                    if field not in raw_entry and field in (existing.get("entry") or {}):
+                        raw_entry[field] = copy.deepcopy(existing["entry"][field])
+            elif "text" in raw:
+                raw_entry["summary"] = str(raw["text"])
         text_value = str(
             raw.get("text")
             if "text" in raw
@@ -3172,15 +3180,31 @@ def show_node(state: GraphState, node_id_or_name: str) -> dict[str, Any]:
 def curation_report(
     state: GraphState,
     authorities: set[str],
+    *,
+    node_ids: set[str] | None = None,
+    relation_node_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Validate deterministic consequences of prior agent curation decisions."""
-    selected = {
+    """Check relations across the source while allowing partial entry coverage."""
+    active = {
         node_id: node
         for node_id, node in state.nodes.items()
         if node.get("type") == "knowledge"
         and (node.get("provenance") or {}).get("active")
-        and (node.get("provenance") or {}).get("authority") in authorities
     }
+    authority_node_ids = {
+        node_id for node_id, node in active.items()
+        if (node.get("provenance") or {}).get("authority") in authorities
+    }
+    selected = {
+        node_id: node for node_id, node in active.items()
+        if node_id in (authority_node_ids if node_ids is None else node_ids)
+    }
+    # A partial write can remove a reference required by an unchanged sibling,
+    # or add an edge without touching its consumer's entry or source file.
+    # Neither case requires full entry coverage, but both require valid relations.
+    relation_scope = (
+        authority_node_ids | set(selected) | (relation_node_ids or set())
+    ) & set(active)
     errors: list[dict[str, Any]] = []
     entries = 0
     for node_id, node in selected.items():
@@ -3224,7 +3248,7 @@ def curation_report(
         consumer_authority = str(consumer_provenance.get("authority", ""))
         dependency_authority = str(dependency_provenance.get("authority", ""))
         if (
-            consumer_id not in selected
+            consumer_id not in relation_scope
             or not dependency_authority
             or not dependency_provenance.get("active")
             or consumer_authority == dependency_authority
@@ -3274,7 +3298,7 @@ def curation_report(
         if (
             edge.get("relation") != "contains"
             and edge.get("curation_status") == "needs-review"
-            and ({str(edge.get("source", "")), str(edge.get("target", ""))} & set(selected))
+            and ({str(edge.get("source", "")), str(edge.get("target", ""))} & relation_scope)
         ):
             errors.append(
                 diagnostic(
@@ -3881,6 +3905,13 @@ def parse_args() -> argparse.Namespace:
     propose_command.add_argument("--target-authority")
     propose_command.add_argument("--output", type=Path)
     propose_command.add_argument("--delta-output", type=Path)
+    capture_command = commands.add_parser("capture")
+    capture_commands = capture_command.add_subparsers(
+        dest="capture_command", required=True
+    )
+    capture_prepare = capture_commands.add_parser("prepare")
+    capture_prepare.add_argument("input", type=Path)
+    capture_prepare.add_argument("--output", type=Path, required=True)
     ingest_command = commands.add_parser("ingest")
     ingest_commands = ingest_command.add_subparsers(
         dest="ingest_command", required=True
@@ -4421,6 +4452,23 @@ def main() -> int:
                     )
             else:
                 print(pretty_json(validate_agent_snapshot(payload)), end="")
+            return 0
+        if args.command == "capture":
+            from .capture import prepare_capture
+            from .ingest import IngestPaths
+
+            input_path = defaults(repo_root, args.input)
+            output_path = defaults(repo_root, args.output)
+            paths = IngestPaths(
+                repo_root=repo_root,
+                registry=registry,
+                graph_dir=graph_dir,
+                identities=identities,
+                alignments=alignments,
+                typst_registry=typst_registry,
+            )
+            result = prepare_capture(paths, read_json(input_path, {}), output_path)
+            print(pretty_json(result), end="")
             return 0
         if args.command == "ingest":
             from .ingest import (

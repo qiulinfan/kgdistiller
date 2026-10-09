@@ -93,9 +93,16 @@ kgd_definition_sha256: "..."
 A measurable space equipped with a measure.
 ```
 
+Optional entry learning metadata uses `understanding` (`unknown`,
+`not-yet-understood`, `understood`) and `pending_prerequisites` (direct gap
+descriptions). Absence of understanding means unknown; compilation and
+`curation_status` do not certify personal mastery. These fields survive content
+updates when omitted. Explicitly passing an empty pending list clears it.
+
 The remaining supported level-two sections are `Context`, `Role`,
-`Prerequisites`, `Common confusions`, `Open questions`, and `Sources`. The last
-four use Markdown `- ` list items. Unknown frontmatter fields or sections fail
+`Understanding`, `Prerequisites`, `Pending prerequisites`, `Common confusions`,
+`Open questions`, and `Sources`. The prerequisite, confusion, question and source
+sections use Markdown `- ` list items. Unknown frontmatter fields or sections fail
 closed instead of becoming invisible graph data. Normal IDs use
 `<node-id>.md`; Windows-reserved or overlong IDs use a deterministic `_kgd-...`
 filename while `kgd_id` remains the stable graph identity.

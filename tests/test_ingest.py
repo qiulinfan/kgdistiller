@@ -13,6 +13,7 @@ from kgdistiller.cli import (
     GRAPH_SCHEMA,
     SOURCE_SCHEMA,
     apply_delta,
+    curation_report,
     load_state,
     make_agent_snapshot,
     sha256_authority_file,
@@ -336,6 +337,258 @@ class TransactionalIngestTest(unittest.TestCase):
         self.assertNotEqual(plan["before"]["graph_sha256"], plan["after"]["graph_sha256"])
         self.assertEqual(before, self.material_hashes())
         self.assertFalse(any(self.repo.rglob("*.sqlite")))
+
+    def partial_request(self, suffix: str = ".md") -> dict:
+        """Start with two authored, uncurated definitions and review only Alpha."""
+        sources = {
+            ".md": (
+                "> **Definition: --[[Alpha]]--**\n> Alpha is the first concept.\n\n"
+                "> **Definition: --[[Beta]]--**\n> Beta is the second concept.\n"
+            ),
+            ".typ": (
+                "#definition(title: [#kn[Alpha]])[Alpha is the first concept.]\n\n"
+                "#definition(title: [#kn[Beta]])[Beta is the second concept.]\n"
+            ),
+            ".tex": (
+                "\\begin{definition}\\kn{Alpha} Alpha is the first concept.\\end{definition}\n\n"
+                "\\begin{definition}\\kn{Beta} Beta is the second concept.\\end{definition}\n"
+            ),
+        }
+        old_authority = self.authority
+        self.authority = old_authority.with_suffix(suffix)
+        if old_authority != self.authority:
+            old_authority.unlink()
+        content = sources[suffix]
+        self.authority.write_text(content, encoding="utf-8")
+        shutil.rmtree(self.graph)
+        shutil.rmtree(self.repo / "knowledge/entries")
+        if suffix != ".md":
+            evidence = (
+                self.repo / "knowledge/derived/by-source"
+                / self.authority.relative_to(self.repo).with_suffix(suffix + ".md")
+            )
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            evidence.write_text(
+                "Alpha is the first concept.\n\nBeta is the second concept.\n",
+                encoding="utf-8",
+            )
+        synchronize(
+            self.repo, self.registry, self.graph, self.typst_registry,
+            identities=self.identities, alignments=self.alignments,
+            files=[], course=None, subject=None, write=True,
+        )
+        node = self.candidate["nodes"][0]
+        node.update({"id": "alpha", "label": "Alpha", "text": "Alpha is the first concept."})
+        self.candidate.pop("snapshot_sha256")
+        self.candidate["snapshot_sha256"] = sha256_json(self.candidate)
+        self.candidate_path.write_text(json.dumps(self.candidate), encoding="utf-8")
+        snapshot = make_agent_snapshot(load_state(self.graph))
+        self.query_report["candidate"]["snapshot_sha256"] = self.candidate["snapshot_sha256"]
+        self.query_report["target"].update({
+            "snapshot_sha256": snapshot["snapshot_sha256"],
+            "graph_sha256": snapshot["graph"]["sha256"],
+        })
+        result = self.query_report["results"][0]
+        result["candidate"]["id"] = "alpha"
+        result["status"] = "matched"
+        result["identity_target_id"] = "alpha"
+        self.query_report["summary"].update({"matched": 1, "unmatched": 0})
+        self.query_path.write_text(json.dumps(self.query_report), encoding="utf-8")
+        request = self.request("apply", request_id="curate-alpha")
+        # Moving an unchanged statement must not pull Beta into curation scope.
+        request["authority_patches"][0].update({
+            "content": "\n" + content,
+            "content_sha256": sha256_text("\n" + content),
+        })
+        request["decisions"] = [{
+            "candidate_id": "alpha", "action": "reuse", "target_id": "alpha",
+            "evidence": "Review the existing Alpha definition only.",
+        }]
+        request["delta"]["nodes"] = [{"id": "alpha", "text": "Alpha is the first concept."}]
+        return finalize_request(request)
+
+    def assert_partial_ingest(self, suffix: str) -> None:
+        request = self.partial_request(suffix)
+        receipt = apply_ingest(self.paths, request)
+        self.assertEqual("committed", receipt["status"])
+        state = load_state(self.graph)
+        self.assertEqual("current", state.nodes["alpha"]["properties"]["curation_status"])
+        self.assertEqual("pending", state.nodes["beta"]["properties"]["curation_status"])
+        self.assertFalse((self.repo / "knowledge/entries/beta.md").exists())
+        # The normal source-wide check must still report its coverage gap.
+        report = curation_report(state, {self.authority.relative_to(self.repo).as_posix()})
+        self.assertEqual(["beta"], [item["node"] for item in report["errors"]])
+
+    def test_partial_ingest_curates_only_selected_markdown_node(self) -> None:
+        self.assert_partial_ingest(".md")
+
+    def test_partial_ingest_curates_only_selected_typst_node(self) -> None:
+        self.assert_partial_ingest(".typ")
+
+    def test_partial_ingest_curates_only_selected_latex_node(self) -> None:
+        self.assert_partial_ingest(".tex")
+
+    def test_partial_ingest_does_not_require_an_authority_patch(self) -> None:
+        request = self.partial_request()
+        request["authority_patches"] = []
+        receipt = apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("committed", receipt["status"])
+        state = load_state(self.graph)
+        self.assertEqual("current", state.nodes["alpha"]["properties"]["curation_status"])
+        self.assertEqual("pending", state.nodes["beta"]["properties"]["curation_status"])
+
+    def test_partial_ingest_rejects_changed_sibling_without_reviewed_entry(self) -> None:
+        request = self.partial_request()
+        patch = request["authority_patches"][0]
+        patch["content"] = patch["content"].replace("Beta is the second concept.", "Beta has changed.")
+        patch["content_sha256"] = sha256_text(patch["content"])
+        before = self.material_hashes()
+        with self.assertRaises(IngestError) as rejected:
+            apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("curation-failed", rejected.exception.code)
+        self.assertEqual("beta", rejected.exception.diagnostics[0]["node"])
+        self.assertEqual(before, self.material_hashes())
+
+    def test_partial_ingest_rejects_changed_curated_definition_without_replacement(self) -> None:
+        request = self.request("apply")
+        patch = request["authority_patches"][0]
+        patch["content"] = patch["content"].replace("Alpha is the baseline concept.", "Alpha has changed.")
+        patch["content_sha256"] = sha256_text(patch["content"])
+        before = self.material_hashes()
+        with self.assertRaises(IngestError) as rejected:
+            apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("curation-failed", rejected.exception.code)
+        self.assertIn("stale-node-entry", {item["code"] for item in rejected.exception.diagnostics})
+        self.assertEqual(before, self.material_hashes())
+
+    def test_partial_ingest_preserves_unchanged_entry_when_source_lines_move(self) -> None:
+        request = self.request("apply")
+        patch = request["authority_patches"][0]
+        patch["content"] = "# Reading notes\n\n" + patch["content"]
+        patch["content_sha256"] = sha256_text(patch["content"])
+        entry_path = self.repo / "knowledge/entries/alpha.md"
+        entry_before = entry_path.read_bytes()
+        apply_ingest(self.paths, finalize_request(request))
+        alpha = load_state(self.graph).nodes["alpha"]
+        self.assertEqual(3, alpha["provenance"]["line"])
+        self.assertEqual("current", alpha["properties"]["curation_status"])
+        self.assertEqual(entry_before, entry_path.read_bytes())
+
+    def test_partial_ingest_rejects_new_definition_without_entry(self) -> None:
+        request = self.request("apply")
+        request["delta"]["nodes"] = []
+        with self.assertRaises(IngestError) as rejected:
+            apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("curation-failed", rejected.exception.code)
+        self.assertEqual("beta", rejected.exception.diagnostics[0]["node"])
+
+    def test_partial_ingest_checks_explicit_node_update_without_authority_patch(self) -> None:
+        request = self.partial_request()
+        request["authority_patches"] = []
+        request["delta"]["nodes"] = [{"id": "alpha", "properties": {"aliases": ["A"]}}]
+        with self.assertRaises(IngestError) as rejected:
+            apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("curation-failed", rejected.exception.code)
+        self.assertEqual("alpha", rejected.exception.diagnostics[0]["node"])
+
+    def external_dependency_request(
+        self, suffix: str, *, include_reference: bool, existing_edge: bool,
+    ) -> dict:
+        request = self.partial_request(suffix)
+        gamma = self.authority.parent / "gamma.md"
+        gamma.write_text(
+            "> **Definition: --[[Gamma]]--**\n> Gamma is an external prerequisite.\n",
+            encoding="utf-8",
+        )
+        if include_reference:
+            reference = {".md": "[[Gamma]]", ".typ": "#ref[Gamma]", ".tex": r"\knref{Gamma}"}[suffix]
+            self.authority.write_text(
+                self.authority.read_text(encoding="utf-8") + "\n" + reference + "\n",
+                encoding="utf-8",
+            )
+        synchronize(
+            self.repo, self.registry, self.graph, self.typst_registry,
+            identities=self.identities, alignments=self.alignments,
+            files=[], course=None, subject=None, write=True,
+        )
+        edge = {
+            "source": "gamma", "relation": "prerequisite-for", "target": "beta",
+            "evidence": "Beta directly uses Gamma in its source explanation.",
+        }
+        if existing_edge:
+            delta_path = self.repo / "knowledge/build/dependency.delta.json"
+            delta_path.write_text(json.dumps({
+                "schema": DELTA_SCHEMA, "nodes": [], "edges": [edge],
+                "remove_nodes": [], "remove_edges": [],
+            }), encoding="utf-8")
+            apply_delta(self.graph, self.typst_registry, delta_path)
+        else:
+            request["delta"]["edges"] = [edge]
+        state = load_state(self.graph)
+        snapshot = make_agent_snapshot(state)
+        self.query_report["target"].update({
+            "snapshot_sha256": snapshot["snapshot_sha256"],
+            "graph_sha256": snapshot["graph"]["sha256"],
+        })
+        self.query_path.write_text(json.dumps(self.query_report), encoding="utf-8")
+        request["base_graph_sha256"] = state.manifest["graph_sha256"]
+        request["query_report"]["sha256"] = sha256_json(self.query_report)
+        request["authority_patches"][0]["expected_sha256"] = sha256_authority_file(self.authority)
+        return finalize_request(request)
+
+    def assert_partial_ingest_rejects_removed_sibling_reference(self, suffix: str) -> None:
+        request = self.external_dependency_request(
+            suffix, include_reference=True, existing_edge=True,
+        )
+        # Only Alpha is curated; Beta's definition stays unchanged while the
+        # authority patch removes its last file-level reference to Gamma.
+        before = self.material_hashes()
+        with self.assertRaises(IngestError) as rejected:
+            apply_ingest(self.paths, request)
+        self.assertEqual("curation-failed", rejected.exception.code)
+        self.assertEqual(
+            {"missing-cross-file-ref"},
+            {item["code"] for item in rejected.exception.diagnostics},
+        )
+        self.assertEqual(before, self.material_hashes())
+
+    def test_partial_ingest_rejects_removed_sibling_markdown_reference(self) -> None:
+        self.assert_partial_ingest_rejects_removed_sibling_reference(".md")
+
+    def test_partial_ingest_rejects_removed_sibling_typst_reference(self) -> None:
+        self.assert_partial_ingest_rejects_removed_sibling_reference(".typ")
+
+    def test_partial_ingest_rejects_removed_sibling_latex_reference(self) -> None:
+        self.assert_partial_ingest_rejects_removed_sibling_reference(".tex")
+
+    def test_relation_only_ingest_requires_consumer_reference(self) -> None:
+        request = self.external_dependency_request(
+            ".md", include_reference=False, existing_edge=False,
+        )
+        request["authority_patches"] = []
+        request["delta"]["nodes"] = []
+        before = self.material_hashes()
+        with self.assertRaises(IngestError) as rejected:
+            apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("curation-failed", rejected.exception.code)
+        self.assertEqual(
+            {"missing-cross-file-ref"},
+            {item["code"] for item in rejected.exception.diagnostics},
+        )
+        self.assertEqual(before, self.material_hashes())
+
+    def test_relation_only_ingest_does_not_require_pending_consumer_entry(self) -> None:
+        request = self.external_dependency_request(
+            ".md", include_reference=True, existing_edge=False,
+        )
+        request["authority_patches"] = []
+        request["delta"]["nodes"] = []
+        receipt = apply_ingest(self.paths, finalize_request(request))
+        self.assertEqual("committed", receipt["status"])
+        state = load_state(self.graph)
+        self.assertEqual("pending", state.nodes["beta"]["properties"]["curation_status"])
+        self.assertEqual("pending", state.nodes["gamma"]["properties"]["curation_status"])
+        self.assertIn(("gamma", "prerequisite-for", "beta"), state.edges)
 
     def test_ingest_request_v1_refuses_unknown_request_and_delta_contracts(
         self,

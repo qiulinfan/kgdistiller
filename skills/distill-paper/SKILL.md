@@ -111,7 +111,9 @@ selected content. It never automatically reads the first N ranked candidates.
 Check the returned definitions, conditions and provenance before accepting a link;
 exact names and search scores alone do not establish applicability. Deduplicate
 selected IDs within each vault and reuse verified content across follow-up searches.
-A matching applicable entry is mastered: link it and its paper use without
+A matching applicable entry is available knowledge. Only explicit user
+understanding establishes mastery; preserve unknown or not-yet-understood state.
+For a confirmed understood entry, link it and its paper use without
 reteaching it. Missing is not proof the user does not know it. Never accept an
 error, unread candidate, truncated definition or changed generation as a verified
 negative/match; only retrieve the specific missing evidence when needed. Describe absence as
@@ -140,5 +142,6 @@ hitting the time target. State any real gap briefly instead of hiding it.
 
 In conversation return only the note link, counts and any blocking gap (one or
 two lines); do not repeat the note or list every long candidate ID again.
-Candidates remain outside the personal graph and are not yet mastered knowledge.
+Candidates remain outside the personal graph. Their presence or absence does
+not establish the user's understanding.
 Finish here; only a later explicit `harvest-paper` handles selection and import.

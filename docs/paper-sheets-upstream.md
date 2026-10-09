@@ -16,6 +16,10 @@ flowchart LR
 ```
 
 The diagram shows the intended reviewed flow, not a new synchronization API.
+Sheets may intentionally cover only selected concepts or passages. Record that
+partial coverage and preserve other rows. Full source distillation is explicitly
+requested; even a complete extraction does not certify the user's understanding.
+
 The source's native markers remain identity authority and its passages remain
 evidence. Accepted entries and semantic state live in `knowledge/`. Source-side
 sheets link to those records; they do not hold another complete editable copy of
@@ -33,7 +37,11 @@ portable-store contract. `knowledge/build/` remains transient.
 A paper definition view contains explained source-scoped concepts, types, exact
 locations and actual metadata links. Full definitions, formulas, conditions,
 factual assertions and experimental applications belong in knowledge records.
-The pending view identifies unexplained terms and required meanings. A locally
+The pending view identifies direct gaps, including unexplained terms and
+available definitions the user has not yet understood. `understanding` and
+`pending_prerequisites` live on the owning atomic entry. Each entry records only
+its immediate layer; further dependencies are considered when the user chooses
+to study that item. A locally
 explained inherited concept can have a scoped entry without claiming first origin.
 Unexplained terms require applicability review against a primary defining source.
 
@@ -48,7 +56,9 @@ shared identity. A display-name match does not establish ownership.
 Use supported transactional ingest when it preserves the reviewed payload.
 After a committed receipt and fresh verification, refresh source views with
 links to the actual accepted records. Unsupported full n-ary assertions,
-applications and gap state remain explicit unapplied proposals. Do not fabricate
+applications and rich gap history remain explicit unapplied proposals. Simple
+direct prerequisite gaps and personal understanding use the supported entry
+fields. Do not fabricate
 entries or gap links, flatten assertions, or call a smaller transaction complete
 synchronization. Existing authored paper files are not automatically replaced.
 

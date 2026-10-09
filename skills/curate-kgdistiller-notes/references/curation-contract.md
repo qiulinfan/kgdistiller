@@ -9,7 +9,8 @@ workflow, not curation.
 
 ## Authority and identity
 
-Treat one complete source file as the normal curation unit. Read its statements,
+For source-level curation, treat one complete source file as the curation unit.
+For one selected item, use `$capture-kgdistiller` and preserve unselected entries. Read its statements,
 proofs, explanations, examples, and comparisons. Preserve user-authored markers
 and keep any suspected conflict or bundled concept pending explicit identity
 review. A classification policy alone never authorizes deleting or reclassifying
@@ -64,6 +65,17 @@ Use `properties.entry_origin: agent-extracted` for a new agent-authored entry.
 Keep longer dossiers outside node properties; the engine stores reviewed entry
 bodies in authority-scoped shards.
 
+## Personal understanding and direct gaps
+
+Atomic entries may carry `understanding`: `unknown`, `not-yet-understood` or
+`understood`; absence means unknown. Preserve the user's stated status. Source
+coverage, definition availability and curation status do not establish mastery.
+`pending_prerequisites` lists only direct source-grounded gaps with the required
+meaning and use context. A definition may be available while still unlearned.
+Finding it never automatically clears the learning gap. Record the next layer
+only when the user chooses to study that dependency. Do not create unexplained
+nodes or recursively seek all ancestors.
+
 ## References
 
 Add a file-level native ref when the file materially uses a direct prerequisite
@@ -103,7 +115,8 @@ status together. Preserve explicit roles and changing states; an instance does
 not become a concept solely to hold these fields.
 
 The current `kgdistiller-agent-delta-v1` direct-edge contract does not provide a
-lossless full n-ary, application-record or complete gap-state adapter. Retain
+lossless full n-ary, application-record or rich gap-history adapter. Simple
+direct gaps and understanding use the entry fields above. Retain
 unsupported proposals in `knowledge/build/reviews/`, identify the exact gap and
 defer their persistence.
 Never flatten them into disconnected edges, hide them in unrelated nodes, drop

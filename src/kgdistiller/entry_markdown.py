@@ -17,9 +17,11 @@ ENTRY_ROOT = Path("knowledge/entries")
 DERIVED_ROOT = Path("knowledge/derived")
 DERIVED_SOURCE_ROOT = DERIVED_ROOT / "by-source"
 
-_SCALAR_FIELDS = ("summary", "context", "role")
+_SCALAR_FIELDS = ("summary", "context", "role", "understanding")
+UNDERSTANDING_STATES = frozenset({"unknown", "not-yet-understood", "understood"})
 _LIST_FIELDS = (
     "prerequisites",
+    "pending_prerequisites",
     "common_confusions",
     "open_questions",
     "sources",
@@ -28,7 +30,9 @@ _SECTIONS = {
     "summary": "Summary",
     "context": "Context",
     "role": "Role",
+    "understanding": "Understanding",
     "prerequisites": "Prerequisites",
+    "pending_prerequisites": "Pending prerequisites",
     "common_confusions": "Common confusions",
     "open_questions": "Open questions",
     "sources": "Sources",
@@ -140,6 +144,12 @@ def normalize_entry(entry: Any, text: str = "") -> dict[str, Any]:
         raise EntryMarkdownError(
             f"unsupported structured entry fields: {', '.join(sorted(unsupported))}"
         )
+    if "understanding" in entry:
+        understanding = entry["understanding"]
+        if not isinstance(understanding, str) or understanding.strip() not in UNDERSTANDING_STATES:
+            raise EntryMarkdownError(
+                "entry field understanding must be unknown, not-yet-understood, or understood"
+            )
     result: dict[str, Any] = {}
     for field in _SCALAR_FIELDS:
         value = entry.get(field, "")
@@ -263,14 +273,14 @@ def _parse_sections(body: str, path: Path) -> dict[str, Any]:
                 result[field] = items
         else:
             value = "\n".join(lines).strip()
-            if value:
+            if value or field == "understanding":
                 result[field] = value
     return result
 
 
 def parse_entry(path: Path) -> dict[str, Any]:
     metadata, body = _parse_frontmatter(_normalized_text(path), path)
-    entry = _parse_sections(body, path)
+    entry = normalize_entry(_parse_sections(body, path))
     if not entry:
         raise EntryMarkdownError(f"entry has no recognized content sections: {path}")
     return {"metadata": metadata, "entry": entry}

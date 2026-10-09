@@ -230,6 +230,7 @@ function renderDetail(node) {
   addAttribute(detail, "Source status", propertyText(node, "source_status"));
   addAttribute(detail, "Source format", propertyText(node, "source_format"));
   if (node.type === "knowledge") addAttribute(detail, "Knowledge origin", originLabel(node));
+  if (node.type === "knowledge") addAttribute(detail, "Understanding", node.entry?.understanding || "unknown");
   addAttribute(detail, "Course", propertyText(node, "course"));
   const fields = list(properties(node).fields).map((id) => state.index.get(id)?.label || id);
   addAttribute(detail, "Fields", fields.join(" · "));
@@ -245,6 +246,7 @@ function renderDetail(node) {
     ["context", "Context"],
     ["role", "Role in source"],
     ["prerequisites", "Direct prerequisites"],
+    ["pending_prerequisites", "Pending prerequisites"],
     ["common_confusions", "Common confusions"],
     ["open_questions", "Open questions"],
     ["sources", "Source locations"],

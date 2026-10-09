@@ -1,5 +1,7 @@
 # kgdistiller agent guidance
 
+- Work directly on `main` for the owner's ongoing main feature. Commit and push
+  authorized progress after checks; do not create new PRs unless requested.
 - Keep the deterministic core provider-neutral. Model-specific behavior belongs
   in Agent skills or adapters.
 - Text BM25, optional local embedding/reranker adapters, versioned search results
@@ -13,7 +15,10 @@
   Source-scoped def/pending sheets are lightweight metadata link projections for
   papers, notes, blogs and other knowledge files. Preserve native authority,
   complete scientific content and existing identities; report unsupported
-  adapters instead of claiming partial synchronization is complete.
+  adapters instead of claiming partial synchronization is complete. Source sheets
+  may be partial; source coverage, definition availability and user understanding
+  are independent. Capture only direct dependency gaps and expand another level
+  only when the user chooses to study it.
 - Never infer graph identity from document order, headings, or keyword
   co-occurrence. Only explicit source markers define knowledge nodes.
 - Preserve user-authored markers and require evidence for semantic relations.

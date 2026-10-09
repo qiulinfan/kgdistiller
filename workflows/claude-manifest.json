@@ -24,6 +24,10 @@
   ],
   "skills": [
     {
+      "name": "capture-kgdistiller",
+      "path": "skills/capture-kgdistiller"
+    },
+    {
       "name": "compile-knowledge-sheets",
       "path": "skills/compile-knowledge-sheets"
     },
@@ -79,6 +83,24 @@
     }
   ],
   "workflows": [
+    {
+      "id": "capture-knowledge",
+      "description": "Capture one selected source-backed knowledge item, preserve personal understanding and direct pending prerequisites, then apply one reviewed transaction without full-source distillation.",
+      "steps": [
+        {
+          "id": "capture",
+          "skill": "capture-kgdistiller",
+          "agent": null,
+          "mode": "author"
+        },
+        {
+          "id": "commit",
+          "skill": "ingest-kgdistiller",
+          "agent": null,
+          "mode": "transaction"
+        }
+      ]
+    },
     {
       "id": "compile-knowledge-sheets",
       "description": "Prepare source-grounded knowledge metadata updates and source-scoped definition/pending link views for notes, papers, blogs and project documents; apply only supported reviewed transactions.",
