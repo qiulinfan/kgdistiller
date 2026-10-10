@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kgdistiller"
-version = "0.4.0"
+version = "1.0.0"
 description = "Local-first academic research knowledge base: source-backed records and role-bound relations in Obsidian vaults, indexed in one SQLite file."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Qiulin Fan" }]
 keywords = ["research", "knowledge-base", "obsidian", "retrieval", "agents"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
 ]

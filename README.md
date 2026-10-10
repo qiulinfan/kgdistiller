@@ -25,8 +25,8 @@
 - Review and edit records in Obsidian, with a typed graph view, and let coding
   agents capture, compile and query them through Skills and an MCP server.
 
-This repository holds the Obsidian plugin (**0.1.5**) and the Python core
-(**0.4.0**). They are versioned and tagged separately: plugin tags are bare
+This repository holds the Obsidian plugin and the Python core, both at
+**1.0.0**, the first stable release. They are versioned and tagged separately: plugin tags are bare
 `x.y.z`, core tags are `core-x.y.z`.
 
 ## Obsidian plugin
@@ -39,14 +39,14 @@ download `main.js`, `manifest.json` and `styles.css` from the
 Obsidian **1.13.7 or newer** on desktop is required; the plugin does not load
 on mobile.
 
-This README describes plugin 0.1.5 or newer. Earlier releases read an older
+This README describes plugin 1.0.0 or newer. Earlier releases read an older
 export format and show none of the records below.
 
 Records live in the vault's hidden `.knowledge/` folder, which Obsidian skips
 by default. Turn on **Settings → kgdistiller → Index hidden knowledge folder**
 so that `.knowledge/` appears in the file explorer, search, Properties and
 Backlinks like any other folder. With the CLI from [Install](#install),
-`kgd obsidian install` copies the bundled plugin 0.1.5 into the vault and turns
+`kgd obsidian install` copies the bundled plugin 1.0.0 into the vault and turns
 this setting on in one step; use it if the community listing or the release
 page still offers an earlier version.
 [docs/obsidian.md](docs/obsidian.md#installation) lists what it changes.
@@ -441,8 +441,8 @@ silicon, restoring a 535-record base took 115 s.
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/0.4.0
-uv run --locked python scripts/check_distribution.py --dist-root build/release/0.4.0
+uv build --out-dir build/release/1.0.0
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.0
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```

@@ -5,7 +5,7 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 
 ## Data and output shapes
 
-Version 0.4 has no named schema contracts. Knowledge lives in record files
+Version 1.0 has no named schema contracts. Knowledge lives in record files
 whose format is specified in [model.md](model.md); the derived database and
 every command's JSON output are specified in [model.md](model.md) and
 [retrieval.md](retrieval.md) and asserted by the unit tests. MCP input
@@ -28,8 +28,8 @@ dependency group provides; the model itself is replaced by a fake encoder.
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/0.4.0
-uv run --locked python scripts/check_distribution.py --dist-root build/release/0.4.0
+uv build --out-dir build/release/1.0.0
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.0
 npm test
 cd integrations/obsidian && npm ci && npm run check
 ```
@@ -102,7 +102,7 @@ Then verify that:
   syntax or converts a source;
 - `check` reports every error and every moved or stale record and exits 1 for
   any of them; staleness never hides a record from retrieval;
-- the Obsidian plugin (version 0.1.5, `isDesktopOnly: true`) passes its
+- the Obsidian plugin (version 1.0.0, `isDesktopOnly: true`) passes its
   vitest suites, including the mocked-metadata-cache cases (binary, n-ary,
   self, relation-as-participant, draft, foreign and pending) and the
   `link-grammar.json` and `name-key.json` parity fixtures shared with the
@@ -123,16 +123,16 @@ a clean tagged commit into an empty distribution directory, inspect wheel and
 sdist contents, and smoke-install the wheel in an isolated environment. Use
 short-lived or trusted publishing credentials and never commit tokens. Tag only
 after all gates pass; tag the Python core as `core-x.y.z` (for example
-`core-0.4.0`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
+`core-1.0.0`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
 and starts its release workflow. Do not move a published tag. Keep the previous release
-available, while treating 0.4 data and API changes as intentionally
-incompatible.
+available. 1.0 data and APIs are intentionally incompatible with every 0.x
+release.
 
 ## Obsidian Community release entry
 
 The monorepo publishes the plugin through root `manifest.json` and
-`versions.json`, exactly mirrored from `integrations/obsidian`. Plugin version
-0.1.5 and Python core version 0.4.0 are independent. A plugin release tag must
+`versions.json`, exactly mirrored from `integrations/obsidian`. The plugin and
+the Python core are versioned independently; both are 1.0.0. A plugin release tag must
 be the manifest's exact `x.y.z` version, without `v`; bare `x.y.z` tags are
 reserved for plugin releases, and Python core tags are `core-x.y.z`.
 
@@ -140,7 +140,7 @@ reserved for plugin releases, and Python core tags are `core-x.y.z`.
 npm ci
 npm run build
 npm test
-node scripts/build-obsidian-plugin.mjs --verify-only --tag 0.1.5
+node scripts/build-obsidian-plugin.mjs --verify-only --tag 1.0.0
 ```
 
 The root build delegates installation and build to the integration, checks
@@ -153,8 +153,8 @@ metadata and the plugin, and publishes the three assets as a GitHub release. Do
 not replace a published version's tag or assets; increment the plugin version
 in both manifests, packages and compatibility maps before a new release.
 
-Version 0.1.5 sets `isDesktopOnly`. Once it is released, Obsidian on mobile
-offers no update to installs of 0.1.4, which stay on that version.
+Version 1.0.0 sets `isDesktopOnly`, so Obsidian on mobile offers no update to
+installs of 0.1.4, which stay on that version.
 
 Original project code uses MIT. The embedded MIT licenses of Cytoscape.js,
 cytoscape-fcose, cose-base and layout-base, and the other upstream notices, must

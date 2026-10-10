@@ -2,7 +2,11 @@
 
 All notable changes are documented here.
 
-## 0.4.0 — unreleased
+## 1.0.0 — 2026-10-10
+
+The first stable release. The Python core and the Obsidian plugin both move to
+1.0.0; the plugin keeps its own release tags (`1.0.0`), the core is tagged
+`core-1.0.0`.
 
 ### Knowledge model and storage
 
@@ -187,9 +191,9 @@ All notable changes are documented here.
   `doctor` reports a differing copy, and relinking replaces it or removes a
   retired one, discarding local edits to installed files.
 
-### Obsidian plugin 0.1.5 (unreleased)
+### Obsidian plugin 1.0.0
 
-- Version 0.1.5 of the Obsidian plugin, versioned independently of the Python
+- Version 1.0.0 of the Obsidian plugin, versioned independently of the Python
   core (release notes in `.github/obsidian-release-notes.md`), is desktop only
   (`isDesktopOnly`).
 - Build the typed graph live from Obsidian's metadata cache of
@@ -249,7 +253,7 @@ All notable changes are documented here.
 - Added the first portable store, transactional ingest, machine-local query
   index, bounded hybrid retrieval, and multi-platform release coverage.
 - Added explicit embedding policy/provider experiments and versioned retrieval
-  execution contracts. These derived runtime paths are removed in 0.4.0.
+  execution contracts. These derived runtime paths are removed in 1.0.0.
 
 ## 0.2.1
 

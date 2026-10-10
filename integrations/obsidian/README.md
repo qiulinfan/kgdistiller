@@ -23,12 +23,10 @@ never writes knowledge files either: after an edit, run `kgd check` and
 Requires Obsidian **1.13.7 or newer** on desktop. The manifest sets
 `isDesktopOnly`, so Obsidian does not load the plugin on a phone or tablet.
 
-This README describes plugin 0.1.5 or newer; earlier releases read an older
-export format and show none of these records. Until 0.1.5 is released, the
-Community plugins listing and the GitHub releases may still serve 0.1.4. With
-the kgdistiller CLI, use `kgd obsidian install`
-([CLI installation](#cli-installation)): it installs the bundled 0.1.5 and
-turns on hidden-folder indexing in one step.
+This README describes plugin 1.0.0 or newer; releases up to 0.1.4 read an
+older export format and show none of these records. With the kgdistiller CLI,
+`kgd obsidian install` ([CLI installation](#cli-installation)) installs the
+bundled plugin and turns on hidden-folder indexing in one step.
 
 Without the CLI, install **kgdistiller** from Community plugins, or download
 `main.js`, `manifest.json` and `styles.css` from

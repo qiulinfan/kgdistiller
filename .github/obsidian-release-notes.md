@@ -1,4 +1,4 @@
-kgdistiller Obsidian 0.1.5 draws the records in the vault's hidden `.knowledge/`
+kgdistiller Obsidian 1.0.0, the first stable release, draws the records in the vault's hidden `.knowledge/`
 tree live from Obsidian's metadata cache and lets you inspect each one beside
 its source. There is no exported file to keep in sync: editing a record in
 Obsidian, or writing one with `kgd`, updates the view.
