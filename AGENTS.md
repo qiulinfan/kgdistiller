@@ -78,6 +78,9 @@
   database file.
 - Publishing (websites, course registries, marker registries, HTML conversion)
   belongs to consuming repositories; kgdistiller has no publishing surface.
+- In a fresh checkout run root `npm run build` before any `uv` command: the
+  package and its editable build include the gitignored
+  `integrations/obsidian/main.js`, so a plain `git+` install cannot work.
 - Implementation changes pass these gates: the complete unit test suite
   (`uv run --locked python -m unittest discover -s tests`),
   `uv run --locked ruff check src tests scripts`, `uv build` with
@@ -104,7 +107,8 @@
   integration and copies only ignored root main.js/styles.css; the Python
   bundled installer still consumes the original integration paths.
   Plugin tags have no `v` prefix and match manifest.version exactly; the Python
-  core's version is independent. Keep the release workflow's tag guard and
+  core's version is independent and its tags are `core-x.y.z`, so they never
+  start the plugin release workflow. Keep the release workflow's tag guard and
   the full Cytoscape.js, cytoscape-fcose, cose-base and layout-base MIT
   notices in the actual bundle. Original project code is MIT; upstream
   licenses remain unchanged.

@@ -81,6 +81,25 @@ class HomeRulesTest(CheckTestCase):
         report = self.run_check()
         self.assertEqual([{"path": str(bad), "rule": "type", "message": report["errors"][0]["message"]}], report["errors"])
 
+    def test_config_is_checked_while_a_type_file_is_broken(self) -> None:
+        bad = self.kb.home / "types" / "broken.md"
+        bad.write_text("---\nnode_kinds: []\n---\nGuidance.\n", encoding="utf-8")
+        config = self.kb.home / "config.json"
+        payload = json.loads(config.read_text(encoding="utf-8"))
+        payload["extra"] = True
+        config.write_text(json.dumps(payload), encoding="utf-8")
+        report = self.run_check()
+        self.assertEqual([(str(bad), "type"), (str(config), "config")],
+                         [(item["path"], item["rule"]) for item in report["errors"]])
+
+    def test_a_glob_naming_an_unknown_type_is_a_type_error(self) -> None:
+        self.kb.sources["kb"]["notes/*.typ"] = "missing"
+        self.kb.write_config()
+        report = self.run_check()
+        self.assertEqual([(str(self.kb.home / "config.json"), "type")],
+                         [(item["path"], item["rule"]) for item in report["errors"]])
+        self.assertIn("names unknown type 'missing'", report["errors"][0]["message"])
+
     def test_unknown_and_unavailable_bases_are_config_errors(self) -> None:
         self.assertIn("unknown base 'nope'", self.errors("nope")[0][2])
         self.kb.roots["gone"] = self.kb.home.parent / "gone"

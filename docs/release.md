@@ -18,14 +18,16 @@ rebuilt by `kgd index`, never migrated.
 
 ## Release gates
 
-Run from a clean engine worktree. The unit environment needs NumPy, which the
-`dev` dependency group provides; the model itself is replaced by a fake
-encoder.
+Run from a clean engine worktree. Root `npm run build` comes first: the
+package and its editable build include the gitignored
+`integrations/obsidian/main.js`, so every `uv run` and `uv build` in a fresh
+checkout fails without it. The unit environment needs NumPy, which the `dev`
+dependency group provides; the model itself is replaced by a fake encoder.
 
 ```sh
+npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-npm run build
 uv build --out-dir build/release/0.4.0
 uv run --locked python scripts/check_distribution.py --dist-root build/release/0.4.0
 npm test
@@ -120,7 +122,9 @@ Review the complete diff and status, version, changelog and license. Build from
 a clean tagged commit into an empty distribution directory, inspect wheel and
 sdist contents, and smoke-install the wheel in an isolated environment. Use
 short-lived or trusted publishing credentials and never commit tokens. Tag only
-after all gates pass; do not move a published tag. Keep the previous release
+after all gates pass; tag the Python core as `core-x.y.z` (for example
+`core-0.4.0`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
+and starts its release workflow. Do not move a published tag. Keep the previous release
 available, while treating 0.4 data and API changes as intentionally
 incompatible.
 
@@ -129,7 +133,8 @@ incompatible.
 The monorepo publishes the plugin through root `manifest.json` and
 `versions.json`, exactly mirrored from `integrations/obsidian`. Plugin version
 0.1.5 and Python core version 0.4.0 are independent. A plugin release tag must
-be the manifest's exact `x.y.z` version, without `v`.
+be the manifest's exact `x.y.z` version, without `v`; bare `x.y.z` tags are
+reserved for plugin releases, and Python core tags are `core-x.y.z`.
 
 ```sh
 npm ci

@@ -50,8 +50,10 @@ All notable changes are documented here.
   model only when some vector is NULL, encodes those rows in batches of 64 and
   writes each vector with an UPDATE guarded by the row's text and the model, so
   a concurrent change makes the write a no-op; texts over the model's input
-  limit are reported under `truncated`. `--rebuild` re-derives every row in
-  place, re-using vectors by text, and never swaps the database file;
+  limit are reported under `truncated`, and an embedding failure under
+  `embedding_error` with exit 1 after the lexical commit. `--rebuild`
+  re-derives every row in place, re-using vectors by text, keeps the rows of
+  bases whose root is unavailable, and never swaps the database file;
   `--no-embed` skips the embedding phase. An incremental run equals a rebuild
   and a build from a deleted database, vectors included. A missing, damaged or
   other-version database is recreated, so restore is one command. Every read
@@ -222,6 +224,13 @@ All notable changes are documented here.
 ### Project
 
 - Require Python 3.11 or newer.
+- Read and write UTF-8 on stdin, stdout and stderr whatever the locale or
+  Windows code page, so CLI JSON and `kgd mcp` stdio stay UTF-8 on Windows
+  pipes.
+- Build the bundled Obsidian plugin with root `npm run build` before any `uv`
+  command in a checkout; install from a built checkout rather than `git+`.
+- Tag Python core releases `core-x.y.z`; bare `x.y.z` tags are plugin
+  releases.
 - Pin ruff 0.16.10 in the `dev` dependency group and run
   `ruff check src tests scripts` in CI.
 - Add `numpy>=2` to the `retrieval` extra and to the `dev` dependency group.

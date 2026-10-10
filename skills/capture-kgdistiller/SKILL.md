@@ -96,7 +96,8 @@ kgd index
 ```
 
 Every knowledge write ends with this, so search sees the change. The report
-includes `embedded`, `unembedded` and `truncated`. If it exits 1 with
+includes `embedded`, `unembedded`, `truncated`, `embedding_error` and
+`understanding_changed`. If `embedding_error` says
 `install kgdistiller[retrieval] or set embedding to null`, the lexical index is
 committed and only the vectors are missing: report that message to the owner
 and do not edit `config.json`.
@@ -105,6 +106,6 @@ and do not edit `config.json`.
 
 Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
 `check` result for an in-place edit, the pending terms recorded, and the
-`index` result (`embedded`, `unembedded`, `truncated`, or its error). Name any
-refusal and what was left unwritten. If the owner wants a sheet for this
-source, `kgd sheet SOURCE` regenerates it.
+`index` result (`embedded`, `unembedded`, `truncated`, `embedding_error`,
+`understanding_changed`). Name any refusal and what was left unwritten. If the
+owner wants a sheet for this source, `kgd sheet SOURCE` regenerates it.

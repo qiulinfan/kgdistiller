@@ -58,7 +58,7 @@ foreach ($skill in (Get-ChildItem -LiteralPath $repositorySkills -Directory)) {
 }
 
 # Remove links this checkout owns that are stale or renamed. Links owned by
-# qlblog or other product checkouts are never touched.
+# other checkouts are never touched.
 Get-ChildItem -Force -LiteralPath $runtimeSkills | ForEach-Object {
     if (-not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { return }
     if ([string]::IsNullOrEmpty($_.LinkTarget)) { return }

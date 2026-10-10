@@ -23,13 +23,19 @@ product repository.
 ## 1. Install
 
 ```sh
-uv tool install 'kgdistiller[retrieval] @ git+https://github.com/qiulinfan/kgdistiller.git'
+git clone https://github.com/qiulinfan/kgdistiller.git
+cd kgdistiller
+npm run build                     # builds the bundled Obsidian plugin
+uv tool install '.[retrieval]'    # or --editable '.[retrieval]'
 uv tool update-shell
 kgd --help
 ```
 
-From a checkout, use `uv tool install --editable '<checkout>[retrieval]'`.
-The `retrieval` extra brings NumPy and sentence-transformers for the dense
+The package bundles the Obsidian plugin, whose built
+`integrations/obsidian/main.js` is not tracked in git, so building it needs
+Node 22 and npm, and `npm run build` must run before any `uv` command builds
+the package; a direct `git+https` install fails for that reason. The
+`retrieval` extra brings NumPy and sentence-transformers for the dense
 lane; without it `embedding` must stay `null`.
 
 ## 2. Register a base
@@ -92,14 +98,15 @@ kgd index --rebuild
 
 `kgd index` updates `index.sqlite` from the record files of every available
 base, then embeds the rows that have no vector, and prints a report with
-`reused`, `embedded`, `unembedded` and `truncated`; it exits 1 when a file is
-unparseable or a base is unavailable. The model loads only when some row needs
-a vector. `--no-embed` skips embedding and leaves those rows unembedded.
-`--rebuild` re-derives every row in place and re-uses vectors by text, so it
-loads no model. If `embedding` is set but the retrieval extra is missing,
-`kgd index` exits 1 with `install kgdistiller[retrieval] or set embedding to
-null`; the lexical index is committed, so report the message and install the
-extra rather than editing the model id away unasked.
+`reused`, `embedded`, `unembedded`, `truncated` and `embedding_error`; it exits
+1 when a file is unparseable, a base is unavailable or embedding failed. The
+model loads only when some row needs a vector. `--no-embed` skips embedding
+and leaves those rows unembedded. `--rebuild` re-derives every row in place
+and re-uses vectors by text, so it loads no model. If `embedding` is set but
+the retrieval extra is missing, the report's `embedding_error` says
+`install kgdistiller[retrieval] or set embedding to null`; the lexical index
+is committed, so report the message and install the extra rather than editing
+the model id away unasked.
 
 To restore a lost or damaged database, delete `index.sqlite*` in the home and
 run `kgd index`; it re-embeds every record (about two minutes per 500 records

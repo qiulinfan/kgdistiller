@@ -377,9 +377,9 @@ def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
     """Bring the database up to date: the lexical phase, then (unless ``embed`` is False) the embedding phase.
 
     The report has the shape documented in docs/retrieval.md under ``kgd index``.
-    A run is clean when no file was unparseable and every base was available.
-    An embedding failure raises KnowledgeError after the lexical phase has
-    committed.
+    A run is clean when no file was unparseable, every base was available and
+    embedding did not fail. An embedding failure is reported in
+    ``embedding_error`` after the lexical phase has committed.
     """
     home = load_home(home_directory(), types=False)
     available, unavailable = _available(home)
@@ -395,6 +395,7 @@ def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
         "embedded": 0,
         "unembedded": 0,
         "truncated": [],
+        "embedding_error": None,
     }
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -404,9 +405,9 @@ def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
             connection.execute("UPDATE meta SET value = ? WHERE key = 'embedding'", (model,))
         pool: dict[str, bytes] = {}
         if rebuild:
-            pool.update(connection.execute("SELECT text, vec FROM record WHERE vec IS NOT NULL"))
-            for table in ("record", "link", "name", "fts"):
-                connection.execute(f"DELETE FROM {table}")
+            for row in connection.execute("SELECT rowid, uid, base FROM record").fetchall():
+                if row["base"] not in unavailable:
+                    _drop(connection, row["uid"], row["rowid"], pool)
         known = {
             row["uid"]: row
             for row in connection.execute("SELECT rowid, uid, base, mtime_ns, size, understanding FROM record")
@@ -452,7 +453,10 @@ def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
         report["reused"] = _refresh_texts(connection, pool)
         connection.execute("COMMIT")
         if embed and model:
-            _embed(connection, model, report)
+            try:
+                _embed(connection, model, report)
+            except KnowledgeError as error:
+                report["embedding_error"] = str(error)
         report["unembedded"] = _unembedded(connection)
     except BaseException:
         if connection.in_transaction:
@@ -476,7 +480,7 @@ def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any]) -
             "install kgdistiller[retrieval] or set embedding to null"
         ) from error
     except EmbeddingError as error:
-        raise _embedding_failed(error, report) from error
+        raise KnowledgeError(f"{error}; rerun `kgd index`") from error
     for start in range(0, len(rows), EMBED_BATCH):
         batch = rows[start:start + EMBED_BATCH]
         texts = [row["text"] for row in batch]
@@ -484,7 +488,7 @@ def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any]) -
             report["truncated"].extend(batch[position]["uid"] for position in encoder.over_limit(texts))
             vectors = encoder.encode_documents(texts)
         except EmbeddingError as error:
-            raise _embedding_failed(error, report) from error
+            raise KnowledgeError(f"{error}; rerun `kgd index`") from error
         connection.execute("BEGIN IMMEDIATE")
         for row, vector in zip(batch, vectors, strict=True):
             report["embedded"] += connection.execute(
@@ -495,14 +499,12 @@ def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any]) -
         connection.execute("COMMIT")
 
 
-def _embedding_failed(error: EmbeddingError, report: dict[str, Any]) -> KnowledgeError:
-    return KnowledgeError(
-        f"{error}; the lexical index is committed and {report['embedded']} rows were embedded; rerun `kgd index`"
-    )
-
-
 def index_clean(report: dict[str, Any]) -> bool:
-    return not report["unavailable"] and not any(counts["unparseable"] for counts in report["bases"].values())
+    return (
+        not report["unavailable"]
+        and report["embedding_error"] is None
+        and not any(counts["unparseable"] for counts in report["bases"].values())
+    )
 
 
 # ---------------------------------------------------------------- lag

@@ -110,6 +110,10 @@ class FrontmatterTest(unittest.TestCase):
             with self.subTest(stem=stem), self.assertRaises(RecordError) as caught:
                 parse(text, stem)
             self.assertEqual("id", caught.exception.rule)
+        with self.assertRaises(RecordError) as caught:
+            parse(text, "紧集-Compact")
+        self.assertIn("CJK included", caught.exception.message)
+        self.assertIn("'紧集-compact'", caught.exception.message)
 
     def test_values_keep_frontmatter_role_order_then_requires(self) -> None:
         parsed = record(

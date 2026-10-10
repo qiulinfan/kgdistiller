@@ -14,27 +14,14 @@ from kgdistiller.codex_product import (
     doctor_product,
     link_product,
 )
+from kgdistiller.mcp import TOOL_SCHEMAS
+from tests.test_cli import COMMANDS
 
 ROOT = Path(__file__).resolve().parents[1]
 WRITING_SKILLS = ("capture-kgdistiller", "compile-knowledge-sheets", "harvest-kgdistiller")
-# Retired names are assembled from parts so that repository-wide residue greps stay empty.
-RETIRED_SKILLS = {
-    "-".join(parts) for parts in (
-        ("harvest", "paper"), ("ingest", "kgdistiller"), ("curate", "kgdistiller", "notes"),
-        ("federate", "paper", "knowledge"), ("trace", "concept", "lineage"), ("import", "paper", "knowledge"),
-    )
-}
-RETIRED_PRESETS = {"-".join(parts) for parts in (("note", "curator"), ("transaction", "reviewer"))}
-DELETED_COMMAND_RE = re.compile(
-    r"kgd(?:istiller)? (?:agent|scan|ingest|capture|export)\b"
-    r"|capture[ ]prepare|harvest[ ]prepare|harvest[ ]apply|ingest[ ]plan|ingest[ ]apply"
-    r"|edges[.]jsonl|[.]knowledge/build|pending[_]prerequisites|def[-]sheet[.]md|pending[-]sheet[.]md"
-    r"|kg_(?:status|resolve_concepts|get_node|expand|ppr|build_context|compiled_knowledge)\b"
-    r"|kgd[_]inventory|submit[_]selection|omp[_]compiled[_]tools|compiled[_]retrieval"
-    r"|Compiled[L]ibrary|compiled[-]retrieval[.]md|omp[-]compiled[-]tools"
-    r"|obsidian[ ]install[^|\n]*--replace|--no[-]enable"
-    r"|Planned[ ]for the plugin"
-)
+CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
+COMMAND_RE = re.compile(r"(?<![\w/.-])(?:kgd|kgdistiller)[ ]+([a-z][a-z-]*)")
+TOOL_RE = re.compile(r"\bkg_[a-z_]+\b")
 
 
 def _frontmatter(text: str) -> list[str]:
@@ -74,8 +61,9 @@ class ProductSkillTests(unittest.TestCase):
                 metadata = (folder / "agents" / "openai.yaml").read_text(encoding="utf-8")
                 self.assertIn("$harvest-kgdistiller", metadata)
                 self.assertNotIn("allow_implicit_invocation", metadata)
-                for name in RETIRED_SKILLS:
-                    self.assertFalse((home / "skills" / name).exists(), name)
+                manifest = json.loads((ROOT / "workflows" / "manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual({item["name"] for item in manifest["skills"]},
+                                 {path.name for path in (home / "skills").iterdir()})
 
     def test_capture_and_compile_ship_the_same_record_format(self) -> None:
         capture = ROOT / "skills/capture-kgdistiller/references/record-format.md"
@@ -91,12 +79,12 @@ class ProductSkillTests(unittest.TestCase):
                 skill = (ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
                 self.assertIn("kgd index", skill)
 
-    def test_no_product_text_names_a_deleted_command_or_asset(self) -> None:
-        retired = re.compile("|".join(re.escape(name) for name in RETIRED_SKILLS | RETIRED_PRESETS))
+    def test_product_texts_name_only_offered_commands_and_tools(self) -> None:
         for path, text in _product_texts().items():
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
-                self.assertIsNone(DELETED_COMMAND_RE.search(text))
-                self.assertIsNone(retired.search(text))
+                commands = {match[1] for span in CODE_SPAN_RE.findall(text) for match in COMMAND_RE.finditer(span)}
+                self.assertLessEqual(commands, COMMANDS)
+                self.assertLessEqual(set(TOOL_RE.findall(text)), set(TOOL_SCHEMAS))
         self.assertEqual(
             {"capture-kgdistiller", "compile-knowledge-sheets", "deploy-kgdistiller",
              "harvest-kgdistiller", "query-kgdistiller"},
@@ -146,11 +134,11 @@ class ProductSkillTests(unittest.TestCase):
                     manifest["workflow_resources"],
                 )
 
-    def test_upgrade_removes_retired_assets_from_both_runtimes(self) -> None:
-        retired_workflows = {
-            "federate-paper": "federate-paper-knowledge",
-            "trace-lineage": "trace-concept-lineage",
-            "import-paper": "import-paper-knowledge",
+    def test_upgrade_removes_assets_dropped_from_the_manifest(self) -> None:
+        dropped_workflows = {
+            "removed-a": "removed-skill-a",
+            "removed-b": "removed-skill-b",
+            "removed-c": "removed-skill-c",
         }
         for runtime in ("codex", "claude"):
             with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as temp:
@@ -165,12 +153,12 @@ class ProductSkillTests(unittest.TestCase):
                     "manifest.json" if runtime == "codex" else "claude-manifest.json"
                 )
                 current_manifest = manifest_path.read_text(encoding="utf-8")
-                legacy_manifest = json.loads(current_manifest)
-                for name in retired_workflows.values():
+                previous_manifest = json.loads(current_manifest)
+                for name in dropped_workflows.values():
                     folder = source / "skills" / name
                     folder.mkdir()
                     (folder / "SKILL.md").write_text(
-                        f"---\nname: {name}\ndescription: Retired command.\n---\n",
+                        f"---\nname: {name}\ndescription: Removed command.\n---\n",
                         encoding="utf-8",
                     )
                     (folder / "agents").mkdir()
@@ -179,26 +167,26 @@ class ProductSkillTests(unittest.TestCase):
                         .read_text(encoding="utf-8").replace("harvest-kgdistiller", name),
                         encoding="utf-8",
                     )
-                    legacy_manifest["skills"].append({"name": name, "path": f"skills/{name}"})
+                    previous_manifest["skills"].append({"name": name, "path": f"skills/{name}"})
                 extension = "toml" if runtime == "codex" else "md"
-                agent_path = source / f".{runtime}/agents/paper-distiller.{extension}"
+                agent_path = source / f".{runtime}/agents/removed-agent.{extension}"
                 agent_path.write_text(
                     (source / f".{runtime}/agents/query-reviewer.{extension}")
-                    .read_text(encoding="utf-8").replace("query-reviewer", "paper-distiller"),
+                    .read_text(encoding="utf-8").replace("query-reviewer", "removed-agent"),
                     encoding="utf-8",
                 )
-                legacy_manifest["agents"].append({
-                    "name": "paper-distiller",
-                    "path": f".{runtime}/agents/paper-distiller.{extension}",
-                    "install_as": f"kgdistiller-paper-distiller.{extension}",
+                previous_manifest["agents"].append({
+                    "name": "removed-agent",
+                    "path": f".{runtime}/agents/removed-agent.{extension}",
+                    "install_as": f"kgdistiller-removed-agent.{extension}",
                 })
-                for workflow_id, skill in retired_workflows.items():
-                    legacy_manifest["workflows"].append({
-                        "id": workflow_id, "description": "Retired workflow.",
-                        "steps": [{"id": "legacy", "skill": skill,
-                                   "agent": "paper-distiller", "mode": "author"}],
+                for workflow_id, skill in dropped_workflows.items():
+                    previous_manifest["workflows"].append({
+                        "id": workflow_id, "description": "Removed workflow.",
+                        "steps": [{"id": "old", "skill": skill,
+                                   "agent": "removed-agent", "mode": "author"}],
                     })
-                manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+                manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
                 unrelated = home / "skills/external-skill/SKILL.md"
                 unrelated.parent.mkdir(parents=True)
                 unrelated.write_text("external\n", encoding="utf-8")
@@ -209,7 +197,7 @@ class ProductSkillTests(unittest.TestCase):
                     return link_claude_product(claude_home=home, source_root=source)
 
                 link()
-                for name in retired_workflows.values():
+                for name in dropped_workflows.values():
                     self.assertTrue((home / "skills" / name / "SKILL.md").is_file())
                     shutil.rmtree(source / "skills" / name)
                 agent_path.unlink()
@@ -217,11 +205,11 @@ class ProductSkillTests(unittest.TestCase):
 
                 updated = link()
                 self.assertEqual(4, updated["removed"])
-                for name in retired_workflows.values():
+                for name in dropped_workflows.values():
                     target = home / "skills" / name
                     self.assertFalse(target.exists() or target.is_symlink())
                 self.assertFalse(
-                    (home / f"agents/kgdistiller-paper-distiller.{extension}").exists()
+                    (home / f"agents/kgdistiller-removed-agent.{extension}").exists()
                 )
                 self.assertTrue((home / f"agents/kgdistiller-query-reviewer.{extension}").is_file())
                 self.assertEqual("external\n", unrelated.read_text(encoding="utf-8"))

@@ -95,18 +95,46 @@ class BaseAddTest(unittest.TestCase):
 
 
 class ConsoleTest(unittest.TestCase):
-    def test_json_output_escapes_text_an_ascii_console_cannot_encode(self) -> None:
-        kb = make_record_home(self)
-        kb.write_source("notes/a.txt", SOURCE)
-        kb.write_record("measure", node("测度 \U0001d4dc", "3"), "A set function.", ["A measure"])
+    """Windows pipes default to the ANSI code page; ``PYTHONIOENCODING=cp1252`` models them on every OS."""
+
+    LABEL = "Café — 测度 \U0001d4dc"
+
+    def setUp(self) -> None:
+        self.kb = make_record_home(self)
+        self.kb.write_source("notes/a.txt", SOURCE)
+        self.kb.write_record("cafe", node(self.LABEL, "3"), "A set function.", ["A measure"])
+        self.env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+
+    def test_json_output_is_utf_8_under_an_ansi_code_page(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "kgdistiller", "sheet", "notes/a.txt", "--json"],
-            capture_output=True, check=False, env={**os.environ, "PYTHONIOENCODING": "ascii:strict"}, cwd=kb.root,
+            capture_output=True, check=False, env=self.env, cwd=self.kb.root,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        stdout = result.stdout.decode("ascii")
-        self.assertIn("\\u6d4b\\u5ea6 \\ud835\\udcdc", stdout)
-        self.assertEqual(json.loads(stdout)["records"][0]["label"], "测度 \U0001d4dc")
+        self.assertEqual(json.loads(result.stdout.decode("utf-8"))["records"][0]["label"], self.LABEL)
+
+    def test_mcp_stdio_is_utf_8_under_an_ansi_code_page(self) -> None:
+        output(kgdistiller("index", cwd=self.kb.root))
+        requests = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "kg_resolve", "arguments": {"terms": ["Café", "测度"]}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "kg_get", "arguments": {"uids": ["kb:cafe"]}}},
+        ]
+        payload = "".join(json.dumps(request, ensure_ascii=False) + "\n" for request in requests).encode("utf-8")
+        result = subprocess.run(
+            [sys.executable, "-m", "kgdistiller", "mcp"],
+            input=payload, capture_output=True, check=False, env=self.env, cwd=self.kb.root,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        responses = {item["id"]: item for item in map(json.loads, result.stdout.decode("utf-8").splitlines())}
+        terms = responses[2]["result"]["structuredContent"]["terms"]
+        self.assertEqual(["café", "测度"], [term["key"] for term in terms])
+        self.assertEqual(["kb:cafe"], [item["uid"] for item in terms[0]["mentions"]])
+        self.assertEqual(["kb:cafe"], [item["uid"] for item in terms[1]["mentions"]])
+        self.assertEqual(self.LABEL, responses[3]["result"]["structuredContent"]["records"][0]["label"])
 
 
 def _choices(help_text: str) -> set[str]:
@@ -124,15 +152,12 @@ class CommandSurfaceTest(unittest.TestCase):
             usage = help_text.split("{", 1)[0]
             self.assertEqual(set(re.findall(r"--[a-z-]+", usage)) - {"--help"}, set())
 
-    def test_removed_commands_and_flags_are_usage_errors(self) -> None:
+    def test_unknown_commands_and_flags_are_usage_errors(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            for arguments in (("agent", "status"), ("scan", "--file", "a.txt"), ("ingest", "plan", "r.json"),
-                              ("capture", "prepare", "c.json"), ("export", "obsidian"), ("mcp", "--base", "kb"),
-                              ("mcp", "--embedding"), ("search", "q", "--embedding"), ("search", "q", "--rerank"),
-                              ("harvest", "prepare", "x"), ("obsidian", "install", "--replace"),
-                              ("obsidian", "install", "--no-enable"),
-                              ("base", "list", "--base", "kb"), ("--base", "kb", "check")):
+            for arguments in (("no-such-command",), ("mcp", "--no-such-flag"), ("search", "q", "--no-such-flag"),
+                              ("obsidian", "install", "--no-such-flag"), ("base", "list", "--no-such-flag"),
+                              ("--no-such-flag", "check")):
                 with self.subTest(arguments=arguments):
                     result = kgdistiller(*arguments, cwd=root)
                     self.assertEqual(result.returncode, 2, result.stdout + result.stderr)

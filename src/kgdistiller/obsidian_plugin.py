@@ -200,6 +200,11 @@ def install_obsidian_plugin(base: Base) -> dict[str, Any]:
     if knowledge.is_symlink():
         raise ObsidianPluginError(f"knowledge tree must not be a symlink: {knowledge}")
     obsidian_root = vault_root / ".obsidian"
+    if not obsidian_root.exists() and not obsidian_root.is_symlink():
+        raise ObsidianPluginError(
+            f"vault has no .obsidian directory: {obsidian_root}; "
+            "open this folder as a vault in Obsidian once, then rerun"
+        )
     if (
         obsidian_root.is_symlink()
         or not obsidian_root.is_dir()

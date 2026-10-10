@@ -1,7 +1,9 @@
 """Encoder-only adapter for the optional ``retrieval`` extra.
 
 It takes a sentence-transformers model id and nothing else: the library picks
-the device, and offline use is Hugging Face's own ``HF_HUB_OFFLINE``. Vectors
+the device, and offline use is Hugging Face's own ``HF_HUB_OFFLINE``. Hugging
+Face progress bars stay off unless ``HF_HUB_DISABLE_PROGRESS_BARS`` is set, so
+the CLI and MCP stderr carry only kgdistiller's own messages. Vectors
 leave this module as little-endian float32 bytes, L2-normalized, so callers
 never need NumPy to store them. NumPy and sentence-transformers are imported
 lazily, so importing this module is cheap.
@@ -9,6 +11,7 @@ lazily, so importing this module is cheap.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from ..home import KnowledgeError
@@ -28,6 +31,8 @@ class Encoder:
     """One loaded model, addressed by its id."""
 
     def __init__(self, model: str) -> None:
+        # Read by huggingface_hub and transformers when first imported, which happens only here.
+        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
         try:
             import numpy
             from sentence_transformers import SentenceTransformer

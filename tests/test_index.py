@@ -145,12 +145,13 @@ class SchemaTest(IndexTestCase):
         report = index()
         self.assertEqual(
             ["created", "rebuild", "bases", "unavailable", "understanding_changed", "reused", "embedded",
-             "unembedded", "truncated"],
+             "unembedded", "truncated", "embedding_error"],
             list(report),
         )
         self.assertEqual({"kb": {"parsed": 2, "deleted": 0, "unparseable": []},
                           "notes": {"parsed": 1, "deleted": 0, "unparseable": []}}, report["bases"])
         self.assertEqual((0, 0, 0, []), (report["reused"], report["embedded"], report["unembedded"], report["truncated"]))
+        self.assertIsNone(report["embedding_error"])
         self.assertTrue(index_clean(report))
         second = index()
         self.assertFalse(second["created"])
@@ -303,6 +304,9 @@ class InvariantTest(IndexTestCase):
         self.assertEqual(["notes"], report["unavailable"])
         self.assertNotIn("notes", report["bases"])
         self.assertFalse(index_clean(report))
+        self.assertEqual(before, dump())
+        rebuilt = index(rebuild=True)
+        self.assertEqual(["notes"], rebuilt["unavailable"])
         self.assertEqual(before, dump())
         moved.rename(self.kb.roots["notes"])
 
@@ -554,16 +558,47 @@ class EmbeddingTest(IndexTestCase):
         self.assertEqual(3, report["embedded"])
         self.assert_all_encoded()
 
-    def test_missing_retrieval_extra_keeps_the_lexical_commit(self) -> None:
+    def without_retrieval_extra(self) -> None:
         resident = patch("kgdistiller.adapters.sentence_transformers._resident", None)
         resident.start()
         self.addCleanup(resident.stop)
-        with patch.dict(sys.modules, {"sentence_transformers": None}), self.assertRaises(KnowledgeError) as caught:
-            index()
-        self.assertIn("install kgdistiller[retrieval] or set embedding to null", str(caught.exception))
-        self.assertIn(self.MODEL, str(caught.exception))
+        modules = patch.dict(sys.modules, {"sentence_transformers": None})
+        modules.start()
+        self.addCleanup(modules.stop)
+
+    def test_missing_retrieval_extra_keeps_the_lexical_commit(self) -> None:
+        self.without_retrieval_extra()
+        report = index()
+        self.assertIn("install kgdistiller[retrieval] or set embedding to null", report["embedding_error"])
+        self.assertIn(self.MODEL, report["embedding_error"])
+        self.assertFalse(index_clean(report))
+        self.assertEqual((0, 3), (report["embedded"], report["unembedded"]))
         self.assertEqual({"kb:subspace", "kb:sum-is-subspace", "notes:measure"}, set(self.rows()))
         self.assertEqual(3, self.lag()["unembedded"])
+
+    def test_embedding_failure_keeps_the_rest_of_the_report(self) -> None:
+        index(embed=False)
+        self.edit(self.subspace, "lines: 3", "lines: 3\nunderstanding: understood")
+        self.without_retrieval_extra()
+        report = index()
+        self.assertIsNotNone(report["embedding_error"])
+        self.assertEqual([{"uid": "kb:subspace", "from": "unknown", "to": "understood"}], report["understanding_changed"])
+        self.assertEqual(1, report["bases"]["kb"]["parsed"])
+
+    def test_rebuild_keeps_an_unavailable_base_and_loads_no_model(self) -> None:
+        with fake_encoder() as fake:
+            index()
+            moved = self.kb.home.parent / "notes-away"
+            self.kb.roots["notes"].rename(moved)
+            before = dump()
+            report = index(rebuild=True)
+            self.assertEqual(["notes"], report["unavailable"])
+            self.assertEqual((0, 0), (report["embedded"], report["unembedded"]))
+            self.assertEqual(before, dump())
+            self.assertEqual([self.MODEL], fake.loads)
+            moved.rename(self.kb.roots["notes"])
+            self.assertEqual(0, index()["embedded"])
+        self.assertEqual(before, dump())
 
 
 if __name__ == "__main__":

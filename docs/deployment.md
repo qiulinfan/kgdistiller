@@ -43,18 +43,23 @@ model; deleting it loses nothing but the time to rebuild and re-embed.
 
 Install the package as a user-level tool on Windows, macOS or Linux, with the
 `retrieval` extra for the dense search lane, then register each knowledge
-directory once:
+directory once. The package bundles the Obsidian plugin, whose built
+`integrations/obsidian/main.js` is not tracked in git, so a checkout needs
+Node 22 and npm to build it before any `uv` command builds the package; a
+direct `git+https` install therefore fails.
 
 ```sh
-uv tool install 'kgdistiller[retrieval] @ git+https://github.com/qiulinfan/kgdistiller.git'
+git clone https://github.com/qiulinfan/kgdistiller.git
+cd kgdistiller
+npm run build                     # builds integrations/obsidian/main.js
+uv tool install '.[retrieval]'    # or --editable '.[retrieval]'
 uv tool update-shell
 kgd base add BASE_ROOT --name research
 kgd base list
 ```
 
-From a checkout, install it with
-`uv tool install --editable '<checkout>[retrieval]'`. The extra brings NumPy
-and sentence-transformers; without it, keep `embedding` `null`.
+The extra brings NumPy and sentence-transformers; without it, keep
+`embedding` `null`.
 
 `kgd base add PATH [--name N]` creates the home on first use (`config.json` as
 `{"bases": {}, "embedding": null}`, an empty `types/` and the `.gitignore`),
@@ -130,6 +135,8 @@ model id needs a complete cache entry: the snapshot and the
 `refs/main` pointer that an online load writes. A cache copied without
 `refs/` fails offline with "couldn't find them in the cached files"; one online
 load (or restoring `refs/main` with the snapshot's directory name) fixes it.
+Hugging Face progress bars are off by default; set
+`HF_HUB_DISABLE_PROGRESS_BARS=0` to watch the first download.
 
 ### Document types
 
@@ -192,21 +199,23 @@ kgd index --rebuild
 `kgd index` brings `$KGDISTILLER_HOME/index.sqlite` up to date with the
 `entries/` files of every registered, available base and prints a report with,
 per base, `parsed`, `deleted` and `unparseable` files, plus `unavailable` bases
-and `understanding_changed`. It exits 1 when a file is unparseable or a base is
-unavailable. With `embedding` set, an embedding phase follows: the rows whose
-vector is NULL (new or changed text, or every row after a model change) are
-encoded in batches of 64. The model loads only when such a row exists, so an
+and `understanding_changed`. It exits 1 when a file is unparseable, a base is
+unavailable or embedding failed. With `embedding` set, an embedding phase
+follows: the rows whose vector is NULL (new or changed text, or every row
+after a model change) are encoded in batches of 64. The model loads only when such a row exists, so an
 up-to-date index runs in well under a second. The report adds `reused`
 (vectors kept by text, such as an id rename), `embedded`, `unembedded` and
 `truncated` (texts longer than the model's input limit, embedded from their
-leading part and listed rather than cut silently). `--no-embed` skips the
+leading part and listed rather than cut silently) and `embedding_error`
+(`null`, or why the embedding phase failed). `--no-embed` skips the
 embedding phase and leaves changed rows unembedded until the next run.
 `--rebuild` re-derives every row in place in one transaction and re-uses the
 existing vectors by text, so it loads no model. If `embedding` is set but the
-`retrieval` extra is missing, `kgd index` commits the lexical phase and exits 1
-with `install kgdistiller[retrieval] or set embedding to null`. Every Skill
-that writes knowledge ends with `kgd index`; edits made in Obsidian lag until
-the next run, and every read reports that lag.
+`retrieval` extra is missing, `kgd index` commits the lexical phase, reports
+`embedding_error` ending in `install kgdistiller[retrieval] or set embedding
+to null` and exits 1. Every Skill that writes knowledge ends with `kgd index`;
+edits made in Obsidian lag until the next run, and every read reports that
+lag.
 
 Restore after a lost or damaged database with one command:
 

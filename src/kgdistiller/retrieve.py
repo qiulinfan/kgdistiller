@@ -275,6 +275,8 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
     """
     if limit < 1:
         raise KnowledgeError("limit must be at least 1")
+    if not query.strip():
+        raise KnowledgeError("query must not be empty")
     connection, home = _session()
     try:
         lanes = {"lexical": _lexical(connection, query, filters)}

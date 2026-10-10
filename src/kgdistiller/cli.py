@@ -9,7 +9,6 @@ codes: 0 ok, 1 findings or refusal, 2 usage.
 from __future__ import annotations
 
 import argparse
-import codecs
 import json
 import os
 import sqlite3
@@ -24,31 +23,18 @@ def pretty_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
-def _json_backslash_replace(error: UnicodeError) -> tuple[str, int]:
-    if not isinstance(error, UnicodeEncodeError):
-        raise error
-    escaped: list[str] = []
-    for character in error.object[error.start : error.end]:
-        codepoint = ord(character)
-        if codepoint <= 0xFFFF:
-            escaped.append(f"\\u{codepoint:04x}")
-            continue
-        codepoint -= 0x10000
-        escaped.append(
-            f"\\u{0xD800 + (codepoint >> 10):04x}"
-            f"\\u{0xDC00 + (codepoint & 0x3FF):04x}"
-        )
-    return "".join(escaped), error.end
-
-
 def configure_console_streams() -> None:
-    """Escape unencodable console text as valid JSON Unicode escapes."""
-    error_handler = "kgdistiller_json_backslashreplace"
-    codecs.register_error(error_handler, _json_backslash_replace)
-    for stream in (sys.stdout, sys.stderr):
+    """Read and write UTF-8 whatever the locale or Windows ANSI code page.
+
+    JSON between programs and MCP stdio are UTF-8. A lone surrogate on output
+    becomes a valid JSON ``\\udcxx`` escape; invalid input bytes become lone
+    surrogates, which the MCP server answers with a parse error.
+    """
+    for stream, errors in ((sys.stdin, "surrogateescape"), (sys.stdout, "backslashreplace"),
+                           (sys.stderr, "backslashreplace")):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            reconfigure(errors=error_handler)
+            reconfigure(encoding="utf-8", errors=errors)
 
 
 def _cwd_path(value: Path) -> Path:

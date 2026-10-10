@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -68,6 +69,15 @@ class EncoderTest(unittest.TestCase):
         encoder = adapter.encoder("some/model")
         self.assertEqual([(("some/model",), {"trust_remote_code": False, "token": False})], FakeModel.constructed)
         self.assertEqual(("some/model", 8), (encoder.model, encoder.max_tokens))
+
+    def test_hugging_face_progress_bars_are_off_unless_set(self) -> None:
+        for preset, expected in ((None, "1"), ("0", "0")):
+            environment = {} if preset is None else {"HF_HUB_DISABLE_PROGRESS_BARS": preset}
+            with self.subTest(preset=preset), patch.dict(os.environ, environment):
+                if preset is None:
+                    os.environ.pop("HF_HUB_DISABLE_PROGRESS_BARS", None)
+                adapter.Encoder("some/model")
+                self.assertEqual(expected, os.environ["HF_HUB_DISABLE_PROGRESS_BARS"])
 
     def test_documents_and_queries_become_little_endian_float32_bytes(self) -> None:
         encoder = adapter.encoder("some/model")

@@ -139,7 +139,7 @@ class MCPTest(unittest.TestCase):
             "requires_depth is outside": ("kg_pack", {"uids": ["kb:x"], "requires_depth": -1}),
             "argument uids has an invalid item count": ("kg_pack", {"uids": []}),
             "handle has an invalid length": ("kg_browse", {"handle": ""}),
-            "unknown tool: kg_compiled_knowledge": ("kg_compiled_knowledge", {}),
+            "unknown tool: kg_no_such_tool": ("kg_no_such_tool", {}),
         }
         server = self.server()
         for message, (name, arguments) in cases.items():

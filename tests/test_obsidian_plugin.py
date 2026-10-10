@@ -116,6 +116,12 @@ class ObsidianPluginInstallTest(unittest.TestCase):
                 self.assertIs(True, stored["hiddenKnowledgeEnabled"])
                 self.assertEqual({"showDrafts": False, "hiddenKnowledgeEnabled": True}, stored)
 
+    def test_a_vault_never_opened_in_obsidian_is_refused_with_the_remedy(self) -> None:
+        (self.vault / ".obsidian").rmdir()
+        with self.assertRaisesRegex(ObsidianPluginError, "open this folder as a vault in Obsidian once"):
+            self.install()
+        self.assertFalse((self.vault / ".obsidian").exists())
+
     @unittest.skipIf(sys.platform == "win32", "directory symlinks need extra privileges on Windows")
     def test_a_symlinked_knowledge_tree_is_refused_without_writes(self) -> None:
         elsewhere = self.unrelated / "elsewhere"

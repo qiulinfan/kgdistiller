@@ -65,7 +65,7 @@ for source_dir in "$skills_repo_dir"/*/; do
 done
 
 # Remove links this checkout owns that are stale or renamed. Links owned by
-# qlblog or other product checkouts are never touched.
+# other checkouts are never touched.
 for existing in "$runtime_skills_dir"/*; do
   [ -L "$existing" ] || continue
   link_target=$(readlink "$existing")

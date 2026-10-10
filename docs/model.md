@@ -302,7 +302,9 @@ default; `--base` (repeatable) narrows it. Its output is JSON:
  "moved": [{"path": "/abs/root/.knowledge/entries/w.md", "lines": "41-47"}]}
 ```
 
-Paths are absolute. The exit code is 1 when any list is non-empty.
+Paths are absolute. The exit code is 1 when any list is non-empty. Each type
+file and `config.json` report their first problem; a broken type file does
+not hide a `config.json` error, and record rules run only once both are valid.
 
 | Rule | Checks |
 |---|---|

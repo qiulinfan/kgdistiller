@@ -319,10 +319,12 @@ def record_class(frontmatter: dict[str, Any]) -> str:
 def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
     """Structural parse: frontmatter shape, value grammar and body grammar."""
     if not valid_id(identifier):
+        suggestion = slug(identifier)
         raise RecordError(
             "id",
-            f"the file name {identifier!r} is not a valid id: lowercase letters and digits joined "
-            f"by single hyphens, at most {MAX_ID_LENGTH} characters",
+            f"the file name {identifier!r} is not a valid id: Unicode letters and digits (CJK included) "
+            f"joined by single hyphens, equal to its own NFKC casefold, at most {MAX_ID_LENGTH} characters"
+            + (f"; for example {suggestion!r}" if suggestion else ""),
         )
     head, body = split_frontmatter(text)
     try:
@@ -632,6 +634,12 @@ def record_problems(
 
 
 def _load_for_check(home_dir: Path, errors: list[dict[str, str]]) -> Home | None:
+    """The home, or None after recording every type file's error and config.json's own error.
+
+    config.json is validated without its type names even when a type file is
+    broken; a glob naming an unknown type (or a missing types/) is a type error.
+    """
+    config = str(home_dir / CONFIG_FILENAME)
     types = home_dir / TYPES_DIRECTORY
     if (home_dir / CONFIG_FILENAME).is_file() and types.is_dir():
         for path in sorted(types.glob("*.md")):
@@ -639,12 +647,16 @@ def _load_for_check(home_dir: Path, errors: list[dict[str, str]]) -> Home | None
                 load_type(path)
             except (KnowledgeError, OSError, UnicodeDecodeError) as error:
                 errors.append({"path": str(path), "rule": "type", "message": str(error)})
-        if errors:
-            return None
+    try:
+        load_home(home_dir, types=False)
+    except (KnowledgeError, OSError, UnicodeDecodeError) as error:
+        errors.append({"path": config, "rule": "config", "message": str(error)})
+    if errors:
+        return None
     try:
         return load_home(home_dir)
     except (KnowledgeError, OSError, UnicodeDecodeError) as error:
-        errors.append({"path": str(home_dir / CONFIG_FILENAME), "rule": "config", "message": str(error)})
+        errors.append({"path": config, "rule": "type", "message": str(error)})
         return None
 
 

@@ -135,10 +135,11 @@ timeout:
 
 1. If `config.embedding` (or `''` when null) differs from `meta.embedding`,
    set every `vec` to NULL and store the new model id in `meta.embedding`.
-2. Keep a pool of vectors keyed by text. With `--rebuild`, put every current
-   `(text, vec)` into the pool, then delete every row of `record`, `link`,
-   `name` and `fts` inside the same transaction. The file is never swapped, so
-   WAL readers keep their snapshot until commit.
+2. Keep a pool of vectors keyed by text. With `--rebuild`, delete every row
+   of `record`, `link`, `name` and `fts` inside the same transaction, putting
+   each deleted `(text, vec)` into the pool, except the rows of registered
+   bases whose root is unavailable (step 3). The file is never swapped, so WAL
+   readers keep their snapshot until commit.
 3. Delete the rows of bases no longer in `config.json`. Leave the rows of
    registered bases whose root is unavailable untouched and report those bases.
 4. For each available base, list the regular `entries/*.md` files; a
@@ -178,10 +179,11 @@ A concurrent text or model change makes the write a no-op, and the row is
 picked up by the next run. The guard keeps every stored vector matched to its
 row's current text and model without any hashing, even when two runs overlap.
 If `embedding` is set but the `retrieval` extra is missing, the lexical commit
-stands and the command exits 1 with `embedding is set to <model> but the
-retrieval extra is missing: install kgdistiller[retrieval] or set embedding to
-null`. A model that fails to load or encode also exits 1 after the lexical
-commit, saying how many rows were embedded; rerun `kgd index`.
+stands and the report's `embedding_error` is `embedding is set to <model> but
+the retrieval extra is missing: install kgdistiller[retrieval] or set
+embedding to null`. A model that fails to load or encode also sets
+`embedding_error` after the lexical commit; `embedded` says how many rows were
+written before the failure; rerun `kgd index`.
 
 **Report.**
 
@@ -189,16 +191,16 @@ commit, saying how many rows were embedded; rerun `kgd index`.
 {"created": false, "rebuild": false,
  "bases": {"notes": {"parsed": 3, "deleted": 0, "unparseable": [{"path": "/abs/…/x.md", "message": "…"}]}},
  "unavailable": [], "understanding_changed": [{"uid": "notes:measure", "from": "unknown", "to": "understood"}],
- "reused": 1, "embedded": 2, "unembedded": 0, "truncated": []}
+ "reused": 1, "embedded": 2, "unembedded": 0, "truncated": [], "embedding_error": null}
 ```
 
 `created` says the file was (re)created. `reused` counts changed rows that
 took a vector from the pool, `embedded` the vectors written by the embedding
 phase, `unembedded` the rows still without a vector when `embedding` is set
 (`0` when it is null), and `truncated` the uids whose text exceeded the
-model's input limit. The exit code is 1 when a file was unparseable or a base
-was unavailable. An embedding failure prints its error instead of the report
-and exits 1; the lexical phase is already committed.
+model's input limit, and `embedding_error` the embedding failure or `null`.
+The exit code is 1 when a file was unparseable, a base was unavailable or
+embedding failed; an embedding failure leaves the lexical phase committed.
 
 **Invariants** (tested with a fake encoder).
 
@@ -258,7 +260,8 @@ caller names. `get` addresses records by uid and takes no filters.
 
 ## `kgd search QUERY [--limit 40] [--no-dense] [filters]`
 
-Up to three lanes each produce a ranked uid list:
+A `QUERY` that is empty after trimming is refused before the database opens
+or a model loads. Up to three lanes each produce a ranked uid list:
 
 1. **Lexical.** `fts MATCH` over the OR of the deduplicated, quoted
    `tokens(QUERY)`, ordered by `bm25(fts)`, top 200.
@@ -501,7 +504,10 @@ instead packs both nodes and appends that relation as shared, with no gaps.
 ## MCP server: `kgd mcp`
 
 `kgd mcp` takes no arguments. It is a read-only stdio server over the whole
-home with six tools that mirror the CLI and return the same JSON:
+home with six tools that mirror the CLI and return the same JSON. Its stdin
+and stdout, like every `kgd` command's output, are UTF-8 whatever the locale
+or Windows code page. A `query` that is empty after trimming is refused, as in
+`kgd search`.
 
 | Tool | Arguments |
 |---|---|

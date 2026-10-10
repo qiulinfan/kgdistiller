@@ -30,7 +30,7 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 AGENT_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 FORBIDDEN_TEXT_RE = re.compile(
-    r"(?:qlblog|vendor/kgdistiller|knowledge/kgd\.py|[A-Za-z]:\\|/Users/|/home/)",
+    r"(?:[A-Za-z]:\\|/Users/|/home/)",
     re.IGNORECASE,
 )
 

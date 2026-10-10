@@ -137,6 +137,11 @@ class SearchTest(RetrieveTestCase):
         with self.assertRaises(KnowledgeError):
             search("measure", limit=0)
 
+    def test_empty_query_is_refused(self) -> None:
+        for query in ("", "   "):
+            with self.subTest(query=query), self.assertRaisesRegex(KnowledgeError, "query must not be empty"):
+                search(query)
+
     def test_cjk_query_hits_lexical_and_name_lanes(self) -> None:
         results = {item["uid"]: item for item in search("测度")["results"]}
         self.assertEqual(1, results["kb:measure"]["ranks"]["name"])
@@ -279,6 +284,11 @@ class DenseLaneTest(RetrieveTestCase):
         result = search("measure space", dense=False)
         self.assertEqual(["lexical", "name"], result["lanes"])
         self.assertEqual(["lexical", "name"], list(result["results"][0]["ranks"]))
+        self.assertEqual([], self.encoders.loads)
+
+    def test_empty_query_loads_no_model(self) -> None:
+        with self.assertRaises(KnowledgeError):
+            search("")
         self.assertEqual([], self.encoders.loads)
 
     def test_missing_retrieval_extra(self) -> None:

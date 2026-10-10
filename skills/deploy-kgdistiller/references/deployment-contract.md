@@ -167,13 +167,14 @@ hides a record from retrieval.
 stat changed, then embeds every row whose vector is NULL with the `embedding`
 model. The model loads only when such a row exists. Its JSON report lists per
 base `parsed`, `deleted` and `unparseable`, plus `unavailable` bases,
-`understanding_changed`, `reused`, `embedded`, `unembedded` and `truncated`
-(texts longer than the model's input limit); it exits 1 when a file is
-unparseable or a base is unavailable. `--rebuild` re-derives every row in
+`understanding_changed`, `reused`, `embedded`, `unembedded`, `truncated`
+(texts longer than the model's input limit) and `embedding_error` (`null` or
+why embedding failed); it exits 1 when a file is unparseable, a base is
+unavailable or embedding failed. `--rebuild` re-derives every row in
 place and re-uses vectors by text. `--no-embed` skips the embedding phase and
 leaves changed rows unembedded. With `embedding` set and the `retrieval` extra
-missing, it exits 1 with `install kgdistiller[retrieval] or set embedding to
-null` after committing the lexical index.
+missing, it commits the lexical index, reports `embedding_error` ending in
+`install kgdistiller[retrieval] or set embedding to null` and exits 1.
 
 Restore after a lost or damaged database in one step:
 
