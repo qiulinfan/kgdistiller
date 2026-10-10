@@ -1,6 +1,6 @@
 #!/bin/sh
 # Link only this product's Skills into a native runtime home.
-# Full product installers retain authority over agents, workflows, and receipts.
+# Full product installers retain authority over agents, workflows, and link state.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

@@ -1,5 +1,5 @@
 #Requires -Version 7.0
-# Link only this product's Skills. Full installers retain agent/receipt ownership.
+# Link only this product's Skills. Full installers retain agent/link-state ownership.
 [CmdletBinding()]
 param(
     [ValidateSet('claude', 'codex', 'opencode', 'omp')][string]$Runtime = 'claude',

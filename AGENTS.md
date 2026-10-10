@@ -98,9 +98,9 @@
   come only with the `retrieval` extra (the dense lane); NumPy is also in the
   `dev` group so the fake-encoder tests run in CI. The product ships no default
   embedding model and no revision pin.
-- Do not add user knowledge data, credentials, generated graphs, or model keys to
-  this repository. Retrieval stays generic: never hardcode papers, benchmark
-  questions or answers.
+- Do not add user knowledge data, credentials, derived databases
+  (`index.sqlite`), or model keys to this repository. Retrieval stays generic:
+  never hardcode papers, benchmark questions or answers.
 - The Community directory entry stays in this monorepo: root manifest/versions
   mirror the canonical `integrations/obsidian` metadata, guarded by
   `scripts/build-obsidian-plugin.mjs`. Root `npm run build` installs/builds that
@@ -140,7 +140,7 @@
   two runtime manifests identical; agent presets stay runtime-specific files.
 - `scripts/link-claude-skills.sh` / `.ps1` remain a skills-only development
   shortcut independent of both manifests; they install no agents, workflows,
-  or receipts, and `kgdistiller claude link` adopts symlinks they created.
+  or link state, and `kgdistiller claude link` adopts symlinks they created.
   They delegate to the product-owned `scripts/link-skills.sh RUNTIME` /
   `.ps1 -Runtime RUNTIME`; that Skill-only linker also supports native OpenCode
   and OMP homes. Full agent/workflow integration remains governed by the
