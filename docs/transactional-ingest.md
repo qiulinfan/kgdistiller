@@ -12,14 +12,17 @@ ingest never edits them.
 ## Commands and Python API
 
 ```sh
-kgdistiller --repo-root PROJECT ingest plan request.json --output plan.json
-kgdistiller --repo-root PROJECT ingest apply request.json --receipt receipt.json
+kgd ingest plan request.json --output plan.json --base B
+kgd ingest apply request.json --receipt receipt.json --base B
 ```
 
 ```python
+from pathlib import Path
+
+from kgdistiller.home import resolve_base
 from kgdistiller.ingest import IngestPaths, apply_ingest, plan_ingest
 
-paths = IngestPaths(repo_root=project, registry=project / ".knowledge/sources.json")
+paths = IngestPaths(base=resolve_base("B", Path.cwd()))
 plan = plan_ingest(paths, request)
 receipt = apply_ingest(paths, request)
 ```
@@ -83,7 +86,7 @@ result and writes nothing to the store. It returns a readable
 
 ## Apply: lock plus semantic re-validation
 
-Apply holds the single-writer lock for the whole operation:
+Apply holds the home lock, `$KGDISTILLER_HOME/lock`, for the whole operation:
 
 1. finish or roll back an interrupted earlier install from its journal;
 2. if a receipt for `request_id` exists, return it when the stored request is
@@ -92,8 +95,8 @@ Apply holds the single-writer lock for the whole operation:
 3. re-validate the delta against the current store and current source text:
    update and remove targets exist with their `expected_label`; created ids,
    labels and aliases collide with nothing; every created or updated entry's
-   Evidence equals its cited source lines now; kinds are allowed by the
-   sources' document types; post-delta edge endpoints exist;
+   Evidence equals its cited source lines now; kinds are in the `node_kinds`
+   of the sources' document types; post-delta edge endpoints exist;
    `prerequisite-for` stays acyclic; and the whole resulting store validates;
 4. write a journal, back up every target, and install the changed entry files
    and `edges.jsonl` atomically; journal targets are restricted to
@@ -141,13 +144,14 @@ Errors are printed as a `kgdistiller-ingest-error-v1` envelope
 |---|---|
 | `invalid-request` | The request or delta violates its schema or shape. |
 | `invalid-store` | The current store, a receipt or the journal cannot be read. |
-| `lock-conflict` | Another writer holds the lock, or an interrupted ingest is pending (for `plan`). |
+| `lock-conflict` | Another writer holds the home lock, or an interrupted ingest is pending (for `plan`). |
 | `missing-entry` | An update or removal target does not exist. |
 | `label-mismatch` | A target's current label differs from `expected_label`. |
 | `entry-exists` | A created id already exists. |
 | `identity-collision` | A label or alias is already used by another entry. |
 | `missing-source` | A cited source is missing, unsafe or not UTF-8 text. |
-| `source-not-registered` | No single registered source admits a cited path. |
+| `source-not-registered` | No glob of the base matches a cited path, or its globs map it to two different types. |
+| `source-type-conflict` | Some registered file of the base, cited or not, matches globs of two different types. The whole store fails validation, so every ingest, harvest and capture write to the base is refused until the globs under `bases.<name>.sources` in `$KGDISTILLER_HOME/config.json` are fixed; `kgd check` lists every conflicted file. |
 | `line-range` | A cited range exceeds the source's line count. |
 | `stale-evidence` | An entry's Evidence differs from its cited lines. |
 | `kind-not-allowed` | A kind is not in the source document type's `node_kinds`. |

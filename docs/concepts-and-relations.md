@@ -2,7 +2,7 @@
 
 kgdistiller is a personal research knowledge base. Papers, mathematical notes,
 computer-science notes, blogs and project documents supply knowledge through the
-same model. The accepted knowledge lives in the project's hidden `.knowledge/`
+same model. The accepted knowledge lives in each base's hidden `.knowledge/`
 tree; source-scoped sheets are views of that metadata.
 
 ## Source document types: user-owned extraction rules
@@ -22,9 +22,9 @@ the node types to look for and extraction rules, including what should instead
 be represented as a relation/application or left as a direct pending dependency.
 The shared evidence and identity requirements still apply.
 
-The minimum conceptual registration is a type name, its intended node types,
-and human-readable extraction rules. Use `document_type` for the source's
-association with a registered profile. A node has its own `kind`, chosen from
+The minimum registration is a type name, its intended node kinds, and
+human-readable extraction guidance. A source is associated with a type only
+through the glob that registers it. A node has its own `kind`, chosen from
 that profile's `node_kinds`; it is not typed merely as `airesearch` because its
 source uses that profile.
 For example, an AI research source may explain an architecture and also state
@@ -45,54 +45,70 @@ other text document are treated identically. Evidence is a file path, a line
 range and the quoted text of those lines. A def sheet displays links and is not
 a copy of the source.
 
-Register profiles in `.knowledge/sources.json` under `document_types`, for
-example:
+Each type is one file, `$KGDISTILLER_HOME/types/<name>.md` (default
+`~/.knowledge/types/`), for example `types/worked-notes.md`:
 
-```json
-{
-  "worked-notes": {
-    "node_kinds": ["definition", "theorem"],
-    "extraction_guidance": "Extract explained definitions and precise theorems; represent worked examples as applications."
-  }
-}
+```markdown
+---
+node_kinds: [definition, theorem]
+relation_kinds:
+  implies: [premise, conclusion]
+epistemic: [proved, stated]
+---
+Extract explained definitions and precise theorems; represent worked examples
+as applications.
 ```
 
-The block above is the value of `document_types`, not a replacement for the
-whole source registry. Add `"document_type": "worked-notes"` to the relevant
-source record. That record can cover a bounded set of files of any format.
-Separate source records can use different profiles. Names and kinds are
-caller-supplied; new projects omit this optional mapping until the user
-registers a profile. Explicit unknown profile names or malformed registrations
-are errors.
+The file stem is the type name and matches `^[a-z0-9][a-z0-9-]*$`. The
+frontmatter is read with PyYAML's `BaseLoader` and has only these keys:
+`node_kinds` (required, a non-empty list of unique kind slugs),
+`relation_kinds` (optional, mapping each kind slug to a non-empty list of
+unique role slugs matching `^[a-z][a-z0-9-]*$`, none of them a fixed entry key)
+and `epistemic` (optional, a list of unique slugs). No kind may be both a node
+kind and a relation kind. The body is the guidance and must not be empty. Names
+and kinds are caller-supplied; an unknown key, a malformed list or an empty
+body is an error.
 
-`kgdistiller --repo-root PROJECT scan --file SOURCE` returns, for each requested
-file, the admitting source id, its `document_type`, the profile
-(`node_kinds`, `extraction_guidance`, or `null` when the source has none) and
-every line with its 1-based number. It writes nothing and works before the
-source has any entries, so an agent reads the extraction rules and the exact
-line numbers before choosing nodes. Every entry's `kind` must belong to its
-source's profile when one is declared; `check` and ingest enforce this.
+Sources map to types through globs relative to the base root under
+`bases.<name>.sources` in `$KGDISTILLER_HOME/config.json`:
+
+```json
+{"bases": {"research": {"path": "~/research",
+  "sources": {"notes/**/*.md": "worked-notes"}}}, "embedding": null}
+```
+
+A file matched by at least one glob is a registered source. Globs follow
+Python's `glob` semantics, and hidden files and directories never match. Every
+registered source has exactly one type: globs that map one file to two
+different types are an error, so there is no unclassified source and no
+profile-less extraction.
+
+`kgd scan --file SOURCE --base B` returns, for each requested file, its path
+relative to the base root, the base, its `type`, that type's `profile`
+(`node_kinds`, `relation_kinds`, `epistemic`, `guidance`) and every line with
+its 1-based number. It writes nothing and works before the source has any
+entries, so an agent reads the guidance and the exact line numbers before
+choosing nodes. Every entry's `kind` must belong to its source type's
+`node_kinds`; `check` and ingest enforce this. Entries are still nodes in this
+release, so `relation_kinds` is listed for extraction but is not an entry kind.
 
 RAG architecture is still open. Source types must not silently impose hard
 retrieval filters or choose an embedding/index backend.
 
 ## Minimum stored metadata
 
-A project's knowledge lives only in `<root>/.knowledge/`:
+A base's knowledge lives only in `<root>/.knowledge/`:
 
 ```text
 .knowledge/
-├── vault.json              # stable vault identity for registration
-├── sources.json            # bounded source registration; optional document types
 ├── entries/<id>.md         # one reviewed entry per knowledge node
 ├── edges.jsonl             # accepted typed relationships
 └── build/                  # rebuildable local work (ignored)
 ```
 
-A source registration holds only its `id`, `root`, `files` and an optional
-`document_type`; the registry adds only optional `document_types` extraction
-profiles. Any other key is rejected. Source registration does not create
-knowledge nodes.
+Source globs and document types live in the home
+(`$KGDISTILLER_HOME/config.json` and `types/`), not in the base. Source
+registration does not create knowledge nodes.
 
 An entry carries everything its node needs: id, label, kind, aliases, source
 path and line range, understanding, the human sections and the verbatim

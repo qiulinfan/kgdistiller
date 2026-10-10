@@ -118,7 +118,7 @@ class EntryFormatTest(unittest.TestCase):
             "repeat its label": record(aliases=["MEASURE  space"]),
             "must be unique": record(aliases=["a", "A"]),
             "without '..'": record(source="../outside.tex"),
-            "project-relative": record(source="/abs/path.tex"),
+            "base-relative": record(source="/abs/path.tex"),
             "outside the .knowledge": record(source=".knowledge/entries/x.md"),
             "must not exceed": record(line_start=6, line_end=5),
             "positive integer": record(line_start=0),

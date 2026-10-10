@@ -11,7 +11,8 @@ explicit versioned schema and release boundary.
 kgdistiller is a local, single-user engine. It validates bounded registered
 paths, rejects traversal, symlinked and unsafe source and entry paths, refuses
 to read the store while an ingest install is in progress, bounds MCP and query
-inputs, and serializes transactional writers under one lock. MCP is read-only.
+inputs, and serializes transactional writers on the dedicated
+`$KGDISTILLER_HOME/lock` file. MCP is read-only.
 kgdistiller has no web server and no publishing surface, and it is not an
 authenticated multi-user service.
 
@@ -22,17 +23,17 @@ UTF-8 text documents of any format; kgdistiller reads them as lines and never
 parses, executes or converts them. Reviewed entries and accepted edges under
 `.knowledge/` are the only knowledge; consistency with sources is checked by
 comparing text, not by stored content hashes. The Obsidian plugin's graph feed
-is derived; never register or rescan it as a source. The knowledge-project root
-may be opened as an Obsidian editor vault without changing these boundaries.
+is derived; never register or rescan it as a source. A base root may be opened
+as an Obsidian editor vault without changing these boundaries.
 
-The user-level vault registry is a machine-local locator, not authority. It
-contains absolute local paths and therefore may disclose directory names; do
-not commit, publish, or copy `~/.kgdistiller/vaults.json` as part of a knowledge
-project. The portable `.knowledge/vault.json` contains only a schema discriminator
-and random vault UUID. Registry resolution verifies that this UUID matches
-before a command uses a registered path.
+`$KGDISTILLER_HOME/config.json` and `$KGDISTILLER_HOME/types/` (default
+`~/.knowledge`) are owner data: they hold local base paths, source globs and
+user-defined document types, and may disclose directory names. Keep them in a
+private local git repository; never commit them to a public repository or to
+this product repository. A base is found only through its registered root;
+there is no identity file inside the base.
 
-Knowledge projects may contain private data. Do not attach sources, entries,
+Bases may contain private data. Do not attach sources, entries,
 edge files, transaction journals, receipts, Obsidian graph feeds, or agent
 configuration to a public issue. Produce a minimal synthetic reproducer.
 

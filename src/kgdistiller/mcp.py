@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from . import __version__
 from .contracts import canonical_json, load_contract_schema
 from .graph_retrieval import GraphRetrievalPolicy
+from .home import Base
 from .query import (
     QueryError,
     expand,
@@ -211,8 +212,7 @@ def _validate_arguments(name: str, arguments: Any) -> dict[str, Any]:
 
 
 def call_tool(
-    repo_root: Path,
-    registry: Path,
+    base: Base,
     name: str,
     raw_arguments: Any,
     *,
@@ -252,7 +252,7 @@ def call_tool(
             return library.pack(arguments["references"], byte_budget=arguments.get("byte_budget", 24000))
         except (CompiledRetrievalError, OSError) as error:
             raise QueryError(str(error)) from error
-    view = load_graph_view(repo_root, registry)
+    view = load_graph_view(base)
     if name == "kg_status":
         return query_status(view)
     if name == "kg_resolve_concepts":
@@ -289,9 +289,8 @@ def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, 
 class MCPServer:
     """Small stateful MCP dispatcher for newline-delimited stdio transport."""
 
-    def __init__(self, repo_root: Path, registry: Path, *, ranking_service: Any = None):
-        self.repo_root = Path(repo_root)
-        self.registry = Path(registry)
+    def __init__(self, base: Base, *, ranking_service: Any = None):
+        self.base = base
         self.ranking_service = ranking_service
         self.initialized = False
         self.protocol_version = MCP_PROTOCOL_VERSION
@@ -333,7 +332,7 @@ class MCPServer:
                 options = {}
                 if name in {"kg_search", "kg_build_context"}:
                     options["ranking_service"] = self.ranking_service
-                value = call_tool(self.repo_root, self.registry, name, params.get("arguments"), **options)
+                value = call_tool(self.base, name, params.get("arguments"), **options)
                 return _result(request_id, _tool_result(value))
             except RetrievalError as error:
                 return _result(request_id, _tool_result({"error": error.to_payload()}, is_error=True))
@@ -345,8 +344,7 @@ class MCPServer:
 
 
 def serve_stdio(
-    repo_root: Path,
-    registry: Path,
+    base: Base,
     *,
     ranking_service: Any = None,
     input_stream: TextIO | None = None,
@@ -354,7 +352,7 @@ def serve_stdio(
 ) -> None:
     source = input_stream or sys.stdin
     destination = output_stream or sys.stdout
-    server = MCPServer(repo_root, registry, ranking_service=ranking_service)
+    server = MCPServer(base, ranking_service=ranking_service)
     for raw_line, oversized in _bounded_input_lines(source):
         if oversized:
             destination.write(canonical_json(_protocol_error(None, -32700, "Parse error")) + "\n")

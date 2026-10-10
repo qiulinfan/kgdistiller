@@ -7,9 +7,10 @@ entry `.knowledge/entries/<id>.md` is one knowledge node: it names its source
 path and line range and quotes those lines verbatim as Evidence. Accepted edges
 live in `.knowledge/edges.jsonl`. A sheet is a source-scoped navigation
 projection of this state. It neither defines a new authority nor independently
-stores full meanings. The source's registered `document_type` selects
-user-authored extraction rules; it is independent of file format and knowledge
-domain. Sources are any registered text documents and are never converted.
+stores full meanings. The source's registered type, a user-authored file
+`$KGDISTILLER_HOME/types/<type>.md` in the home, selects the extraction rules;
+it is independent of file format and knowledge domain. Sources are any
+registered text documents and are never converted.
 
 This applies to mathematical notes, computer-science notes, papers, blogs and
 project documents. Preserve caller-selected locations and existing filenames;

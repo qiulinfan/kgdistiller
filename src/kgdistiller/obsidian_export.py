@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import ContractError, validate_contract
-from .knowledge_store import atomic_write_text
+from .home import KNOWLEDGE_DIRECTORY, Base, atomic_write_text
+from .knowledge_store import entries_root
 from .query import GraphView, QueryError, load_graph_view
-from .sources import KnowledgeError, load_sources
 
 PLUGIN_GRAPH_SCHEMA = "kgdistiller-obsidian-graph-v1"
 
@@ -22,20 +22,21 @@ def _pretty_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
-def _validate_output_boundary(repo_root: Path, output: Path, registry: Path) -> None:
-    if output == repo_root or ".obsidian" in {part.casefold() for part in output.parts}:
-        raise ObsidianExportError("graph feed output cannot be the project root or .obsidian")
-    try:
-        specs = load_sources(repo_root, registry)
-    except (KnowledgeError, OSError, UnicodeError, ValueError) as error:
-        raise ObsidianExportError(f"cannot load the source registry: {error}") from error
-    for spec in specs:
-        try:
-            output.relative_to(spec.root.resolve())
-        except ValueError:
-            continue
+def _validate_output_boundary(base: Base, output: Path) -> None:
+    """Keep the feed out of the base's sources whether or not the file exists yet.
+
+    Inside the base root the feed may only live under the hidden knowledge tree,
+    which no source glob can match, and never among the committed entries.
+    """
+    if ".obsidian" in {part.casefold() for part in output.parts}:
+        raise ObsidianExportError("graph feed output cannot be inside .obsidian")
+    if not output.is_relative_to(base.root):
+        return
+    knowledge = base.root / KNOWLEDGE_DIRECTORY
+    if not output.is_relative_to(knowledge) or output.is_relative_to(entries_root(base.root)):
         raise ObsidianExportError(
-            f"graph feed output overlaps registered source root: {spec.id}"
+            f"graph feed output inside base {base.name} must lie under {KNOWLEDGE_DIRECTORY}/, "
+            "outside entries/, where no source glob matches"
         )
 
 
@@ -43,7 +44,7 @@ def build_plugin_graph(view: GraphView) -> dict[str, Any]:
     """Build the typed, read-only graph consumed by the Obsidian plugin.
 
     Every entry and every accepted edge is included; staleness is reported by
-    ``kgdistiller check`` and never filters the feed.
+    ``kgd check`` and never filters the feed.
     """
     concepts = [
         {
@@ -100,9 +101,8 @@ def build_plugin_graph(view: GraphView) -> dict[str, Any]:
         raise ObsidianExportError(f"graph feed violates {PLUGIN_GRAPH_SCHEMA}: {error}") from error
 
 
-def export_obsidian_graph(repo_root: Path, output_file: Path, *, registry: Path) -> dict[str, Any]:
+def export_obsidian_graph(base: Base, output_file: Path) -> dict[str, Any]:
     """Atomically write the plugin feed for the current entry store."""
-    repo_root = repo_root.resolve()
     if output_file.is_symlink():
         raise ObsidianExportError("graph feed output must not be a symlink")
     if output_file.suffix.lower() != ".json":
@@ -110,9 +110,9 @@ def export_obsidian_graph(repo_root: Path, output_file: Path, *, registry: Path)
     if output_file.exists() and not output_file.is_file():
         raise ObsidianExportError("graph feed output is not an ordinary file")
     output_file = output_file.resolve()
-    _validate_output_boundary(repo_root, output_file, registry)
+    _validate_output_boundary(base, output_file)
     try:
-        view = load_graph_view(repo_root, registry)
+        view = load_graph_view(base)
     except QueryError as error:
         raise ObsidianExportError(f"cannot load the entry store: {error}") from error
     plugin_graph = build_plugin_graph(view)

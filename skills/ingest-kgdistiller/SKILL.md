@@ -18,8 +18,10 @@ keys and action codes, and raw errors unchanged.
 ## Load the write contract
 
 Read [references/transaction-contract.md](references/transaction-contract.md)
-completely before the first write. Use the public
-`kgdistiller --repo-root PROJECT` CLI.
+completely before the first write. Use the public `kgd` CLI with
+`--base B` after every command (`kgd check --base B`), or run it inside the
+registered base root; relative paths are resolved against the working
+directory.
 
 Start with `agent status` (entry and edge counts) and `check`. A store with
 errors cannot accept a transaction until they are repaired; entries reported as
@@ -43,16 +45,18 @@ create new identities from them.
 
 Every entry cites one registered source by path and line range, and its
 `evidence` must equal those lines exactly. Source documents are any registered
-text format and are never edited. A source's user-registered `document_type`
-restricts the allowed `kind` values; it never creates identities or bypasses
-review.
+text format and are never edited. Each source has exactly one document type,
+registered in the home: a glob in `bases.B.sources` of
+`$KGDISTILLER_HOME/config.json` maps it to `$KGDISTILLER_HOME/types/<type>.md`.
+That type's `node_kinds` restrict the allowed `kind` values; it never creates
+identities or bypasses review.
 
 ## Plan, review, then apply
 
 1. Run:
 
    ```sh
-   kgdistiller --repo-root PROJECT ingest plan PLAN_REQUEST.json --output PLAN.json
+   kgd ingest plan PLAN_REQUEST.json --output PLAN.json --base B
    ```
 
    The request's `mode` must be `plan`. Planning applies the delta in memory,
@@ -62,16 +66,15 @@ review.
 3. Apply the same request with `mode: apply`:
 
    ```sh
-   kgdistiller --repo-root PROJECT ingest apply APPLY_REQUEST.json \
-     --receipt RECEIPT.json
+   kgd ingest apply APPLY_REQUEST.json --receipt RECEIPT.json --base B
    ```
 
 4. Accept only `kgdistiller-ingest-receipt-v1` with `status: committed`, then run
    `check` and `agent status` and confirm the counts match the receipt.
 5. Refresh the Obsidian graph feed only when the user uses it:
-   `kgdistiller --repo-root PROJECT export obsidian`.
+   `kgd export obsidian --base B`.
 
-The engine owns the writer lock, semantic re-validation against the current
+The engine owns the home lock (`$KGDISTILLER_HOME/lock`), semantic re-validation against the current
 store, atomic installation, crash recovery and idempotency. A failed transaction
 returns a stable error code and leaves the store unchanged.
 

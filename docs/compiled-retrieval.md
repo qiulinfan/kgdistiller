@@ -73,8 +73,8 @@ kgdistiller agent compiled --library library.json inventory 'an authored term or
 kgdistiller agent compiled --library library.json pack 'first reference' 'second reference' --budget 24000
 ```
 
-Paths are supplied by the caller. These commands do not require vault
-registration. MCP exposes the same operations through `kg_compiled_knowledge`
+Paths are supplied by the caller. These commands need no registered base or
+home. MCP exposes the same operations through `kg_compiled_knowledge`
 with an absolute `library_path` and `operation: search|browse|get|inventory|pack`.
 The inventory operation requires `term` and accepts no ranking limit or packing
 budget.

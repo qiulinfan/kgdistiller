@@ -18,9 +18,9 @@ from urllib.parse import quote, unquote
 
 from .capture import CaptureError, _inside, capture_record, prepare_captures
 from .entries import SECTION_TITLES, cited_text, entry_relative, slug_id, split_lines
+from .home import atomic_write_text, knowledge_root
 from .ingest import IngestPaths, apply_ingest, load_receipt, load_request
-from .knowledge_paths import knowledge_root
-from .knowledge_store import atomic_write_text, entries_root, load_state
+from .knowledge_store import entries_root, load_state
 
 SCHEMA = "kgdistiller-checkbox-review-v1"
 _HEADER = re.compile(r"^<!-- kgdistiller-harvest-review: (\S+) -->$")
@@ -40,7 +40,7 @@ def _write(path: Path, content: str) -> None:
 
 
 def _sheet_path(paths: IngestPaths, value: Path) -> Path:
-    root = paths.repo_root.resolve()
+    root = paths.base.root
     sheet = _inside(root, value, "sheet")
     if sheet.suffix.lower() != ".md":
         raise HarvestError("a harvest sheet must be a Markdown file")
@@ -213,7 +213,7 @@ def prepare_harvest(
         or not isinstance(payload["captures"], list) or not payload["captures"]
     ):
         raise HarvestError("harvest input must contain a non-empty captures array")
-    root = paths.repo_root.resolve()
+    root = paths.base.root
     sheet = _sheet_path(paths, sheet_path)
     output = _inside(root, output_dir, "output_dir")
     text = _read_exact(sheet) if sheet.exists() else "# Definition sheet\n\nCoverage: partial\n"
@@ -328,7 +328,7 @@ def _refresh_sheet(sheet: Path, root: Path, manifest: dict[str, Any], selected: 
 
 def apply_harvest(paths: IngestPaths, sheet_path: Path, output_dir: Path) -> dict[str, Any]:
     """Apply only checked reviewed tasks, then link the committed entries."""
-    root = paths.repo_root.resolve()
+    root = paths.base.root
     sheet = _sheet_path(paths, sheet_path)
     text = _read_exact(sheet)
     manifest_path = _manifest_path(root, sheet, text)

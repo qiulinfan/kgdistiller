@@ -75,7 +75,7 @@ class ClaudeProductTests(unittest.TestCase):
             {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")},
             {item["name"] for item in manifest["skills"]},
         )
-        self.assertEqual(4, len(manifest["agents"]))
+        self.assertEqual(3, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
         self.assertEqual(
             len({item["id"] for item in manifest["workflows"]}),
@@ -144,7 +144,7 @@ class ClaudeProductTests(unittest.TestCase):
             )
             self.assertEqual("linked", linked["status"])
             self.assertEqual(self.expected_skills, linked["skills"])
-            self.assertEqual(4, linked["agents"])
+            self.assertEqual(3, linked["agents"])
             self.assertEqual([], linked["adopted"])
             self.assertEqual(str(home), linked["claude_home"])
             self.assertEqual(["CLAUDE.md", "settings.json"], linked["protected"])
@@ -168,7 +168,6 @@ class ClaudeProductTests(unittest.TestCase):
                 [
                     "agents/kgdistiller-note-curator.md",
                     "agents/kgdistiller-query-reviewer.md",
-                    "agents/kgdistiller-related-work-scout.md",
                     "agents/kgdistiller-transaction-reviewer.md",
                 ],
                 installed_agents,

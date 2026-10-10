@@ -149,9 +149,10 @@ class IngestTest(unittest.TestCase):
             apply_ingest(self.paths, self.create_beta())
         self.assertEqual(caught.exception.code, "stale-evidence")
         self.fixture.write_source(SOURCE, TEXT)
-        self.fixture.document_types = {"notes": {"node_kinds": ["concept"], "extraction_guidance": "Ideas."}}
-        self.fixture.sources[0]["document_type"] = "notes"
-        self.fixture.write_registry()
+        self.fixture.types = {"notes": {"node_kinds": ["concept"], "guidance": "Ideas."}}
+        self.fixture.sources = {"notes/**/*": "notes"}
+        self.fixture.write_home()
+        self.paths = self.fixture.paths
         with self.assertRaises(IngestError) as caught:
             apply_ingest(self.paths, self.create_beta())
         self.assertEqual(caught.exception.code, "kind-not-allowed")
@@ -203,10 +204,20 @@ class IngestTest(unittest.TestCase):
     def test_crash_is_recovered_before_the_next_write(self) -> None:
         request_file = self.root / "request.json"
         request_file.write_text(json.dumps(self.create_beta()), encoding="utf-8")
-        environment = dict(os.environ, KGDISTILLER_INGEST_CRASH_STAGE="installed-entry",
-                           PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+        script = (
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "from kgdistiller.home import resolve_base\n"
+            "from kgdistiller.ingest import IngestPaths, apply_ingest, load_request\n"
+            "def crash(stage):\n"
+            "    if stage == 'installed-entry':\n"
+            "        os._exit(86)\n"
+            "paths = IngestPaths(resolve_base('kb', Path.cwd()))\n"
+            "apply_ingest(paths, load_request(Path(sys.argv[1]), mode='apply'), failure_injector=crash)\n"
+        )
         crashed = subprocess.run(
-            [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "ingest", "apply", "request.json"],
+            [sys.executable, "-c", script, str(request_file)],
             capture_output=True, text=True, env=environment, check=False)
         self.assertEqual(crashed.returncode, 86, crashed.stderr)
         self.assertTrue(journal_path(self.paths).exists())
@@ -223,7 +234,9 @@ class IngestTest(unittest.TestCase):
     def test_recovery_rejects_unmanaged_journal_targets(self) -> None:
         notes = self.root / SOURCE
         before = notes.read_bytes()
-        for target in (SOURCE, ".knowledge/sources.json", ".knowledge/entries/../sources.json",
+        unmanaged = self.root / ".knowledge/SPEC.md"
+        unmanaged.write_text("Owner notes about this base.\n", encoding="utf-8")
+        for target in (SOURCE, ".knowledge/SPEC.md", ".knowledge/entries/../SPEC.md",
                        ".knowledge/entries/Bad.md"):
             with self.subTest(target=target):
                 journal_path(self.paths).parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +248,7 @@ class IngestTest(unittest.TestCase):
                     apply_ingest(self.paths, self.create_beta())
                 self.assertEqual(caught.exception.code, "install-failed")
                 self.assertEqual(notes.read_bytes(), before)
-                self.assertTrue((self.root / ".knowledge/sources.json").is_file())
+                self.assertTrue(unmanaged.is_file())
         journal_path(self.paths).unlink()
 
     def test_request_validation(self) -> None:
@@ -263,18 +276,18 @@ class IngestTest(unittest.TestCase):
         for mode in ("plan", "apply"):
             (self.root / f"{mode}.json").write_text(json.dumps(self.create_beta(mode=mode)), encoding="utf-8")
         environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
-        base = [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "ingest"]
-        planned = subprocess.run(base + ["plan", "plan.json"], capture_output=True, text=True,
-                                 env=environment, check=False)
+        command = [sys.executable, "-m", "kgdistiller", "ingest"]
+        planned = subprocess.run(command + ["plan", "plan.json", "--base", "kb"], capture_output=True, text=True,
+                                 env=environment, cwd=self.root, check=False)
         self.assertEqual(planned.returncode, 0, planned.stderr)
         self.assertEqual(json.loads(planned.stdout)["status"], "planned")
-        applied = subprocess.run(base + ["apply", "apply.json", "--receipt", "receipt.json"],
-                                 capture_output=True, text=True, env=environment, check=False)
+        applied = subprocess.run(command + ["apply", "apply.json", "--receipt", "receipt.json", "--base", "kb"],
+                                 capture_output=True, text=True, env=environment, cwd=self.root, check=False)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         self.assertEqual(json.loads(applied.stdout)["request_id"], "req-1")
         self.assertEqual(json.loads((self.root / "receipt.json").read_text())["status"], "committed")
-        failed = subprocess.run(base + ["apply", "plan.json"], capture_output=True, text=True,
-                                env=environment, check=False)
+        failed = subprocess.run(command + ["apply", "plan.json"], capture_output=True, text=True,
+                                env=environment, cwd=self.root, check=False)
         self.assertEqual(failed.returncode, 1)
         self.assertEqual(json.loads(failed.stderr)["error"]["code"], "invalid-request")
 

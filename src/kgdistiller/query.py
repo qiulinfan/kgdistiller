@@ -4,7 +4,7 @@ A :class:`GraphView` is one complete in-memory view of the entries under
 ``.knowledge/entries/`` and the accepted edges in ``.knowledge/edges.jsonl``.
 Callers may retain a view for a request, but should load a fresh view for each
 independent CLI or MCP operation. Staleness of an entry's Evidence never hides
-it from a query; ``kgdistiller check`` reports it instead.
+it from a query; ``kgd check`` reports it instead.
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ from .entries import (
     identity_key,
     validate_id,
 )
+from .home import Base, KnowledgeError
 from .knowledge_store import (
     SEMANTIC_RELATIONS,
     KnowledgeState,
     load_state,
 )
-from .sources import KnowledgeError
 from .tokens import tokenize
 
 QUERY_STATUS_SCHEMA = "kgdistiller-query-status-v1"
@@ -77,23 +77,24 @@ class GraphView:
     aliases: dict[str, tuple[str, ...]]
 
     @classmethod
-    def load(cls, repo_root: Path, registry: Path) -> GraphView:
+    def load(cls, base: Base) -> GraphView:
         """Read the store, refusing while an ingest install is in progress or interrupted."""
         from .ingest import IngestPaths, journal_path
 
-        repo_root = Path(repo_root).resolve()
-        if not Path(registry).is_file():
-            raise QueryError(f"no source registry at {registry}; run kgdistiller init first")
-        if journal_path(IngestPaths(repo_root=repo_root, registry=Path(registry))).exists():
+        if journal_path(IngestPaths(base)).exists():
             raise QueryError(
                 "an ingest install is in progress or was interrupted; "
-                "rerun or recover it with kgdistiller ingest apply before querying"
+                f"rerun or recover it with `kgd ingest apply REQUEST --base {base.name}` before querying"
             )
+        check_hint = f"run `kgd check --base {base.name}` to list every problem"
         try:
-            state = load_state(repo_root)
+            state = load_state(base.root)
         except (KnowledgeError, OSError, UnicodeError) as error:
-            raise QueryError(f"{error}; run kgdistiller check to list every problem") from error
-        return cls.from_state(repo_root, state)
+            raise QueryError(f"{error}; {check_hint}") from error
+        try:
+            return cls.from_state(base.root, state)
+        except QueryError as error:
+            raise QueryError(f"{error}; {check_hint}") from error
 
     @classmethod
     def from_state(cls, repo_root: Path, state: KnowledgeState) -> GraphView:
@@ -109,7 +110,7 @@ class GraphView:
                 if endpoint not in nodes:
                     raise QueryError(
                         f"edge {edge['source']} {edge['relation']} {edge['target']} "
-                        f"has no entry for {endpoint}; run kgdistiller check"
+                        f"has no entry for {endpoint}"
                     )
             outgoing[edge["source"]].append(edge)
             incoming[edge["target"]].append(edge)
@@ -130,8 +131,8 @@ class GraphView:
         )
 
 
-def load_graph_view(repo_root: Path, registry: Path) -> GraphView:
-    return GraphView.load(repo_root, registry)
+def load_graph_view(base: Base) -> GraphView:
+    return GraphView.load(base)
 
 
 def _node_id(value: Any, label: str) -> str:

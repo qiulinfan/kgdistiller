@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .document_types import load_document_types, validate_node_kind
 from .entries import (
     LIST_SECTIONS,
     UNDERSTANDING_STATES,
@@ -23,6 +22,7 @@ from .entries import (
     split_lines,
     validate_id,
 )
+from .home import KNOWLEDGE_DIRECTORY, KnowledgeError
 from .ingest import (
     CAPABILITY,
     REQUEST_SCHEMA,
@@ -39,7 +39,6 @@ from .knowledge_store import (
     identity_index,
     load_state,
 )
-from .sources import KnowledgeError, load_sources, source_for_path
 
 PAYLOAD_KEYS = {
     "label", "id", "source", "line_start", "line_end", "kind", "aliases", "text", "entry", "review",
@@ -65,10 +64,10 @@ def _inside(root: Path, value: str | Path, field: str) -> Path:
         raise CaptureError(f"{field} must be a single path")
     raw = Path(value)
     if ".." in raw.parts:
-        raise CaptureError(f"{field} must stay inside the project")
+        raise CaptureError(f"{field} must stay inside the base root")
     path = (raw if raw.is_absolute() else root / raw).resolve()
     if not path.is_relative_to(root) or path == root:
-        raise CaptureError(f"{field} must stay inside the project")
+        raise CaptureError(f"{field} must stay inside the base root")
     return path
 
 
@@ -112,17 +111,16 @@ def capture_record(
     extras = payload.get("entry", {})
     if not isinstance(extras, dict) or set(extras) - ENTRY_KEYS:
         raise CaptureError(f"entry may contain only: {', '.join(sorted(ENTRY_KEYS))}")
-    root = paths.repo_root.resolve()
+    root = paths.base.root
     if state is None:
         state = load_state(root)
-    specs = load_sources(root, paths.registry)
     source = _inside(root, _text(payload, "source"), "source")
-    try:
-        owner = source_for_path(specs, source)
-    except KnowledgeError as error:
-        raise CaptureError(str(error)) from error
     if not source.is_file():
         raise CaptureError(f"source file does not exist: {source.relative_to(root).as_posix()}")
+    try:
+        owner = paths.base.type_of(source.relative_to(root))
+    except KnowledgeError as error:
+        raise CaptureError(str(error)) from error
     try:
         with source.open("r", encoding="utf-8", newline=None) as handle:
             lines = split_lines(handle.read())
@@ -158,10 +156,8 @@ def capture_record(
         record = {key: value for key, value in existing.items()
                   if key not in {"context", "role", *LIST_SECTIONS} or key not in extras}
     kind = _text(payload, "kind") if "kind" in payload else record["kind"]
-    try:
-        validate_node_kind(kind, owner.document_type, load_document_types(paths.registry))
-    except KnowledgeError as error:
-        raise CaptureError(str(error)) from error
+    if kind not in owner.node_kinds:
+        raise CaptureError(f"node kind {kind!r} is not allowed by document type {owner.name!r}")
     aliases = _string_list(payload["aliases"], "aliases") if "aliases" in payload else list(record["aliases"])
     if (
         existing is not None
@@ -201,11 +197,11 @@ def capture_record(
 
 
 def _check_output(paths: IngestPaths, output_dir: Path) -> Path:
-    root = paths.repo_root.resolve()
+    root = paths.base.root
     output = _inside(root, output_dir, "output_dir")
-    specs = load_sources(root, paths.registry)
-    if any(output == spec.root or output.is_relative_to(spec.root) for spec in specs):
-        raise CaptureError("output_dir must be outside registered source roots")
+    knowledge = root / KNOWLEDGE_DIRECTORY
+    if not output.is_relative_to(knowledge) or output == knowledge:
+        raise CaptureError(f"output_dir must lie under {KNOWLEDGE_DIRECTORY}/, where no source glob matches")
     entries = entries_root(root)
     if output == entries or output.is_relative_to(entries):
         raise CaptureError("output_dir must be outside the committed entries")
@@ -234,7 +230,7 @@ def prepare_captures(
     """Prepare reviewed captures as one plan request and one apply request."""
     if not isinstance(payloads, list) or not payloads:
         raise CaptureError("captures must be a non-empty array")
-    root = paths.repo_root.resolve()
+    root = paths.base.root
     output = _check_output(paths, output_dir)
     state = load_state(root)
     captures = [capture_record(paths, payload, state) for payload in payloads]
@@ -249,7 +245,7 @@ def prepare_captures(
         "remove_entries": [], "add_edges": [], "remove_edges": [],
     }
     try:
-        apply_delta(state, delta, root, paths.registry)
+        apply_delta(state, delta, paths.base)
     except StoreError as error:
         raise CaptureError(f"{error.code}: {error}") from error
     output.mkdir(parents=True, exist_ok=True)

@@ -48,10 +48,6 @@
       "path": "skills/ingest-kgdistiller"
     },
     {
-      "name": "paper-related-work",
-      "path": "skills/paper-related-work"
-    },
-    {
       "name": "query-kgdistiller",
       "path": "skills/query-kgdistiller"
     }
@@ -66,11 +62,6 @@
       "name": "query-reviewer",
       "path": ".claude/agents/query-reviewer.md",
       "install_as": "kgdistiller-query-reviewer.md"
-    },
-    {
-      "name": "related-work-scout",
-      "path": ".claude/agents/related-work-scout.md",
-      "install_as": "kgdistiller-related-work-scout.md"
     },
     {
       "name": "transaction-reviewer",
@@ -142,18 +133,6 @@
           "skill": "harvest-paper",
           "agent": null,
           "mode": "transaction"
-        }
-      ]
-    },
-    {
-      "id": "paper-related-work",
-      "description": "Explicit command only: related-work research with bounded non-recursive scouts, grouped successors and source-backed explanations; no default time limit or natural-language activation.",
-      "steps": [
-        {
-          "id": "research",
-          "skill": "paper-related-work",
-          "agent": "related-work-scout",
-          "mode": "author"
         }
       ]
     },

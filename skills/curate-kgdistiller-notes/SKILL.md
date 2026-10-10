@@ -1,12 +1,12 @@
 ---
 name: curate-kgdistiller-notes
-description: Extract and review source-grounded knowledge from registered text documents of any format, guided by their user-registered document type, resolve existing identities through query-kgdistiller, and hand one bounded update of entries and direct relations to ingest-kgdistiller. Use for raw-note ingestion, changed-note curation, and missing entries or direct relations in any kgdistiller knowledge project, including when the user asks to file or ingest a document into their kgdistiller (kgd/kgdt) knowledge base.
+description: Extract and review source-grounded knowledge from registered text documents of any format, guided by their user-registered document type, resolve existing identities through query-kgdistiller, and hand one bounded update of entries and direct relations to ingest-kgdistiller. Use for raw-note ingestion, changed-note curation, and missing entries or direct relations in any registered kgdistiller base, including when the user asks to file or ingest a document into their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Curate kgdistiller notes
 
-Turn authored notes into a reviewed update to the caller's canonical
-`.knowledge/`. Accepted knowledge is two things: one Markdown entry per node in
+Turn authored notes into a reviewed update to the caller's registered base and
+its canonical `.knowledge/`. Accepted knowledge is two things: one Markdown entry per node in
 `.knowledge/entries/<id>.md`, which cites its source path and line range and
 quotes those lines verbatim as Evidence, and the accepted direct relations in
 `.knowledge/edges.jsonl`. kgdistiller is the deterministic transaction boundary.
@@ -31,26 +31,31 @@ partial.
 Start with:
 
 ```sh
-kgdistiller --repo-root PROJECT agent status
-kgdistiller --repo-root PROJECT check
-kgdistiller --repo-root PROJECT scan --file RELATIVE_SOURCE
+kgd agent status --base B
+kgd check --base B
+kgd scan --file SOURCE --base B
 ```
+
+Pass `--base B` after every command, or run inside the registered base root;
+relative paths are resolved against the working directory.
 
 `agent status` reports the entry and edge counts. `check` must pass before a
 curation transaction, apart from entries it reports as moved (run
 `check --fix-lines` for those after confirming the source edit) or stale (report
 them; re-capturing them is a separate reviewed update).
 
-Each input must be admitted by exactly one source in `.knowledge/sources.json`.
-Use the smallest coherent registered file set. If a document is unregistered,
-propose the source ID, root, file glob, optional registered `document_type`, and
-destination; obtain review before moving it or expanding a glob. `scan --file`
-returns the file's `document_type`, its `profile` (`node_kinds`,
-`extraction_guidance`) and the numbered lines. Follow the user's profile;
+Each input must be a registered source: a file matched by the base's globs in
+`$KGDISTILLER_HOME/config.json`, mapped to exactly one document type. Use the
+smallest coherent registered file set. If a document is unregistered, propose a
+glob→type entry under `bases.B.sources` in `$KGDISTILLER_HOME/config.json`
+(naming an existing type in `$KGDISTILLER_HOME/types/`, or a new type file for
+the user to author) and any destination; obtain review before editing the home
+configuration, moving the document or widening a glob. `scan --file` returns
+the file's base, its `type`, its `profile` (`node_kinds`, `relation_kinds`,
+`epistemic`, `guidance`) and the numbered lines. Follow the user's type;
 document type is separate from file format and knowledge domain. Do not
-hardcode document classes or infer extraction policy from an extension. An
-absent profile makes no classification claim; use the explicitly requested
-scope without silently adding a profile.
+hardcode document classes or infer extraction policy from an extension. There
+is no source without a type.
 
 Read [references/curation-contract.md](references/curation-contract.md) before
 extracting. Never infer identity from headings, order, syntax wrappers,
@@ -69,9 +74,9 @@ contract. Do not write entries or choose identity from similarity yet.
 Resolve the whole batch with `$query-kgdistiller`:
 
 ```sh
-kgdistiller --repo-root PROJECT agent resolve "LABEL" "ALIAS" ...
-kgdistiller --repo-root PROJECT agent search "LABEL OR DEFINING PHRASE"
-kgdistiller --repo-root PROJECT agent get ENTRY_ID
+kgd agent resolve "LABEL" "ALIAS" ... --base B
+kgd agent search "LABEL OR DEFINING PHRASE" --base B
+kgd agent get ENTRY_ID --base B
 ```
 
 Decide one disposition per candidate: `add` (no existing entry has this
@@ -106,8 +111,8 @@ those files as a substitute for a reviewed transaction, and never hand-edit
 accept completion only from a committed receipt followed by a passing `check`.
 
 ```sh
-kgdistiller --repo-root PROJECT check
-kgdistiller --repo-root PROJECT agent status
+kgd check --base B
+kgd agent status --base B
 ```
 
 Publishing the notes belongs to the repository that owns them; kgdistiller has

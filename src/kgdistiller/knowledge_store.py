@@ -9,15 +9,12 @@ its cited lines, ignoring whitespace.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .document_types import load_document_types
 from .entries import (
     ENTRIES_DIR,
     EntryError,
@@ -32,8 +29,14 @@ from .entries import (
     validate_id,
     validate_source_path,
 )
-from .knowledge_paths import KNOWLEDGE_DIRECTORY, knowledge_root
-from .sources import KnowledgeError, SourceSpec, load_sources, source_for_path
+from .home import (
+    KNOWLEDGE_DIRECTORY,
+    Base,
+    DocumentType,
+    KnowledgeError,
+    atomic_write_text,
+    knowledge_root,
+)
 
 EDGES_PATH = Path(KNOWLEDGE_DIRECTORY, "edges.jsonl")
 EDGE_FIELDS = ("source", "relation", "target", "origin", "confidence", "evidence")
@@ -158,25 +161,6 @@ def load_state(repo_root: Path, errors: list[dict[str, Any]] | None = None) -> K
     return state
 
 
-def atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, mode)
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
-
-
 def render_edges(edges: Iterable[dict[str, Any]]) -> str:
     rows = sorted(edges, key=edge_key)
     return "".join(
@@ -230,7 +214,7 @@ def graph_cycles(nodes: set[str], edges: Iterable[dict[str, Any]], relation: str
 
 @dataclass(frozen=True)
 class _Source:
-    spec: SourceSpec
+    type: DocumentType
     text: str
     lines: list[str]
 
@@ -240,11 +224,12 @@ def _diagnostic(code: str, message: str, **context: Any) -> dict[str, Any]:
 
 
 class _Sources:
-    """Read cited source files once, with registry admission checks."""
+    """Read cited source files once, checking that the base's globs register them."""
 
-    def __init__(self, repo_root: Path, specs: list[SourceSpec]) -> None:
-        self.repo_root = repo_root
-        self.specs = specs
+    def __init__(self, base: Base) -> None:
+        self.base = base
+        self.repo_root = base.root
+        self.registered, self.conflicts = base.source_types()
         self.cache: dict[str, _Source | dict[str, Any]] = {}
 
     def read(self, relative: str) -> _Source | dict[str, Any]:
@@ -266,17 +251,19 @@ class _Sources:
         if not path.is_file():
             return _diagnostic("missing-source", f"source file does not exist: {relative}",
                                source=relative)
-        try:
-            spec = source_for_path(self.specs, path)
-        except KnowledgeError as error:
-            return _diagnostic("source-not-registered", str(error), source=relative)
+        if relative in self.conflicts or relative not in self.registered:
+            try:
+                self.base.type_of(relative)
+            except KnowledgeError as error:
+                return _diagnostic("source-not-registered", str(error), source=relative)
+        document_type = self.base.types[self.registered[relative]]
         try:
             with path.open("r", encoding="utf-8", newline=None) as handle:
                 text = handle.read()
         except (OSError, UnicodeError) as error:
             return _diagnostic("missing-source", f"source is not readable UTF-8 text: {relative}: {error}",
                                source=relative)
-        return _Source(spec=spec, text=text, lines=split_lines(text))
+        return _Source(type=document_type, text=text, lines=split_lines(text))
 
 
 def _evidence_status(record: dict[str, Any], source: _Source) -> dict[str, Any] | None:
@@ -296,13 +283,16 @@ def _evidence_status(record: dict[str, Any], source: _Source) -> dict[str, Any] 
     return {**base, "status": "stale"}
 
 
-def validate(state: KnowledgeState, repo_root: Path, registry: Path) -> dict[str, list[dict[str, Any]]]:
+def validate(state: KnowledgeState, base: Base) -> dict[str, list[dict[str, Any]]]:
     """Check the store contract and report entries whose Evidence no longer matches."""
     errors: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
-    specs = load_sources(repo_root, registry)
-    profiles = load_document_types(registry)
-    sources = _Sources(repo_root, specs)
+    sources = _Sources(base)
+    for path, names in sorted(sources.conflicts.items()):
+        errors.append(_diagnostic(
+            "source-type-conflict",
+            f"source {path} of base {base.name} matches globs of several types: {', '.join(names)}",
+            source=path))
     names: dict[str, str] = {}
     for entry_id, record in sorted(state.entries.items()):
         for name in (record["label"], *record["aliases"]):
@@ -315,11 +305,10 @@ def validate(state: KnowledgeState, repo_root: Path, registry: Path) -> dict[str
         if isinstance(source, dict):
             errors.append({**source, "entry": entry_id})
             continue
-        document_type = source.spec.document_type
-        if document_type and record["kind"] not in profiles[document_type]["node_kinds"]:
+        if record["kind"] not in source.type.node_kinds:
             errors.append(_diagnostic(
                 "kind-not-allowed",
-                f"kind {record['kind']!r} of {entry_id} is not allowed by document type {document_type!r}",
+                f"kind {record['kind']!r} of {entry_id} is not allowed by document type {source.type.name!r}",
                 entry=entry_id))
         if record["line_end"] > len(source.lines):
             errors.append(_diagnostic(
@@ -345,15 +334,15 @@ def validate(state: KnowledgeState, repo_root: Path, registry: Path) -> dict[str
     return {"errors": errors, "stale": stale}
 
 
-def fix_lines(state: KnowledgeState, repo_root: Path, registry: Path) -> list[dict[str, Any]]:
+def fix_lines(state: KnowledgeState, base: Base) -> list[dict[str, Any]]:
     """Rewrite only the line ranges of moved entries and return what changed."""
     fixed = []
-    for item in validate(state, repo_root, registry)["stale"]:
+    for item in validate(state, base)["stale"]:
         if item["status"] != "moved":
             continue
         record = dict(state.entries[item["entry"]])
         record["line_start"], record["line_end"] = item["new_line_start"], item["new_line_end"]
-        write_entry(repo_root, record)
+        write_entry(base.root, record)
         state.entries[record["id"]] = normalize_record(record)
         fixed.append(item)
     return fixed
@@ -416,7 +405,7 @@ def _changes(before: KnowledgeState, after: KnowledgeState) -> dict[str, list[An
 
 
 def apply_delta(
-    state: KnowledgeState, delta: Any, repo_root: Path, registry: Path
+    state: KnowledgeState, delta: Any, base: Base
 ) -> tuple[KnowledgeState, dict[str, list[Any]]]:
     """Apply a reviewed delta in memory; the result must satisfy the store contract."""
     _object(delta, {"schema", *DELTA_KEYS}, "delta")
@@ -476,10 +465,10 @@ def apply_delta(
         except ValueError as error:
             raise StoreError("invalid-request", f"add_edges[{index}]: {error}") from error
         after.edges[edge_key(edge)] = edge
-    sources = _Sources(repo_root, load_sources(repo_root, registry))
+    sources = _Sources(base)
     for record in changed:
         _check_cited(record, sources)
-    errors = validate(after, repo_root, registry)["errors"]
+    errors = validate(after, base)["errors"]
     if errors:
         raise StoreError(errors[0]["code"], errors[0]["message"], errors)
     return after, _changes(state, after)

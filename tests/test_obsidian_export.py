@@ -25,7 +25,6 @@ class ObsidianGraphFeedTest(unittest.TestCase):
     def setUp(self) -> None:
         self.fixture = make_fixture(self)
         self.repo = self.fixture.root
-        self.registry = self.fixture.registry
         self.output = self.repo / ".knowledge/build/obsidian/semantic-graph.json"
         self.authority = self.fixture.write_source("notes/chapter.tex", CHAPTER)
         self.fixture.add_entry("sigma-algebra", "Sigma algebra", "notes/chapter.tex", 1, 3,
@@ -36,7 +35,7 @@ class ObsidianGraphFeedTest(unittest.TestCase):
                               evidence="A measure is defined on a sigma algebra.")
 
     def export(self, output: Path | None = None) -> dict:
-        return export_obsidian_graph(self.repo, output or self.output, registry=self.registry)
+        return export_obsidian_graph(self.fixture.base, output or self.output)
 
     def feed(self) -> dict:
         return json.loads(self.output.read_text(encoding="utf-8"))
@@ -109,15 +108,23 @@ class ObsidianGraphFeedTest(unittest.TestCase):
                 validate_contract(payload)
 
     def test_output_must_be_a_json_file_outside_sources_and_obsidian(self) -> None:
+        outside = "must lie under .knowledge/, outside entries/"
         cases = (
             (self.repo / ".knowledge/build/obsidian/graph.txt", "must be a .json file"),
-            (self.repo / "notes/graph.json", "overlaps registered source root"),
-            (self.repo / ".obsidian/graph.json", "cannot be the project root or .obsidian"),
+            (self.repo / ".obsidian/graph.json", "cannot be inside .obsidian"),
+            (self.repo / "notes/graph.json", outside),
+            (self.repo / "graph.json", outside),
+            (self.repo / ".knowledge/entries/graph.json", outside),
         )
         for output, message in cases:
             with self.subTest(output=output), self.assertRaisesRegex(ObsidianExportError, message):
                 self.export(output)
             self.assertFalse(output.exists())
+
+    def test_output_outside_the_base_root_is_allowed(self) -> None:
+        output = self.repo.parent / "feeds/graph.json"
+        self.export(output)
+        self.assertTrue(output.is_file())
 
     def test_symlinked_output_is_rejected(self) -> None:
         target = self.repo / "elsewhere.json"
@@ -143,7 +150,7 @@ class ObsidianGraphFeedTest(unittest.TestCase):
         self.export()
         baseline = self.output.read_bytes()
         with (
-            patch("kgdistiller.knowledge_store.os.replace", side_effect=OSError("interrupted")),
+            patch("kgdistiller.home.os.replace", side_effect=OSError("interrupted")),
             self.assertRaisesRegex(OSError, "interrupted"),
         ):
             self.export()

@@ -5,7 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import chdir, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,7 +19,7 @@ from kgdistiller.obsidian_plugin import (
     ObsidianPluginError,
     install_obsidian_plugin,
 )
-from kgdistiller.vault_registry import register_vault
+from tests.knowledge_fixture import use_temporary_home
 
 
 class ObsidianPluginInstallTest(unittest.TestCase):
@@ -97,48 +97,44 @@ class ObsidianPluginInstallTest(unittest.TestCase):
         self.assertFalse(self.plugin.exists())
         self.assertEqual("{}\n", configuration.read_text(encoding="utf-8"))
 
-    def test_cli_installs_for_explicit_vault(self) -> None:
+    def cli(self, cwd: Path, *arguments: str) -> tuple[int, str, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
-        arguments = [
-            "kgdistiller",
-            "--repo-root",
-            str(self.vault),
-            "obsidian",
-            "install",
-        ]
-        with patch.object(sys, "argv", arguments), redirect_stdout(
+        with patch.object(sys, "argv", ["kgdistiller", *arguments]), chdir(cwd), redirect_stdout(
             stdout
         ), redirect_stderr(stderr):
             status = main()
+        return status, stdout.getvalue(), stderr.getvalue()
 
-        self.assertEqual(0, status, stderr.getvalue())
-        self.assertEqual("installed", json.loads(stdout.getvalue())["status"])
-        self.assertEqual("", stderr.getvalue())
+    def register(self) -> Path:
+        use_temporary_home(self)
+        unrelated = Path(self.temporary.name).resolve()
+        status, _, stderr = self.cli(unrelated, "base", "add", str(self.vault), "--name", "notes")
+        self.assertEqual(0, status, stderr)
+        return unrelated
 
-    def test_cli_installs_for_registered_vault_from_any_directory(self) -> None:
-        home = Path(self.temporary.name) / "user-state"
-        register_vault(self.vault, name="notes", home=home)
-        stdout = io.StringIO()
-        stderr = io.StringIO()
-        arguments = [
-            "kgdistiller",
-            "--kgdistiller-home",
-            str(home),
-            "--vault",
-            "notes",
-            "obsidian",
-            "install",
-        ]
-        with patch.object(sys, "argv", arguments), redirect_stdout(
-            stdout
-        ), redirect_stderr(stderr):
-            status = main()
+    def test_cli_installs_for_a_named_base_from_an_unrelated_directory(self) -> None:
+        unrelated = self.register()
+        status, stdout, stderr = self.cli(unrelated, "obsidian", "install", "--base", "notes")
+        self.assertEqual(0, status, stderr)
+        self.assertEqual("", stderr)
+        result = json.loads(stdout)
+        self.assertEqual("installed", result["status"])
+        self.assertEqual(str(self.vault.resolve()), result["vault"])
 
-        self.assertEqual(0, status, stderr.getvalue())
-        self.assertEqual(
-            str(self.vault.resolve()), json.loads(stdout.getvalue())["vault"]
-        )
+    def test_cli_installs_for_the_base_containing_the_working_directory(self) -> None:
+        self.register()
+        status, stdout, stderr = self.cli(self.vault / ".obsidian", "obsidian", "install")
+        self.assertEqual(0, status, stderr)
+        self.assertEqual(str(self.vault.resolve()), json.loads(stdout)["vault"])
+
+    def test_cli_refuses_outside_every_registered_base(self) -> None:
+        unrelated = self.register()
+        status, stdout, stderr = self.cli(unrelated, "obsidian", "install")
+        self.assertEqual(1, status)
+        self.assertEqual("", stdout)
+        self.assertIn("not inside any registered base root", stderr)
+        self.assertFalse(self.plugin.exists())
 
 
 if __name__ == "__main__":

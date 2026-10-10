@@ -12,4 +12,6 @@ installation. The `skills` and `workflows` sections of
 `workflows/manifest.json`. `scripts/link-claude-skills.sh` /
 `scripts/link-claude-skills.ps1` remain a skills-only development shortcut;
 the full installer adopts symlinks they created. The agent-facing install
-recipe lives in the README.
+recipe lives in the README. Home and base registration (`kgd base add`, the
+`sources` globs in `$KGDISTILLER_HOME/config.json`, and `types/`) is specified
+in `docs/deployment.md`.

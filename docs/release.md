@@ -7,9 +7,6 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 
 | Contract | Read | Write | Role |
 | --- | --- | --- | --- |
-| `kgdistiller-vault-v1` | yes | yes | Portable stable vault identity. |
-| `kgdistiller-vault-registry-v1` | yes | yes | Machine-local name/UUID/path locator. |
-| `kgdistiller-sources-v1` | yes | yes | Registered source documents of any text format and optional user-owned document type profiles. |
 | `kgdistiller-entry-v1` | yes | yes | One reviewed entry per node: Obsidian properties (id, label, kind, aliases, source, line range, understanding), human sections and a verbatim Evidence quote. |
 | `kgdistiller-agent-delta-v1` | yes | yes | Reviewed delta of entries (create, update, remove) and edges (add, remove). |
 | `kgdistiller-ingest-request-v1` | yes | yes | Transactional reviewed write request. |
@@ -77,22 +74,30 @@ Then verify that:
   `.codex/agents` and `.claude/agents` presets, and the three-file Obsidian
   plugin bundle;
 - an isolated environment installs the wheel and runs
-  `scripts/smoke_installed_runtime.py`: `init` with a plain-text source,
-  `scan --file` with numbered lines, capture plus ingest plan/apply (including a
-  CJK label with an explicit id), `check` printing `OK`, a source edit that
-  shifts lines reported as moved, `check --fix-lines` restoring `OK`,
-  `agent status`/`resolve`/`search` (including a CJK query), vault registration,
+  `scripts/smoke_installed_runtime.py` with `KGDISTILLER_HOME` set to a
+  temporary directory: a command before the home exists refuses without
+  creating it; `base add ROOT --name research` creates the home
+  (`config.json`, `types/`, `.gitignore`) and `ROOT/.knowledge/entries/`;
+  a source glob and a temporary document type are registered; then
+  `scan --file` with numbered lines and the type profile, capture plus ingest
+  plan/apply (including a CJK label with an explicit id), `check` printing
+  `OK`, a source edit that shifts lines reported as moved, `check --fix-lines`
+  restoring `OK`, `agent status`/`resolve`/`search` (including a CJK query),
   plugin installation and `export obsidian` validated against
   `kgdistiller-obsidian-graph-v1`;
-- installed `kgdistiller`/`kgdistiller.exe` registers and queries a vault from
-  an unrelated working directory on Linux, Windows, and macOS;
-- the installed wheel atomically installs the Obsidian plugin into a vault,
+- installed `kgdistiller`/`kgdistiller.exe` resolves the base with `--base`
+  from an unrelated working directory and from a working directory inside the
+  base root, and refuses outside every registered root without `--base`, on
+  Linux, Windows, and macOS;
+- every test and the smoke script use a temporary `KGDISTILLER_HOME` and never
+  read or write the real home;
+- the installed wheel atomically installs the Obsidian plugin into a base,
   configures it as enabled, and preserves existing plugin settings on update;
 - sources of any extension are read as text, and no command parses source
   syntax or converts a source;
 - `check` reports every store error and every moved, stale or ambiguous entry,
   exits 1 for any of them, and `--fix-lines` rewrites only moved line ranges
-  under the writer lock;
+  under the home lock;
 - transactional plan/apply, replay versus `request-conflict`, every semantic
   re-validation error, lock conflict, fault injection and crash recovery pass,
   with no content hash anywhere in requests, receipts or stored knowledge;

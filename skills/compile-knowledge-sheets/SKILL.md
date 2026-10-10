@@ -19,20 +19,21 @@ formulas and raw errors.
 
 Read [references/sheet-contract.md](references/sheet-contract.md) before
 creating or refreshing a view. Establish the caller's source files, source
-version/locators, registered knowledge project, output location and requested
-coverage. Respect existing filenames; otherwise use `def-sheet.md` and
+version/locators, registered base, output location and requested coverage. Respect existing filenames; otherwise use `def-sheet.md` and
 `pending-sheet.md` beside the selected source or in its caller-selected folder.
 Do not assume a paper corpus, paper-reading vault or prior sheet layout.
 
-Run `kgdistiller --repo-root PROJECT scan --file RELATIVE_SOURCE` for each
-selected source. It returns the source's `document_type`, its `profile`
-(`node_kinds` and `extraction_guidance`, the user-registered extraction rules)
-and every line with its 1-based number. A source is any registered UTF-8 text
-document; kgdistiller never parses its syntax, so the profile, not the file
-format, guides extraction. Do not impose a fixed catalog of document classes.
-An unassigned source keeps the explicitly requested scope until the user
-registers a profile. Cite the source directly by path and line range; no
-conversion is involved.
+Run `kgd scan --file SOURCE --base B` for each selected source, passing
+`--base B` after every command or running inside the registered base root;
+relative paths are resolved against the working directory. It returns the
+source's base and `type`, its `profile` (`node_kinds`, `relation_kinds`,
+`epistemic` and `guidance`, the user-registered extraction rules from
+`$KGDISTILLER_HOME/types/<type>.md`) and every line with its 1-based number. A
+source is a UTF-8 text document matched by the base's globs, and every source
+has exactly one type; kgdistiller never parses its syntax, so the profile, not
+the file format, guides extraction. Do not impose a fixed catalog of document
+classes. Cite the source directly by path and line range; no conversion is
+involved.
 
 Partial sheets are normal. Use the explicitly selected concepts or passages as
 the scope; do not fill every missing row or initiate full-source distillation.
@@ -67,7 +68,8 @@ Store only direct gaps in `pending_prerequisites`, retaining the term, required
 meaning and use context. When the user chooses to learn a pending concept, its
 own entry may expose the next layer; do not recursively resolve the chain now.
 
-Apply the registered profile's node kinds and extraction guidance. For example,
+Apply the registered type's node kinds, relation kinds, epistemic values and
+guidance. For example,
 the shared model admits mathematical definitions, axioms and theorems, and
 computer-science algorithms and architectures as knowledge nodes. Propositions
 and remarks express relations; examples and experiments express typed
@@ -77,7 +79,7 @@ Use `$curate-kgdistiller-notes`, `$query-kgdistiller`, `$capture-kgdistiller`
 and `$ingest-kgdistiller` within their current supported contracts. Compilation
 alone does not authorize live writes; apply only the concrete reviewed content
 and target already authorized by the user, or obtain confirmation for that scope.
-Do not bootstrap or migrate a knowledge project, and never hand-edit
+Do not register or migrate a base, and never hand-edit
 `.knowledge/edges.jsonl`.
 
 Atomic entries support simple direct pending prerequisites and understanding.

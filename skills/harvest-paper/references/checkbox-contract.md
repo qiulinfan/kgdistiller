@@ -7,11 +7,13 @@ extraction or selection conversation.
 
 ## Prepare the review once
 
-Use the current registered project and the existing source def sheet:
+Use the current registered base and the existing source def sheet. Pass
+`--base B` after the command, or run inside the registered base root; relative
+paths are resolved against the working directory:
 
 ```sh
-kgdistiller --repo-root PROJECT harvest prepare CAPTURES.json \
-  --sheet DEF_SHEET.md --output .knowledge/build/reviews/HARVEST
+kgd harvest prepare CAPTURES.json \
+  --sheet DEF_SHEET.md --output .knowledge/build/reviews/HARVEST --base B
 ```
 
 `CAPTURES.json` contains a nonempty `captures` array of ordinary reviewed
@@ -52,7 +54,7 @@ fields (label, kind, aliases, understanding), the entry sections before and
 after, the identity review, the cited source range and the Evidence quote. It
 binds generated task rows to these frozen proposals and returns
 `status: prepared`. It does not ingest the candidates. The review directory
-must be inside the project. The sheet must be Markdown outside
+must be inside the base root. The sheet must be Markdown outside
 `.knowledge/entries/` and separate from the cited source. To append candidates
 to the same sheet, use that sheet's existing review directory. A sheet that does
 not exist yet starts as `# Definition sheet` with `Coverage: partial`.
@@ -85,8 +87,8 @@ follow the sheet's existing line endings.
 After the user's explicit harvest request, run:
 
 ```sh
-kgdistiller --repo-root PROJECT harvest apply DEF_SHEET.md \
-  --output .knowledge/build/reviews/HARVEST_RUN
+kgd harvest apply DEF_SHEET.md \
+  --output .knowledge/build/reviews/HARVEST_RUN --base B
 ```
 
 The request plus the checked reviewed items authorizes that scope and target.

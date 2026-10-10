@@ -247,15 +247,16 @@ class HarvestTest(unittest.TestCase):
     def test_cli_prepares_and_harvests(self) -> None:
         (self.root / "capture.json").write_text(json.dumps({"captures": [self.payload()]}), encoding="utf-8")
         environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
-        prefix = [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "harvest"]
+        prefix = [sys.executable, "-m", "kgdistiller", "harvest"]
         prepared = subprocess.run(prefix + ["prepare", "capture.json", "--sheet", "sheets/defs.md",
-                                            "--output", ".knowledge/build/reviews"],
-                                  check=False, capture_output=True, text=True, env=environment)
+                                            "--output", ".knowledge/build/reviews", "--base", "kb"],
+                                  check=False, capture_output=True, text=True, env=environment, cwd=self.root)
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         sheet = Path(json.loads(prepared.stdout)["sheet"])
         sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
+        # Inside the base root the base is found without --base.
         applied = subprocess.run(prefix + ["apply", "sheets/defs.md", "--output", ".knowledge/build/runs"],
-                                 check=False, capture_output=True, text=True, env=environment)
+                                 check=False, capture_output=True, text=True, env=environment, cwd=self.root)
         self.assertEqual(applied.returncode, 0, applied.stderr)
         self.assertEqual(json.loads(applied.stdout)["status"], "committed")
         self.assertIn("beta", self.entries())

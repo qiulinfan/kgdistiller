@@ -6,7 +6,9 @@ runtime workflow manifests `workflows/manifest.json` (Codex) and
 `workflows/claude-manifest.json` (Claude Code). Both manifests declare the
 same Skills and workflows; only linkers and agent-preset formats differ.
 
-A knowledge project owns its registered source documents, its reviewed entries
+A base is a directory registered in `$KGDISTILLER_HOME/config.json` (default
+`~/.knowledge/config.json`). It owns the source documents its globs map to
+user-registered document types, its reviewed entries
 `.knowledge/entries/<id>.md` and its accepted edges `.knowledge/edges.jsonl`.
 Sources are any UTF-8 text documents: kgdistiller reads them as numbered lines
 and never parses their syntax, so every text format is treated identically.
@@ -88,94 +90,25 @@ with their properties in frontmatter.
 ### Independent paper workflows
 
 Ordinary paper reading and explanation need no Skill. Harvesting runs in the
-current agent. Related-work research can delegate independent search
-directions:
+current agent:
 
 | Command (Codex / Claude Code) | Result |
 |---|---|
 | `$harvest-paper` / `/harvest-paper` | Scripted ingestion of reviewed def-sheet candidates checked in Obsidian |
-| `$paper-related-work` / `/paper-related-work` | Parallel searches for cited predecessors, citing successors and bounded online discussion |
 
-These commands are independent. Related-work search needs no prepared archive,
-does not start knowledge lookup and does not import knowledge. Harvesting
-requires an explicit request after human selection in the source def sheet; it
-does not repeat that selection in chat. Neither command repeats a long
-explanation through agent handoffs. Knowledge lookup during reading uses
+Harvesting requires an explicit request after human selection in the source def
+sheet; it does not repeat that selection in chat or a long explanation through
+agent handoffs. Knowledge lookup during reading uses
 `$query-kgdistiller` at the actual use sites; an item not found is not proof the
 user does not know it, and a lookup error is not a negative match. Only the
 user's stated understanding allows treating an entry as mastered.
 
-The paper Skills are explicit-command-only in both runtimes: `harvest-paper`
-and `paper-related-work`. A direct request to harvest the checked
-sheet is explicit harvest intent; ordinary reading or merely checking a box is
-not. Invoke related-work research
-with `$paper-related-work` (Codex) or `/paper-related-work` (Claude Code).
-Natural-language requests for related papers, predecessors/successors, reviews or
-online discussion do not activate this Skill. Codex sets
+The `harvest-paper` Skill is explicit-command-only in both runtimes. A direct
+request to harvest the checked sheet is explicit harvest intent; ordinary
+reading or merely checking a box is not. Codex sets
 `allow_implicit_invocation: false`; Claude Code sets `disable-model-invocation: true`.
 General note curation, query, ingest and deployment keep their existing triggers.
 
-
-Related-work has no default wall-clock deadline. Dispatch the requested branches
-and let each complete its bounded research and explanation. Do not create countdown
-tasks or cancel workers merely because a duration has elapsed. The parent waits
-for actual branch returns or concrete failures and delivers one self-contained
-synthesis; unfinished synthesis is not evidence of an empty citation search.
-Respect user cancellation and report source-access failures accurately.
-
-The `related-work-scout` preset follows the fixed
-[resource methods](../skills/paper-related-work/references/resource-methods.md) and
-returns flexible ranked lists of up to eight predecessors and eight successors,
-plus at most two online-discussion findings. Each paper gets a direct source and
-an explanation proportionate to its importance; key successors may need several
-sentences. Select by relevance, reading value and
-complementary coverage, not citation count alone; eight is a ceiling, not a quota. Resources follow bounded identity correction and one focused successor
-scholarly search; access errors stop that provider. No retry loops or broad searches. Claude Code exposes only Read/WebSearch/WebFetch/ToolSearch to
-it, blocking delegation, shell parsing and file writes. Codex has a matching
-instruction-scoped preset; the parent enforces the no-recursion rule there. Do not describe the Codex counterpart as a proven tool sandbox.
-The parent is the orchestrator; the manifest's preset association is the worker,
-not a reason to give orchestration/delegation tools to the scout.
-
-Related-work research has three independent branches: the target's own references
-with citing passages, articles citing the target, and bounded online discussion.
-A broad request uses all three; a narrow request only uses requested directions.
-Start workers promptly, with the parent optionally owning one branch; no recursive
-delegation or branch dependency. Merge sourced findings and explain important research relationships in conversation.
-File output requires an explicit request.
-This parallelism belongs to research discovery, not the paper-reading pipeline.
-
-OpenAlex cites is the successor index, with bounded identity correction. One
-focused scholarly search complements the citation page even when it is nonempty,
-so a high-count application-heavy sample is not the only candidate pool. Read the original abstracts and relevant passages of shortlisted successors as
-needed for verification and explanation, without expanding their citation graphs. Rank at most eight
-successors total by research relationship: core advances, evaluation/criticism,
-applications/transfer, and surveys/background. Same-subfield membership is useful
-context, not a strict filter; cross-field theoretical or methodological advances
-can also receive priority. Use citation counts only as a secondary tie-breaker,
-show only populated groups, and keep uncertain classifications explicit. Semantic Scholar
-has been removed. Any citing paper qualifies as a successor, including surveys, comparisons and
-background citations. Method use is optional annotation, not an inclusion gate.
-Indexed citations do not by themselves establish method use. A source search must
-not exclude whole scholarly domains to remove the target's own pages.
-Google Scholar or visual graphs are only for explicit requests; similarity edges
-are not citation or influence. See the
-[citation discovery note](../skills/paper-related-work/references/citation-discovery.md).
-
-Online discussion checks at most two applicable sources: an already known public
-review entry, Hacker News, or readable Hugging Face Papers comments. Public reviews
-are part of this branch, not a fourth default search. Use the
-[quick peer-review recipe](../skills/paper-related-work/references/quick-peer-reviews.md)
-when an official entry is known or reviews are explicitly requested. Reddit/Zhihu
-are excluded. A paper having only an arXiv source and no discussion is a normal
-completed outcome: report no discussion found within these sources and stop.
-Do not expand forums or manufacture criticism to make every branch nonempty.
-Keep access failures, unresolved identities, empty indexes and useful content distinct.
-
-For paper source reading, prefer HTML, then LaTeX packages, then PDF. Do not
-require TeX manifests for HTML/PDF reading. Local source acquisition and original
-knowledge extraction are not redistribution: a no-redistribution notice alone
-does not justify blocking ordinary local reading. Keep full source copies local,
-separate from original knowledge notes and short necessary excerpts.
 
 Knowledge candidates found while reading are prepared with `harvest prepare` as
 reviewed capture payloads that cite their source lines. They are not accepted
@@ -229,7 +162,9 @@ not automatic triggers or a scheduler.
 ### Curate registered notes
 
 Use `$curate-kgdistiller-notes` to extract one bounded source set (read through
-`scan --file`, which returns the document-type profile and numbered lines),
+`kgd scan --file SOURCE --base B`, which returns the source's base, its type and
+that type's profile (`node_kinds`, `relation_kinds`, `epistemic`, `guidance`)
+with numbered lines),
 `$query-kgdistiller` to resolve the full candidate batch read-only
 (`agent resolve`, `agent search`, `agent get`), and `$ingest-kgdistiller` to
 plan and apply one reviewed transaction of entries and edges, then `check`.
@@ -238,24 +173,27 @@ blocks its own write, while content conflicts or enrichment of matched entries
 require a separate source-backed review rather than inference from retrieval
 scores.
 
-### Set up, check and restore a project
+### Set up, check and restore a base
 
-Use `$deploy-kgdistiller` to initialize a project, register sources and
-document types, and run `check` and `agent status` after setup, a clone, a pull
+Use `$deploy-kgdistiller` to register a base with `kgd base add PATH [--name N]`,
+write its source globs under `bases.<name>.sources` in
+`$KGDISTILLER_HOME/config.json` and its document types as
+`$KGDISTILLER_HOME/types/<name>.md`, and run `check` and `agent status` with
+`--base B` (or from inside the base root) after setup, a clone, a pull
 or a source edit. `check --fix-lines` repairs the line ranges of entries whose
 Evidence moved; stale entries need a reviewed re-capture. Git initialization,
 commit, remote configuration, and push remain explicit separate actions.
 
 ### Refresh the Obsidian graph feed
 
-Use `$deploy-kgdistiller` and open the knowledge-project root as the editor
-vault. Registered sources and `.knowledge/entries/*.md` remain the knowledge.
+Use `$deploy-kgdistiller` and open the base root as the editor vault. Registered sources and `.knowledge/entries/*.md` remain the knowledge.
 The optional Obsidian plugin's semantic graph view reads only
 `.knowledge/build/obsidian/semantic-graph.json`
 (`kgdistiller-obsidian-graph-v1`), which `kgdistiller export obsidian` writes
 atomically from every entry and every accepted edge. It shows typed semantic
-edges and the source → entry definition edges. Never register the feed in
-`sources.json`, rescan it, or ingest it back.
+edges and the source → entry definition edges. The feed lives under the hidden
+`.knowledge/build/` directory, which no source glob ever matches; never rescan
+it or ingest it back.
 
 ### Native indexing of a hidden knowledge folder
 

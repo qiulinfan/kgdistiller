@@ -2,17 +2,16 @@
 
 ## What is stored
 
-A knowledge project keeps its accepted knowledge in two places under
-`.knowledge/`:
+A base keeps its accepted knowledge in two places under `.knowledge/`:
 
 - `entries/<id>.md`: one reviewed entry per knowledge node;
 - `edges.jsonl`: the accepted semantic edges between entries.
 
-Nothing else is knowledge. Source documents are registered in
-`.knowledge/sources.json` and only read. `.knowledge/build/` holds rebuildable
-local work: ingest journals, plans and receipts, review drafts, retrieval
-caches and the Obsidian graph feed. In-memory query views and the feed never
-become another authority.
+Nothing else is knowledge. Source documents are registered by glob in the home
+(`bases.<name>.sources` in `$KGDISTILLER_HOME/config.json`) and only read.
+`.knowledge/build/` holds rebuildable local work: ingest journals, plans and
+receipts, review drafts, retrieval caches and the Obsidian graph feed.
+In-memory query views and the feed never become another authority.
 
 ## Sources are format-agnostic
 
@@ -20,12 +19,14 @@ A knowledge source is any registered UTF-8 text document. kgdistiller reads it
 as lines numbered from 1 and never parses its syntax: `.md`, `.typ`, `.tex`,
 `.txt` and every other format are handled identically. No marker, heading,
 environment or link inside a source defines a node, and no source is converted
-into another format. An entry cites its source by project-relative path and
+into another format. An entry cites its source by base-relative path and
 line range and quotes the cited lines verbatim.
 
-Each entry's source must be admitted by exactly one registered source (its
-`root` plus `files` globs). Source roots lie inside the project and outside
-`.knowledge/`.
+Each entry's source must be a registered source of its base: a file matched by
+at least one of the base's `sources` globs, which are relative to the base root
+and follow Python's `glob` semantics. Several globs may match one file when they
+name the same type; globs mapping one file to two different types are an error.
+Hidden files and directories, including `.knowledge/`, never match.
 
 ## Node selection
 
@@ -95,9 +96,9 @@ A measurable space (X, F) equipped with a measure mu on F.
 | `schema` | `kgdistiller-entry-v1`. |
 | `id` | Readable ASCII slug `[a-z0-9]+(-[a-z0-9]+)*`, at most 200 characters, never a Windows-reserved name. The file name is `<id>.md`. |
 | `label` | Single-line canonical name; the body's H1 must equal it. |
-| `kind` | Nonempty single line; one of the source document type's `node_kinds` when the admitting source declares a `document_type`. |
+| `kind` | Nonempty single line; always one of the `node_kinds` of the source's document type. |
 | `aliases` | Block list or `[]`; unique, and never the entry's own label. |
-| `source` | Project-relative POSIX path without `..`, outside `.knowledge/`. |
+| `source` | Base-relative POSIX path without `..`, outside `.knowledge/`. |
 | `line_start`, `line_end` | Integers with `1 <= line_start <= line_end <=` the source's line count. |
 | `understanding` | `unknown`, `not-yet-understood` or `understood`. |
 
@@ -154,9 +155,10 @@ independent audit. `prerequisite-for` is acyclic.
 All writes go through [transactional ingest](transactional-ingest.md): a
 reviewed `kgdistiller-agent-delta-v1` creates, updates or removes entries and
 adds or removes edges. `capture prepare` and `harvest apply` build such
-requests. Apply holds a writer lock, re-validates the delta against the current
-store and the current source text, and installs the changed entries and
-`edges.jsonl` atomically. Source documents are never edited.
+requests. Apply holds the home lock (`$KGDISTILLER_HOME/lock`), re-validates
+the delta against the current store and the current source text, and installs
+the changed entries and `edges.jsonl` atomically. Source documents are never
+edited.
 
 ## Consistency without hashes
 
@@ -164,8 +166,9 @@ store and the current source text, and installs the changed entries and
 source by text:
 
 - errors: invalid entry files, duplicate ids, label or alias collisions, a
-  missing, unregistered, ambiguously registered or non-UTF-8 source, a line
-  range out of bounds, a kind the document type does not allow, an unknown
+  missing, unregistered or non-UTF-8 source, a registered file whose globs map
+  it to two types, a line range out of bounds, a kind outside the type's
+  `node_kinds`, an unknown
   relation, an edge endpoint without an entry, and a `prerequisite-for` cycle;
 - an entry is **current** when the whitespace-normalized text of its cited lines
   equals its whitespace-normalized Evidence (normalization joins the
@@ -181,7 +184,7 @@ source by text:
 file is reported as an `invalid-entry` or `invalid-edge` error without hiding
 the others. It prints every error and staleness and exits 1 when there are any;
 otherwise it prints `OK: <n> entries, <m> edges`. `check --fix-lines`, under
-the writer lock, rewrites only `line_start`/`line_end` of moved entries and
+the home lock, rewrites only `line_start`/`line_end` of moved entries and
 checks again. Stale and ambiguous entries need a reviewed re-capture.
 
 Staleness is reported, never enforced: retrieval, graph traversal, MCP and the
@@ -225,15 +228,17 @@ or rank candidates but never create identity or edges. See
 Every entry is a concept whose `authority` is its entry file; every cited source
 is a source; every accepted edge is a semantic edge; every entry's citation is
 a definition. Paths are any safe relative paths. This is the only supported
-input to the Obsidian plugin. The feed is derived: never register it in
-`.knowledge/sources.json`, scan it, or ingest it back.
+input to the Obsidian plugin. The feed is derived and lies under the hidden
+`.knowledge/build/`, which no source glob matches; never scan it or ingest it
+back.
 
 ## Required invariants
 
 - one entry file per id, named `<id>.md`, with a valid frontmatter and body;
 - unique labels and aliases across the store;
-- every entry cites an existing, singly registered UTF-8 source within bounds;
-- every kind is allowed by its source's document type;
+- every entry cites an existing registered UTF-8 source of its base within
+  bounds, and that source maps to exactly one type;
+- every kind is one of its source type's `node_kinds`;
 - no dangling edge endpoints and no cycles in `prerequisite-for`;
 - identity comes only from reviewed entries, never from source syntax, order,
   headings or co-occurrence;

@@ -34,7 +34,7 @@ Knowledge lives in the hidden `.knowledge/` tree. Obsidian sees it through the
 kgdistiller plugin's hidden-folder indexing, which keeps `build/` out of the
 native index by default. Its entries and accepted semantic relationships are
 the durable state; they cannot be reconstructed from definition prose alone.
-Preserve them with the sources in the knowledge project's backup.
+Preserve them with the sources in the base's backup.
 `.knowledge/build/` remains transient.
 
 A paper definition view contains explained source-scoped concepts, types, exact

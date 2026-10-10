@@ -32,7 +32,7 @@ class EntryStoreCallersTest(unittest.TestCase):
         build_entry_store(self.fixture)
 
     def view(self) -> GraphView:
-        return GraphView.load(self.fixture.root, self.fixture.registry)
+        return GraphView.load(self.fixture.base)
 
     def test_query_mcp_and_retrieval_read_the_same_entry(self) -> None:
         result = get(self.view(), "beta")
@@ -43,7 +43,7 @@ class EntryStoreCallersTest(unittest.TestCase):
         self.assertEqual([edge["source"] for edge in result["incoming"]], ["alpha"])
         self.assertNotIn("backlinks", result)
         self.assertEqual(
-            call_tool(self.fixture.root, self.fixture.registry, "kg_get_node", {"id": "beta"}),
+            call_tool(self.fixture.base, "kg_get_node", {"id": "beta"}),
             result,
         )
         execution = execute_retrieval_plan(self.view(), query_retrieval_plan("Beta"))

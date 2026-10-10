@@ -15,9 +15,7 @@ from kgdistiller.codex_product import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-PAPER_COMMANDS = {
-    "harvest-paper", "paper-related-work",
-}
+PAPER_COMMANDS = {"harvest-paper"}
 RETIRED_PAPER_COMMANDS = {
     "federate-paper-knowledge", "trace-concept-lineage", "import-paper-knowledge",
 }
@@ -51,8 +49,6 @@ class PaperCommandTests(unittest.TestCase):
                     self.assertIn("disable-model-invocation: true", header.splitlines())
                     metadata = (folder / "agents/openai.yaml").read_text(encoding="utf-8")
                     self.assertIn("policy:\n  allow_implicit_invocation: false", metadata)
-                related = home / "skills/paper-related-work"
-                self.assertTrue((related / "references/citation-discovery.md").is_file())
                 self.assertFalse((home / "skills/read-paper").exists())
                 self.assertFalse((home / "skills/extract-paper-markdown").exists())
                 self.assertFalse((home / "skills/prepare-paper").exists())
@@ -60,12 +56,9 @@ class PaperCommandTests(unittest.TestCase):
                     self.assertFalse((home / "skills" / name).exists())
                 manifest = json.loads((ROOT / "workflows/manifest.json").read_text(encoding="utf-8"))
                 for workflow in manifest["workflows"]:
-                    if workflow["id"] in {"harvest-paper", "paper-related-work"}:
+                    if workflow["id"] == "harvest-paper":
                         self.assertEqual(1, len(workflow["steps"]))
-                        if workflow["id"] == "paper-related-work":
-                            self.assertEqual("related-work-scout", workflow["steps"][0]["agent"])
-                        else:
-                            self.assertIsNone(workflow["steps"][0]["agent"])
+                        self.assertIsNone(workflow["steps"][0]["agent"])
 
     def test_upgrade_removes_retired_paper_assets_from_both_runtimes(self) -> None:
         retired_workflows = {
@@ -154,12 +147,3 @@ class PaperCommandTests(unittest.TestCase):
                 else:
                     checked = doctor_claude_product(claude_home=home, source_root=source)
                 self.assertEqual("ok", checked["status"])
-
-    def test_claude_scout_has_no_delegation_or_shell_capability(self) -> None:
-        # Verify the packaged runtime boundary, not just a prose promise.
-        text = (ROOT / ".claude/agents/related-work-scout.md").read_text(encoding="utf-8")
-        header = text.split("---", 2)[1]
-        tools_line = next(line for line in header.splitlines() if line.startswith("tools:"))
-        allowed = {item.strip() for item in tools_line.split(":", 1)[1].split(",")}
-        self.assertEqual({"Read", "WebSearch", "WebFetch", "ToolSearch"}, allowed)
-        self.assertTrue(allowed.isdisjoint({"Agent", "Task", "Bash", "Write", "Edit", "Skill"}))

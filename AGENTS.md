@@ -24,10 +24,23 @@
   capture; explicit whole-source distillation is typically for authored notes
   or familiar material. Harvest uses Obsidian def-sheet task selections and
   deterministic ingest; checking a task does not imply understanding.
-- `.knowledge/` is the project's only metadata root. Resolve it through
-  `knowledge_paths`; never create a second tree during reads or writes. Hidden
-  Obsidian indexing still requires its explicit plugin setting.
-- Storage: a project's knowledge is exactly `.knowledge/entries/<id>.md` (one
+- `.knowledge/` is a base's only knowledge root; never create a second tree
+  during reads or writes. A base is found only through the roots registered in
+  `$KGDISTILLER_HOME/config.json`: the registered root containing the cwd, or
+  the per-command `--base NAME`. There is no upward walk and no default base.
+  Hidden Obsidian indexing still requires its explicit plugin setting.
+- The home: `KGDISTILLER_HOME` (default `~/.knowledge`, absolute after `~`
+  expansion) is the only environment variable for kgdistiller's own home and
+  data; only `codex|claude link|doctor` also honor their runtime's `CODEX_HOME`
+  or `CLAUDE_CONFIG_DIR`. It holds
+  `config.json` (`{"bases": {name: {"path", "sources"}}, "embedding"}`, written
+  atomically by `base add|rm`), `types/<name>.md`, the `.gitignore` written when
+  the home is created, and the dedicated `lock` file held by `base add|rm`,
+  `check --fix-lines` and ingest/harvest apply. No base root may be an ancestor
+  or descendant of another, and the home never lies inside a base root.
+  Base-bound commands take a per-command `--base NAME`; there are no global
+  path flags. The home is owner data and never enters this repository.
+- Storage: a base's knowledge is exactly `.knowledge/entries/<id>.md` (one
   reviewed entry per node, carrying id, label, kind, aliases, source path, line
   range and understanding in frontmatter, the human sections and a verbatim
   Evidence quote) plus `.knowledge/edges.jsonl` (accepted semantic edges with
@@ -45,14 +58,18 @@
   identity from document order, headings, syntax or keyword co-occurrence, and
   require evidence for semantic relations.
 - Source document types are user-registered extraction profiles, independent
-  of file format and knowledge domain. Follow the registration contract in
+  of file format and knowledge domain: `$KGDISTILLER_HOME/types/<name>.md`, whose
+  frontmatter (read with PyYAML `BaseLoader`) has `node_kinds` and optional
+  `relation_kinds`/`epistemic`, and whose body is the guidance. A base's sources
+  are its `sources` glob→type map; each source has exactly one type. Follow
   `docs/concepts-and-relations.md`; do not hardcode the owner's example types.
-  Agents read the selected profile and numbered lines through `scan --file`.
+  Agents read the type profile and numbered lines through
+  `scan --file SOURCE --base B`.
 - Hash-free consistency: no content-hash mechanism anywhere in the product
   (no hashing module, no stored or compared checksums), and ids are readable
   slugs, never hash-derived. `check` compares each entry's Evidence with its cited lines by
   text and reports moved, stale or ambiguous entries; `check --fix-lines`
-  rewrites only moved line ranges. Ingest uses the writer lock plus semantic
+  rewrites only moved line ranges. Ingest uses the home lock plus semantic
   re-validation at apply time. Staleness is reported, never used to hide
   knowledge from retrieval, graph traversal, MCP or the Obsidian feed.
 - Publishing (websites, course registries, marker registries, HTML conversion)
@@ -61,7 +78,10 @@
   (`uv run --locked python -m unittest discover -s tests`),
   `uv run --locked ruff check src tests scripts`, `uv build` with
   `scripts/check_distribution.py`, and `npm run check` in
-  `integrations/obsidian` when the plugin changes.
+  `integrations/obsidian` when the plugin changes. Every test and
+  `scripts/smoke_installed_runtime.py` use a temporary `KGDISTILLER_HOME` and
+  never read or write the real home.
+- PyYAML>=6 is the single runtime dependency; anything else stays optional.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
   this repository.
 - The Community directory entry stays in this monorepo: root manifest/versions

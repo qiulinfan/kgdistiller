@@ -51,6 +51,9 @@ jobs:
         python-version: ["3.11", "3.13"]
     runs-on: ubuntu-latest
     steps:
+      - name: Use a temporary kgdistiller home, never the runner user's ~/.knowledge
+        shell: bash
+        run: echo "KGDISTILLER_HOME=$RUNNER_TEMP/kgdistiller-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - name: Download built Obsidian plugin
         uses: actions/download-artifact@v4
@@ -78,6 +81,9 @@ jobs:
     needs: [dependency-resolution, obsidian-plugin]
     runs-on: windows-latest
     steps:
+      - name: Use a temporary kgdistiller home, never the runner user's ~/.knowledge
+        shell: bash
+        run: echo "KGDISTILLER_HOME=$RUNNER_TEMP/kgdistiller-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - name: Download built Obsidian plugin
         uses: actions/download-artifact@v4
@@ -105,6 +111,9 @@ jobs:
     needs: [dependency-resolution, obsidian-plugin]
     runs-on: macos-latest
     steps:
+      - name: Use a temporary kgdistiller home, never the runner user's ~/.knowledge
+        shell: bash
+        run: echo "KGDISTILLER_HOME=$RUNNER_TEMP/kgdistiller-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - name: Download built Obsidian plugin
         uses: actions/download-artifact@v4

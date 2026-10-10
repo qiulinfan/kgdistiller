@@ -7,9 +7,14 @@ whole source, look up prerequisites, edit the source, or infer that the reader
 understands a concept.
 
 ```sh
-kgdistiller --repo-root PROJECT capture prepare CAPTURE.json \
-  --output .knowledge/build/reviews/captures
+kgd capture prepare CAPTURE.json \
+  --output .knowledge/build/reviews/captures --base B
 ```
+
+Every command takes `--base B` after the command, or runs with the working
+directory inside the registered base root. Relative paths such as `--output`
+are resolved against the working directory, so run this from the base root or
+pass absolute paths.
 
 The agent supplies the content, the cited lines and an explicit identity review:
 
@@ -39,17 +44,16 @@ The agent supplies the content, the cited lines and an explicit identity review:
 |---|---|
 | `label` | Single-line display name; becomes the entry's `label` and H1. |
 | `id` | Optional for `add`: readable slug `[a-z0-9]+(-[a-z0-9]+)*`, at most 200 characters. Defaults to the slug of the label; required when the label has no ASCII slug (for example a pure-CJK label). Never a hash. |
-| `source` | Project-relative path of a file admitted by exactly one registered source. |
+| `source` | Base-relative path of a registered source: a file matched by the base's globs in `$KGDISTILLER_HOME/config.json`, mapped to exactly one document type. |
 | `line_start`, `line_end` | 1-based inclusive line range that states the knowledge. These lines are copied verbatim into the entry's Evidence section. |
-| `kind` | Required for `add`. Must be one of the source's document-type `node_kinds` when the source declares a `document_type`; any nonempty single-line kind otherwise. |
+| `kind` | Required for `add`. Must be one of the `node_kinds` of the source's document type. |
 | `aliases` | Optional list of other names. Unique across the whole store; an alias equal to the label is dropped. |
 | `text` | The entry's Summary. |
 | `entry` | Optional `context`, `role`, `understanding`, `prerequisites`, `pending_prerequisites`, `common_confusions`, `open_questions`. |
 | `review` | `action` (`add` or `update`), `reviewer`, `evidence` (why this identity decision is right), and `target_id` (required for `update`, rejected for `add`). |
 
-Read the source's profile and numbered lines with
-`kgdistiller --repo-root PROJECT scan --file SOURCE` before choosing the kind and
-the line range. Any registered text format works the same way; the helper never
+Read the source's type profile and numbered lines with
+`kgd scan --file SOURCE --base B` before choosing the kind and the line range. Any registered text format works the same way; the helper never
 parses source syntax.
 
 An `update` keeps its target's id. Omitted fields keep their current values;
@@ -63,8 +67,8 @@ entry starts as `unknown`. `pending_prerequisites` records only directly
 encountered gaps as text. It creates neither placeholder entries nor
 prerequisite edges.
 
-The output directory must be inside the project and outside registered source
-roots and `.knowledge/entries/`. The result names the generated requests:
+The output directory (`output_dir`) must lie under the base's `.knowledge/` and
+outside `.knowledge/entries/`, for example `.knowledge/build/reviews/captures`. The result names the generated requests:
 
 ```json
 {
@@ -87,10 +91,10 @@ receipt or request file. Apply the requests through the ordinary ingest
 sequence:
 
 ```sh
-kgdistiller --repo-root PROJECT ingest plan PLAN_REQUEST.json --output PLAN.json
+kgd ingest plan PLAN_REQUEST.json --output PLAN.json --base B
 # Review the plan, then apply the prepared request in the authorized scope.
-kgdistiller --repo-root PROJECT ingest apply APPLY_REQUEST.json --receipt RECEIPT.json
-kgdistiller --repo-root PROJECT check
+kgd ingest apply APPLY_REQUEST.json --receipt RECEIPT.json --base B
+kgd check --base B
 ```
 
 Preparation and planning write nothing to the entry store. Apply re-validates

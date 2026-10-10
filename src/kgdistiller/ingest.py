@@ -1,7 +1,7 @@
 """Transactional, review-gated ingestion into the entry store.
 
 A request carries one reviewed delta. Planning applies it in memory and reports
-the changes. Applying takes the writer lock, re-validates the same delta against
+the changes. Applying takes the home lock, re-validates the same delta against
 the current store, installs the changed entry files and ``edges.jsonl`` through
 a recoverable journal, and writes a readable receipt keyed by ``request_id``.
 Source documents are only read, never edited.
@@ -16,27 +16,26 @@ import re
 import shutil
 import stat
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import home
 from .contracts import canonical_json
 from .entries import ID_RE, WINDOWS_RESERVED, render_entry
+from .home import Base, KnowledgeError, LockConflict, atomic_write_text, knowledge_root
 from .json_schema import validate_json_schema
-from .knowledge_paths import knowledge_root
 from .knowledge_store import (
     EDGES_PATH,
     ENTRIES_DIR,
     KnowledgeState,
     StoreError,
     apply_delta,
-    atomic_write_text,
     load_state,
     render_edges,
 )
-from .sources import KnowledgeError
 
 REQUEST_SCHEMA = "kgdistiller-ingest-request-v1"
 PLAN_SCHEMA = "kgdistiller-ingest-plan-v1"
@@ -80,8 +79,7 @@ class IngestError(KnowledgeError):
 
 @dataclass(frozen=True)
 class IngestPaths:
-    repo_root: Path
-    registry: Path
+    base: Base
 
 
 def _validate_json_schema(payload: Any, filename: str, code: str) -> None:
@@ -138,7 +136,7 @@ def _invoke(injector: FailureInjector | None, stage: str) -> None:
 
 
 def _state_dir(paths: IngestPaths) -> Path:
-    return knowledge_root(paths.repo_root) / "build/kgdistiller-ingest"
+    return knowledge_root(paths.base.root) / "build/kgdistiller-ingest"
 
 
 def receipt_path(paths: IngestPaths, request_id: str) -> Path:
@@ -155,7 +153,7 @@ def _counts(state: KnowledgeState) -> dict[str, int]:
 
 def _load_current(paths: IngestPaths) -> KnowledgeState:
     try:
-        return load_state(paths.repo_root)
+        return load_state(paths.base.root)
     except StoreError as error:
         raise IngestError(error.code, str(error), diagnostics=error.diagnostics) from error
     except (KnowledgeError, OSError, ValueError) as error:
@@ -164,7 +162,7 @@ def _load_current(paths: IngestPaths) -> KnowledgeState:
 
 def _apply(paths: IngestPaths, state: KnowledgeState, request: dict[str, Any]):
     try:
-        return apply_delta(state, request["delta"], paths.repo_root, paths.registry)
+        return apply_delta(state, request["delta"], paths.base)
     except StoreError as error:
         raise IngestError(error.code, str(error), diagnostics=error.diagnostics) from error
     except (KnowledgeError, OSError, ValueError) as error:
@@ -194,58 +192,17 @@ def plan_ingest(
     }
 
 
-def _acquire_writer_lock(handle: Any) -> None:
-    handle.seek(0)
-    try:
-        if os.name == "nt":
-            import msvcrt
-
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as error:
-        raise IngestError(
-            "lock-conflict", "another kgdistiller writer holds the repository lock", stage="lock"
-        ) from error
-
-
-def _release_writer_lock(handle: Any) -> None:
-    try:
-        handle.seek(0)
-        if os.name == "nt":
-            import msvcrt
-
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except OSError:
-        pass
-
-
 @contextmanager
 def writer_lock(paths: IngestPaths) -> Iterator[None]:
-    """Hold the repository's single knowledge-writer lock."""
-    state_dir = _state_dir(paths)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    handle = (state_dir / "writer.lock").open("a+b")
-    try:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"\0")
-            handle.flush()
-        _acquire_writer_lock(handle)
-        handle.seek(0)
-        handle.truncate()
-        handle.write(f"pid={os.getpid()}\n".encode("ascii"))
-        handle.flush()
+    """Hold the home's single knowledge-writer lock."""
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(home.lock())
+        except LockConflict as error:
+            raise IngestError(
+                "lock-conflict", "another kgdistiller writer holds the home lock", stage="lock"
+            ) from error
         yield
-    finally:
-        _release_writer_lock(handle)
-        handle.close()
 
 
 def _journal_failure(message: str) -> IngestError:
@@ -287,7 +244,7 @@ def _managed_target(value: Any) -> str:
 
 def _read_journal(paths: IngestPaths) -> dict[str, Any] | None:
     path = journal_path(paths)
-    _no_symlinks(paths.repo_root, path)
+    _no_symlinks(paths.base.root, path)
     mode = _lstat(path)
     if mode is None:
         return None
@@ -309,7 +266,7 @@ def _read_journal(paths: IngestPaths) -> dict[str, Any] | None:
         raise _journal_failure("invalid ingest journal")
     seen = set()
     backups = _backup_root(paths, journal["request_id"])
-    _no_symlinks(paths.repo_root, backups)
+    _no_symlinks(paths.base.root, backups)
     for record in journal["targets"]:
         if not isinstance(record, dict) or set(record) != {"path", "existed"} or type(record["existed"]) is not bool:
             raise _journal_failure("invalid ingest journal target")
@@ -318,7 +275,7 @@ def _read_journal(paths: IngestPaths) -> dict[str, Any] | None:
             raise _journal_failure(f"duplicate ingest journal target: {target}")
         seen.add(target)
         backup = backups / target
-        _no_symlinks(paths.repo_root, backup)
+        _no_symlinks(paths.base.root, backup)
         mode = _lstat(backup)
         if record["existed"] and (mode is None or not stat.S_ISREG(mode)):
             raise _journal_failure(f"missing ingest journal backup: {target}")
@@ -339,9 +296,9 @@ def _restore(paths: IngestPaths, journal: dict[str, Any]) -> None:
     backups = _backup_root(paths, journal["request_id"])
     errors = []
     for record in reversed(journal["targets"]):
-        target = paths.repo_root / record["path"]
+        target = paths.base.root / record["path"]
         try:
-            _no_symlinks(paths.repo_root, target)
+            _no_symlinks(paths.base.root, target)
             if record["existed"]:
                 _atomic_copy(backups / record["path"], target)
             else:
@@ -409,8 +366,8 @@ def _install(
     _invoke(failure_injector, "staged")
     targets = []
     for relative in staged:
-        target = paths.repo_root / relative
-        _no_symlinks(paths.repo_root, target)
+        target = paths.base.root / relative
+        _no_symlinks(paths.base.root, target)
         existed = target.is_file()
         if existed:
             (backups / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -422,7 +379,7 @@ def _install(
     _invoke(failure_injector, "prepared-install")
     try:
         for relative, content in staged.items():
-            target = paths.repo_root / relative
+            target = paths.base.root / relative
             if content is None:
                 target.unlink(missing_ok=True)
             else:

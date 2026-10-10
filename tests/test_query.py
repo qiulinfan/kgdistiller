@@ -315,7 +315,7 @@ class LoadedViewTest(unittest.TestCase):
         fixture.add_entry("absolute-continuity", "Absolute continuity", "notes/measure.txt", 3)
         for edge in fixture_edges():
             fixture.add_edge(edge["source"], edge["relation"], edge["target"])
-        view = GraphView.load(fixture.root, fixture.registry)
+        view = GraphView.load(fixture.base)
         status = query_status(view)
         self.assertEqual(status, validate_contract(status))
         self.assertEqual({"schema": "kgdistiller-query-status-v1",

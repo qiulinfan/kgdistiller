@@ -277,6 +277,9 @@ wheels = [
 name = "kgdistiller"
 version = "0.4.0"
 source = { editable = "." }
+dependencies = [
+    { name = "pyyaml" },
+]
 
 [package.optional-dependencies]
 retrieval = [
@@ -289,7 +292,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "sentence-transformers", marker = "extra == 'retrieval'", specifier = "==6.1.0" }]
+requires-dist = [
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "sentence-transformers", marker = "extra == 'retrieval'", specifier = "==6.1.0" },
+]
 provides-extras = ["retrieval"]
 
 [package.metadata.requires-dev]

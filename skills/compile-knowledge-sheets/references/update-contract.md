@@ -15,9 +15,9 @@ Skills do not require a repository checkout.
 
 ## Knowledge model and complete proposals
 
-Read the selected source's `document_type` profile from `scan --file` before
-extracting. The profile's `node_kinds` and `extraction_guidance` determine what
-knowledge to propose; no document-class enum is built into this workflow. The
+Read the selected source's type profile from `kgd scan --file SOURCE --base B`
+before extracting. The profile's `node_kinds`, `relation_kinds`, `epistemic`
+and `guidance` determine what knowledge to propose; no document-class enum is built into this workflow. The
 following are examples of the shared model, not a substitute for the caller's
 profile. Cite source documents directly by path and line range; they are plain
 text to kgdistiller, whatever their format, and are never converted.
@@ -64,7 +64,7 @@ unselected existing rows; full-source distillation is explicitly requested.
 
 ## Bounded change and current adapters
 
-Identify the exact target project, registered source scope and revision,
+Identify the exact target base, registered source scope and revision,
 selected identities, complete content changes, direct relations, applications
 and pending-state changes. Include edits and withdrawals, not only additions.
 Review their before/after effect against accepted knowledge. Use explicit source

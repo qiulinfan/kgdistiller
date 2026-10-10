@@ -1,6 +1,6 @@
 # Registered-note curation contract
 
-Use this contract for any registered text document in a kgdistiller project.
+Use this contract for any registered text document in a kgdistiller base.
 kgdistiller reads a source as UTF-8 text with 1-based line numbers and never
 parses its syntax; `.md`, `.typ`, `.tex`, `.txt` and every other format are
 handled identically. Prepare only `kgdistiller-agent-delta-v1` updates through
@@ -8,9 +8,12 @@ transactional ingest.
 
 ## Authority and identity
 
-Use the selected source's registered `document_type` profile, exposed by
-`scan --file`, for its `node_kinds` and `extraction_guidance`. Profiles are user
-data in `.knowledge/sources.json`; file format does not choose them.
+Use the selected source's registered type profile, exposed by
+`kgd scan --file SOURCE --base B`, for its `node_kinds`, `relation_kinds`,
+`epistemic` and `guidance`. Types are user data in the home
+(`$KGDISTILLER_HOME/types/<type>.md`), mapped to source files by the base's
+globs in `$KGDISTILLER_HOME/config.json`; every source has exactly one type, and
+file format does not choose it.
 
 For source-level curation, treat one complete source file as the curation unit.
 For one selected item, use `$capture-kgdistiller` and leave other knowledge
@@ -63,9 +66,9 @@ An entry record has these fields:
 |---|---|
 | `id` | Readable slug `[a-z0-9]+(-[a-z0-9]+)*`, at most 200 characters; defaults to the slug of the label. A label without an ASCII slug needs an explicit id. Never derived from a hash. |
 | `label` | Single-line canonical name; the entry's H1. |
-| `kind` | One of the source document type's `node_kinds` when the source has one. |
+| `kind` | One of the `node_kinds` of the source's document type. |
 | `aliases` | Other names, possibly empty. |
-| `source`, `line_start`, `line_end` | Project-relative source path and the 1-based inclusive line range that states the knowledge. |
+| `source`, `line_start`, `line_end` | Base-relative source path and the 1-based inclusive line range that states the knowledge. |
 | `understanding` | `unknown`, `not-yet-understood` or `understood`. |
 | `summary` | Required Summary section. |
 | `context`, `role` | Optional text sections. |

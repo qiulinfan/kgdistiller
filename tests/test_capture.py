@@ -135,10 +135,10 @@ class CaptureTest(unittest.TestCase):
         payload.pop("kind")
         with self.assertRaisesRegex(CaptureError, "kind is required"):
             prepare_capture(self.paths, payload, self.output)
-        self.fixture.document_types = {"papers": {"node_kinds": ["concept", "method"],
-                                                  "extraction_guidance": "Named methods."}}
-        self.fixture.sources[0]["document_type"] = "papers"
-        self.fixture.write_registry()
+        self.fixture.types = {"papers": {"node_kinds": ["concept", "method"], "guidance": "Named methods."}}
+        self.fixture.sources = {"notes/**/*": "papers"}
+        self.fixture.write_home()
+        self.paths = self.fixture.paths
         with self.assertRaisesRegex(CaptureError, "not allowed"):
             prepare_capture(self.paths, self.payload(), self.output)
         self.capture(self.payload(kind="method"))
@@ -147,9 +147,9 @@ class CaptureTest(unittest.TestCase):
     def test_source_and_scope_checks(self) -> None:
         (self.root / "loose.txt").write_text(TEXT, encoding="utf-8")
         cases = (
-            (self.payload(source="loose.txt"), "not admitted"),
+            (self.payload(source="loose.txt"), "not a registered source"),
             (self.payload(source="notes/missing.txt"), "does not exist"),
-            (self.payload(source="../outside.txt"), "inside the project"),
+            (self.payload(source="../outside.txt"), "inside the base root"),
             (self.payload(line_end=99), "outside the source"),
             (self.payload(line_start=0), "positive integer"),
             (self.payload(line_start=5, line_end=4), "outside the source"),
@@ -186,9 +186,9 @@ class CaptureTest(unittest.TestCase):
         (self.root / "capture.json").write_text(json.dumps(self.payload()), encoding="utf-8")
         environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
         result = subprocess.run(
-            [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "capture", "prepare",
-             "capture.json", "--output", ".knowledge/build/captures"],
-            capture_output=True, text=True, env=environment, check=False)
+            [sys.executable, "-m", "kgdistiller", "capture", "prepare",
+             "capture.json", "--output", ".knowledge/build/captures", "--base", "kb"],
+            capture_output=True, text=True, env=environment, cwd=self.root, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         artifacts = json.loads(result.stdout)["artifacts"]
         self.assertTrue(Path(artifacts["plan"]).is_file())

@@ -5,10 +5,10 @@ description: Save or update one source-backed knowledge entry while reading, cit
 
 # Capture one knowledge item
 
-Save the selected knowledge to the caller's established `.knowledge/` through one
-bounded transaction. Use the current passage and just enough nearby context to
+Save the selected knowledge to the caller's registered base through one bounded
+transaction. Use the current passage and just enough nearby context to
 preserve its definition and conditions. Do not turn this into a full-source read,
-a survey, a recursive prerequisite search or a new knowledge project.
+a survey, a recursive prerequisite search or a new base.
 This is the usual writing path while reading a new article. Full-source
 distillation is separately requested, typically for the user's own notes or
 already familiar material.
@@ -18,24 +18,27 @@ structured keys and raw errors.
 
 ## Select and understand the item
 
-Establish the target project, registered source, selected concept and the exact
+Establish the target base, registered source, selected concept and the exact
 line range that defines or states it from the current conversation. Ask only for
 an essential missing target or a genuinely ambiguous meaning. Read additional
 local context only when a defining condition or source statement is incomplete.
 
-Read the source's profile and numbered text before preparing content:
+Read the source's type profile and numbered text before preparing content:
 
 ```sh
-kgdistiller --repo-root PROJECT scan --file RELATIVE_SOURCE
+kgd scan --file SOURCE --base B
 ```
 
-The result names the source's `document_type` and its `profile`
-(`node_kinds`, `extraction_guidance`) and lists every line with its 1-based
-number. A source is any registered UTF-8 text document; kgdistiller never parses
-its syntax, so `.md`, `.typ`, `.tex` and `.txt` are read the same way. Follow
-the user-registered profile; do not infer a document type from the extension or
-substitute a built-in type list. If the source has no profile, use the user's
-explicit extraction scope without silently registering one.
+Pass `--base B` after every command, or run inside the registered base root;
+relative paths are resolved against the working directory. The result names the
+source's base and `type`, its `profile` (`node_kinds`, `relation_kinds`,
+`epistemic`, `guidance`), and lists every line with its 1-based number. A source
+is a UTF-8 text document matched by the base's globs in
+`$KGDISTILLER_HOME/config.json`, and every source has exactly one type;
+kgdistiller never parses its syntax, so `.md`, `.typ`, `.tex` and `.txt` are
+read the same way. Follow the user-registered type; do not infer a document
+type from the extension or substitute a built-in type list. An unregistered
+file cannot be captured; report it instead of registering a glob silently.
 
 Keep the full definition and essential assumptions in the entry. Definitions,
 axioms, precise theorems, algorithms and architectures may be nodes. A claim or
@@ -75,9 +78,9 @@ for the payload and CLI. The payload cites the source path and line range; the
 helper copies those lines verbatim into the entry's Evidence section, checks the
 kind against the source's document type, checks the label and aliases against
 every existing entry, and writes the plan and apply requests. Do not hand-write
-the Evidence quote or the request files. Keep prepared artifacts in the caller's
-`.knowledge/build/reviews/` or another explicit project review directory outside
-the registered sources. `build/` is excluded from Obsidian hidden-folder
+the Evidence quote or the request files. Keep prepared artifacts in the base's
+`.knowledge/build/reviews/` or another directory under its `.knowledge/` and
+outside `.knowledge/entries/`. `build/` is excluded from Obsidian hidden-folder
 indexing by default; remove `build` from the kgdistiller plugin's exclusion list
 to open drafts there.
 
@@ -97,13 +100,13 @@ Preparation does not itself commit knowledge. A refused apply (for example
 overridden gate.
 
 The transaction leaves other knowledge in the source untouched. Verify the
-committed receipt, run `kgdistiller --repo-root PROJECT check`, and return a link
+committed receipt, run `kgd check --base B`, and return a link
 to the accepted entry plus its understanding and direct remaining gaps. If a
 source def/pending sheet exists or was requested, refresh only its affected rows
 and retain `partial` coverage. Preserve unrelated rows and annotations. A partial
 sheet need not be filled before capture ends.
 If the user wants to review several items before saving, prepare them with
-`kgdistiller harvest prepare` so the sheet gets clearly labeled draft links as
+`kgd harvest prepare … --base B` so the sheet gets clearly labeled draft links as
 Markdown tasks. The user selects those items in Obsidian and explicitly requests
 `$harvest-paper` to ingest them. A checkbox selects an import; it does not change
 understanding.

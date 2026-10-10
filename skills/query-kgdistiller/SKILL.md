@@ -19,29 +19,31 @@ keys and action codes, and raw errors unchanged.
 
 - Use the bounded query interface instead of reading `.knowledge/entries/` or
   `.knowledge/edges.jsonl` wholesale.
-- Never edit a source, entry, edge file or registry.
+- Never edit a source, entry, edge file, or the home's `config.json` or types.
 - Never run `capture`, `ingest`, `harvest`, `check --fix-lines` or another
   writer.
 - Never promote lexical, embedding, acronym, translation, or topology similarity
   into identity.
 
 Use the read-only MCP tools when available (`kg_status`, `kg_resolve_concepts`,
-`kg_search`, `kg_get_node`, `kg_expand`, `kg_ppr`, `kg_build_context`).
-Otherwise use `kgdistiller --repo-root PROJECT agent ...` and consume its JSON
-output. Every call loads the entries and edges into one in-memory view; do not
+`kg_search`, `kg_get_node`, `kg_expand`, `kg_ppr`, `kg_build_context`); they
+serve the one base selected when `kgd mcp [--base B]` started. Otherwise use
+`kgd agent ... --base B`, or run `kgd agent ...` inside a registered base root,
+and consume its JSON output. Relative paths such as `--plan` are resolved
+against the working directory. Every call loads the entries and edges into one in-memory view; do not
 reimplement loading or indexing in the Skill.
 
 Start with `kg_status` or:
 
 ```sh
-kgdistiller --repo-root PROJECT agent status
+kgd agent status --base B
 ```
 
 It returns `kgdistiller-query-status-v1` with the entry and edge counts and the
 count of each relation. A read never authorizes a write.
 
 Every entry is returned, including entries whose Evidence quote no longer
-matches their source; such staleness is reported only by `kgdistiller check` and
+matches their source; such staleness is reported only by `kgd check` and
 never hides knowledge from retrieval. If an answer depends on a cited source
 passage, read the entry's `source`, `line_start`, `line_end` and `evidence`
 fields and say when `check` reports that entry as stale.
@@ -51,7 +53,7 @@ fields and say when `check` reports that entry as stale.
 Resolve the whole batch of names with `kg_resolve_concepts` or:
 
 ```sh
-kgdistiller --repo-root PROJECT agent resolve "Concept A" "Concept B"
+kgd agent resolve "Concept A" "Concept B" --base B
 ```
 
 Each result has a `status`: `exact` (an id or canonical label), `alias` (a
@@ -63,9 +65,9 @@ review.
 Then read only what is needed:
 
 ```sh
-kgdistiller --repo-root PROJECT agent get ENTRY_ID
-kgdistiller --repo-root PROJECT agent expand ENTRY_ID --direction both --depth 1
-kgdistiller --repo-root PROJECT agent ppr ENTRY_ID --limit 10
+kgd agent get ENTRY_ID --base B
+kgd agent expand ENTRY_ID --direction both --depth 1 --base B
+kgd agent ppr ENTRY_ID --limit 10 --base B
 ```
 
 `agent get` returns the entry record (label, kind, aliases, source and line
@@ -77,8 +79,8 @@ incoming and outgoing edges. `expand` and `ppr` walk the accepted edges.
 For anything beyond exact resolution:
 
 ```sh
-kgdistiller --repo-root PROJECT agent search "QUESTION OR TERMS"
-kgdistiller --repo-root PROJECT agent context "QUESTION" --budget 6000
+kgd agent search "QUESTION OR TERMS" --base B
+kgd agent context "QUESTION" --budget 6000 --base B
 ```
 
 Lexical search is BM25 over each entry's label, aliases, kind, summary,

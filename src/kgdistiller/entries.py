@@ -15,7 +15,7 @@ import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .knowledge_paths import KNOWLEDGE_DIRECTORY
+from .home import KNOWLEDGE_DIRECTORY
 
 ENTRY_SCHEMA = "kgdistiller-entry-v1"
 ENTRIES_DIR = Path(KNOWLEDGE_DIRECTORY, "entries")
@@ -149,18 +149,18 @@ def _single_line(value: Any, field: str, *, limit: int = MAX_LABEL_LENGTH) -> st
 
 
 def validate_source_path(value: Any) -> str:
-    """Check a project-relative POSIX source path lexically."""
+    """Check a base-relative POSIX source path lexically."""
     if not isinstance(value, str) or not value or "\\" in value or any(
         ord(character) < 32 for character in value
     ):
-        raise EntryError(f"source must be a project-relative POSIX path: {value!r}")
+        raise EntryError(f"source must be a base-relative POSIX path: {value!r}")
     path = PurePosixPath(value)
     if (
         path.is_absolute()
         or re.match(r"^[A-Za-z]:", value)
         or any(part in {"", ".", ".."} for part in value.split("/"))
     ):
-        raise EntryError(f"source must be a safe project-relative path without '..': {value!r}")
+        raise EntryError(f"source must be a safe base-relative path without '..': {value!r}")
     if path.parts[0] == KNOWLEDGE_DIRECTORY:
         raise EntryError(f"source must be outside the {KNOWLEDGE_DIRECTORY}/ tree: {value!r}")
     return value

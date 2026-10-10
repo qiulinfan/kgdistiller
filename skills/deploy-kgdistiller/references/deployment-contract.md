@@ -1,77 +1,116 @@
 # Deployment contract
 
-## Knowledge layout
+## Home and base layout
 
 ```text
-PROJECT/
+$KGDISTILLER_HOME/            # default ~/.knowledge; owner data
+├── config.json               # bases, their source globs, embedding
+├── types/<USER_TYPE>.md      # one user-defined document type per file
+├── .gitignore                # "index.sqlite*" and "lock"
+└── lock                      # writer lock; its contents are meaningless
+
+BASE_ROOT/
 ├── notes/                    # registered source documents, any text format
 └── .knowledge/
-    ├── vault.json            # stable vault identity
-    ├── sources.json          # source registration; optional document types
     ├── entries/<id>.md       # one reviewed entry per knowledge node
     ├── edges.jsonl           # accepted semantic edges
-    ├── .gitignore            # ignores build/
-    └── build/                # rebuildable local work (ignored)
+    └── build/                # rebuildable local work (ignored by the base)
 ```
 
-The knowledge project owns its source documents and the `.knowledge/` tree.
-Each entry is Obsidian-compatible Markdown: frontmatter properties (`schema`,
-`id`, `label`, `kind`, `aliases`, `source`, `line_start`, `line_end`,
-`understanding`), the human sections, and an Evidence section quoting the cited
-source lines verbatim. `edges.jsonl` holds one accepted edge per line with
-exactly `source`, `relation`, `target`, `origin`, `confidence` and `evidence`.
-Nothing else is knowledge: `.knowledge/build/` (ingest journals, plans,
-receipts, review drafts, retrieval caches, the Obsidian graph feed) is local and
-rebuildable. `.knowledge/` is the project's only knowledge root.
+`KGDISTILLER_HOME` is the only environment variable for kgdistiller's own home
+and data (the runtime linkers also honor `CODEX_HOME` and `CLAUDE_CONFIG_DIR`);
+it must be absolute after `~` expansion. A base owns its source documents and its
+`.knowledge/` tree, the base's only knowledge root. Each entry is
+Obsidian-compatible Markdown: frontmatter properties (`schema`, `id`, `label`,
+`kind`, `aliases`, `source`, `line_start`, `line_end`, `understanding`), the
+human sections, and an Evidence section quoting the cited source lines
+verbatim. `edges.jsonl` holds one accepted edge per line with exactly `source`,
+`relation`, `target`, `origin`, `confidence` and `evidence`. Nothing else in a
+base is knowledge: `.knowledge/build/` (ingest journals, plans, receipts,
+review drafts, retrieval caches, the Obsidian graph feed) is local and
+rebuildable.
 
-Opening the knowledge project as an Obsidian vault changes none of these roles.
-The product checkout and the Obsidian graph feed are not knowledge or backup
-roots.
+Opening a base root as an Obsidian vault changes none of these roles. The
+product checkout and the Obsidian graph feed are not knowledge or backup roots.
 
-## Source extraction profiles
+## Base registration
 
-The source registry may contain a `document_types` mapping. Names and node kinds
-are supplied by the user; the product does not pre-register research, mathematics
-or computing classes. For example, using placeholder values:
+`kgd base add BASE_ROOT [--name NAME]` creates the home on first use, records
+the base in `config.json` and creates `BASE_ROOT/.knowledge/entries/`.
+`kgd base list` shows every base; `kgd base rm NAME` removes only the
+registration. Both writers hold the home lock and write `config.json`
+atomically. Base names match `^[a-z0-9][a-z0-9-]*$`.
+
+A command finds its base through `--base NAME` after the command, or through
+the registered root that contains the working directory's real path. There is
+no upward search, no default base and no base identity file. Outside every
+registered root without `--base`, a command refuses and lists the registered
+bases.
+
+- No base root may equal, contain or lie inside another base root.
+- The home may not equal or lie inside a base root.
+- `path` is stored as `~/…` when the root lies under the user's home, otherwise
+  as an absolute path. A moved base needs its `path` edited by hand.
+
+## Source globs and document types
+
+Names, kinds and guidance are supplied by the user; the product does not
+pre-register research, mathematics or computing classes. For example, using
+placeholder values, `config.json`:
 
 ```json
 {
-  "schema": "kgdistiller-sources-v1",
-  "document_types": {
-    "USER_DOCUMENT_TYPE": {
-      "node_kinds": ["USER_NODE_KIND"],
-      "extraction_guidance": "The user's rules for nodes, relations, applications and pending gaps."
+  "bases": {
+    "NAME": {
+      "path": "~/BASE_ROOT",
+      "sources": {
+        "notes/**/*.md": "USER_TYPE",
+        "notes/*/main.tex": "USER_TYPE"
+      }
     }
   },
-  "sources": [
-    {
-      "id": "SOURCE_REGISTRATION",
-      "root": "SOURCE_DIRECTORY",
-      "files": ["*.tex"],
-      "document_type": "USER_DOCUMENT_TYPE"
-    }
-  ]
+  "embedding": null
 }
 ```
 
-The top level holds only `schema`, `sources` and the optional `document_types`.
-Each source holds only `id`, `root`, `files` and an optional `document_type`;
-any other key is rejected. A source root must be inside the project and outside
-`.knowledge/`. Every file an entry cites must be admitted by exactly one
-registered source. Omit unused document types. `node_kinds` is a nonempty list
-of unique user-defined names, and `extraction_guidance` contains the user's
-extraction rules. A source selects a registered profile by exact name; every
-entry citing it must use one of its kinds. Registration never reclassifies
-existing entries. If different files need different profiles, register
-separate bounded file sets. An omitted `document_type` leaves a source
-unclassified; do not silently assign one.
+and `types/USER_TYPE.md`:
+
+```markdown
+---
+node_kinds: [USER_NODE_KIND]
+relation_kinds:
+  USER_RELATION_KIND: [USER_ROLE, USER_OTHER_ROLE]
+epistemic: [USER_STATUS]
+---
+The user's rules for nodes, relations, applications and pending gaps.
+```
+
+- The top level holds exactly `bases` and `embedding`; each base holds exactly
+  `path` and `sources`. `embedding` is `null` or a model id.
+- Each `sources` key is a glob relative to the base root with Python glob
+  semantics: `*` stays within one path segment, `**` spans directories, and
+  hidden files and directories (`.knowledge/`, `.obsidian/`, `.git/`) never
+  match. A glob is non-empty and relative, uses `/`, and contains no `..` or
+  hidden segment.
+- Each value names an existing type file. Several globs may match one file
+  when they name the same type; globs naming two different types for one file
+  are an error. Every registered source therefore has exactly one type, and
+  there is no unclassified source.
+- A type file has a slug stem and frontmatter read with PyYAML's `BaseLoader`
+  (every scalar stays a string). `node_kinds` is a required nonempty list of
+  unique slugs; `relation_kinds` maps a kind to a nonempty list of unique role
+  slugs; `epistemic` is a list of slugs. No kind is both a node kind and a
+  relation kind. The non-empty body is the extraction guidance.
+- Every entry citing a source uses one of its type's `node_kinds`, and every
+  file an entry cites must be a registered source. Registration never
+  reclassifies existing entries.
 
 Sources are format-agnostic: any UTF-8 text document is read as lines, and its
-syntax is never parsed or converted. `kgdistiller --repo-root PROJECT scan --file
-RELATIVE_SOURCE` shows the admitting source, its `document_type` and `profile`,
-and the numbered lines, so extraction workflows can read the user's policy
-before any entry exists. Registration alone creates no entries and makes no
-retrieval-index choice.
+syntax is never parsed or converted. `kgd scan --file SOURCE --base NAME`
+shows the source's base, its `type` and `profile` (`node_kinds`,
+`relation_kinds`, `epistemic`, `guidance`) and the numbered lines, so
+extraction workflows can read the user's policy before any entry exists.
+Registration alone creates no entries and makes no retrieval-index choice.
 
 ## Required checks
 
@@ -90,10 +129,10 @@ machine.
 Record installed kgdistiller version and full product commit when discoverable.
 
 The Obsidian graph feed `.knowledge/build/obsidian/semantic-graph.json` is
-derived and never a source. Do not add it to the source registry or feed it to
-scan, capture or ingest. kgdistiller has no publishing surface; websites,
-course registries and HTML rendering belong to the repositories that own the
-notes.
+derived and never a source. It lies under the hidden `.knowledge/build/`, which
+no glob matches; never feed it to scan, capture or ingest. kgdistiller has no
+publishing surface; websites, course registries and HTML rendering belong to
+the repositories that own the notes.
 
 `kgdistiller codex link` and `kgdistiller claude link` treat installed copies
 as product-owned: `doctor` reports a copy that differs from the product source,
@@ -101,5 +140,5 @@ and relinking replaces it or removes a retired one, discarding local edits to
 installed files. Report a differing copy before relinking.
 
 Installing, linking, committing and pushing are separate authorities. Never
-place private sources or secrets in a product repository, receipt, command
-output or agent configuration.
+place private sources, the home's `config.json` or types, or secrets in a
+product repository, receipt, command output or agent configuration.

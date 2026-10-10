@@ -15,6 +15,7 @@ from kgdistiller.cli import (
     make_ranking_service,
     parse_args,
 )
+from kgdistiller.home import home_directory, resolve_base
 from kgdistiller.query import load_graph_view
 from kgdistiller.retrieval import (
     SEARCH_EXECUTION_SCHEMA,
@@ -25,7 +26,7 @@ from kgdistiller.semantic_retrieval import (
     SemanticRetrievalError,
     search_document,
 )
-from tests.knowledge_fixture import KnowledgeFixture
+from tests.knowledge_fixture import KnowledgeFixture, use_temporary_home
 from tests.test_query import fixture_edges, fixture_nodes
 from tests.test_semantic_retrieval import FakeEmbedding
 
@@ -79,13 +80,13 @@ def repository_bytes(root: Path) -> dict[str, bytes]:
 
 
 def authority_bytes(knowledge: Path) -> dict[str, bytes]:
-    """Entries, edges and the registry; the rebuildable build/ tree is excluded."""
+    """Entries and edges; the rebuildable build/ tree is excluded."""
     return {path: data for path, data in repository_bytes(knowledge).items() if not path.startswith("build/")}
 
 
 def write_fixture_store(root: Path, nodes: list[dict] | None = None, edges: list[dict] | None = None) -> Path:
-    """Write the query fixture as real entry files whose Evidence quotes one source line each."""
-    fixture = KnowledgeFixture(root)
+    """Write the query fixture as base ``kb`` in the temporary home; Evidence quotes one source line each."""
+    fixture = KnowledgeFixture(root, home_directory())
     nodes = fixture_nodes() if nodes is None else nodes
     fixture.write_source("notes/fixture.txt", "".join(f"{node['summary']}\n" for node in nodes))
     for line, node in enumerate(nodes, 1):
@@ -111,6 +112,9 @@ def write_graph_retrieval_fixture(root: Path) -> Path:
 
 
 class RetrievalCliParserTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.home = use_temporary_home(self)
+
     def parse(self, *arguments: str):
         with patch.object(sys, "argv", ["kgdistiller", *arguments]):
             return parse_args()
@@ -129,7 +133,7 @@ class RetrievalCliParserTest(unittest.TestCase):
         with patch.object(
             sys,
             "argv",
-            ["kgdistiller", "--repo-root", str(root), *arguments],
+            ["kgdistiller", *arguments, "--base", "kb"],
         ), redirect_stdout(stdout), redirect_stderr(stderr):
             status = main()
         return status, stdout.getvalue(), stderr.getvalue()
@@ -264,7 +268,7 @@ class RetrievalCliParserTest(unittest.TestCase):
             # Reranker scores and query vectors are not persisted; each run infers them.
             self.assertEqual(2, len(adapter.pair_calls))
             for _, documents in adapter.pair_calls:
-                self.assertEqual([search_document(load_graph_view(root, graph / "sources.json").nodes["measure"])], documents)
+                self.assertEqual([search_document(load_graph_view(resolve_base("kb", root)).nodes["measure"])], documents)
             self.assertEqual([["如何给可测集合赋予大小？"]] * 2, adapter.query_calls)
             self.assertEqual([], execution["result"]["graph_retrieval"]["seeds"]["identity"])
             self.assertEqual(["measure"], [item["node_id"] for item in execution["result"]["graph_retrieval"]["seeds"]["candidate"]])
@@ -431,7 +435,8 @@ class RetrievalCliParserTest(unittest.TestCase):
                                "--model-cache-dir", "derived/vectors", "--models-offline"),
                     repo_root=root,
                 )
-                self.assertEqual((root / "derived" / "vectors").resolve(), service.cache_dir)
+                # A relative path argument resolves against the working directory.
+                self.assertEqual((Path.cwd() / "derived" / "vectors").resolve(), service.cache_dir)
                 constructor.assert_called_once_with(
                     model="test/model", revision="a" * 40, device="mps", batch_size=2,
                     max_length=4096, local_files_only=True,
@@ -500,14 +505,14 @@ class RetrievalCliParserTest(unittest.TestCase):
     def test_mcp_launch_reuses_one_explicit_service(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-retrieval-cli-") as raw:
             root = Path(raw)
-            graph = write_fixture_store(root)
+            write_fixture_store(root)
             with patch("kgdistiller.adapters.sentence_transformers.SentenceTransformersAdapter",
                        return_value=FakeEmbedding()) as constructor, patch("kgdistiller.mcp.serve_stdio") as serve:
                 status, _, error = self.run_cli(root, "mcp", "--embedding", "--models-offline")
                 self.assertEqual(0, status, error)
                 constructor.assert_called_once()
-                self.assertEqual(root.resolve(), serve.call_args.args[0])
-                self.assertEqual((graph / "sources.json").resolve(), serve.call_args.args[1])
+                self.assertEqual(resolve_base("kb", root), serve.call_args.args[0])
+                self.assertEqual(root.resolve(), serve.call_args.args[0].root)
                 self.assertIs(serve.call_args.kwargs["ranking_service"].adapter, constructor.return_value)
 
     def test_missing_graph_fails_without_creating_runtime_state(self) -> None:
@@ -518,7 +523,7 @@ class RetrievalCliParserTest(unittest.TestCase):
             status, _, error = self.run_cli(root, "agent", "search", "alpha")
 
             self.assertEqual(1, status)
-            self.assertIn("run kgdistiller init", error)
+            self.assertIn("kgd base add", error)
             self.assertEqual(before, repository_bytes(root))
             self.assertFalse(any(root.rglob("*.sqlite")))
 

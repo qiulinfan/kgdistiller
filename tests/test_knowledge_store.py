@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from kgdistiller import knowledge_store
+from kgdistiller import home
 from kgdistiller.knowledge_store import (
     DELTA_SCHEMA,
     StoreError,
@@ -17,7 +17,7 @@ from kgdistiller.knowledge_store import (
     write_edges,
     write_entry,
 )
-from tests.knowledge_fixture import make_fixture
+from tests.knowledge_fixture import DEFAULT_TYPES, make_fixture
 
 SOURCE = "notes/measure.txt"
 TEXT = (
@@ -27,7 +27,7 @@ TEXT = (
     "\n"
     "A sigma-algebra is closed under complements.\n"
 )
-MATH = {"math": {"node_kinds": ["definition", "theorem"], "extraction_guidance": "Named statements."}}
+MATH = {"math": {"node_kinds": ["definition", "theorem"], "guidance": "Named statements."}}
 
 
 def delta(**lists):
@@ -48,7 +48,7 @@ class StoreTestCase(unittest.TestCase):
         self.fixture.add_edge("sigma-algebra", "prerequisite-for", "measure-space")
 
     def check(self):
-        return validate(load_state(self.root), self.root, self.fixture.registry)
+        return validate(load_state(self.root), self.fixture.base)
 
     def codes(self):
         return [error["code"] for error in self.check()["errors"]]
@@ -135,24 +135,29 @@ class LoadAndValidateTest(StoreTestCase):
 
     def test_kind_follows_the_registered_document_type(self) -> None:
         self.assertEqual(self.codes(), [])
-        self.fixture.document_types = MATH
-        self.fixture.sources[0]["document_type"] = "math"
-        self.fixture.write_registry()
+        self.fixture.types = MATH
+        self.fixture.sources = {"notes/**/*": "math"}
+        self.fixture.write_home()
         self.assertEqual(self.codes(), ["kind-not-allowed", "kind-not-allowed"])
         self.fixture.write_entry({**self.measure, "kind": "definition"})
         self.fixture.write_entry({**self.sigma, "kind": "theorem"})
         self.assertEqual(self.codes(), [])
 
-    def test_sources_must_exist_and_be_admitted_by_exactly_one_source(self) -> None:
+    def test_sources_must_exist_and_map_to_exactly_one_type(self) -> None:
         self.fixture.write_entry({**self.sigma, "source": "notes/missing.txt"})
         self.assertEqual(self.codes(), ["missing-source"])
         self.fixture.write_source("elsewhere/a.txt", TEXT)
         self.fixture.write_entry({**self.sigma, "source": "elsewhere/a.txt"})
         self.assertEqual(self.codes(), ["source-not-registered"])
-        self.fixture.sources.append({"id": "local:all", "root": "notes", "files": ["*.txt"]})
-        self.fixture.write_registry()
         self.fixture.write_entry(self.sigma)
-        self.assertEqual(self.codes(), ["source-not-registered", "source-not-registered"])
+        self.fixture.sources["notes/*.txt"] = "fixture"
+        self.fixture.write_home()
+        self.assertEqual(self.codes(), [])
+        self.fixture.types = {**DEFAULT_TYPES, **MATH}
+        self.fixture.sources["notes/*.txt"] = "math"
+        self.fixture.write_home()
+        self.assertEqual(self.codes(),
+                         ["source-type-conflict", "source-not-registered", "source-not-registered"])
 
     def test_any_extension_is_plain_text(self) -> None:
         for name in ("a.md", "b.typ", "c.tex", "d"):
@@ -196,7 +201,7 @@ class EvidenceStalenessTest(StoreTestCase):
                          [("measure-space", "moved", 4, 5), ("sigma-algebra", "moved", 7, 7)])
         state = load_state(self.root)
         before = (self.root / ".knowledge/entries/measure-space.md").read_text(encoding="utf-8")
-        fixed = fix_lines(state, self.root, self.fixture.registry)
+        fixed = fix_lines(state, self.fixture.base)
         self.assertEqual(len(fixed), 2)
         self.assertEqual(self.check(), {"errors": [], "stale": []})
         after = (self.root / ".knowledge/entries/measure-space.md").read_text(encoding="utf-8")
@@ -212,7 +217,7 @@ class EvidenceStalenessTest(StoreTestCase):
         self.assertEqual(stale["sigma-algebra"]["status"], "ambiguous")
         self.assertEqual(stale["sigma-algebra"]["candidates"],
                          [{"line_start": 6, "line_end": 6}, {"line_start": 7, "line_end": 7}])
-        fixed = fix_lines(load_state(self.root), self.root, self.fixture.registry)
+        fixed = fix_lines(load_state(self.root), self.fixture.base)
         self.assertEqual([item["entry"] for item in fixed], ["measure-space"])
         self.assertEqual(load_state(self.root).entries["sigma-algebra"]["line_start"], 5)
 
@@ -225,7 +230,7 @@ class EvidenceStalenessTest(StoreTestCase):
 
 class ApplyDeltaTest(StoreTestCase):
     def apply(self, **lists):
-        return apply_delta(load_state(self.root), delta(**lists), self.root, self.fixture.registry)
+        return apply_delta(load_state(self.root), delta(**lists), self.fixture.base)
 
     def test_create_update_remove_and_edges(self) -> None:
         chapter = self.fixture.entry("chapter-one", "Chapter one", SOURCE, 1, kind="note")
@@ -247,7 +252,7 @@ class ApplyDeltaTest(StoreTestCase):
         _, changes = apply_delta(after, delta(
             remove_entries=[{"id": "chapter-one", "expected_label": "Chapter one"}],
             remove_edges=[{"source": "chapter-one", "relation": "implies", "target": "measure-space"}],
-        ), self.root, self.fixture.registry)
+        ), self.fixture.base)
         self.assertEqual(changes["entries_removed"], ["chapter-one"])
         self.assertEqual(changes["edges_removed"],
                          [{"source": "chapter-one", "relation": "implies", "target": "measure-space"}])
@@ -283,9 +288,9 @@ class ApplyDeltaTest(StoreTestCase):
         self.assert_code("invalid-request", add_edges=[{**self.fixture.edge("a", "contains", "b")}])
         self.assert_code("invalid-request", create_entries=[self.measure],
                          remove_entries=[{"id": "measure-space", "expected_label": "Measure space"}])
-        self.fixture.document_types = MATH
-        self.fixture.sources[0]["document_type"] = "math"
-        self.fixture.write_registry()
+        self.fixture.types = MATH
+        self.fixture.sources = {"notes/**/*": "math"}
+        self.fixture.write_home()
         self.assert_code("kind-not-allowed", create_entries=[self.fixture.entry("x", "X", SOURCE, 1, kind="note")])
 
     def test_apply_delta_never_writes(self) -> None:
@@ -300,7 +305,7 @@ class AtomicWriteTest(StoreTestCase):
         state = load_state(self.root)
         path = self.root / ".knowledge/entries/measure-space.md"
         original = path.read_bytes()
-        with patch.object(knowledge_store.os, "replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
+        with patch.object(home.os, "replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
             write_entry(self.root, {**self.measure, "summary": "Changed."})
         self.assertEqual(path.read_bytes(), original)
         self.assertEqual(sorted(item.name for item in path.parent.iterdir()),

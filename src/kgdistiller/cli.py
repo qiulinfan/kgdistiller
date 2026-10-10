@@ -10,9 +10,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from kgdistiller.knowledge_paths import KNOWLEDGE_DIRECTORY, knowledge_root
-from kgdistiller.knowledge_store import atomic_write_text
-from kgdistiller.sources import KnowledgeError, read_json
+from kgdistiller.home import (
+    KNOWLEDGE_DIRECTORY,
+    Base,
+    KnowledgeError,
+    atomic_write_text,
+    knowledge_root,
+    resolve_base,
+)
 
 
 def pretty_json(value: Any) -> str:
@@ -46,34 +51,39 @@ def configure_console_streams() -> None:
             reconfigure(errors=error_handler)
 
 
-def defaults(repo_root: Path, value: str | Path) -> Path:
-    return (repo_root / value).resolve()
+def _cwd_path(value: Path) -> Path:
+    """Resolve a command-line path against the working directory; keep absolute paths."""
+    return Path(os.path.abspath(value))
 
 
-def check_command(repo_root: Path, registry: Path, *, fix: bool) -> int:
+def _read_json(value: Path) -> Any:
+    return json.loads(_cwd_path(value).read_text(encoding="utf-8"))
+
+
+def check_command(base: Base, *, fix: bool) -> int:
     """Validate the entry store; with ``fix`` rewrite the line ranges of moved entries."""
     from .ingest import IngestPaths, journal_path, writer_lock
     from .knowledge_store import fix_lines, load_state, validate
 
-    paths = IngestPaths(repo_root=repo_root, registry=registry)
+    paths = IngestPaths(base)
     if journal_path(paths).exists():
         raise KnowledgeError(
             "an ingest install is in progress or was interrupted; "
-            "rerun or recover it with kgdistiller ingest apply before checking"
+            f"rerun or recover it with `kgd ingest apply REQUEST --base {base.name}` before checking"
         )
     load_errors: list[dict[str, Any]] = []
     if fix:
         with writer_lock(paths):
-            state = load_state(repo_root, load_errors)
-            for item in fix_lines(state, repo_root, registry):
+            state = load_state(base.root, load_errors)
+            for item in fix_lines(state, base):
                 print(
                     f"fixed {item['entry']}: {item['source']}:{item['line_start']}-{item['line_end']}"
                     f" -> {item['new_line_start']}-{item['new_line_end']}"
                 )
-            report = validate(state, repo_root, registry)
+            report = validate(state, base)
     else:
-        state = load_state(repo_root, load_errors)
-        report = validate(state, repo_root, registry)
+        state = load_state(base.root, load_errors)
+        report = validate(state, base)
     report["errors"][:0] = load_errors
     for error in report["errors"]:
         print(f"error {error['code']}: {error['message']}")
@@ -82,7 +92,7 @@ def check_command(repo_root: Path, registry: Path, *, fix: bool) -> int:
         if item["status"] == "moved":
             print(
                 f"moved {item['entry']}: {cited} -> {item['new_line_start']}-{item['new_line_end']}"
-                " (run kgdistiller check --fix-lines)"
+                f" (run `kgd check --base {base.name} --fix-lines`)"
             )
         elif item["status"] == "ambiguous":
             ranges = ", ".join(
@@ -98,31 +108,35 @@ def check_command(repo_root: Path, registry: Path, *, fix: bool) -> int:
     return 0
 
 
-def scan_files(repo_root: Path, registry: Path, files: list[Path]) -> dict[str, Any]:
-    """Return each file's registered source profile and its text with 1-based line numbers."""
-    from .document_types import load_document_types
+def scan_files(base: Base, files: list[Path]) -> dict[str, Any]:
+    """Return each file's document type profile and its text with 1-based line numbers."""
     from .entries import split_lines
-    from .sources import load_sources, source_for_path
 
-    specs = load_sources(repo_root, registry)
-    profiles = load_document_types(registry)
+    registered, _ = base.source_types()
     result = []
     for value in files:
-        path = value if value.is_absolute() else repo_root / value
+        path = _cwd_path(value)
         if not path.is_file():
             raise KnowledgeError(f"scan file does not exist: {value}")
-        spec = source_for_path(specs, path)
         try:
-            relative = path.resolve().relative_to(repo_root.resolve()).as_posix()
+            relative = Path(os.path.realpath(path)).relative_to(base.root).as_posix()
         except ValueError as error:
-            raise KnowledgeError(f"scan file lies outside the project: {value}") from error
+            raise KnowledgeError(f"scan file lies outside base {base.name}: {value}") from error
+        document_type = (
+            base.types[registered[relative]] if relative in registered else base.type_of(relative)
+        )
         with path.open("r", encoding="utf-8", newline=None) as handle:
             text = handle.read()
         result.append({
             "path": relative,
-            "source_id": spec.id,
-            "document_type": spec.document_type or None,
-            "profile": profiles[spec.document_type] if spec.document_type else None,
+            "base": base.name,
+            "type": document_type.name,
+            "profile": {
+                "node_kinds": list(document_type.node_kinds),
+                "relation_kinds": {kind: list(roles) for kind, roles in document_type.relation_kinds.items()},
+                "epistemic": list(document_type.epistemic),
+                "guidance": document_type.guidance,
+            },
             "lines": [{"line": number, "text": line} for number, line in enumerate(split_lines(text), 1)],
         })
     return {"files": result}
@@ -142,7 +156,7 @@ def add_model_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rerank-candidates", type=int, default=50, help="maximum candidates sent to the reranker (1 to 500)")
     parser.add_argument("--reranker-model", help="reranker model; defaults to the adapter's pinned BAAI/bge-reranker-v2-m3")
     parser.add_argument("--reranker-revision", help="immutable reranker revision; defaults to the adapter's pinned revision")
-    parser.add_argument("--model-cache-dir", type=Path, help=f"derived vector cache; defaults to {KNOWLEDGE_DIRECTORY}/build/retrieval")
+    parser.add_argument("--model-cache-dir", type=Path, help=f"derived vector cache; defaults to {KNOWLEDGE_DIRECTORY}/build/retrieval under the base root")
     parser.add_argument("--models-offline", action="store_true", help="load only already downloaded local model files")
 
 
@@ -183,9 +197,11 @@ def make_ranking_service(args: argparse.Namespace, *, repo_root: Path):
     from .retrieval import RetrievalError
     from .semantic_retrieval import SemanticRankingService, SemanticRetrievalError
 
-    cache_dir = args.model_cache_dir or knowledge_root(repo_root) / "build" / "retrieval"
-    if not cache_dir.is_absolute():
-        cache_dir = repo_root / cache_dir
+    cache_dir = (
+        _cwd_path(args.model_cache_dir)
+        if args.model_cache_dir is not None
+        else knowledge_root(repo_root) / "build" / "retrieval"
+    )
     try:
         adapter_options = {
             "model": args.embedding_model if args.embedding_model is not None else DEFAULT_EMBEDDING_MODEL,
@@ -212,10 +228,6 @@ def make_ranking_service(args: argparse.Namespace, *, repo_root: Path):
         raise RetrievalError(error.code, error.message) from error
 
 
-def _resolve_cli_path(repo_root: Path, value: Path) -> Path:
-    return value.resolve() if value.is_absolute() else (repo_root / value).resolve()
-
-
 def _option_names(options: set[str]) -> set[str]:
     """Return the long options from ``options`` that appear on the command line."""
     supplied = set()
@@ -237,78 +249,34 @@ def _option_names(options: set[str]) -> set[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    target = parser.add_mutually_exclusive_group()
-    target.add_argument(
-        "--repo-root",
-        type=Path,
-        help="use an explicit vault path without consulting the user registry",
+    based = argparse.ArgumentParser(add_help=False)
+    based.add_argument(
+        "--base",
+        metavar="NAME",
+        help="registered base to use; defaults to the base whose root contains the working directory",
     )
-    target.add_argument(
-        "--vault",
-        help="select a registered vault by machine-local name or stable ID",
-    )
-    parser.add_argument(
-        "--kgdistiller-home",
-        type=Path,
-        help="override the user-level registry directory (or use KGDISTILLER_HOME)",
-    )
-    parser.add_argument("--registry", default=f"{KNOWLEDGE_DIRECTORY}/sources.json")
     commands = parser.add_subparsers(dest="command", required=True)
-    vault_command = commands.add_parser(
-        "vault",
-        help="manage machine-local vault registrations",
-        description="Manage machine-local vault names, paths, and the default target.",
+    base_command = commands.add_parser(
+        "base",
+        help="register knowledge bases in the kgdistiller home",
+        description="Add, remove or list the bases registered in $KGDISTILLER_HOME/config.json.",
     )
-    vault_commands = vault_command.add_subparsers(
-        dest="vault_command", required=True
+    base_commands = base_command.add_subparsers(dest="base_command", required=True)
+    base_add = base_commands.add_parser(
+        "add", help="register a directory as a base, creating the home on first use"
     )
-    vault_register = vault_commands.add_parser(
-        "register", help="register or relocate a vault"
-    )
-    vault_register.add_argument("path", type=Path)
-    vault_register.add_argument("--name")
-    vault_register.add_argument(
-        "--replace",
-        action="store_true",
-        help="relocate an existing vault identity even when its old path still exists",
-    )
-    vault_commands.add_parser("list", help="list registered vaults")
-    vault_show = vault_commands.add_parser("show", help="show one registered vault")
-    vault_show.add_argument("selector")
-    vault_default = vault_commands.add_parser(
-        "default", help="set or clear the default vault"
-    )
-    vault_default.add_argument("selector", nargs="?")
-    vault_default.add_argument(
-        "--clear",
-        action="store_true",
-        help="clear the default vault",
-    )
-    vault_unregister = vault_commands.add_parser(
-        "unregister", help="remove a machine-local registration"
-    )
-    vault_unregister.add_argument("selector")
-    vault_doctor = vault_commands.add_parser(
-        "doctor", help="validate registered paths and portable identities"
-    )
-    vault_doctor.add_argument("selector", nargs="?")
-    init_command = commands.add_parser(
-        "init", help="create the source registry, an empty entries directory and edges file"
-    )
-    init_command.add_argument("--source-root", type=Path, default=Path("notes"))
-    init_command.add_argument(
-        "--files",
-        action="append",
-        metavar="PATTERN",
-        help="glob admitted by the source, relative to its root (repeatable; default **/*)",
-    )
-    init_command.add_argument("--force", action="store_true")
+    base_add.add_argument("path", type=Path)
+    base_add.add_argument("--name", help="base name; defaults to the directory's basename")
+    base_rm = base_commands.add_parser("rm", help="remove a base from the registry; files stay")
+    base_rm.add_argument("name")
+    base_commands.add_parser("list", help="list the registered bases")
     scan_command = commands.add_parser(
-        "scan", help="show registered files with their document-type profile and numbered lines"
+        "scan", parents=[based],
+        help="show registered files with their document-type profile and numbered lines",
     )
     scan_command.add_argument("--file", action="append", required=True, type=Path)
     check_command_parser = commands.add_parser(
-        "check", help="validate entries and edges and report entries whose Evidence moved or vanished"
+        "check", parents=[based], help="validate entries and edges and report entries whose Evidence moved or vanished"
     )
     check_command_parser.add_argument(
         "--fix-lines",
@@ -323,7 +291,7 @@ def parse_args() -> argparse.Namespace:
         dest="obsidian_command", required=True
     )
     obsidian_install = obsidian_commands.add_parser(
-        "install", help="install the bundled kgdistiller plugin into the selected vault"
+        "install", parents=[based], help="install the bundled kgdistiller plugin into the base root"
     )
     obsidian_install.add_argument(
         "--replace",
@@ -338,7 +306,7 @@ def parse_args() -> argparse.Namespace:
     )
     agent_command = commands.add_parser("agent", help="read-only queries for agents")
     agent_commands = agent_command.add_subparsers(dest="agent_command", required=True)
-    agent_commands.add_parser("status")
+    agent_commands.add_parser("status", parents=[based])
     compiled_command = agent_commands.add_parser(
         "compiled", help="search, navigate and read an explicitly supplied compiled knowledge library"
     )
@@ -356,9 +324,9 @@ def parse_args() -> argparse.Namespace:
     compiled_pack = compiled_operations.add_parser("pack")
     compiled_pack.add_argument("reference", nargs="+")
     compiled_pack.add_argument("--budget", type=int, default=24000, help="complete UTF-8 response byte budget")
-    resolve_command = agent_commands.add_parser("resolve")
+    resolve_command = agent_commands.add_parser("resolve", parents=[based])
     resolve_command.add_argument("concept", nargs="+")
-    agent_search_command = agent_commands.add_parser("search")
+    agent_search_command = agent_commands.add_parser("search", parents=[based])
     agent_search_command.add_argument("query", nargs="?")
     agent_search_command.add_argument(
         "--plan",
@@ -372,9 +340,9 @@ def parse_args() -> argparse.Namespace:
     )
     add_model_arguments(agent_search_command)
     add_graph_retrieval_arguments(agent_search_command)
-    get_command = agent_commands.add_parser("get")
+    get_command = agent_commands.add_parser("get", parents=[based])
     get_command.add_argument("id")
-    expand_command = agent_commands.add_parser("expand")
+    expand_command = agent_commands.add_parser("expand", parents=[based])
     expand_command.add_argument("id", nargs="+")
     expand_command.add_argument(
         "--direction",
@@ -384,7 +352,7 @@ def parse_args() -> argparse.Namespace:
     expand_command.add_argument("--relation", action="append", dest="edge_types")
     expand_command.add_argument("--depth", type=int, default=1)
     expand_command.add_argument("--limit", type=int, default=50)
-    ppr_command = agent_commands.add_parser("ppr")
+    ppr_command = agent_commands.add_parser("ppr", parents=[based])
     ppr_command.add_argument("id", nargs="+")
     ppr_command.add_argument("--relation", action="append", dest="edge_types")
     ppr_command.add_argument(
@@ -393,7 +361,7 @@ def parse_args() -> argparse.Namespace:
         default="outgoing",
     )
     ppr_command.add_argument("--limit", type=int, default=50)
-    context_command = agent_commands.add_parser("context")
+    context_command = agent_commands.add_parser("context", parents=[based])
     context_command.add_argument("query", nargs="?")
     context_command.add_argument(
         "--plan",
@@ -414,11 +382,11 @@ def parse_args() -> argparse.Namespace:
     harvest_commands = harvest_command.add_subparsers(
         dest="harvest_command", required=True
     )
-    harvest_prepare = harvest_commands.add_parser("prepare")
+    harvest_prepare = harvest_commands.add_parser("prepare", parents=[based])
     harvest_prepare.add_argument("input", type=Path)
     harvest_prepare.add_argument("--sheet", type=Path, required=True)
     harvest_prepare.add_argument("--output", type=Path, required=True)
-    harvest_apply = harvest_commands.add_parser("apply")
+    harvest_apply = harvest_commands.add_parser("apply", parents=[based])
     harvest_apply.add_argument("sheet", type=Path)
     harvest_apply.add_argument("--output", type=Path, required=True)
     capture_command = commands.add_parser(
@@ -427,7 +395,7 @@ def parse_args() -> argparse.Namespace:
     capture_commands = capture_command.add_subparsers(
         dest="capture_command", required=True
     )
-    capture_prepare = capture_commands.add_parser("prepare")
+    capture_prepare = capture_commands.add_parser("prepare", parents=[based])
     capture_prepare.add_argument("input", type=Path)
     capture_prepare.add_argument("--output", type=Path, required=True)
     ingest_command = commands.add_parser(
@@ -436,10 +404,10 @@ def parse_args() -> argparse.Namespace:
     ingest_commands = ingest_command.add_subparsers(
         dest="ingest_command", required=True
     )
-    ingest_plan = ingest_commands.add_parser("plan")
+    ingest_plan = ingest_commands.add_parser("plan", parents=[based])
     ingest_plan.add_argument("request", type=Path)
     ingest_plan.add_argument("--output", type=Path)
-    ingest_apply = ingest_commands.add_parser("apply")
+    ingest_apply = ingest_commands.add_parser("apply", parents=[based])
     ingest_apply.add_argument("request", type=Path)
     ingest_apply.add_argument("--receipt", type=Path)
     export_command = commands.add_parser("export", help="write the Obsidian plugin's graph feed")
@@ -447,12 +415,12 @@ def parse_args() -> argparse.Namespace:
         dest="export_command", required=True
     )
     export_obsidian = export_commands.add_parser(
-        "obsidian", help="write the Obsidian plugin's typed graph feed"
+        "obsidian", parents=[based], help="write the Obsidian plugin's typed graph feed"
     )
     export_obsidian.add_argument(
         "--output",
         type=Path,
-        default=Path(KNOWLEDGE_DIRECTORY, "build", "obsidian", "semantic-graph.json"),
+        help=f"feed file; defaults to {KNOWLEDGE_DIRECTORY}/build/obsidian/semantic-graph.json under the base root",
     )
     codex_command = commands.add_parser("codex", help="link or verify the Codex integration")
     codex_commands = codex_command.add_subparsers(dest="codex_command", required=True)
@@ -482,7 +450,9 @@ def parse_args() -> argparse.Namespace:
     claude_doctor = claude_commands.add_parser("doctor")
     claude_doctor.add_argument("--claude-home", type=Path)
     claude_doctor.add_argument("--source-only", action="store_true")
-    mcp_command = commands.add_parser("mcp", help="serve read-only MCP tools over stdio")
+    mcp_command = commands.add_parser(
+        "mcp", parents=[based], help="serve read-only MCP tools over stdio for one base"
+    )
     add_model_arguments(mcp_command)
     args = parser.parse_args()
     if hasattr(args, "graph_retrieval"):
@@ -514,14 +484,6 @@ def parse_args() -> argparse.Namespace:
             parser.error("--reranker-model requires an explicit immutable --reranker-revision")
         if not args.rerank and supplied_options.intersection({"--rerank-candidates", "--reranker-model", "--reranker-revision"}):
             parser.error("reranker settings require --rerank")
-    if args.command == "vault" and (args.repo_root is not None or args.vault is not None):
-        parser.error("vault registry commands cannot be combined with --repo-root or --vault")
-    if (
-        args.command == "vault"
-        and args.vault_command == "default"
-        and ((args.selector is None) == (not args.clear))
-    ):
-        parser.error("vault default requires one selector or --clear")
     if (
         args.command == "agent"
         and args.agent_command in {"search", "context"}
@@ -542,11 +504,11 @@ def _error(kind: str, code: str, message: str) -> None:
     print(pretty_json({"kind": kind, "code": code, "message": message}), end="", file=sys.stderr)
 
 
-def _query_plan(args: argparse.Namespace, repo_root: Path, default_limit: int):
+def _query_plan(args: argparse.Namespace, default_limit: int):
     from .retrieval import load_retrieval_plan, query_retrieval_plan
 
     if args.plan is not None:
-        return load_retrieval_plan(_resolve_cli_path(repo_root, args.plan)), "planned"
+        return load_retrieval_plan(_cwd_path(args.plan)), "planned"
     plan = query_retrieval_plan(
         str(args.query),
         limit=args.limit if args.limit is not None else default_limit,
@@ -556,7 +518,7 @@ def _query_plan(args: argparse.Namespace, repo_root: Path, default_limit: int):
     return plan, "query"
 
 
-def _agent(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
+def _agent(args: argparse.Namespace, base: Base) -> int:
     from .query import (
         QueryError,
         expand,
@@ -573,7 +535,7 @@ def _agent(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
     )
 
     try:
-        view = load_graph_view(repo_root, registry)
+        view = load_graph_view(base)
     except QueryError as error:
         raise KnowledgeError(str(error)) from error
     if args.agent_command == "status":
@@ -601,12 +563,12 @@ def _agent(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
         )
     else:
         try:
-            plan, plan_mode = _query_plan(args, repo_root, 20 if args.agent_command == "search" else 50)
+            plan, plan_mode = _query_plan(args, 20 if args.agent_command == "search" else 50)
             execution = execute_retrieval_plan(
                 view,
                 plan,
                 plan_mode=plan_mode,
-                ranking_service=make_ranking_service(args, repo_root=repo_root),
+                ranking_service=make_ranking_service(args, repo_root=base.root),
                 graph_policy=make_graph_retrieval_policy(args),
             )
             result = (
@@ -621,7 +583,7 @@ def _agent(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
     return 0
 
 
-def _ingest(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
+def _ingest(args: argparse.Namespace, base: Base) -> int:
     from .ingest import (
         IngestError,
         IngestPaths,
@@ -630,24 +592,14 @@ def _ingest(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
         plan_ingest,
     )
 
-    paths = IngestPaths(repo_root=repo_root, registry=registry)
-    fail_stage = os.environ.get("KGDISTILLER_INGEST_FAIL_STAGE", "")
-    crash_stage = os.environ.get("KGDISTILLER_INGEST_CRASH_STAGE", "")
-
-    def inject(stage: str) -> None:
-        if crash_stage and stage == crash_stage:
-            os._exit(86)
-        if fail_stage and stage == fail_stage:
-            raise IngestError("injected-failure", f"failure injected at {stage}", stage=stage)
-
-    injector = inject if fail_stage or crash_stage else None
+    paths = IngestPaths(base)
     try:
-        request = load_request(_resolve_cli_path(repo_root, args.request), mode=args.ingest_command)
+        request = load_request(_cwd_path(args.request), mode=args.ingest_command)
         if args.ingest_command == "plan":
-            result = plan_ingest(paths, request, failure_injector=injector)
+            result = plan_ingest(paths, request)
             destination = args.output
         else:
-            result = apply_ingest(paths, request, failure_injector=injector)
+            result = apply_ingest(paths, request)
             destination = args.receipt
     except IngestError as error:
         print(pretty_json(error.payload()), end="", file=sys.stderr)
@@ -656,7 +608,7 @@ def _ingest(args: argparse.Namespace, repo_root: Path, registry: Path) -> int:
     if destination is None:
         print(content, end="")
         return 0
-    output = _resolve_cli_path(repo_root, destination)
+    output = _cwd_path(destination)
     atomic_write_text(output, content)
     print(pretty_json({
         "schema": result["schema"],
@@ -692,30 +644,17 @@ def _compiled(args: argparse.Namespace) -> int:
     return 0
 
 
-def _vault(args: argparse.Namespace) -> int:
-    from kgdistiller.vault_registry import (
-        doctor_vaults,
-        list_vaults,
-        register_vault,
-        set_default_vault,
-        show_vault,
-        unregister_vault,
-    )
+def _base(args: argparse.Namespace) -> int:
+    from kgdistiller.home import add_base, list_bases, remove_base
 
-    if args.vault_command == "register":
-        result = register_vault(args.path, name=args.name, home=args.kgdistiller_home, replace=args.replace)
-    elif args.vault_command == "list":
-        result = list_vaults(args.kgdistiller_home)
-    elif args.vault_command == "show":
-        result = show_vault(args.selector, args.kgdistiller_home)
-    elif args.vault_command == "default":
-        result = set_default_vault(None if args.clear else args.selector, args.kgdistiller_home)
-    elif args.vault_command == "unregister":
-        result = unregister_vault(args.selector, args.kgdistiller_home)
+    if args.base_command == "add":
+        result = add_base(args.path, name=args.name)
+    elif args.base_command == "rm":
+        result = remove_base(args.name)
     else:
-        result = doctor_vaults(args.selector, args.kgdistiller_home)
+        result = list_bases()
     print(pretty_json(result), end="")
-    return 1 if result.get("status") == "error" else 0
+    return 0
 
 
 def _runtime_product(args: argparse.Namespace) -> int:
@@ -753,46 +692,26 @@ def main() -> int:
     configure_console_streams()
     args = parse_args()
     try:
+        if args.command == "base":
+            return _base(args)
         if args.command == "agent" and args.agent_command == "compiled":
             return _compiled(args)
-        if args.command == "vault":
-            return _vault(args)
         if args.command in {"codex", "claude"}:
             return _runtime_product(args)
-        from kgdistiller.vault_registry import resolve_repo_root
-
-        repo_root = resolve_repo_root(
-            explicit_repo_root=args.repo_root,
-            explicit_vault=args.vault,
-            home=args.kgdistiller_home,
-            use_default=args.command != "init",
-        )
-        # Every repo-relative default lives under the knowledge tree; reject a
+        base = resolve_base(args.base, Path.cwd())
+        # Every base-relative default lives under the knowledge tree; reject a
         # symlinked tree before any command reads or writes through it.
-        knowledge_root(repo_root)
-        registry = defaults(repo_root, args.registry)
-        if args.command == "init":
-            from .project import initialize_project
-
-            result = initialize_project(
-                repo_root,
-                registry,
-                source_root=args.source_root,
-                files=args.files,
-                force=args.force,
-            )
-            print(pretty_json(result), end="")
-            return 0
+        knowledge_root(base.root)
         if args.command == "check":
-            return check_command(repo_root, registry, fix=args.fix_lines)
+            return check_command(base, fix=args.fix_lines)
         if args.command == "scan":
-            print(pretty_json(scan_files(repo_root, registry, list(args.file))), end="")
+            print(pretty_json(scan_files(base, list(args.file))), end="")
             return 0
         if args.command == "obsidian":
             from .obsidian_plugin import ObsidianPluginError, install_obsidian_plugin
 
             try:
-                result = install_obsidian_plugin(repo_root, replace=args.replace, enable=args.enable)
+                result = install_obsidian_plugin(base.root, replace=args.replace, enable=args.enable)
             except ObsidianPluginError as error:
                 _error("kgdistiller-obsidian-plugin-error", "obsidian-plugin-install-failed", str(error))
                 return 1
@@ -802,12 +721,12 @@ def main() -> int:
             from .obsidian_export import ObsidianExportError, export_obsidian_graph
 
             output = (
-                Path(os.path.abspath(args.output))
-                if args.output.is_absolute()
-                else Path(os.path.abspath(repo_root / args.output))
+                _cwd_path(args.output)
+                if args.output is not None
+                else knowledge_root(base.root) / "build" / "obsidian" / "semantic-graph.json"
             )
             try:
-                result = export_obsidian_graph(repo_root, output, registry=registry)
+                result = export_obsidian_graph(base, output)
             except ObsidianExportError as error:
                 _error("kgdistiller-obsidian-export-error", "obsidian-export-failed", str(error))
                 return 1
@@ -817,12 +736,11 @@ def main() -> int:
             from .harvest import apply_harvest, prepare_harvest
             from .ingest import IngestPaths
 
-            paths = IngestPaths(repo_root=repo_root, registry=registry)
-            sheet_path = defaults(repo_root, args.sheet)
-            output_path = defaults(repo_root, args.output)
+            paths = IngestPaths(base)
+            sheet_path = _cwd_path(args.sheet)
+            output_path = _cwd_path(args.output)
             if args.harvest_command == "prepare":
-                payload = read_json(defaults(repo_root, args.input), {})
-                result = prepare_harvest(paths, payload, sheet_path, output_path)
+                result = prepare_harvest(paths, _read_json(args.input), sheet_path, output_path)
             else:
                 result = apply_harvest(paths, sheet_path, output_path)
             print(pretty_json(result), end="")
@@ -831,26 +749,23 @@ def main() -> int:
             from .capture import prepare_capture
             from .ingest import IngestPaths
 
-            paths = IngestPaths(repo_root=repo_root, registry=registry)
-            result = prepare_capture(
-                paths, read_json(defaults(repo_root, args.input), {}), defaults(repo_root, args.output)
-            )
+            result = prepare_capture(IngestPaths(base), _read_json(args.input), _cwd_path(args.output))
             print(pretty_json(result), end="")
             return 0
         if args.command == "ingest":
-            return _ingest(args, repo_root, registry)
+            return _ingest(args, base)
         if args.command == "mcp":
             from kgdistiller.mcp import serve_stdio
             from kgdistiller.retrieval import RetrievalError
 
             try:
-                ranking_service = make_ranking_service(args, repo_root=repo_root)
+                ranking_service = make_ranking_service(args, repo_root=base.root)
             except RetrievalError as error:
                 print(pretty_json(error.to_payload()), end="", file=sys.stderr)
                 return 1
-            serve_stdio(repo_root, registry, ranking_service=ranking_service)
+            serve_stdio(base, ranking_service=ranking_service)
             return 0
-        return _agent(args, repo_root, registry)
+        return _agent(args, base)
     except (KnowledgeError, OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         print(f"knowledge command failed: {error}", file=sys.stderr)
         return 1

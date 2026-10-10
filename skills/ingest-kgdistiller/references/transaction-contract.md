@@ -10,9 +10,11 @@ identity evidence. Labels and aliases are unique across the store under NFKC
 normalization, casefolding and whitespace collapsing. A rename is an update
 whose new label differs; keep the old label as an alias.
 
-A registered source's `document_type` selects user-authored `node_kinds` and
-`extraction_guidance`; it is independent of format and knowledge domain. Sources
-are any UTF-8 text documents, cited by path and line range, and are never
+A source is registered when a glob under `bases.B.sources` in
+`$KGDISTILLER_HOME/config.json` matches it; the glob maps it to exactly one
+user-authored type `$KGDISTILLER_HOME/types/<type>.md`, whose `node_kinds` and
+`guidance` are independent of format and knowledge domain. Sources are any
+UTF-8 text documents, cited by base-relative path and line range, and are never
 edited or converted by ingest.
 
 Every semantic edge is direct, typed, and supported by concrete evidence.
@@ -82,7 +84,7 @@ result, and returns a readable `kgdistiller-ingest-plan-v1`:
 `{schema, request_id, status: planned, changes, counts{before, after}}`. It
 writes nothing to the store.
 
-`ingest apply` takes the writer lock, finishes or rolls back any interrupted
+`ingest apply` takes the home lock (`$KGDISTILLER_HOME/lock`), finishes or rolls back any interrupted
 earlier install, and re-validates the same delta against the current store:
 
 - update and remove targets exist with their `expected_label`;
@@ -90,7 +92,11 @@ earlier install, and re-validates the same delta against the current store:
 - every created or updated entry's `evidence` equals its cited source lines
   now;
 - every kind is allowed by its source's document type;
-- every source is a registered UTF-8 file and every line range is in bounds;
+- every source is a UTF-8 file matched by the base's globs with exactly one
+  type (otherwise `source-not-registered`), and every line range is in bounds;
+- no registered file of the base, cited or not, matches globs of two different
+  types (otherwise `source-type-conflict`, which refuses every write to the base
+  until its globs in `$KGDISTILLER_HOME/config.json` are fixed);
 - every edge endpoint exists after the delta, and `prerequisite-for` stays
   acyclic;
 - the whole resulting store validates.
@@ -108,7 +114,7 @@ Reapplying an identical request returns its stored receipt. Reusing a
 
 `invalid-request`, `invalid-store`, `lock-conflict`, `missing-entry`,
 `label-mismatch`, `entry-exists`, `identity-collision`, `missing-source`,
-`source-not-registered`, `line-range`, `stale-evidence`, `kind-not-allowed`,
+`source-not-registered`, `source-type-conflict`, `line-range`, `stale-evidence`, `kind-not-allowed`,
 `missing-edge`, `invalid-edge`, `dangling-edge`, `cycle`, `request-conflict`,
 `install-failed`. Errors are printed as a `kgdistiller-ingest-error-v1`
 envelope. Any rejection before installation leaves the store unchanged; an
@@ -121,7 +127,7 @@ known-good Git revision.
 
 ## Downstream state and handoff
 
-Run `kgdistiller check` after every commit. Refreshing the Obsidian graph feed
+Run `kgd check --base B` after every commit. Refreshing the Obsidian graph feed
 (`export obsidian`) is a separate action; the feed under
 `.knowledge/build/obsidian/` is derived and must not be scanned or ingested
 back.

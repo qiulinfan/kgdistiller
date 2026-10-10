@@ -1,5 +1,5 @@
 export const GRAPH_SCHEMA = "kgdistiller-obsidian-graph-v1" as const;
-/** The product's single knowledge tree at a project root; entries live in its `entries/` folder. */
+/** The product's single knowledge tree at a base root; entries live in its `entries/` folder. */
 export const KNOWLEDGE_DIRECTORY = ".knowledge";
 
 export const UNDERSTANDING_STATES = ["unknown", "not-yet-understood", "understood"] as const;
@@ -17,7 +17,7 @@ export interface ConceptRecord {
   label: string;
   kind: string;
   aliases: string[];
-  /** The concept's entry file, relative to the project root. */
+  /** The concept's entry file, relative to the base root. */
   authority: string;
   understanding: Understanding;
 }

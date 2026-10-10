@@ -1,51 +1,82 @@
-"""Build temporary knowledge projects: registry, plain text sources, entries, edges."""
+"""Build temporary knowledge bases: a home with source globs and types, plain text sources, entries, edges."""
 
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from kgdistiller.entries import cited_text, normalize_record, render_entry, split_lines
+from kgdistiller.home import HOME_GITIGNORE, Base, resolve_base
 from kgdistiller.ingest import IngestPaths
 from kgdistiller.knowledge_store import KnowledgeState, render_edges
 from kgdistiller.query import GraphView
-from kgdistiller.sources import SOURCE_SCHEMA
 
-DEFAULT_SOURCE = {"id": "local:notes", "root": "notes", "files": ["**/*"]}
+BASE_NAME = "kb"
+DEFAULT_SOURCES = {"notes/**/*": "fixture"}
+FIXTURE_KINDS = [
+    "concept", "definition", "theorem", "method", "note", "term", "construction",
+    "axiom", "lemma", "proposition", "corollary", "example",
+]
+DEFAULT_TYPES: dict[str, dict[str, Any]] = {
+    "fixture": {"node_kinds": FIXTURE_KINDS, "guidance": "Extract every stated idea."},
+}
+
+
+def type_document(spec: dict[str, Any]) -> str:
+    """Render a document type file; JSON flow collections are valid YAML."""
+    lines = ["---", f"node_kinds: {json.dumps(spec['node_kinds'])}"]
+    if "relation_kinds" in spec:
+        lines.append(f"relation_kinds: {json.dumps(spec['relation_kinds'])}")
+    if "epistemic" in spec:
+        lines.append(f"epistemic: {json.dumps(spec['epistemic'])}")
+    lines += ["---", "", spec.get("guidance", "Fixture guidance."), ""]
+    return "\n".join(lines)
 
 
 class KnowledgeFixture:
-    """A project whose entries are rendered through the real entry writer."""
+    """Base ``kb`` registered in ``home``; entries are rendered through the real entry writer."""
 
     def __init__(
         self,
         root: Path,
+        home: Path,
         *,
-        sources: list[dict[str, Any]] | None = None,
-        document_types: dict[str, Any] | None = None,
+        sources: dict[str, str] | None = None,
+        types: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.root = root
-        self.registry = root / ".knowledge/sources.json"
-        self.sources = sources if sources is not None else [dict(DEFAULT_SOURCE)]
-        self.document_types = document_types
+        self.home = home
+        self.sources = dict(sources) if sources is not None else dict(DEFAULT_SOURCES)
+        self.types = dict(types) if types is not None else dict(DEFAULT_TYPES)
         self.edges: list[dict[str, str]] = []
-        for source in self.sources:
-            (root / source["root"]).mkdir(parents=True, exist_ok=True)
-        self.write_registry()
+        (root / ".knowledge/entries").mkdir(parents=True, exist_ok=True)
+        (root / "notes").mkdir(exist_ok=True)
+        self.write_home()
+
+    @property
+    def base(self) -> Base:
+        return resolve_base(BASE_NAME, self.root)
 
     @property
     def paths(self) -> IngestPaths:
-        return IngestPaths(repo_root=self.root, registry=self.registry)
+        return IngestPaths(self.base)
 
-    def write_registry(self) -> None:
-        payload: dict[str, Any] = {"schema": SOURCE_SCHEMA, "sources": self.sources}
-        if self.document_types is not None:
-            payload["document_types"] = self.document_types
-        self.registry.parent.mkdir(parents=True, exist_ok=True)
-        self.registry.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    def write_home(self) -> None:
+        types = self.home / "types"
+        types.mkdir(parents=True, exist_ok=True)
+        for stale in types.glob("*.md"):
+            if stale.stem not in self.types:
+                stale.unlink()
+        for name, spec in self.types.items():
+            (types / f"{name}.md").write_text(type_document(spec), encoding="utf-8")
+        config = {"bases": {BASE_NAME: {"path": str(self.root), "sources": self.sources}}, "embedding": None}
+        (self.home / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+        (self.home / ".gitignore").write_text(HOME_GITIGNORE, encoding="utf-8")
 
     def write_source(self, relative: str, text: str) -> Path:
         path = self.root / relative
@@ -119,11 +150,26 @@ class KnowledgeFixture:
         return edge
 
 
-def make_fixture(test: unittest.TestCase, **kwargs: Any) -> KnowledgeFixture:
-    """Create a fixture in a temporary directory removed after ``test``."""
-    directory = tempfile.TemporaryDirectory(prefix="kgdistiller-knowledge-")
+def use_temporary_home(test: unittest.TestCase) -> Path:
+    """Point KGDISTILLER_HOME at a fresh, not yet created directory for ``test``.
+
+    The home path is realpath-resolved; tests never touch the real ~/.knowledge.
+    """
+    directory = tempfile.TemporaryDirectory(prefix="kgdistiller-home-")
     test.addCleanup(directory.cleanup)
-    return KnowledgeFixture(Path(directory.name).resolve(), **kwargs)
+    home = Path(directory.name).resolve() / "home"
+    environment = patch.dict(os.environ, {"KGDISTILLER_HOME": str(home)})
+    environment.start()
+    test.addCleanup(environment.stop)
+    return home
+
+
+def make_fixture(test: unittest.TestCase, **kwargs: Any) -> KnowledgeFixture:
+    """Create base ``kb`` at <tmp>/kb beside a temporary home <tmp>/home, removed after ``test``."""
+    home = use_temporary_home(test)
+    root = home.parent / BASE_NAME
+    root.mkdir()
+    return KnowledgeFixture(root, home, **kwargs)
 
 
 def node_record(

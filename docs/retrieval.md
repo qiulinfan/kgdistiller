@@ -34,11 +34,14 @@ Install the optional extra:
 
 ```sh
 python -m pip install 'kgdistiller[retrieval]'
-kgdistiller --repo-root VAULT agent search 'QUESTION' --embedding
-kgdistiller --repo-root VAULT agent search 'QUESTION' --embedding --rerank
-kgdistiller --repo-root VAULT agent context 'QUESTION' --embedding --rerank --budget 6000
-kgdistiller --repo-root VAULT mcp --embedding --rerank --models-offline
+kgd agent search 'QUESTION' --embedding --base B
+kgd agent search 'QUESTION' --embedding --rerank --base B
+kgd agent context 'QUESTION' --embedding --rerank --budget 6000 --base B
+kgd mcp --base B --embedding --rerank --models-offline
 ```
+
+Run these with `--base B`, or from inside a registered base root. `kgd mcp
+[--base B]` serves the one base selected when it starts.
 
 Source checkouts may use `pip install -e '.[retrieval]'`. Plain search, status,
 identity tools and `--help` do not import/load model inference. The optional
@@ -138,9 +141,9 @@ inputs are inferred once. Scores remain relevance values, never truth scores.
 ## Opt-in graph exploration
 
 ```sh
-kgdistiller --repo-root VAULT agent search 'QUESTION' --graph-retrieval
-kgdistiller --repo-root VAULT agent context 'QUESTION' --graph-retrieval --budget 24000
-kgdistiller --repo-root VAULT agent search 'QUESTION' --embedding --rerank --graph-retrieval
+kgd agent search 'QUESTION' --graph-retrieval --base B
+kgd agent context 'QUESTION' --graph-retrieval --budget 24000 --base B
+kgd agent search 'QUESTION' --embedding --rerank --graph-retrieval --base B
 ```
 
 `--graph-seed-candidates N` selects the first N filtered text/embedding RRF

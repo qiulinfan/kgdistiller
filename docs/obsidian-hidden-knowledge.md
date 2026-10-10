@@ -69,7 +69,7 @@ watching behavior.
 
 These settings change indexing only. They do not move knowledge data, rewrite
 source links or change the **Semantic graph path** setting. The kgdistiller core
-always keeps a project's knowledge in `<root>/.knowledge/`, the folder the
+always keeps a base's knowledge in `<root>/.knowledge/`, the folder the
 plugin indexes.
 
 ## Compatibility and boundaries
