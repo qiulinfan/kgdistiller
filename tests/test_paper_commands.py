@@ -16,10 +16,10 @@ from kgdistiller.codex_product import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PAPER_COMMANDS = {
-    "distill-paper", "harvest-paper", "paper-related-work",
+    "harvest-paper", "paper-related-work",
 }
 RETIRED_PAPER_COMMANDS = {
-    "distill-paper-knowledge", "trace-concept-lineage", "import-paper-knowledge",
+    "federate-paper-knowledge", "trace-concept-lineage", "import-paper-knowledge",
 }
 
 
@@ -27,15 +27,15 @@ class PaperCommandTests(unittest.TestCase):
     def test_commands_run_without_a_specialized_agent(self) -> None:
         workflow = [{
             "id": "prepare", "description": "Prepare a paper",
-            "steps": [{"id": "prepare", "skill": "distill-paper", "agent": None,
+            "steps": [{"id": "prepare", "skill": "harvest-paper", "agent": None,
                        "mode": "author"}],
         }]
-        _validate_workflows(workflow, {"distill-paper"}, set())
+        _validate_workflows(workflow, {"harvest-paper"}, set())
         for invalid in ("unknown", "", False, []):
             with self.subTest(agent=invalid):
                 workflow[0]["steps"][0]["agent"] = invalid
                 with self.assertRaises(CodexProductError):
-                    _validate_workflows(workflow, {"distill-paper"}, set())
+                    _validate_workflows(workflow, {"harvest-paper"}, set())
 
     def test_both_runtime_installs_preserve_per_skill_invocation_policies(self) -> None:
         for runtime in ("codex", "claude"):
@@ -60,7 +60,7 @@ class PaperCommandTests(unittest.TestCase):
                     self.assertFalse((home / "skills" / name).exists())
                 manifest = json.loads((ROOT / "workflows/manifest.json").read_text(encoding="utf-8"))
                 for workflow in manifest["workflows"]:
-                    if workflow["id"] in {"distill-paper", "harvest-paper", "paper-related-work"}:
+                    if workflow["id"] in {"harvest-paper", "paper-related-work"}:
                         self.assertEqual(1, len(workflow["steps"]))
                         if workflow["id"] == "paper-related-work":
                             self.assertEqual("related-work-scout", workflow["steps"][0]["agent"])
@@ -69,7 +69,7 @@ class PaperCommandTests(unittest.TestCase):
 
     def test_upgrade_removes_retired_paper_assets_from_both_runtimes(self) -> None:
         retired_workflows = {
-            "federate-paper": "distill-paper-knowledge",
+            "federate-paper": "federate-paper-knowledge",
             "trace-lineage": "trace-concept-lineage",
             "import-paper": "import-paper-knowledge",
         }
@@ -96,8 +96,8 @@ class PaperCommandTests(unittest.TestCase):
                     )
                     (folder / "agents").mkdir()
                     (folder / "agents/openai.yaml").write_text(
-                        (ROOT / "skills/distill-paper/agents/openai.yaml")
-                        .read_text(encoding="utf-8").replace("distill-paper", name),
+                        (ROOT / "skills/harvest-paper/agents/openai.yaml")
+                        .read_text(encoding="utf-8").replace("harvest-paper", name),
                         encoding="utf-8",
                     )
                     legacy_manifest["skills"].append({

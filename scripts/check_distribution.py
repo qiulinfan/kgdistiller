@@ -62,7 +62,6 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         if path.is_file() and not _is_python_cache(path.relative_to(root))
     ]
     files.append(REPO_ROOT / "docs" / "product-workflows.md")
-    files.append(REPO_ROOT / "docs" / "latex-sources.md")
     files.append(REPO_ROOT / "docs" / "omp-compiled-tools.md")
     files.append(REPO_ROOT / "integrations" / "omp" / "compiled_tools.ts")
     files.extend(

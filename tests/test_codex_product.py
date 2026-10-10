@@ -153,7 +153,7 @@ class CodexProductTests(unittest.TestCase):
             self.assertEqual("ok", checked["status"])
             self.assertEqual("linked", checked["installation"])
 
-    def test_copy_resources_are_manifest_declared_and_digest_owned(self) -> None:
+    def test_copy_resources_are_manifest_declared_and_product_owned(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-codex-resources-") as temporary:
             root = Path(temporary)
             source = copy_product_root(root / "product")
@@ -175,34 +175,22 @@ class CodexProductTests(unittest.TestCase):
             self.assertFalse((installed / "docs" / unselected.name).exists())
             state = json.loads((home / STATE_NAME).read_text(encoding="utf-8"))
             owner = next(item for item in state["assets"] if item["kind"] == "product-root")
-            _, installed_manifest = load_manifest(installed)
-            self.assertEqual(
-                owner["digest"],
-                codex_product_module._product_digest(
-                    source, manifest, codex_product_module.CODEX_PROFILE
-                ),
-            )
-            self.assertEqual(
-                owner["digest"],
-                codex_product_module._product_digest(
-                    installed, installed_manifest, codex_product_module.CODEX_PROFILE
-                ),
-            )
+            self.assertEqual({"kind", "mode", "name", "source", "target"}, set(owner))
             unselected.write_text("Unselected edit.\n", encoding="utf-8")
             self.assertEqual("ok", doctor_product(codex_home=home, source_root=source)["status"])
             (source / selected).write_text("Updated reference.\n", encoding="utf-8")
-            with self.assertRaisesRegex(CodexProductError, "source changed"):
+            with self.assertRaisesRegex(CodexProductError, "differs from the product source"):
                 doctor_product(codex_home=home, source_root=source)
             link_product(codex_home=home, mode="copy", source_root=source)
             self.assertEqual((source / selected).read_bytes(), (installed / selected).read_bytes())
             self.assertEqual("ok", doctor_product(codex_home=home, source_root=source)["status"])
             (installed / selected).write_text("Local edit.\n", encoding="utf-8")
-            for action in (doctor_product, link_product):
-                with self.assertRaisesRegex(CodexProductError, "modified managed copy"):
-                    action(codex_home=home, source_root=source)
-                self.assertEqual(
-                    "Local edit.\n", (installed / selected).read_text(encoding="utf-8")
-                )
+            with self.assertRaisesRegex(CodexProductError, "differs from the product source"):
+                doctor_product(codex_home=home, source_root=source)
+            # Recorded copies are product-owned: relinking replaces local edits.
+            link_product(codex_home=home, mode="copy", source_root=source)
+            self.assertEqual((source / selected).read_bytes(), (installed / selected).read_bytes())
+            self.assertEqual("ok", doctor_product(codex_home=home, source_root=source)["status"])
 
     def test_copy_without_resource_field_can_upgrade_to_declared_resources(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-codex-resource-upgrade-") as temporary:
@@ -286,9 +274,9 @@ class CodexProductTests(unittest.TestCase):
                 doctor_product(codex_home=home, source_root=REPO_ROOT)
 
     def test_reparse_destination_parents_fail_before_any_product_write(self) -> None:
-        for namespace in ("skills", "agents", "workflow-products"):
+        for directory in ("skills", "agents", "workflow-products"):
             with (
-                self.subTest(namespace=namespace),
+                self.subTest(directory=directory),
                 real_temporary_directory(
                     prefix="kgdistiller-codex-reparse-parent-"
                 ) as temporary,
@@ -300,7 +288,7 @@ class CodexProductTests(unittest.TestCase):
                 external.mkdir()
                 sentinel = external / "sentinel.txt"
                 sentinel.write_text("external\n", encoding="utf-8")
-                linked_parent = home / namespace
+                linked_parent = home / directory
                 create_directory_link(external, linked_parent)
                 try:
                     with self.assertRaisesRegex(
@@ -317,7 +305,7 @@ class CodexProductTests(unittest.TestCase):
                     )
                     self.assertFalse((home / STATE_NAME).exists())
                     for other in {"skills", "agents", "workflow-products"} - {
-                        namespace
+                        directory
                     }:
                         self.assertFalse((home / other).exists())
                 finally:
@@ -364,7 +352,7 @@ class CodexProductTests(unittest.TestCase):
                 json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(CodexProductError, "manifest namespace"):
+            with self.assertRaisesRegex(CodexProductError, "manifest scope"):
                 link_product(codex_home=home, mode="copy", source_root=source)
             self.assertEqual(before, target.read_bytes())
 
@@ -392,7 +380,7 @@ class CodexProductTests(unittest.TestCase):
             target.write_text(
                 target.read_text(encoding="utf-8") + "modified\n", encoding="utf-8"
             )
-            with self.assertRaisesRegex(CodexProductError, "modified managed copy"):
+            with self.assertRaisesRegex(CodexProductError, "differs from the product source"):
                 doctor_product(codex_home=home, source_root=REPO_ROOT)
 
     def test_symbolic_link_mode_and_doctor_when_platform_allows_it(self) -> None:
@@ -608,15 +596,15 @@ class CodexProductTests(unittest.TestCase):
                 ),
             )
 
-    def test_wrong_owner_retired_copy_is_preserved_and_blocks_cleanup(self) -> None:
+    def test_modified_retired_copy_is_product_owned_and_removed(self) -> None:
         with real_temporary_directory(
-            prefix="kgdistiller-codex-wrong-owner-"
+            prefix="kgdistiller-codex-retired-copy-"
         ) as temporary:
             root = Path(temporary)
             source = copy_product_root(root / "product")
             home = root / "codex-home"
             link_product(codex_home=home, mode="copy", source_root=source)
-            name = "distill-paper"
+            name = "harvest-paper"
             target = home / "skills" / name / "SKILL.md"
             target.write_text("foreign replacement\n", encoding="utf-8")
 
@@ -633,11 +621,11 @@ class CodexProductTests(unittest.TestCase):
             )
             shutil.rmtree(source / "skills" / name)
 
-            with self.assertRaisesRegex(CodexProductError, "modified managed copy"):
-                link_product(codex_home=home, mode="copy", source_root=source)
-            self.assertEqual(
-                "foreign replacement\n", target.read_text(encoding="utf-8")
-            )
+            linked = link_product(codex_home=home, mode="copy", source_root=source)
+            self.assertEqual(1, linked["removed"])
+            self.assertEqual("complete", linked["cleanup_status"])
+            self.assertFalse((home / "skills" / name).exists())
+            self.assertEqual("ok", doctor_product(codex_home=home, source_root=source)["status"])
 
     def test_detached_agent_hardlink_doctor_fails_but_link_repairs(self) -> None:
         with real_temporary_directory(
@@ -673,9 +661,7 @@ class CodexProductTests(unittest.TestCase):
             checked = doctor_product(codex_home=home, source_root=source)
             self.assertEqual("complete", checked["cleanup_status"])
 
-    def test_retired_detached_agent_hardlink_is_removed_by_recorded_digest(
-        self,
-    ) -> None:
+    def test_retired_detached_agent_hardlink_is_removed(self) -> None:
         with real_temporary_directory(
             prefix="kgdistiller-codex-retired-hardlink-"
         ) as temporary:
@@ -710,17 +696,17 @@ class CodexProductTests(unittest.TestCase):
             )
 
             old_target = home / "agents" / "kgdistiller-query-reviewer.toml"
-            old_digest = old_target.read_bytes()
+            old_bytes = old_target.read_bytes()
             linked = link_product(codex_home=home, mode="auto", source_root=source)
             self.assertEqual(1, linked["removed"])
             self.assertEqual("complete", linked["cleanup_status"])
             self.assertFalse(old_target.exists())
             new_target = home / "agents" / "kgdistiller-query-auditor.toml"
-            self.assertEqual(old_digest, new_target.read_bytes())
+            self.assertEqual(old_bytes, new_target.read_bytes())
             self.assertTrue(os.path.samefile(new_source, new_target))
             doctor_product(codex_home=home, source_root=source)
 
-    def test_detached_agent_hardlink_digest_mismatch_is_preserved(self) -> None:
+    def test_detached_agent_hardlink_with_foreign_content_is_replaced(self) -> None:
         with real_temporary_directory(
             prefix="kgdistiller-codex-hardlink-owner-"
         ) as temporary:
@@ -743,10 +729,11 @@ class CodexProductTests(unittest.TestCase):
             target.write_text("foreign owner content\n", encoding="utf-8")
 
             with self.assertRaisesRegex(CodexProductError, "detached managed hardlink"):
-                link_product(codex_home=home, mode="auto", source_root=source)
-            self.assertEqual(
-                "foreign owner content\n", target.read_text(encoding="utf-8")
-            )
+                doctor_product(codex_home=home, source_root=source)
+            linked = link_product(codex_home=home, mode="auto", source_root=source)
+            self.assertTrue(linked["committed"])
+            self.assertTrue(os.path.samefile(source_path, target))
+            self.assertIn("new source inode", target.read_text(encoding="utf-8"))
 
     def test_link_cleanup_failure_reports_committed_state_and_recovers(self) -> None:
         with real_temporary_directory(

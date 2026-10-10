@@ -6,17 +6,12 @@
   "additionalProperties": false,
   "required": [
     "schema",
-    "namespace",
-    "snapshot_sha256",
-    "graph_sha256",
     "question",
-    "plan_sha256",
     "search_execution_schema",
     "search_result_schema",
     "edge_policy",
     "nodes",
     "edges",
-    "references",
     "support_packets",
     "gaps",
     "omissions",
@@ -28,22 +23,8 @@
     "schema": {
       "const": "kgdistiller-context-bundle-v2"
     },
-    "namespace": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256
-    },
-    "snapshot_sha256": {
-      "$ref": "#/$defs/sha256"
-    },
-    "graph_sha256": {
-      "$ref": "#/$defs/sha256"
-    },
     "question": {
       "type": "string"
-    },
-    "plan_sha256": {
-      "$ref": "#/$defs/sha256"
     },
     "search_execution_schema": {
       "const": "kgdistiller-search-execution-v3"
@@ -53,7 +34,7 @@
     },
     "edge_policy": {
       "enum": [
-        "current",
+        "all",
         "high-confidence"
       ]
     },
@@ -67,13 +48,6 @@
     "edges": {
       "type": "array",
       "maxItems": 4000,
-      "items": {
-        "type": "object"
-      }
-    },
-    "references": {
-      "type": "array",
-      "maxItems": 10000,
       "items": {
         "type": "object"
       }
@@ -181,10 +155,6 @@
     }
   },
   "$defs": {
-    "sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
     "nodeId": {
       "type": "string",
       "minLength": 1,
@@ -200,26 +170,6 @@
         "derived-from"
       ]
     },
-    "nodeBinding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "node_id",
-        "node_sha256",
-        "document_sha256"
-      ],
-      "properties": {
-        "node_id": {
-          "$ref": "#/$defs/nodeId"
-        },
-        "node_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "document_sha256": {
-          "$ref": "#/$defs/sha256"
-        }
-      }
-    },
     "pathStep": {
       "type": "object",
       "additionalProperties": false,
@@ -229,9 +179,7 @@
         "target",
         "direction",
         "confidence",
-        "curation_status",
         "evidence",
-        "edge_sha256",
         "purpose",
         "logical_entailment"
       ],
@@ -254,14 +202,8 @@
         "confidence": {
           "type": "string"
         },
-        "curation_status": {
-          "type": "string"
-        },
         "evidence": {
           "type": "string"
-        },
-        "edge_sha256": {
-          "$ref": "#/$defs/sha256"
         },
         "purpose": {
           "enum": [
@@ -283,7 +225,6 @@
         "lane",
         "nodes",
         "edge_types",
-        "node_bindings",
         "steps",
         "logical_entailment"
       ],
@@ -307,13 +248,6 @@
           "maxItems": 9,
           "items": {
             "$ref": "#/$defs/edgeType"
-          }
-        },
-        "node_bindings": {
-          "type": "array",
-          "maxItems": 9,
-          "items": {
-            "$ref": "#/$defs/nodeBinding"
           }
         },
         "steps": {

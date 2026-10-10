@@ -20,29 +20,28 @@ from kgdistiller.vault_registry import VAULT_SCHEMA
 
 
 class ProjectInitializationTest(unittest.TestCase):
-    def test_init_creates_minimal_registry_without_erasing_review_data(self) -> None:
+    def test_init_creates_minimal_registry_and_empty_store(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
             root = Path(temporary)
             registry = root / ".knowledge/sources.json"
-            alignments = root / ".knowledge/alignments.json"
 
-            initialize_project(
-                root,
-                registry,
-                source_root=Path("notes"),
-                alignments=alignments,
-            )
+            result = initialize_project(root, registry, source_root=Path("notes"))
 
             sources = json.loads(registry.read_text(encoding="utf-8"))
             self.assertEqual("kgdistiller-sources-v1", sources["schema"])
-            self.assertEqual(
-                {"local:notes"},
-                {source["id"] for source in sources["sources"]},
-            )
             self.assertEqual({"schema", "sources"}, set(sources))
-            self.assertEqual({"id", "root", "files"}, set(sources["sources"][0]))
+            self.assertEqual(
+                [{"id": "local:notes", "root": "notes", "files": ["**/*"]}],
+                sources["sources"],
+            )
+            self.assertEqual(["**/*"], result["files"])
+            self.assertTrue((root / "notes").is_dir())
             self.assertTrue((root / ".knowledge/entries").is_dir())
-            self.assertFalse((root / ".knowledge/derived").exists())
+            self.assertEqual("", (root / ".knowledge/edges.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual(
+                {".gitignore", "edges.jsonl", "entries", "sources.json", "vault.json"},
+                {path.name for path in (root / ".knowledge").iterdir()},
+            )
             vault_manifest = json.loads(
                 (root / ".knowledge/vault.json").read_text(encoding="utf-8")
             )
@@ -51,16 +50,18 @@ class ProjectInitializationTest(unittest.TestCase):
                 vault_manifest["vault_id"],
                 r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
             )
-            self.assertFalse(alignments.exists())
             self.assertEqual(
                 "build/\n",
                 (root / ".knowledge/.gitignore").read_text(encoding="utf-8"),
             )
-            reviewed = {
-                "schema": "kgdistiller-alignments-v1",
-                "mappings": [{"preserved": True}],
-            }
-            alignments.write_text(json.dumps(reviewed), encoding="utf-8")
+
+    def test_init_refuses_to_replace_a_registry_without_force(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kgdistiller-project-test-") as temporary:
+            root = Path(temporary)
+            registry = root / ".knowledge/sources.json"
+            initialize_project(root, registry, source_root=Path("notes"))
+            edges = root / ".knowledge/edges.jsonl"
+            edges.write_text('{"kept": true}\n', encoding="utf-8")
             before = registry.read_bytes()
             with self.assertRaises(FileExistsError):
                 initialize_project(root, registry, source_root=Path("replacement"))
@@ -71,11 +72,13 @@ class ProjectInitializationTest(unittest.TestCase):
                 root,
                 registry,
                 source_root=Path("replacement"),
-                alignments=alignments,
+                files=["**/*.tex", "*.txt"],
                 force=True,
             )
-            self.assertEqual(reviewed, json.loads(alignments.read_text(encoding="utf-8")))
-            self.assertEqual("replacement", json.loads(registry.read_text())["sources"][0]["root"])
+            source = json.loads(registry.read_text(encoding="utf-8"))["sources"][0]
+            self.assertEqual("replacement", source["root"])
+            self.assertEqual(["**/*.tex", "*.txt"], source["files"])
+            self.assertEqual('{"kept": true}\n', edges.read_text(encoding="utf-8"))
             self.assertEqual(
                 "build/\nlocal-secret/\n",
                 gitignore.read_text(encoding="utf-8"),

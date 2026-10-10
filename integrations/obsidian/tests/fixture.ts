@@ -1,43 +1,35 @@
-import {
-  calculateBundleDigest,
-  type KgGraphContract,
-} from "../src/contract";
+import type { KgGraphContract } from "../src/contract";
 
-export async function graphFixture(): Promise<KgGraphContract> {
-  const graph: Record<string, unknown> = {
+export function graphFixture(): KgGraphContract {
+  return {
     schema: "kgdistiller-obsidian-graph-v1",
-    source: {
-      graph_schema: "kgdistiller-graph-v2",
-      graph_sha256: "a".repeat(64),
-      snapshot_sha256: "b".repeat(64),
-      source_hashes_sha256: "c".repeat(64),
-    },
     counts: {
       concepts: 2,
       sources: 1,
       semantic_edges: 1,
       definitions: 2,
-      references: 1,
     },
     concepts: [
       {
-        id: "sigma-algebra",
-        label: "Sigma algebra",
-        authority: "notes/chapter.md",
-        curation_status: "current",
-        aliases: ["Sigma algebra"],
-      },
-      {
         id: "measure",
         label: "Measure",
-        authority: "notes/chapter.md",
-        curation_status: "pending",
-        aliases: ["Measure"],
+        kind: "definition",
+        aliases: ["测度"],
+        authority: ".knowledge/entries/measure.md",
+        understanding: "not-yet-understood",
+      },
+      {
+        id: "sigma-algebra",
+        label: "Sigma algebra",
+        kind: "definition",
+        aliases: [],
+        authority: ".knowledge/entries/sigma-algebra.md",
+        understanding: "understood",
       },
     ],
     sources: [
       {
-        authority: "notes/chapter.md",
+        authority: "notes/chapter.tex",
       },
     ],
     semantic_edges: [
@@ -50,30 +42,17 @@ export async function graphFixture(): Promise<KgGraphContract> {
     ],
     definitions: [
       {
-        source_authority: "notes/chapter.md",
-        target: "sigma-algebra",
-        line_start: 1,
-        line_end: 3,
-      },
-      {
-        source_authority: "notes/chapter.md",
+        source_authority: "notes/chapter.tex",
         target: "measure",
         line_start: 5,
         line_end: 7,
       },
-    ],
-    references: [
       {
-        id: "notes/chapter.md:9:measure",
-        source_authority: "notes/chapter.md",
-        target: "measure",
-        label: "Measure",
-        line: 9,
-        context: "A reference to Measure.",
+        source_authority: "notes/chapter.tex",
+        target: "sigma-algebra",
+        line_start: 1,
+        line_end: 3,
       },
     ],
-    bundle_sha256: "0".repeat(64),
   };
-  graph.bundle_sha256 = await calculateBundleDigest(graph);
-  return graph as unknown as KgGraphContract;
 }

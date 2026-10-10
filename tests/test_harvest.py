@@ -8,320 +8,257 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import test_capture
-
-from kgdistiller.capture import CaptureError, prepare_captures
-from kgdistiller.cli import load_state, synchronize
-from kgdistiller.entry_markdown import DERIVED_SOURCE_ROOT, default_derived_relative
+from kgdistiller import harvest
+from kgdistiller.capture import prepare_captures
 from kgdistiller.harvest import HarvestError, apply_harvest, prepare_harvest
 from kgdistiller.ingest import apply_ingest, load_request
-from kgdistiller.query import compare
+from kgdistiller.knowledge_store import load_state
+from tests.knowledge_fixture import make_fixture
+
+SOURCE = "notes/chapter.md"
+TEXT = (
+    "# Chapter\n"
+    "Alpha is an unrelated idea.\n"
+    "Beta transforms an input representation.\n"
+    "Gamma is a distinct transformation.\n"
+)
 
 
 class HarvestTest(unittest.TestCase):
-    setUp = test_capture.CaptureTest.setUp
-    payload = test_capture.CaptureTest.payload
-
-    def prepare(self, captures=None):
-        self.sheet = self.root / "notes/chapter-defs.md"
+    def setUp(self) -> None:
+        self.fixture = make_fixture(self)
+        self.root = self.fixture.root
+        self.paths = self.fixture.paths
+        self.fixture.write_source(SOURCE, TEXT)
+        self.sheet = self.root / "sheets/chapter-defs.md"
         self.reviews = self.root / ".knowledge/build/reviews"
         self.runs = self.root / ".knowledge/build/harvest-runs"
+
+    def payload(self, label="Beta", line=3, **changes):
+        value = {
+            "label": label, "source": SOURCE, "line_start": line, "line_end": line,
+            "kind": "definition", "text": f"{label} as reviewed.",
+            "entry": {"understanding": "not-yet-understood", "pending_prerequisites": ["Encoder: unexplained."]},
+            "review": {"action": "add", "reviewer": "tester", "evidence": f"The source states {label}."},
+        }
+        value.update(changes)
+        return value
+
+    def gamma(self):
+        return self.payload("Gamma", 4)
+
+    def prepare(self, captures=None):
         return prepare_harvest(self.paths, {"captures": captures or [self.payload()]}, self.sheet, self.reviews)
 
     def check(self, name="Beta"):
         text = self.sheet.read_text(encoding="utf-8")
         self.sheet.write_text(text.replace(f"- [ ] [{name} (draft)]", f"- [x] [{name} (draft)]"), encoding="utf-8")
 
-    def gamma(self):
-        payload = self.payload()
-        payload["name"] = "Gamma"
-        payload["text"] = "Gamma is a distinct transformation."
-        payload["source_content"] = self.original + "\n> **Definition: --[[Gamma]]--**\n> Gamma is a distinct transformation.\n"
-        return payload
+    def entries(self):
+        return load_state(self.root).entries
 
-    def test_checked_only_real_ingest_preserves_pending_and_annotations(self):
+    def manifest(self):
+        return json.loads((self.reviews / "review.json").read_text(encoding="utf-8"))
+
+    def test_only_checked_tasks_are_ingested_and_linked(self) -> None:
         self.prepare([self.payload(), self.gamma()])
         self.check()
-        self.sheet.write_text(self.sheet.read_text(encoding="utf-8") + "\nPersonal annotation.\n- [x] Ordinary task\n", encoding="utf-8")
-        with patch("kgdistiller.capture.compare", wraps=compare) as comparison:
-            result = apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(comparison.call_count, 1)
-        self.assertEqual(result["counts"]["committed"], 1)
-        state = load_state(self.paths.graph_dir)
-        self.assertIn("beta", state.nodes)
-        self.assertNotIn("gamma", state.nodes)
-        self.assertNotIn("--[[Gamma]]--", self.source.read_text(encoding="utf-8"))
-        self.assertEqual(state.nodes["beta"]["entry"]["understanding"], "not-yet-understood")
-        self.assertEqual(state.nodes["beta"]["entry"]["pending_prerequisites"], self.payload()["entry"]["pending_prerequisites"])
-        self.assertIn("../.knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
-        self.assertIn("Personal annotation.\n- [x] Ordinary task", self.sheet.read_text(encoding="utf-8"))
-        self.assertIn("- [ ] [Gamma (draft)]", self.sheet.read_text(encoding="utf-8"))
+        self.sheet.write_text(self.sheet.read_text(encoding="utf-8") + "\nPersonal annotation.\n- [x] Ordinary task\n",
+                              encoding="utf-8")
+        result = apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertEqual(result["status"], "committed")
+        self.assertEqual(result["receipt"]["request_id"], "harvest-reviews-1")
+        self.assertEqual(sorted(self.entries()), ["beta"])
+        self.assertEqual(self.entries()["beta"]["pending_prerequisites"], ["Encoder: unexplained."])
+        text = self.sheet.read_text(encoding="utf-8")
+        self.assertIn("- [x] [Beta](../.knowledge/entries/beta.md)", text)
+        self.assertIn("Personal annotation.\n- [x] Ordinary task", text)
+        self.assertIn("- [ ] [Gamma (draft)]", text)
+        self.assertEqual((self.root / SOURCE).read_text(encoding="utf-8"), TEXT)
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
-        # A later checkbox from the same source rebases only over this harvest's
-        # own accepted source update, retaining the still-reviewed Gamma edit.
         self.check("Gamma")
-        apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertIn("gamma", load_state(self.paths.graph_dir).nodes)
+        result = apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertEqual(result["receipt"]["request_id"], "harvest-reviews-2")
+        self.assertEqual(sorted(self.entries()), ["beta", "gamma"])
+        manifest = self.manifest()
+        self.assertEqual(sorted(manifest), ["items", "last_request_id", "next_item", "runs", "schema", "sheet"])
+        self.assertEqual(sorted(manifest["items"]), ["1-beta", "2-gamma"])
+        self.assertEqual(sorted(manifest["items"]["1-beta"]), [
+            "committed", "draft", "draft_text", "entry_id", "entry_text", "payload", "revision", "source_text"])
 
-    def test_multiple_selected_same_source_are_one_batch(self):
+    def test_multiple_selected_tasks_are_one_transaction(self) -> None:
         self.prepare([self.payload(), self.gamma()])
         self.check()
         self.check("Gamma")
-        with patch("kgdistiller.capture.compare", wraps=compare) as comparison:
-            result = apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(comparison.call_count, 1)
-        self.assertEqual(len(result["receipt"]["changes"]["nodes"]["added"]), 2)
-        self.assertEqual(result["counts"]["committed"], 2)
-        self.assertIn("beta", load_state(self.paths.graph_dir).nodes)
-        self.assertIn("gamma", load_state(self.paths.graph_dir).nodes)
+        result = apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertEqual(result["receipt"]["changes"]["entries_created"], ["beta", "gamma"])
+        self.assertEqual(result["counts"], {"selected": 2, "committed": 2})
 
-    def test_review_draft_shows_explicit_kind_and_omitted_update_preserves_it(self):
-        payload = self.payload()
-        payload["kind"] = "construction"
-        prepared = self.prepare([payload])
-        draft = Path(prepared["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
-        self.assertIn("## Knowledge type", draft)
-        self.assertIn('- After: "construction"', draft)
+    def test_draft_shows_fields_cited_lines_and_evidence(self) -> None:
+        draft = Path(self.prepare()["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
+        self.assertIn("- Kind: （无） → \"definition\"", draft)
+        self.assertIn(f"- Source: `{SOURCE}` lines 3–3", draft)
+        self.assertIn("## Evidence\n\n```\nBeta transforms an input representation.\n```", draft)
         self.check()
         apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(load_state(self.paths.graph_dir).nodes["beta"]["properties"]["kind"], "construction")
+        update = self.payload(kind="method", review={"action": "update", "reviewer": "tester",
+                                                     "evidence": "Re-read.", "target_id": "beta"})
+        draft = Path(self.prepare([update])["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
+        self.assertIn('- Kind: "definition" → "method"', draft)
+        self.assertIn("## Entry before\n\n### Summary\n\nBeta as reviewed.", draft)
 
-        payload.pop("kind")
-        payload.pop("source_content")
-        payload["review"].update(action="update", target_id="beta")
-        prepared = self.prepare([payload])
-        draft = Path(prepared["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
-        self.assertIn('- Before: "construction"', draft)
-        self.assertIn('- After: "construction"（保持现有类型）', draft)
-
-        payload["kind"] = "procedure"
-        prepared = self.prepare([payload])
-        draft = Path(prepared["artifacts"]["drafts"][0]).read_text(encoding="utf-8")
-        self.assertIn('- Before: "construction"', draft)
-        self.assertIn('- After: "procedure"', draft)
-
-    def test_recovery_after_ingest_before_sheet_refresh(self):
+    def test_recovery_after_ingest_before_sheet_refresh(self) -> None:
         self.prepare()
         self.check()
-        with patch("kgdistiller.harvest._refresh_sheet", side_effect=OSError("simulated interruption")):
-            interrupted = apply_harvest(self.paths, self.sheet, self.runs)
-            self.assertEqual(interrupted["status"], "committed-sheet-pending")
-        committed = load_state(self.paths.graph_dir).manifest["graph_sha256"]
-        manifest = json.loads((self.reviews / "review.json").read_text(encoding="utf-8"))
-        request = load_request(self.root / manifest["active_run"]["request"])
-        result = apply_harvest(self.paths, self.sheet, self.root / "a-different-output")
-        self.assertEqual(result["receipt"]["request_sha256"], request["request_sha256"])
-        self.assertEqual(load_state(self.paths.graph_dir).manifest["graph_sha256"], committed)
+        with patch("kgdistiller.harvest._refresh_sheet", side_effect=OSError("interrupted")):
+            self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "committed-sheet-pending")
+        self.assertEqual(self.manifest()["active_run"]["request_id"], "harvest-reviews-1")
+        with patch("kgdistiller.harvest.apply_ingest") as ingest:
+            result = apply_harvest(self.paths, self.sheet, self.root / "a-different-output")
+        ingest.assert_not_called()
+        self.assertEqual(result["status"], "committed")
         self.assertIn("../.knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
 
-    def test_recovery_after_sheet_refresh_before_review_receipt(self):
-        from kgdistiller.cli import atomic_write
+    def test_recovery_after_sheet_refresh_before_review_update(self) -> None:
         self.prepare()
         self.check()
-        manifest_path = self.reviews / "review.json"
-        writes = 0
-        def interrupted_write(path, content):
-            nonlocal writes
-            if path.resolve() == manifest_path.resolve():
-                writes += 1
-                if writes == 2:
-                    raise OSError("interrupted after sheet refresh")
-            atomic_write(path, content)
-        with patch("kgdistiller.harvest.atomic_write", side_effect=interrupted_write):
+        save = harvest._save_manifest
+        calls = 0
+
+        def interrupted(path, manifest):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("interrupted after sheet refresh")
+            save(path, manifest)
+
+        with patch("kgdistiller.harvest._save_manifest", side_effect=interrupted):
             result = apply_harvest(self.paths, self.sheet, self.runs)
         self.assertEqual(result["status"], "committed-sheet-pending")
         self.assertIn("../.knowledge/entries/beta.md", self.sheet.read_text(encoding="utf-8"))
         retried = apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(retried["receipt"], result["receipt"])
-        self.assertEqual(retried["status"], "committed")
+        self.assertEqual((retried["status"], retried["receipt"]), ("committed", result["receipt"]))
 
-    def test_edited_draft_is_rejected_without_writes(self):
-        result = self.prepare()
+    def test_precommit_interruption_reuses_request_and_selection(self) -> None:
+        self.prepare()
         self.check()
-        draft = Path(result["artifacts"]["drafts"][0])
-        draft.write_text(draft.read_text(encoding="utf-8").replace("Beta transforms", "Beta alters"), encoding="utf-8")
+        with patch("kgdistiller.harvest.apply_ingest", side_effect=OSError("interrupted")), self.assertRaises(OSError):
+            apply_harvest(self.paths, self.sheet, self.runs)
+        request = self.manifest()["active_run"]["request"]
+        self.assertNotIn("beta", self.entries())
+        with patch("kgdistiller.harvest.prepare_captures") as prepare:
+            result = apply_harvest(self.paths, self.sheet, self.root / "another-run-directory")
+        prepare.assert_not_called()
+        self.assertEqual(result["receipt"]["request_id"], load_request(self.root / request)["request_id"])
+
+    def test_edited_draft_requires_a_new_prepare(self) -> None:
+        draft = Path(self.prepare()["artifacts"]["drafts"][0])
+        self.check()
+        draft.write_text(draft.read_text(encoding="utf-8").replace("Beta as", "Beta was"), encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "draft changed"):
             apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(self.source.read_text(encoding="utf-8"), self.original)
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
+        self.assertNotIn("beta", self.entries())
 
-    def test_targeted_re_review_replaces_one_pending_row_and_resets_selection(self):
+    def test_source_changes_are_detected_by_text(self) -> None:
+        self.prepare()
+        self.check()
+        self.fixture.write_source(SOURCE, TEXT + "An appended unrelated line.\n")
+        apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertIn("beta", self.entries())
+        self.prepare([self.gamma()])
+        self.check("Gamma")
+        self.fixture.write_source(SOURCE, TEXT.replace("Gamma is a distinct", "Gamma is a different"))
+        with self.assertRaisesRegex(HarvestError, "source changed"):
+            apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertNotIn("gamma", self.entries())
+
+    def test_entry_file_edit_after_review_is_not_overwritten(self) -> None:
+        prepared = prepare_captures(self.paths, [self.payload()], self.root / ".knowledge/build/captures")
+        apply_ingest(self.paths, load_request(Path(prepared["artifacts"]["apply"])))
+        self.prepare([self.payload(review={"action": "update", "reviewer": "tester", "evidence": "Again.",
+                                           "target_id": "beta"}, text="A reviewed new explanation.")])
+        self.check()
+        entry = self.root / ".knowledge/entries/beta.md"
+        entry.write_text(entry.read_text(encoding="utf-8").replace("Beta as reviewed.", "My own words."),
+                         encoding="utf-8")
+        with self.assertRaisesRegex(HarvestError, "entry changed"):
+            apply_harvest(self.paths, self.sheet, self.runs)
+        self.assertIn("My own words.", entry.read_text(encoding="utf-8"))
+
+    def test_targeted_re_review_replaces_one_pending_row_and_resets_selection(self) -> None:
         prepared = self.prepare([self.payload(), self.gamma()])
         self.check()
         text = self.sheet.read_text(encoding="utf-8")
         selected = next(line for line in text.splitlines() if "[Beta (draft)]" in line)
         self.sheet.write_text(text.replace(selected, selected + " My annotation."), encoding="utf-8")
-        old_draft = Path(prepared["artifacts"]["drafts"][0])
-        old_draft.write_text(old_draft.read_text(encoding="utf-8").replace("Beta transforms", "Beta maps"), encoding="utf-8")
-        corrected = self.payload()
-        corrected["text"] = "Beta maps an input representation."
-        corrected["source_content"] = corrected["source_content"].replace("Beta transforms", "Beta maps")
-        before_gamma = next(line for line in self.sheet.read_text(encoding="utf-8").splitlines() if "[Gamma (draft)]" in line)
-        prepared = prepare_harvest(self.paths, {"captures": [corrected]}, self.sheet, self.reviews)
+        gamma_row = next(line for line in self.sheet.read_text(encoding="utf-8").splitlines() if "[Gamma (draft)]" in line)
+        corrected = self.payload(text="Beta maps an input representation.")
+        self.prepare([corrected])
         after = self.sheet.read_text(encoding="utf-8")
         self.assertEqual(after.count("[Beta (draft)]"), 1)
-        self.assertIn("- [ ] [Beta (draft)]", after)
+        self.assertIn("- [ ] [Beta (draft)](../.knowledge/build/reviews/1-beta.r2.md)", after)
         self.assertIn("My annotation.", after)
-        self.assertIn(before_gamma, after)
-        self.assertTrue(old_draft.exists())
+        self.assertIn(gamma_row, after)
+        self.assertTrue(Path(prepared["artifacts"]["drafts"][0]).exists())
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
         self.check()
         apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(load_state(self.paths.graph_dir).nodes["beta"]["text"], corrected["text"])
+        self.assertEqual(self.entries()["beta"]["summary"], corrected["text"])
 
-    def test_source_changes_require_re_review(self):
-        self.prepare()
-        self.check()
-        self.source.write_text(self.original + "\nExternal annotation.\n", encoding="utf-8")
-        with self.assertRaisesRegex(HarvestError, "source changed"):
-            apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
-
-    def test_precommit_interruption_reuses_request_and_selection(self):
-        self.prepare()
-        self.check()
-        with (
-            patch("kgdistiller.harvest.apply_ingest", side_effect=OSError("interrupted before commit")),
-            self.assertRaises(OSError),
-        ):
-            apply_harvest(self.paths, self.sheet, self.runs)
-        first = json.loads((self.reviews / "review.json").read_text(encoding="utf-8"))["active_run"]["request"]
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
-        with patch("kgdistiller.harvest.prepare_captures") as prepare:
-            result = apply_harvest(self.paths, self.sheet, self.root / "another-run-directory")
-        prepare.assert_not_called()
-        self.assertEqual(result["receipt"]["request_id"], load_request(self.root / first)["request_id"])
-
-    def test_cli_prepares_and_harvests_selected_metadata(self):
-        capture = self.root / "capture.json"
-        capture.write_text(json.dumps({"captures": [self.payload()]}), encoding="utf-8")
-        environment = dict(os.environ)
-        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
-        prefix = [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "harvest"]
-        prepared = subprocess.run(prefix + ["prepare", "capture.json", "--sheet", "notes/defs.md",
-                                  "--output", ".knowledge/build/reviews"],
-                                  check=False, capture_output=True, text=True, env=environment)
-        self.assertEqual(prepared.returncode, 0, prepared.stderr)
-        sheet = Path(json.loads(prepared.stdout)["sheet"])
-        sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
-        applied = subprocess.run(prefix + ["apply", "notes/defs.md", "--output", ".knowledge/build/runs"],
-                                 check=False, capture_output=True, text=True, env=environment)
-        self.assertEqual(applied.returncode, 0, applied.stderr)
-        self.assertEqual(json.loads(applied.stdout)["status"], "committed")
-        self.assertIn("beta", load_state(self.paths.graph_dir).nodes)
-
-    def test_existing_entry_file_edit_cannot_be_overwritten(self):
-        payload = self.payload()
-        prepared = prepare_captures(self.paths, [payload], self.output)
-        apply_ingest(self.paths, load_request(Path(prepared["artifacts"]["apply"])))
-        payload.pop("source_content")
-        payload["review"]["action"] = "update"
-        payload["text"] = "A reviewed new explanation."
-        self.prepare([payload])
-        self.check()
-        entry = self.root / ".knowledge/entries/beta.md"
-        entry.write_text(entry.read_text(encoding="utf-8") + "\nAn external user note.\n", encoding="utf-8")
-        with self.assertRaisesRegex(HarvestError, "entry changed"):
-            apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertIn("An external user note", entry.read_text(encoding="utf-8"))
-
-    def test_fenced_task_examples_and_ordinary_tasks_are_ignored(self):
+    def test_fenced_examples_and_ordinary_tasks_are_ignored(self) -> None:
         self.prepare()
         text = self.sheet.read_text(encoding="utf-8")
         task = next(line for line in text.splitlines() if "- [ ] [Beta (draft)]" in line).replace("[ ]", "[x]", 1)
-        self.sheet.write_text(text + f"\n```markdown\n{task}\n```\n\n    {task}\n\n- [x] ordinary task\n", encoding="utf-8")
+        self.sheet.write_text(text + f"\n```markdown\n{task}\n```\n\n    {task}\n\n- [x] ordinary task\n",
+                              encoding="utf-8")
         self.assertEqual(apply_harvest(self.paths, self.sheet, self.runs)["status"], "nothing-selected")
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
 
-    def test_binding_and_link_cannot_be_repurposed(self):
+    def test_binding_and_link_cannot_be_repurposed(self) -> None:
         self.prepare()
         self.check()
-        self.sheet.write_text(self.sheet.read_text(encoding="utf-8").replace("[Beta (draft)]", "[Different (draft)]"), encoding="utf-8")
+        self.sheet.write_text(self.sheet.read_text(encoding="utf-8").replace("[Beta (draft)]", "[Other (draft)]"),
+                              encoding="utf-8")
         with self.assertRaisesRegex(HarvestError, "label or link"):
             apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
 
-    def test_sheet_crlf_and_unchecked_annotations_are_preserved(self):
+    def test_sheet_crlf_and_unchecked_annotations_are_preserved(self) -> None:
+        self.sheet.parent.mkdir(parents=True)
+        self.sheet.write_bytes(b"---\r\ntitle: Reading\r\n---\r\n\r\n# Definitions\r\n\r\nMy annotation.  \r\n")
         self.prepare([self.payload(), self.gamma()])
-        self.check()
-        text = self.sheet.read_text(encoding="utf-8").replace("\n", "\r\n")
-        text += "\r\nUnrelated annotation with trailing spaces.  \r\n"
+        text = self.sheet.read_bytes().decode()
+        self.assertTrue(text.startswith("---\r\ntitle: Reading\r\n---\r\n"))
+        text = text.replace("- [ ] [Beta (draft)]", "- [x] [Beta (draft)]")
         self.sheet.write_bytes(text.encode())
         unchecked = next(line for line in text.splitlines(keepends=True) if "[Gamma (draft)]" in line)
         apply_harvest(self.paths, self.sheet, self.runs)
         after = self.sheet.read_bytes().decode()
         self.assertIn(unchecked, after)
-        self.assertTrue(after.endswith("Unrelated annotation with trailing spaces.  \r\n"))
+        self.assertIn("My annotation.  \r\n", after)
         self.assertNotIn("\n", after.replace("\r\n", ""))
 
-    def test_new_native_sources_support_markdown_typst_and_latex(self):
-        for extension, content in (("md", "--[[Beta]]--\nBeta is defined here.\n"),
-                                   ("typ", "#kn[Beta]\nBeta is defined here.\n"),
-                                   ("tex", "\\kn{Beta}\nBeta is defined here.\n")):
-            with self.subTest(extension=extension):
-                payload = self.payload()
-                name = "Concept" + extension
-                payload.update(name=name, source=f"notes/concept-{extension}.{extension}", source_content=content.replace("Beta", name))
-                if extension != "md":
-                    derived = self.root / default_derived_relative(payload["source"])
-                    derived.parent.mkdir(parents=True, exist_ok=True)
-                    derived.write_text(f"{name} is defined here.\n", encoding="utf-8")
-                sheet = self.root / f"notes/{extension}-defs.md"
-                prepare_harvest(self.paths, {"captures": [payload]}, sheet, self.root / f".knowledge/build/{extension}-reviews")
-                sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
-                apply_harvest(self.paths, sheet, self.root / f".knowledge/build/{extension}-runs")
-                self.assertIn(name.lower(), load_state(self.paths.graph_dir).nodes)
+    def test_sheet_location_rules(self) -> None:
+        for sheet in (self.root / ".knowledge/entries/beta.md", self.root / "sheets/defs.txt",
+                      self.root / SOURCE):
+            with self.subTest(sheet=sheet), self.assertRaises(HarvestError):
+                prepare_harvest(self.paths, {"captures": [self.payload()]}, sheet, self.reviews)
+        self.assertEqual(self.entries(), {})
 
-    def test_existing_sheet_frontmatter_and_legacy_tracking_convert_safely(self):
-        sheet = self.root / "notes/chapter-defs.md"
-        original = "---\r\ntitle: Reading\r\n---\r\n\r\n# Definitions\r\n\r\nMy annotation.  \r\n"
-        sheet.write_bytes(original.encode())
-        synchronize(self.root, self.registry, self.paths.graph_dir,
-                    identities=self.paths.identities, alignments=self.alignments,
-                    files=[], write=True)
-        self.assertIn("notes/chapter-defs.md", load_state(self.paths.graph_dir).manifest["source_hashes"])
-        self.prepare()
-        self.assertTrue(sheet.read_bytes().startswith(b"---\r\ntitle: Reading\r\n---\r\n"))
-        self.assertIn(b"My annotation.  \r\n", sheet.read_bytes())
-        self.check()
-        apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertNotIn("notes/chapter-defs.md", load_state(self.paths.graph_dir).manifest["source_hashes"])
-
-    def test_sheet_cannot_overwrite_committed_metadata(self):
-        for location in (".knowledge/entries/beta.md", ".knowledge/graph/manifest.json", str(DERIVED_SOURCE_ROOT / "beta.md")):
-            with (
-                self.subTest(location=location),
-                self.assertRaises(HarvestError),
-            ):
-                prepare_harvest(self.paths, {"captures": [self.payload()]}, self.root / location, self.output)
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
-
-    def test_overlapping_source_changes_fail_before_knowledge_writes(self):
-        beta, gamma = self.payload(), self.gamma()
-        beta["source_content"] = "# Beta heading\n\n" + beta["source_content"]
-        gamma["source_content"] = "# Gamma heading\n\n" + gamma["source_content"]
-        self.prepare([beta, gamma])
-        self.check()
-        self.check("Gamma")
-        with self.assertRaisesRegex(CaptureError, "overlap"):
-            apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertEqual(self.source.read_text(encoding="utf-8"), self.original)
-        self.assertNotIn("beta", load_state(self.paths.graph_dir).nodes)
-
-    def test_external_edit_after_commit_does_not_become_an_owned_source_version(self):
-        from kgdistiller.harvest import _refresh_sheet
-        self.prepare([self.payload(), self.gamma()])
-        self.check()
-        def refresh_then_external_edit(*args):
-            _refresh_sheet(*args)
-            self.source.write_text(self.source.read_text(encoding="utf-8") + "\nExternal annotation.\n", encoding="utf-8")
-        with patch("kgdistiller.harvest._refresh_sheet", side_effect=refresh_then_external_edit):
-            apply_harvest(self.paths, self.sheet, self.runs)
-        self.check("Gamma")
-        with self.assertRaisesRegex(HarvestError, "source changed"):
-            apply_harvest(self.paths, self.sheet, self.runs)
-        self.assertNotIn("gamma", load_state(self.paths.graph_dir).nodes)
+    def test_cli_prepares_and_harvests(self) -> None:
+        (self.root / "capture.json").write_text(json.dumps({"captures": [self.payload()]}), encoding="utf-8")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+        prefix = [sys.executable, "-m", "kgdistiller", "--repo-root", str(self.root), "harvest"]
+        prepared = subprocess.run(prefix + ["prepare", "capture.json", "--sheet", "sheets/defs.md",
+                                            "--output", ".knowledge/build/reviews"],
+                                  check=False, capture_output=True, text=True, env=environment)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        sheet = Path(json.loads(prepared.stdout)["sheet"])
+        sheet.write_text(sheet.read_text(encoding="utf-8").replace("- [ ]", "- [x]"), encoding="utf-8")
+        applied = subprocess.run(prefix + ["apply", "sheets/defs.md", "--output", ".knowledge/build/runs"],
+                                 check=False, capture_output=True, text=True, env=environment)
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(json.loads(applied.stdout)["status"], "committed")
+        self.assertIn("beta", self.entries())
 
 
 if __name__ == "__main__":

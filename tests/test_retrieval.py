@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import copy
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "src"))
-
-from kgdistiller.contracts import sha256_json
-from kgdistiller.query import CONTEXT_SCHEMA, GraphView, context, estimate_tokens
+from kgdistiller.query import CONTEXT_SCHEMA, context, estimate_tokens
 from kgdistiller.retrieval import (
     RETRIEVAL_PLAN_SCHEMA,
     SEARCH_EXECUTION_SCHEMA,
@@ -20,21 +15,17 @@ from kgdistiller.retrieval import (
     RetrievalError,
     build_context_from_execution,
     execute_retrieval_plan,
-    legacy_retrieval_plan,
     load_retrieval_plan,
+    query_retrieval_plan,
 )
-from tests.test_query import (
-    fixture_nodes,
-    fixture_snapshot,
-    snapshot_with,
-)
+from tests.knowledge_fixture import edge_record, memory_view, node_record
+from tests.test_query import fixture_edges, fixture_nodes
 
 
 def retrieval_plan() -> dict:
     return {
         "schema": "kgdistiller-retrieval-plan-v1",
         "question": "How does a measure depend on a sigma algebra?",
-        "namespace": "personal",
         "identity_queries": ["西格玛代数"],
         "lexical_queries": ["countably additive"],
         "graph": {
@@ -44,20 +35,16 @@ def retrieval_plan() -> dict:
             "max_depth": 2,
             "strategy": "hybrid",
         },
-        "filters": {
-            "include_stale": False,
-            "include_orphaned": False,
-        },
         "limit": 20,
     }
 
 
 class RetrievalTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.view = GraphView.from_snapshot(fixture_snapshot())
+        self.view = memory_view(fixture_nodes(), fixture_edges())
 
     def test_v1_plan_forbids_semantic_queries_and_is_bounded(self) -> None:
-        plan = legacy_retrieval_plan("measure")
+        plan = query_retrieval_plan("measure")
         self.assertEqual(RETRIEVAL_PLAN_SCHEMA, plan["schema"])
         self.assertNotIn("semantic_queries", plan)
         invalid = retrieval_plan() | {"semantic_queries": []}
@@ -85,62 +72,11 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("graph", measure["lanes"])
         self.assertIn("ppr", measure["lanes"])
 
-    def test_graph_lane_filters_neighbor_staleness_and_orphan_status(self) -> None:
-        seed = copy.deepcopy(fixture_nodes()[0])
-        active = copy.deepcopy(fixture_nodes()[1])
-        stale = copy.deepcopy(active)
-        stale.update({"id": "stale-node", "label": "Stale node"})
-        stale["properties"]["curation_status"] = "needs-review"
-        orphan = copy.deepcopy(active)
-        orphan.update({"id": "orphan-node", "label": "Orphan node"})
-        orphan["properties"]["source_status"] = "orphaned"
-        orphan["provenance"]["active"] = False
-        edges = [
-            {
-                "source": seed["id"],
-                "relation": "derived-from",
-                "target": node["id"],
-                "evidence": f"Seed reaches {node['id']}.",
-                "curation_status": "current",
-            }
-            for node in (active, stale, orphan)
-        ]
-        view = GraphView.from_snapshot(
-            snapshot_with([seed, active, stale, orphan], edges)
-        )
-        plan = retrieval_plan()
-        plan["identity_queries"] = []
-        plan["lexical_queries"] = []
-        plan["graph"].update(
-            {
-                "seed_ids": [seed["id"]],
-                "edge_types": ["derived-from"],
-                "max_depth": 1,
-                "strategy": "bfs",
-            }
-        )
-
-        default = execute_retrieval_plan(view, plan)
-        plan["filters"].update({"include_stale": True, "include_orphaned": True})
-        inclusive = execute_retrieval_plan(view, plan)
-
-        self.assertEqual(
-            {"sigma-algebra", "measure"},
-            {row["node_id"] for row in default["result"]["results"]},
-        )
-        self.assertEqual(
-            {"sigma-algebra", "measure", "stale-node", "orphan-node"},
-            {row["node_id"] for row in inclusive["result"]["results"]},
-        )
-
     def test_identity_duplicates_keep_best_rank_and_exact_precedes_alias(self) -> None:
-        alpha = copy.deepcopy(fixture_nodes()[0])
-        alpha.update({"id": "alpha", "label": "Alpha"})
-        alpha["properties"]["aliases"] = ["Alpha alias"]
-        beta = copy.deepcopy(fixture_nodes()[1])
-        beta.update({"id": "beta", "label": "Beta"})
-        beta["properties"]["aliases"] = ["Beta alias"]
-        view = GraphView.from_snapshot(snapshot_with([alpha, beta], []))
+        view = memory_view([
+            node_record("alpha", "Alpha", aliases=["Alpha alias"]),
+            node_record("beta", "Beta", aliases=["Beta alias"]),
+        ])
         plan = retrieval_plan()
         plan["lexical_queries"] = []
         plan["graph"].update(
@@ -163,13 +99,8 @@ class RetrievalTest(unittest.TestCase):
         )
 
     def test_combined_graph_seeds_over_128_fail_instead_of_truncating(self) -> None:
-        nodes = []
-        for index in range(129):
-            node = copy.deepcopy(fixture_nodes()[0])
-            node.update({"id": f"node-{index:03d}", "label": f"Node {index:03d}"})
-            node["properties"]["aliases"] = []
-            nodes.append(node)
-        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+        nodes = [node_record(f"node-{index:03d}", f"Node {index:03d}") for index in range(129)]
+        view = memory_view(nodes)
         plan = retrieval_plan()
         plan["identity_queries"] = ["Node 128"]
         plan["lexical_queries"] = []
@@ -214,29 +145,15 @@ class RetrievalTest(unittest.TestCase):
         )
 
     def test_ppr_evidence_is_attributed_within_disconnected_components(self) -> None:
-        nodes = []
-        for index, node_id in enumerate(("seed-one", "node-one", "seed-two", "node-two")):
-            node = copy.deepcopy(fixture_nodes()[index % len(fixture_nodes())])
-            node.update({"id": node_id, "label": node_id.replace("-", " ").title()})
-            node["properties"]["aliases"] = []
-            nodes.append(node)
-        edges = [
-            {
-                "source": "seed-one",
-                "relation": "prerequisite-for",
-                "target": "node-one",
-                "evidence": "First component.",
-                "curation_status": "current",
-            },
-            {
-                "source": "seed-two",
-                "relation": "prerequisite-for",
-                "target": "node-two",
-                "evidence": "Second component.",
-                "curation_status": "current",
-            },
+        nodes = [
+            node_record(node_id, node_id.replace("-", " ").title())
+            for node_id in ("seed-one", "node-one", "seed-two", "node-two")
         ]
-        view = GraphView.from_snapshot(snapshot_with(nodes, edges))
+        edges = [
+            edge_record("seed-one", "prerequisite-for", "node-one", evidence="First component."),
+            edge_record("seed-two", "prerequisite-for", "node-two", evidence="Second component."),
+        ]
+        view = memory_view(nodes, edges)
         plan = retrieval_plan()
         plan["identity_queries"] = []
         plan["lexical_queries"] = []
@@ -268,12 +185,10 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(plan["question"], bundle["question"])
         self.assertEqual(CONTEXT_SCHEMA, bundle["schema"])
         self.assertEqual("kgdistiller-context-bundle-v1", bundle["schema"])
-        self.assertEqual(self.view.snapshot["snapshot_sha256"], bundle["snapshot_sha256"])
         self.assertLessEqual(bundle["budget"]["estimated_tokens"], 2000)
-        stale = dict(execution)
-        stale["snapshot_sha256"] = "f" * 64
-        with self.assertRaisesRegex(RetrievalError, "another graph generation"):
-            build_context_from_execution(self.view, stale, plan=plan)
+        smaller = memory_view([node for node in fixture_nodes() if node["id"] != "measure"])
+        with self.assertRaisesRegex(RetrievalError, "stale-execution"):
+            build_context_from_execution(smaller, execution, plan=plan)
 
     def test_context_rejects_nested_result_tampering_and_plan_mismatch(self) -> None:
         plan = retrieval_plan()
@@ -286,17 +201,12 @@ class RetrievalTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(RetrievalError, "invalid-execution"):
             build_context_from_execution(self.view, tampered, plan=plan)
-
-        different_plan = copy.deepcopy(plan)
-        different_plan["question"] = "A different question"
-        with self.assertRaisesRegex(RetrievalError, "does not belong"):
-            build_context_from_execution(
-                self.view, execution, plan=different_plan, token_budget=2000
-            )
+        with self.assertRaisesRegex(RetrievalError, "invalid-plan"):
+            build_context_from_execution(self.view, execution, plan=plan | {"filters": {}})
 
     def test_context_token_estimate_reaches_fixed_point_before_budget_check(self) -> None:
         plan = retrieval_plan()
-        plan["question"] = "q" * 500
+        plan["question"] = "q" * 748
         plan["identity_queries"] = []
         plan["lexical_queries"] = []
         plan["graph"].update(
@@ -304,31 +214,34 @@ class RetrievalTest(unittest.TestCase):
         )
         execution = execute_retrieval_plan(self.view, plan)
 
-        with self.assertRaisesRegex(RetrievalError, "budget-too-small"):
-            build_context_from_execution(
-                self.view, execution, plan=plan, token_budget=1048
-            )
+        def fits(budget: int) -> bool:
+            try:
+                build_context_from_execution(self.view, execution, plan=plan, token_budget=budget)
+            except RetrievalError as error:
+                self.assertIn("budget-too-small", str(error))
+                return False
+            return True
+
+        minimum = next(budget for budget in range(900, 1100) if fits(budget))
+        self.assertTrue(all(fits(budget) for budget in range(minimum, minimum + 20)))
         bundle = build_context_from_execution(
-            self.view, execution, plan=plan, token_budget=1049
+            self.view, execution, plan=plan, token_budget=minimum
         )
         self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
-        self.assertLessEqual(bundle["budget"]["estimated_tokens"], 1049)
+        self.assertEqual(minimum, bundle["budget"]["estimated_tokens"])
 
     def test_context_metadata_preserves_complete_node_over_omission_details(self) -> None:
-        selected = copy.deepcopy(fixture_nodes()[1])
-        selected.update({"id": "selected-node", "label": "Shared selected"})
-        selected["text"] = "A complete definition. " + "x" * 3200
-        selected["entry"] = {
-            "conditions": ["The domain is a sigma algebra.", "The function is countably additive."],
-            "summary": "The conditions must remain complete.",
-        }
+        selected = node_record(
+            "selected-node", "Shared selected", "The conditions must remain complete.",
+            evidence="A complete definition. " + "x" * 3200,
+            prerequisites=["The domain is a sigma algebra.", "The function is countably additive."],
+        )
         nodes = [selected]
         for index in range(24):
             omitted = copy.deepcopy(selected)
-            omitted.update({"id": f"oversized-{index:02d}", "label": f"Shared omitted {index}"})
-            omitted["text"] = "y" * 7000
+            omitted.update({"id": f"oversized-{index:02d}", "label": f"Shared omitted {index}", "evidence": "y" * 7000})
             nodes.append(omitted)
-        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+        view = memory_view(nodes)
         plan = retrieval_plan()
         plan["question"] = "What exact conditions apply? " + "q" * 600
         plan["identity_queries"] = ["selected-node"]
@@ -342,12 +255,9 @@ class RetrievalTest(unittest.TestCase):
 
         bundle = build_context_from_execution(view, execution, plan=plan, token_budget=6000)
 
-        self.assertEqual([selected], bundle["nodes"])
-        self.assertEqual(selected["entry"]["conditions"], bundle["nodes"][0]["entry"]["conditions"])
+        self.assertEqual([view.nodes["selected-node"]], bundle["nodes"])
+        self.assertEqual(selected["prerequisites"], bundle["nodes"][0]["prerequisites"])
         self.assertEqual(plan["question"], bundle["question"])
-        self.assertEqual(sha256_json(plan), bundle["plan_sha256"])
-        self.assertEqual(view.snapshot["snapshot_sha256"], bundle["snapshot_sha256"])
-        self.assertEqual(view.snapshot["graph"]["sha256"], bundle["graph_sha256"])
         self.assertEqual(SEARCH_EXECUTION_SCHEMA, bundle["search_execution_schema"])
         self.assertEqual(SEARCH_RESULT_SCHEMA, bundle["search_result_schema"])
         self.assertTrue(bundle["omissions"])
@@ -355,12 +265,10 @@ class RetrievalTest(unittest.TestCase):
         self.assertLessEqual(estimate_tokens(bundle), 6000)
 
     def test_context_skips_node_that_cannot_fit_with_required_bindings(self) -> None:
-        large = copy.deepcopy(fixture_nodes()[1])
-        large.update({"id": "large-node", "text": "x" * 5300})
-        small = copy.deepcopy(fixture_nodes()[1])
-        small.update({"id": "small-node", "text": "A complete smaller definition."})
-        small["entry"] = {"conditions": ["Finite measure.", "Same measurable domain."]}
-        view = GraphView.from_snapshot(snapshot_with([large, small], []))
+        large = node_record("large-node", "Measure", evidence="x" * 5450)
+        small = node_record("small-node", "Measure", evidence="A complete smaller definition.",
+                            prerequisites=["Finite measure.", "Same measurable domain."])
+        view = memory_view([large, small])
         plan = retrieval_plan()
         plan["question"] = "Preserve every condition. " + "q" * 700
         plan["identity_queries"] = ["large-node", "small-node"]
@@ -371,22 +279,21 @@ class RetrievalTest(unittest.TestCase):
 
         bundle = build_context_from_execution(view, execution, plan=plan, token_budget=6000)
 
-        self.assertEqual([small], bundle["nodes"])
+        self.assertEqual([view.nodes["small-node"]], bundle["nodes"])
         self.assertIn({"kind": "node", "id": "large-node", "reason": "token-budget"}, bundle["omissions"])
         self.assertEqual(plan["question"], bundle["question"])
         self.assertLessEqual(estimate_tokens(bundle), 6000)
 
     def test_context_omission_details_do_not_block_later_fitting_node(self) -> None:
-        small = copy.deepcopy(fixture_nodes()[1])
-        small.update({"id": "late-fitting-node", "text": "x" * 3700})
-        small["entry"] = {"conditions": ["Finite measure.", "Same measurable domain."]}
+        small = node_record("late-fitting-node", "Measure", evidence="x" * 3700,
+                            prerequisites=["Finite measure.", "Same measurable domain."])
         nodes = []
         for index in range(20):
             large = copy.deepcopy(small)
-            large.update({"id": f"oversized-{index:02d}", "text": "y" * 7000})
+            large.update({"id": f"oversized-{index:02d}", "evidence": "y" * 7000})
             nodes.append(large)
         nodes.append(small)
-        view = GraphView.from_snapshot(snapshot_with(nodes, []))
+        view = memory_view(nodes)
         plan = retrieval_plan()
         plan["question"] = "Preserve the late candidate's conditions. " + "q" * 600
         plan["identity_queries"] = [node["id"] for node in nodes]
@@ -397,16 +304,15 @@ class RetrievalTest(unittest.TestCase):
 
         bundle = build_context_from_execution(view, execution, plan=plan, token_budget=6000)
 
-        self.assertEqual([small], bundle["nodes"])
+        self.assertEqual([view.nodes["late-fitting-node"]], bundle["nodes"])
         self.assertTrue(bundle["omissions"])
         self.assertEqual(plan["question"], bundle["question"])
         self.assertLessEqual(estimate_tokens(bundle), 6000)
 
     def test_context_impossible_content_keeps_omission_or_fails_explicitly(self) -> None:
-        oversized = copy.deepcopy(fixture_nodes()[1])
-        oversized.update({"id": "oversized-node", "text": "x" * 8000})
-        oversized["entry"] = {"conditions": ["Do not truncate this condition."]}
-        view = GraphView.from_snapshot(snapshot_with([oversized], []))
+        oversized = node_record("oversized-node", "Measure", evidence="x" * 8000,
+                                prerequisites=["Do not truncate this condition."])
+        view = memory_view([oversized])
         plan = retrieval_plan()
         plan["identity_queries"] = ["oversized-node"]
         plan["lexical_queries"] = []
@@ -445,25 +351,14 @@ class RetrievalTest(unittest.TestCase):
                 self.assertEqual(estimate_tokens(bundle), bundle["budget"]["estimated_tokens"])
                 self.assertLessEqual(estimate_tokens(bundle), budget)
                 self.assertEqual(plan["question"], bundle["question"])
-                self.assertEqual(sha256_json(plan), bundle["plan_sha256"])
                 for node in bundle["nodes"]:
                     self.assertEqual(self.view.nodes[node["id"]], node)
 
-    def test_context_obeys_plan_edge_types_and_stale_policy(self) -> None:
-        snapshot = fixture_snapshot()
-        snapshot["edges"].append(
-            {
-                "source": "sigma-algebra",
-                "relation": "implies",
-                "target": "measure",
-                "evidence": "Fixture implication.",
-                "curation_status": "current",
-            }
-        )
-        snapshot["graph"]["counts"]["edges"] += 1
-        snapshot.pop("snapshot_sha256")
-        snapshot["snapshot_sha256"] = sha256_json(snapshot)
-        view = GraphView.from_snapshot(snapshot)
+    def test_context_obeys_plan_edge_types(self) -> None:
+        view = memory_view(fixture_nodes(), [
+            *fixture_edges(),
+            edge_record("sigma-algebra", "implies", "measure", evidence="Fixture implication."),
+        ])
         plan = retrieval_plan()
         plan["identity_queries"] = ["Sigma algebra", "Measure"]
         plan["lexical_queries"] = []
@@ -472,40 +367,13 @@ class RetrievalTest(unittest.TestCase):
         )
 
         execution = execute_retrieval_plan(view, plan)
-        empty = build_context_from_execution(
-            view, execution, plan=plan, token_budget=5000
-        )
+        empty = build_context_from_execution(view, execution, plan=plan, token_budget=5000)
         self.assertEqual([], empty["edges"])
 
         plan["graph"]["edge_types"] = ["implies"]
         execution = execute_retrieval_plan(view, plan)
-        implication = build_context_from_execution(
-            view, execution, plan=plan, token_budget=5000
-        )
+        implication = build_context_from_execution(view, execution, plan=plan, token_budget=5000)
         self.assertEqual(["implies"], [edge["relation"] for edge in implication["edges"]])
-
-        stale_snapshot = copy.deepcopy(snapshot)
-        stale_snapshot["edges"][0]["curation_status"] = "needs-review"
-        stale_snapshot.pop("snapshot_sha256")
-        stale_snapshot["snapshot_sha256"] = sha256_json(stale_snapshot)
-        stale_view = GraphView.from_snapshot(stale_snapshot)
-        plan["identity_queries"] = ["Sigma algebra", "Measure"]
-        plan["graph"]["edge_types"] = ["prerequisite-for"]
-        execution = execute_retrieval_plan(stale_view, plan)
-        current_only = build_context_from_execution(
-            stale_view, execution, plan=plan, token_budget=5000
-        )
-        self.assertEqual([], current_only["edges"])
-
-        plan["filters"]["include_stale"] = True
-        execution = execute_retrieval_plan(stale_view, plan)
-        with_stale = build_context_from_execution(
-            stale_view, execution, plan=plan, token_budget=5000
-        )
-        self.assertEqual(
-            ["needs-review"],
-            [edge["curation_status"] for edge in with_stale["edges"]],
-        )
 
 
 if __name__ == "__main__":

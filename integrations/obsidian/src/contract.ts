@@ -1,31 +1,25 @@
 export const GRAPH_SCHEMA = "kgdistiller-obsidian-graph-v1" as const;
-export const PRIVATE_GRAPH_SCHEMA = "kgdistiller-graph-v2" as const;
 /** The product's single knowledge tree at a project root; entries live in its `entries/` folder. */
 export const KNOWLEDGE_DIRECTORY = ".knowledge";
 
-export type CurationStatus = "current" | "pending" | "needs-review";
-
-export interface GraphSourceGeneration {
-  graph_schema: typeof PRIVATE_GRAPH_SCHEMA;
-  graph_sha256: string;
-  snapshot_sha256: string;
-  source_hashes_sha256: string;
-}
+export const UNDERSTANDING_STATES = ["unknown", "not-yet-understood", "understood"] as const;
+export type Understanding = (typeof UNDERSTANDING_STATES)[number];
 
 export interface GraphCounts {
   concepts: number;
   sources: number;
   semantic_edges: number;
   definitions: number;
-  references: number;
 }
 
 export interface ConceptRecord {
   id: string;
   label: string;
-  authority: string;
-  curation_status: CurationStatus;
+  kind: string;
   aliases: string[];
+  /** The concept's entry file, relative to the project root. */
+  authority: string;
+  understanding: Understanding;
 }
 
 export interface SourceRecord {
@@ -46,32 +40,18 @@ export interface DefinitionRecord {
   line_end: number;
 }
 
-export interface ReferenceRecord {
-  id: string;
-  source_authority: string;
-  target: string;
-  label: string;
-  line: number;
-  context?: string;
-}
-
 export interface KgGraphContract {
   schema: typeof GRAPH_SCHEMA;
-  source: GraphSourceGeneration;
   counts: GraphCounts;
   concepts: ConceptRecord[];
   sources: SourceRecord[];
   semantic_edges: SemanticEdgeRecord[];
   definitions: DefinitionRecord[];
-  references: ReferenceRecord[];
-  bundle_sha256: string;
 }
 
 type UnknownRecord = Record<string, unknown>;
 
-const SHA256_RE = /^[0-9a-f]{64}$/;
-const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
-const AUTHORITY_RE = /\.(?:md|typ|tex)$/i;
+const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function fail(message: string): never {
   throw new Error(`Invalid ${GRAPH_SCHEMA}: ${message}`);
@@ -121,23 +101,6 @@ function exactKeys(value: UnknownRecord, expected: readonly string[], label: str
   }
 }
 
-function keysWithOptional(
-  value: UnknownRecord,
-  required: readonly string[],
-  optional: readonly string[],
-  label: string,
-): void {
-  for (const key of required) {
-    if (!(key in value)) {
-      fail(`${label} is missing ${key}`);
-    }
-  }
-  const allowed = new Set([...required, ...optional]);
-  if (Object.keys(value).some((key) => !allowed.has(key))) {
-    fail(`${label} has unsupported properties`);
-  }
-}
-
 function uniqueStrings(values: unknown, label: string): string[] {
   const result = asArray(values, label).map((value, index) => asString(value, `${label}[${index}]`));
   if (new Set(result).size !== result.length) {
@@ -158,55 +121,18 @@ export function isSafeVaultPath(value: string, suffix?: RegExp): boolean {
   return suffix ? suffix.test(value) : true;
 }
 
-function safePath(value: unknown, label: string, suffix: RegExp): string {
+/** Any safe relative path: sources are plain text documents of any format. */
+function safePath(value: unknown, label: string): string {
   const result = asString(value, label);
-  if (!isSafeVaultPath(result, suffix)) {
+  if (!isSafeVaultPath(result)) {
     fail(`${label} must be a safe vault-relative path`);
   }
   return result;
 }
 
-function sha256(value: unknown, label: string): string {
-  const result = asString(value, label);
-  if (!SHA256_RE.test(result)) {
-    fail(`${label} must be a lowercase SHA-256 digest`);
-  }
-  return result;
-}
+const COUNT_KEYS = ["concepts", "sources", "semantic_edges", "definitions"] as const;
 
-export function canonicalJson(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) fail("canonical JSON contains a non-finite number");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (typeof value === "object") {
-    const record = value as UnknownRecord;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-      .join(",")}}`;
-  }
-  fail("canonical JSON contains an unsupported value");
-}
-
-async function sha256Text(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-export async function calculateBundleDigest(value: UnknownRecord): Promise<string> {
-  const payload = { ...value };
-  delete payload.bundle_sha256;
-  return sha256Text(canonicalJson(payload));
-}
-
-export async function parseGraphContract(text: string): Promise<KgGraphContract> {
+export function parseGraphContract(text: string): KgGraphContract {
   let decoded: unknown;
   try {
     decoded = JSON.parse(text) as unknown;
@@ -214,77 +140,37 @@ export async function parseGraphContract(text: string): Promise<KgGraphContract>
     fail(`malformed JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   const root = asRecord(decoded, "document");
-  exactKeys(
-    root,
-    [
-      "schema",
-      "source",
-      "counts",
-      "concepts",
-      "sources",
-      "semantic_edges",
-      "definitions",
-      "references",
-      "bundle_sha256",
-    ],
-    "document",
-  );
+  exactKeys(root, ["schema", "counts", ...COUNT_KEYS], "document");
   if (root.schema !== GRAPH_SCHEMA) fail(`schema must equal ${GRAPH_SCHEMA}`);
 
-  const source = asRecord(root.source, "source");
-  exactKeys(
-    source,
-    ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
-    "source",
-  );
-  if (source.graph_schema !== PRIVATE_GRAPH_SCHEMA) {
-    fail(`source.graph_schema must equal ${PRIVATE_GRAPH_SCHEMA}`);
-  }
-  sha256(source.graph_sha256, "source.graph_sha256");
-  sha256(source.snapshot_sha256, "source.snapshot_sha256");
-  sha256(source.source_hashes_sha256, "source.source_hashes_sha256");
-
   const counts = asRecord(root.counts, "counts");
-  exactKeys(
-    counts,
-    ["concepts", "sources", "semantic_edges", "definitions", "references"],
-    "counts",
-  );
-  for (const key of ["concepts", "sources", "semantic_edges", "definitions", "references"] as const) {
-    asInteger(counts[key], `counts.${key}`);
-  }
+  exactKeys(counts, COUNT_KEYS, "counts");
+  for (const key of COUNT_KEYS) asInteger(counts[key], `counts.${key}`);
 
   const conceptIds = new Set<string>();
-  const conceptAuthorities = new Map<string, string>();
   for (const [index, raw] of asArray(root.concepts, "concepts").entries()) {
-    const concept = asRecord(raw, `concepts[${index}]`);
-    exactKeys(
-      concept,
-      ["id", "label", "authority", "curation_status", "aliases"],
-      `concepts[${index}]`,
-    );
-    const id = asString(concept.id, `concepts[${index}].id`);
-    if (!ID_RE.test(id) || conceptIds.has(id)) fail(`concepts[${index}].id is invalid or duplicated`);
+    const label = `concepts[${index}]`;
+    const concept = asRecord(raw, label);
+    exactKeys(concept, ["id", "label", "kind", "aliases", "authority", "understanding"], label);
+    const id = asString(concept.id, `${label}.id`);
+    if (!ID_RE.test(id) || conceptIds.has(id)) fail(`${label}.id is invalid or duplicated`);
     conceptIds.add(id);
-    asString(concept.label, `concepts[${index}].label`);
-    const authority = safePath(concept.authority, `concepts[${index}].authority`, AUTHORITY_RE);
-    conceptAuthorities.set(id, authority);
-    if (!["current", "pending", "needs-review"].includes(String(concept.curation_status))) {
-      fail(`concepts[${index}].curation_status is invalid`);
+    asString(concept.label, `${label}.label`);
+    asString(concept.kind, `${label}.kind`);
+    uniqueStrings(concept.aliases, `${label}.aliases`);
+    safePath(concept.authority, `${label}.authority`);
+    if (!(UNDERSTANDING_STATES as readonly unknown[]).includes(concept.understanding)) {
+      fail(`${label}.understanding is invalid`);
     }
-    uniqueStrings(concept.aliases, `concepts[${index}].aliases`);
   }
 
   const sourceAuthorities = new Set<string>();
   for (const [index, raw] of asArray(root.sources, "sources").entries()) {
     const sourceRecord = asRecord(raw, `sources[${index}]`);
     exactKeys(sourceRecord, ["authority"], `sources[${index}]`);
-    const authority = safePath(sourceRecord.authority, `sources[${index}].authority`, AUTHORITY_RE);
+    const authority = safePath(sourceRecord.authority, `sources[${index}].authority`);
     if (sourceAuthorities.has(authority)) fail(`sources[${index}].authority is duplicated`);
     sourceAuthorities.add(authority);
-  }
-  for (const authority of conceptAuthorities.values()) {
-    if (!sourceAuthorities.has(authority)) fail("a concept has an unknown source authority");
   }
 
   const edgeKeys = new Set<string>();
@@ -318,41 +204,12 @@ export async function parseGraphContract(text: string): Promise<KgGraphContract>
     if (definitionTargets.has(target)) fail(`definitions[${index}].target is duplicated`);
     definitionTargets.add(target);
   }
-  if (definitionTargets.size !== conceptIds.size || [...conceptIds].some((id) => !definitionTargets.has(id))) {
+  if (definitionTargets.size !== conceptIds.size) {
     fail("each concept must have exactly one definition edge");
   }
 
-  const referenceIds = new Set<string>();
-  for (const [index, raw] of asArray(root.references, "references").entries()) {
-    const reference = asRecord(raw, `references[${index}]`);
-    keysWithOptional(
-      reference,
-      ["id", "source_authority", "target", "label", "line"],
-      ["context"],
-      `references[${index}]`,
-    );
-    const id = asString(reference.id, `references[${index}].id`);
-    const authority = asString(reference.source_authority, `references[${index}].source_authority`);
-    const target = asString(reference.target, `references[${index}].target`);
-    asString(reference.label, `references[${index}].label`);
-    positiveInteger(reference.line, `references[${index}].line`);
-    if (reference.context !== undefined) asString(reference.context, `references[${index}].context`);
-    if (!sourceAuthorities.has(authority) || !conceptIds.has(target)) fail(`references[${index}] has an unknown endpoint`);
-    if (referenceIds.has(id)) fail(`references[${index}].id is duplicated`);
-    referenceIds.add(id);
+  for (const key of COUNT_KEYS) {
+    if (counts[key] !== asArray(root[key], key).length) fail(`counts.${key} does not match its array`);
   }
-
-  const arrays = {
-    concepts: asArray(root.concepts, "concepts").length,
-    sources: asArray(root.sources, "sources").length,
-    semantic_edges: asArray(root.semantic_edges, "semantic_edges").length,
-    definitions: asArray(root.definitions, "definitions").length,
-    references: asArray(root.references, "references").length,
-  };
-  for (const [key, length] of Object.entries(arrays)) {
-    if (counts[key] !== length) fail(`counts.${key} does not match its array`);
-  }
-  const claimed = sha256(root.bundle_sha256, "bundle_sha256");
-  if ((await calculateBundleDigest(root)) !== claimed) fail("bundle_sha256 does not match canonical content");
   return root as unknown as KgGraphContract;
 }

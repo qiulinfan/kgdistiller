@@ -12,11 +12,8 @@ from kgdistiller.contracts import (
     CONTRACT_SCHEMAS,
     ContractError,
     canonical_json,
-    finalize_self_digest,
     load_contract_schema,
     parse_contract_json,
-    self_digest,
-    sha256_json,
     validate_contract,
 )
 from kgdistiller.json_schema import validate_json_schema
@@ -26,7 +23,6 @@ FIXTURE_CONTRACTS = (
     "kgdistiller-retrieval-plan-v1",
     "kgdistiller-search-result-v1",
     "kgdistiller-search-execution-v1",
-    "kgdistiller-document-record-v2",
 )
 
 
@@ -36,135 +32,33 @@ def fixture(schema: str, group: str = "valid") -> dict:
     )
 
 
-def minimal_store() -> dict:
-    digest = "a" * 64
-    return finalize_self_digest(
-        {
-            "schema": "kgdistiller-store-v1",
-            "generator": "kgdistiller",
-            "layout": "in-place",
-            "paths": {
-                "vault": ".knowledge/vault.json",
-                "registry": ".knowledge/sources.json",
-                "identities": None,
-                "alignments": ".knowledge/alignments.json",
-                "graph": ".knowledge/graph",
-                "documents": ".knowledge/documents.jsonl",
-            },
-            "documents": {
-                "count": 0,
-                "sha256": digest,
-                "source_snapshot_sha256": digest,
-            },
-            "graph_artifacts": [
-                {
-                    "path": ".knowledge/graph/manifest.json",
-                    "bytes": 1,
-                    "sha256": digest,
-                },
-                {"path": ".knowledge/graph/nodes.jsonl", "bytes": 0, "sha256": digest},
-                {"path": ".knowledge/graph/edges.jsonl", "bytes": 0, "sha256": digest},
-                {"path": ".knowledge/graph/references.jsonl", "bytes": 0, "sha256": digest},
-            ],
-            "vault_id": "00000000-0000-4000-8000-000000000000",
-            "vault_sha256": digest,
-            "registry_sha256": digest,
-            "identity_sha256": None,
-            "alignment_sha256": digest,
-            "graph_sha256": digest,
-            "store_generation_sha256": digest,
-            "managed_paths": [".knowledge/documents.jsonl", ".knowledge/store.json"],
-        },
-        "store_sha256",
-    )
-
-
 def minimal_query_status() -> dict:
-    digest = "c" * 64
     return {
         "schema": "kgdistiller-query-status-v1",
-        "snapshot_schema": "kgdistiller-agent-snapshot-v1",
-        "namespace": "personal",
-        "snapshot_sha256": digest,
-        "graph_schema": "kgdistiller-graph-v2",
-        "graph_sha256": digest,
-        "generation": digest,
-        "counts": {"nodes": 0, "edges": 0, "references": 0},
-        "backend": "json-memory",
-        "retrieval_lanes": ["identity", "lexical", "graph", "ppr"],
-        "capabilities": ["json-memory", "read-only-query-v3"],
-        "alignment_schema": "kgdistiller-alignments-v1",
-        "alignment_sha256": digest,
-        "alignment_counts": {"mappings": 0},
+        "counts": {"entries": 2, "edges": 1},
+        "relations": {"prerequisite-for": 1},
     }
 
 
 def minimal_obsidian_graph() -> dict:
-    digest = "9" * 64
-    return finalize_self_digest(
-        {
-            "schema": "kgdistiller-obsidian-graph-v1",
-            "source": {
-                "graph_schema": "kgdistiller-graph-v2",
-                "graph_sha256": digest,
-                "snapshot_sha256": digest,
-                "source_hashes_sha256": digest,
-            },
-            "counts": {
-                "concepts": 1,
-                "sources": 1,
-                "semantic_edges": 0,
-                "definitions": 1,
-                "references": 1,
-            },
-            "concepts": [
-                {
-                    "id": "measure",
-                    "label": "Measure",
-                    "authority": "notes/chapter.md",
-                    "curation_status": "current",
-                    "aliases": ["Measure"],
-                }
-            ],
-            "sources": [{"authority": "notes/chapter.md"}],
-            "semantic_edges": [],
-            "definitions": [
-                {
-                    "source_authority": "notes/chapter.md",
-                    "target": "measure",
-                    "line_start": 1,
-                    "line_end": 3,
-                }
-            ],
-            "references": [
-                {
-                    "id": "notes/chapter.md:7:measure",
-                    "source_authority": "notes/chapter.md",
-                    "target": "measure",
-                    "label": "Measure",
-                    "line": 7,
-                    "context": "A reference to Measure.",
-                }
-            ],
-        },
-        "bundle_sha256",
-    )
-
-
-def minimal_store_report() -> dict:
-    digest = "d" * 64
     return {
-        "schema": "kgdistiller-store-report-v1",
-        "status": "verified",
-        "artifact_schema": "kgdistiller-store-v1",
-        "root": "/tmp/store",
-        "store_sha256": digest,
-        "store_generation_sha256": digest,
-        "graph_sha256": digest,
-        "documents": 0,
-        "counts": {"nodes": 0, "edges": 0, "references": 0},
-        "query_backend": "json-memory",
-        "layout": "snapshot-copy",
+        "schema": "kgdistiller-obsidian-graph-v1",
+        "counts": {"concepts": 1, "sources": 1, "semantic_edges": 0, "definitions": 1},
+        "concepts": [
+            {
+                "id": "measure",
+                "label": "Measure",
+                "kind": "definition",
+                "aliases": ["测度"],
+                "authority": ".knowledge/entries/measure.md",
+                "understanding": "unknown",
+            }
+        ],
+        "sources": [{"authority": "notes/chapter.txt"}],
+        "semantic_edges": [],
+        "definitions": [
+            {"source_authority": "notes/chapter.txt", "target": "measure", "line_start": 1, "line_end": 3}
+        ],
     }
 
 
@@ -181,15 +75,6 @@ class ContractTest(unittest.TestCase):
                 "kgdistiller-search-result-v3",
                 "kgdistiller-search-execution-v3",
                 "kgdistiller-context-bundle-v2",
-                "kgdistiller-context-bundle-v3",
-                "kgdistiller-support-selection-v1",
-                "kgdistiller-source-evidence-manifest-v1",
-                "kgdistiller-source-evidence-result-v1",
-                "kgdistiller-source-evidence-context-v1",
-                "kgdistiller-source-reference-result-v1",
-                "kgdistiller-document-record-v2",
-                "kgdistiller-store-v1",
-                "kgdistiller-store-report-v1",
                 "kgdistiller-obsidian-graph-v1",
             },
             set(CONTRACT_SCHEMAS),
@@ -205,8 +90,6 @@ class ContractTest(unittest.TestCase):
         payloads.extend(
             [
                 minimal_query_status(),
-                minimal_store(),
-                minimal_store_report(),
                 minimal_obsidian_graph(),
             ]
         )
@@ -222,65 +105,38 @@ class ContractTest(unittest.TestCase):
             ):
                 validate_contract(fixture(discriminator, "invalid"))
 
-    def test_removed_runtime_contracts_are_explicitly_unsupported(self) -> None:
-        for discriminator in (
-            "legacy-local-profile-v0",
-            "legacy-embedding-policy-v0",
-            "legacy-store-v0",
-            "legacy-retrieval-plan-v0",
-            "legacy-static-export-v0",
-            "legacy-document-upsert-request-v0",
-            "legacy-document-ingest-receipt-v0",
-            "legacy-document-record-v0",
-            "kgdistiller-document-record-v1",
-        ):
+    def test_unknown_contracts_are_explicitly_unsupported(self) -> None:
+        for discriminator in ("kgdistiller-unknown-v1", "kgdistiller-entry-v2", "unexpected-v0"):
             with (
                 self.subTest(schema=discriminator),
                 self.assertRaisesRegex(ContractError, "unsupported contract schema"),
             ):
                 validate_contract({"schema": discriminator})
 
-    def test_current_wrapper_contracts_reject_unknown_graph_schema(self) -> None:
-        cases = [
-            (minimal_query_status(), ("graph_schema",)),
-            (minimal_obsidian_graph(), ("source", "graph_schema")),
-        ]
-        for payload, path in cases:
-            target = payload
-            for key in path[:-1]:
-                target = target[key]
-            for graph_schema in ("legacy-graph-v0", "kgdistiller-graph-v1"):
-                target[path[-1]] = graph_schema
-                with (
-                    self.subTest(schema=payload["schema"], graph_schema=graph_schema),
-                    self.assertRaises(ContractError),
-                ):
-                    validate_contract(payload)
-
-    def test_store_and_obsidian_self_digests_detect_tampering(self) -> None:
-        for payload, field in (
-            (minimal_store(), "store_sha256"),
-            (minimal_obsidian_graph(), "bundle_sha256"),
-        ):
-            payload["status" if "status" in payload else "generator"] = "tampered"
-            with (
-                self.subTest(schema=payload["schema"]),
-                self.assertRaises(ContractError),
-            ):
+    def test_wrapper_contracts_reject_unknown_fields(self) -> None:
+        for payload in (minimal_query_status(), minimal_obsidian_graph()):
+            payload["unexpected"] = "value"
+            with self.subTest(schema=payload["schema"]), self.assertRaises(ContractError):
                 validate_contract(payload)
-            self.assertNotEqual(payload[field], self_digest(payload, field))
+        status = minimal_query_status()
+        status["relations"]["unexpected-relation"] = 1
+        with self.assertRaises(ContractError):
+            validate_contract(status)
 
     def test_obsidian_graph_requires_closed_endpoints_and_exact_counts(self) -> None:
         payload = minimal_obsidian_graph()
-        payload["references"][0]["target"] = "unknown"
-        payload = finalize_self_digest(payload, "bundle_sha256")
+        payload["definitions"][0]["target"] = "unknown"
         with self.assertRaisesRegex(ContractError, "unknown endpoint"):
             validate_contract(payload)
 
         payload = minimal_obsidian_graph()
-        payload["counts"]["references"] = 0
-        payload = finalize_self_digest(payload, "bundle_sha256")
+        payload["counts"]["definitions"] = 0
         with self.assertRaisesRegex(ContractError, "counts do not match"):
+            validate_contract(payload)
+
+        payload = minimal_obsidian_graph()
+        payload["definitions"][0]["line_end"] = 0
+        with self.assertRaises(ContractError):
             validate_contract(payload)
 
     def test_search_execution_identity_indices_are_contiguous(self) -> None:
@@ -310,19 +166,13 @@ class ContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "must be <= 128"):
             validate_contract(result)
 
-    def test_document_normalization_is_enforced(self) -> None:
-        document = fixture("kgdistiller-document-record-v2")
-        document["format"] = "typst"
-        with self.assertRaisesRegex(ContractError, "authority extension"):
-            validate_contract(document)
-
     def test_schema_loading_and_json_parsing_fail_closed(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,
             mock.patch("kgdistiller.contracts.resources.files", return_value=Path(temporary)),
             self.assertRaisesRegex(ContractError, "unavailable"),
         ):
-            load_contract_schema("kgdistiller-store-v1")
+            load_contract_schema("kgdistiller-retrieval-plan-v1")
         with self.assertRaisesRegex(ContractError, "malformed contract JSON"):
             parse_contract_json("{")
         for constant in ("NaN", "Infinity", "-Infinity"):
@@ -333,7 +183,7 @@ class ContractTest(unittest.TestCase):
         first = {"b": [2, 1], "a": "é"}
         second = {"a": "é", "b": [2, 1]}
         self.assertEqual('{"a":"é","b":[2,1]}', canonical_json(first))
-        self.assertEqual(sha256_json(first), sha256_json(second))
+        self.assertEqual(canonical_json(first), canonical_json(second))
         for value in (math.nan, math.inf, -math.inf):
             with self.assertRaisesRegex(ContractError, "not finite"):
                 canonical_json({"value": value})

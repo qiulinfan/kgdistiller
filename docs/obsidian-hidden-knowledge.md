@@ -7,7 +7,7 @@ not configurable.
 The option is off by default. It preserves the files' actual paths and lets
 Obsidian handle editing, links, backlinks, search and its native graph for the
 file formats those features support. It does not convert source files or add
-new Markdown behavior to Typst or LaTeX files.
+Markdown behavior to other file formats.
 
 ## Settings and operation
 
@@ -46,15 +46,15 @@ together reload once, and a failing file check is shown in the view. **Reload
 typed graph** (`kgdistiller:reload-typed-graph`) forces a reload.
 
 The view's Open buttons work for a graph under the vault-root `.knowledge/`
-folder, whose entries and source authorities are vault-relative. Concepts open
-their accepted entry (`.knowledge/entries/<node-id>.md`); sources, definitions
-and references open the source authority file, at the cited line for
-Markdown. A graph path anywhere else, including a nested folder's
-`.knowledge/`, has no Open targets.
-A target that is not in the vault index produces a notice that names the path;
-enable hidden-folder indexing to open entries. Entries whose node ID needs the
-core's fallback filename (IDs over 255 bytes or Windows-reserved names) do not
-resolve and produce the same notice.
+folder, whose entry and source paths are vault-relative. A concept opens its
+own entry file (`.knowledge/entries/<id>.md`, the feed's `authority`). A source
+opens its document; a definition opens it with the cursor at the first cited
+line whenever the document opens in a Markdown editor. A graph path anywhere
+else, including a nested folder's `.knowledge/`, has no Open targets. A target
+that is not in the vault index produces a notice that names the path; enable
+hidden-folder indexing to open entries. Entry ids are short readable slugs
+(at most 200 characters, never Windows-reserved names), so every entry has the
+file name `<id>.md`.
 
 Stored plugin settings are type-checked at load. A value whose type differs
 from the default, such as a string instead of an exclusion list, is replaced by

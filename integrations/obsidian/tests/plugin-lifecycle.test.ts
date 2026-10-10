@@ -109,11 +109,12 @@ describe("community lifecycle conventions", () => {
 
 describe("hidden knowledge lifecycle", () => {
   it("keeps existing installs disabled and preserves the graph path", async () => {
-    controls.stored = { showReferences: false };
+    controls.stored = { showDefinitions: false, unexpected: false };
     const plugin = pluginFixture(); await plugin.onload();
     expect(controls.configure).toHaveBeenCalledWith(false, ["build"]);
     expect(plugin.settings.graphPath).toBe(DEFAULT_SETTINGS.graphPath);
-    expect(plugin.settings.showReferences).toBe(false);
+    expect(plugin.settings.showDefinitions).toBe(false);
+    expect(plugin.settings).not.toHaveProperty("unexpected");
   });
   it("awaits initial indexing before completing plugin load for workspace restoration", async () => {
     controls.stored = { hiddenKnowledgeEnabled: true };
@@ -138,7 +139,7 @@ describe("hidden knowledge lifecycle", () => {
   it("does not rescan when graph settings change", async () => {
     controls.stored = { hiddenKnowledgeEnabled: true };
     const plugin = pluginFixture(); await plugin.onload(); controls.configure.mockClear();
-    plugin.settings.showReferences = false; await plugin.savePluginSettings();
+    plugin.settings.showDefinitions = false; await plugin.savePluginSettings();
     plugin.settings.graphPath = "custom/graph.json"; await plugin.savePluginSettings();
     expect(controls.configure).not.toHaveBeenCalled(); expect(controls.rescan).not.toHaveBeenCalled();
     plugin.settings.hiddenKnowledgeExclusions = ["drafts"]; await plugin.savePluginSettings();
@@ -282,7 +283,7 @@ describe("graph view loading", () => {
     Object.assign(view, {
       app: { vault: { adapter, getAbstractFileByPath: vi.fn(() => null), read: vi.fn() } },
       host: { settings: { ...DEFAULT_SETTINGS, graphPath } },
-      filters: { relation: "", showSources: true, showDefinitions: true, showReferences: true },
+      filters: { relation: "", showSources: true, showDefinitions: true },
       graph: null, toolbarEl: {}, graphEl: { empty: vi.fn(), createDiv: vi.fn() }, statusEl: {}, refreshQueue: Promise.resolve(),
       renderToolbar: vi.fn(), renderGraph: vi.fn(), setStatus: vi.fn(),
     });
@@ -293,7 +294,7 @@ describe("graph view loading", () => {
   it("reads a graph below the excluded .knowledge/build/ folder through the adapter", async () => {
     const graphPath = DEFAULT_SETTINGS.graphPath;
     expect(graphPath.startsWith(".knowledge/build/")).toBe(true);
-    const { view, adapter } = await loadView(graphPath, { [graphPath]: JSON.stringify(await graphFixture()) });
+    const { view, adapter } = await loadView(graphPath, { [graphPath]: JSON.stringify(graphFixture()) });
     expect(adapter.read).toHaveBeenCalledWith(graphPath);
     expect((view.graph as { counts: { concepts: number } } | null)?.counts.concepts).toBe(2);
     expect(view.setStatus).toHaveBeenCalledWith(expect.stringContaining("2 concepts"), false);
@@ -301,7 +302,7 @@ describe("graph view loading", () => {
 
   it("reloads an excluded graph only after the file changes", async () => {
     const graphPath = DEFAULT_SETTINGS.graphPath;
-    const { view, adapter, mtimes } = await loadView(graphPath, { [graphPath]: JSON.stringify(await graphFixture()) });
+    const { view, adapter, mtimes } = await loadView(graphPath, { [graphPath]: JSON.stringify(graphFixture()) });
     expect(adapter.read).toHaveBeenCalledOnce();
     await view.refreshIfChanged();
     expect(adapter.read).toHaveBeenCalledOnce();
@@ -312,14 +313,14 @@ describe("graph view loading", () => {
 
   it("coalesces focus and leaf-change re-checks into one reload", async () => {
     const graphPath = DEFAULT_SETTINGS.graphPath;
-    const { view, adapter, mtimes } = await loadView(graphPath, { [graphPath]: JSON.stringify(await graphFixture()) });
+    const { view, adapter, mtimes } = await loadView(graphPath, { [graphPath]: JSON.stringify(graphFixture()) });
     mtimes[graphPath] = 2;
     await Promise.all([view.refreshIfChanged(), view.refreshIfChanged(), view.refresh()]);
     // The first re-check reloads; the second sees the new stamp; the explicit refresh always reloads.
     expect(adapter.read).toHaveBeenCalledTimes(3);
     expect(view.renderGraph).toHaveBeenCalledTimes(3);
     let active = 0; let overlapped = false;
-    const text = JSON.stringify(await graphFixture());
+    const text = JSON.stringify(graphFixture());
     adapter.read.mockImplementation(async () => {
       active++; overlapped ||= active > 1;
       await new Promise((resolve) => setTimeout(resolve, 1));
@@ -332,7 +333,7 @@ describe("graph view loading", () => {
 
   it("contains a failing stat during a re-check and reports it in the view", async () => {
     const graphPath = DEFAULT_SETTINGS.graphPath;
-    const { view, adapter } = await loadView(graphPath, { [graphPath]: JSON.stringify(await graphFixture()) });
+    const { view, adapter } = await loadView(graphPath, { [graphPath]: JSON.stringify(graphFixture()) });
     adapter.stat.mockRejectedValue(new Error("stat failed"));
     await expect(view.refreshIfChanged()).resolves.toBeUndefined();
     expect(view.setStatus).toHaveBeenLastCalledWith("Graph unavailable", true);
@@ -346,7 +347,7 @@ describe("graph view loading", () => {
     const { view, adapter, files, mtimes } = await loadView(graphPath, {});
     await view.refreshIfChanged();
     expect(adapter.read).not.toHaveBeenCalled();
-    files[graphPath] = JSON.stringify(await graphFixture()); mtimes[graphPath] = 1;
+    files[graphPath] = JSON.stringify(graphFixture()); mtimes[graphPath] = 1;
     await view.refreshIfChanged();
     expect(adapter.read).toHaveBeenCalledWith(graphPath);
   });

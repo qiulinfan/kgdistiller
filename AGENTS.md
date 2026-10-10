@@ -15,8 +15,8 @@
   nodes and typed relations, including applications, live in the hidden
   `.knowledge/` tree.
   Source-scoped def/pending sheets are lightweight metadata link projections for
-  papers, notes, blogs and other knowledge files. Preserve native authority,
-  complete scientific content and existing identities; report unsupported
+  papers, notes, blogs and other knowledge files. Preserve complete scientific
+  content and existing identities; report unsupported
   adapters instead of claiming partial synchronization is complete. Source sheets
   may be partial; source coverage, definition availability and user understanding
   are independent. Capture only direct dependency gaps and expand another level
@@ -27,25 +27,34 @@
 - `.knowledge/` is the project's only metadata root. Resolve it through
   `knowledge_paths`; never create a second tree during reads or writes. Hidden
   Obsidian indexing still requires its explicit plugin setting.
-- Keep metadata minimal: `.knowledge/entries/` is the single persisted entry
-  body store. Only `kgdistiller-graph-v2` is read and written; every other graph
-  discriminator fails closed. The graph retains stable identities, aliases,
-  orphan state, accepted edges and reference occurrences; it is not a
-  disposable cache.
-  Identity/alignment registries and portable snapshots are optional and must
-  not be created merely to fill a default directory layout.
+- Storage: a project's knowledge is exactly `.knowledge/entries/<id>.md` (one
+  reviewed entry per node, carrying id, label, kind, aliases, source path, line
+  range and understanding in frontmatter, the human sections and a verbatim
+  Evidence quote) plus `.knowledge/edges.jsonl` (accepted semantic edges with
+  exactly `source`, `relation`, `target`, `origin`, `confidence`, `evidence`).
+  The rules live in [docs/graph-contract.md](docs/graph-contract.md). Persist
+  nothing else as knowledge; `.knowledge/build/` is rebuildable local work.
+  Do not reintroduce graph manifests, node or reference files, identity or
+  alignment registries, snapshots or stores.
+- Format agnosticism: a knowledge source is any registered UTF-8 text document.
+  Read it as numbered lines; never parse its syntax, scan for markers, pair
+  sibling formats, or convert it. `.md`, `.typ`, `.tex`, `.txt` and every other
+  extension are treated identically.
+- Nodes come only from reviewed capture or curation through transactional
+  ingest, guided by the source's user-registered document type. Never infer
+  identity from document order, headings, syntax or keyword co-occurrence, and
+  require evidence for semantic relations.
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain. Follow the registration contract in
-  `docs/concepts-and-relations.md`; do not hardcode the owner's example types
-  or require source-to-source Markdown/Typst/LaTeX conversion. Read selected
-  profiles through `scan --file`; preserve reviewed node kinds independently
-  of scanner syntax and link entries to native evidence. RAG remains open.
-- Never infer graph identity from document order, headings, or keyword
-  co-occurrence. Only explicit source markers define knowledge nodes.
-- Preserve user-authored markers and require evidence for semantic relations.
-- Maintain compatibility with all three authority formats: Markdown, Typst, and
-  LaTeX.
-- Native LaTeX scanning follows [docs/latex-sources.md](docs/latex-sources.md).
+  `docs/concepts-and-relations.md`; do not hardcode the owner's example types.
+  Agents read the selected profile and numbered lines through `scan --file`.
+- Hash-free consistency: no content-hash mechanism anywhere in the product
+  (no hashing module, no stored or compared checksums), and ids are readable
+  slugs, never hash-derived. `check` compares each entry's Evidence with its cited lines by
+  text and reports moved, stale or ambiguous entries; `check --fix-lines`
+  rewrites only moved line ranges. Ingest uses the writer lock plus semantic
+  re-validation at apply time. Staleness is reported, never used to hide
+  knowledge from retrieval, graph traversal, MCP or the Obsidian feed.
 - Publishing (websites, course registries, marker registries, HTML conversion)
   belongs to consuming repositories; kgdistiller has no publishing surface.
 - Implementation changes pass these gates: the complete unit test suite

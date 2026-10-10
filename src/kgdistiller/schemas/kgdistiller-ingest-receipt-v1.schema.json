@@ -1,68 +1,50 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kgdistiller.dev/schemas/kgdistiller-ingest-receipt-v1.schema.json",
-  "title": "kgdistiller transactional ingest receipt v2",
+  "title": "kgdistiller transactional ingest receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema", "request_id", "request_sha256", "receipt_sha256", "engine",
-    "before", "after", "changes", "validations", "durations_ms", "warnings",
-    "status"
-  ],
+  "required": ["schema", "request_id", "status", "request", "changes", "counts"],
   "properties": {
     "schema": {"const": "kgdistiller-ingest-receipt-v1"},
-    "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
-    "request_sha256": {"$ref": "#/$defs/sha256"},
-    "receipt_sha256": {"$ref": "#/$defs/sha256"},
-    "engine": {
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$"},
+    "status": {"const": "committed"},
+    "request": {"type": "object", "required": ["schema", "request_id", "mode", "capabilities", "delta", "review"], "properties": {"schema": {"const": "kgdistiller-ingest-request-v1"}, "mode": {"const": "apply"}}},
+    "changes": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "capabilities", "graph_schema", "query_backend"],
+      "required": ["entries_created", "entries_updated", "entries_removed", "aliases_changed", "edges_added", "edges_removed"],
       "properties": {
-        "version": {"type": "string", "minLength": 1, "maxLength": 64},
-        "capabilities": {
-          "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1, "maxLength": 128}
-        },
-        "graph_schema": {"const": "kgdistiller-graph-v2"},
-        "query_backend": {"const": "json-memory"}
+        "entries_created": {"$ref": "#/$defs/ids"},
+        "entries_updated": {"$ref": "#/$defs/ids"},
+        "entries_removed": {"$ref": "#/$defs/ids"},
+        "aliases_changed": {"$ref": "#/$defs/ids"},
+        "edges_added": {"$ref": "#/$defs/edgeKeys"},
+        "edges_removed": {"$ref": "#/$defs/edgeKeys"}
       }
     },
-    "before": {"$ref": "#/$defs/state"},
-    "after": {"$ref": "#/$defs/state"},
-    "changes": {"type": "object"},
-    "validations": {
-      "type": "array", "maxItems": 64,
-      "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["stage", "status"],
-        "properties": {
-          "stage": {"type": "string", "minLength": 1, "maxLength": 128},
-          "status": {"const": "passed"}
-        }
-      }
-    },
-    "durations_ms": {
+    "counts": {
       "type": "object",
-      "propertyNames": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 128},
-      "additionalProperties": {"type": "integer", "minimum": 0}
-    },
-    "warnings": {"type": "array", "maxItems": 10000},
-    "status": {"const": "committed"}
+      "additionalProperties": false,
+      "required": ["entries", "edges"],
+      "properties": {
+        "entries": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0}
+      }
+    }
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "state": {
-      "type": "object", "additionalProperties": false,
-      "required": ["graph_sha256", "alignment_sha256", "source_hashes"],
-      "properties": {
-        "graph_sha256": {"$ref": "#/$defs/sha256"},
-        "alignment_sha256": {"$ref": "#/$defs/sha256"},
-        "source_hashes": {
-          "type": "object", "maxProperties": 100000,
-          "additionalProperties": {
-            "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
-          }
+    "ids": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"}},
+    "edgeKeys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "relation", "target"],
+        "properties": {
+          "source": {"type": "string", "minLength": 1},
+          "relation": {"type": "string", "minLength": 1},
+          "target": {"type": "string", "minLength": 1}
         }
       }
     }

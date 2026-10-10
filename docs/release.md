@@ -9,65 +9,54 @@ publication, tag, GitHub release, or disclosure of personal knowledge.
 | --- | --- | --- | --- |
 | `kgdistiller-vault-v1` | yes | yes | Portable stable vault identity. |
 | `kgdistiller-vault-registry-v1` | yes | yes | Machine-local name/UUID/path locator. |
-| `kgdistiller-derived-markdown-v1` | yes | yes | In-vault conversion provenance frontmatter. |
-| `kgdistiller-entry-v1` | yes | yes | Obsidian-compatible atomic-entry authority. |
-| `kgdistiller-entry-index-v1` | yes | nested | Manifest inventory of atomic-entry authorities. |
-| `kgdistiller-entry-source-index-v1` | yes | nested | Manifest inventory of original or explicitly selected evidence bytes. |
-| `kgdistiller-graph-v2` | yes | yes | Compact graph; entry bodies are hydrated from bound Markdown authorities. |
-| `kgdistiller-sources-v1` | yes | yes | Bounded native sources and optional user-owned document type profiles. |
-| `kgdistiller-identities-v1` | yes | yes | Reviewed authored-name changes and aliases. |
-| `kgdistiller-scoped-aliases-v1` | yes | nested | Collision-aware aliases within one authority scope. |
-| `kgdistiller-alignments-v1` | yes | yes | Bounded fingerprint-bound reviewed mappings. |
-| `kgdistiller-agent-delta-v1` | yes | yes | Reviewed semantic graph delta. |
-| `kgdistiller-agent-snapshot-v1` | yes | yes | Bounded self-contained hydrated graph generation. |
-| `kgdistiller-query-status-v1` | yes | yes | GraphView status and generation binding. |
-| `kgdistiller-retrieval-plan-v1` | yes | yes | Identity, lexical, and bounded graph plan. |
-| `kgdistiller-search-result-v1` | yes | yes | Deterministic lane results. |
-| `kgdistiller-search-execution-v1` | yes | yes | Query execution/generation envelope. |
-| `kgdistiller-context-bundle-v1` | yes | yes | Budgeted source-backed query context. |
-| `kgdistiller-alignment-report-v1` | yes | output | Conservative cross-namespace alignment report. |
-| `kgdistiller-graph-comparison-v1` | yes | output | Matched-node and edge-presence comparison. |
-| `kgdistiller-agent-proposal-v1` | yes | output | Non-mutating review proposal package. |
-| `kgdistiller-candidate-graph-v1` | yes | yes | Bounded isolated source-grounded candidates. |
+| `kgdistiller-sources-v1` | yes | yes | Registered source documents of any text format and optional user-owned document type profiles. |
+| `kgdistiller-entry-v1` | yes | yes | One reviewed entry per node: Obsidian properties (id, label, kind, aliases, source, line range, understanding), human sections and a verbatim Evidence quote. |
+| `kgdistiller-agent-delta-v1` | yes | yes | Reviewed delta of entries (create, update, remove) and edges (add, remove). |
 | `kgdistiller-ingest-request-v1` | yes | yes | Transactional reviewed write request. |
-| `kgdistiller-ingest-plan-v1` | yes | output | Staged review result, not a receipt. |
-| `kgdistiller-ingest-receipt-v1` | yes | yes | JSON-memory committed-write receipt. |
+| `kgdistiller-ingest-plan-v1` | yes | output | Readable planned changes and counts, not a receipt. |
+| `kgdistiller-ingest-receipt-v1` | yes | yes | Readable committed-write receipt keyed by request id. |
 | `kgdistiller-ingest-error-v1` | yes | output | Stable transactional failure envelope. |
-| `kgdistiller-document-record-v2` | yes | output | Optional snapshot inventory row. |
-| `kgdistiller-store-v1` | yes | yes | File-based portable authority and graph generation. |
-| `kgdistiller-store-report-v1` | yes | output | Verified store operation result. |
-| `kgdistiller-obsidian-graph-v1` | yes | yes | Typed, source-backed Obsidian plugin graph feed. |
-| `kgdistiller-curation-check-v1` | yes | output | Scoped curation readiness report. |
-| `kgdistiller-audit-v1` | yes | output | Whole-graph deterministic audit report. |
+| `kgdistiller-ingest-journal-v1` | yes | yes | Local crash-recovery journal for an install in progress. |
+| `kgdistiller-checkbox-review-v1` | yes | yes | Harvest review manifest binding sheet tasks to frozen captures. |
+| `kgdistiller-query-status-v1` | yes | output | Entry and edge counts and relation counts. |
+| `kgdistiller-retrieval-plan-v1` | yes | yes | Identity, lexical, and bounded graph plan. |
+| `kgdistiller-search-result-v1` | yes | output | Deterministic lane results. |
+| `kgdistiller-search-execution-v1` | yes | output | Query execution envelope. |
+| `kgdistiller-search-result-v2` | yes | output | Results with embedding and reranker lanes. |
+| `kgdistiller-search-execution-v2` | yes | output | Model-assisted execution envelope. |
+| `kgdistiller-search-result-v3` | yes | output | Results with graph navigation evidence. |
+| `kgdistiller-search-execution-v3` | yes | output | Graph-retrieval execution envelope. |
+| `kgdistiller-context-bundle-v1` | yes | output | Budgeted source-backed query context. |
+| `kgdistiller-context-bundle-v2` | yes | output | Budgeted context with graph support packets. |
+| `kgdistiller-search-document-v1` | yes | output | Entry projection embedded by the model lane. |
+| `kgdistiller-vector-cache-v1` | yes | yes | Rebuildable per-model vector cache keyed by entry id. |
+| `kgdistiller-obsidian-graph-v1` | yes | yes | Obsidian plugin feed of every entry and accepted edge. |
+| `kgdistiller-obsidian-plugin-install-v1` | yes | output | Plugin installation result. |
 
-The `kgdistiller-*` v1 names are the first public contract generation in this
-namespace. Graph v2 and document-record v2 are the only graph and
-document-record contracts; query, delta, snapshot-manifest and consumer API
-versions remain independent. A read operation never rewrites a generation.
-The normal project has no mandatory portable snapshot or duplicated entry body. Once 0.4 is published, a changed invariant, required field, identity
-meaning, or digest algorithm requires incrementing that contract's own version.
-Readers fail closed on unknown incompatible schemas.
+Accepted edges live in `.knowledge/edges.jsonl` with exactly six fields; that
+line format is part of the knowledge contract rather than a named schema. The
+`kgdistiller-*` v1 names are the first public contract generation in this
+namespace; query, delta and consumer API versions are independent. A read
+operation never rewrites knowledge. Once 0.4 is published, a changed invariant,
+required field or identity meaning requires incrementing that contract's own
+version. Readers fail closed on unknown incompatible schemas.
 
 ## Clean boundary from pre-0.4 artifacts
 
-Version 0.4 removes the SQLite Agent index and every embedding, provider,
-machine-profile, database override, and store-materialization path. It also
-removes v1 retrieval/execution/result and portable-store compatibility from the
-active product boundary.
+Version 0.4 stores knowledge only as reviewed entries and one edge file. It
+removes the SQLite Agent index, the marker-scanned graph and its manifest,
+identity and alignment registries, the portable store, source conversion, and
+every content-hash mechanism from contracts and storage.
+Consistency with sources is checked by comparing text.
 
-There is no older schema reader and no automatic core or database migration.
-Graphs, stores and records with any other schema, including pre-0.4 artifacts,
-fail closed. Databases and vectors were derived data and are not migrated.
+There is no older schema reader and no automatic core migration. Graphs,
+stores and records of other schemas, including pre-0.4 artifacts, fail closed.
+A personal knowledge base is migrated once by its owner, outside the product.
 
-Retrieval clients must emit `kgdistiller-retrieval-plan-v1`, omit
-`semantic_queries`, and consume `kgdistiller-search-execution-v1` with nested
-`kgdistiller-search-result-v1` plus `kgdistiller-context-bundle-v1`. Alignment,
-comparison, and proposal review artifacts bind to `alignment_sha256`. A
-verified `kgdistiller-store-v1` clone is immediately queryable; do not call or
-emulate a materialization command.
-
-The Obsidian graph feed is regenerated from the current graph, not migrated,
-and must never be registered or scanned back into the authority graph.
+Retrieval clients emit `kgdistiller-retrieval-plan-v1` and consume the search
+execution and context bundle versions named above. The Obsidian graph feed is
+regenerated from the current entries and edges, not migrated, and must never be
+registered or scanned as a source.
 
 ## Release gates
 
@@ -83,40 +72,42 @@ cd integrations/obsidian && npm ci && npm run check
 
 Then verify that:
 
-- wheel and sdist contain Python modules, every current JSON Schema, product Skill, workflow manifest, workflow guide,
-  `.codex/agents` preset, and the three-file Obsidian plugin bundle;
-- an isolated environment installs the wheel and runs `kgdistiller --help`;
+- wheel and sdist contain Python modules, every current JSON Schema, product
+  Skill, workflow manifest, workflow guide and its linked resources,
+  `.codex/agents` and `.claude/agents` presets, and the three-file Obsidian
+  plugin bundle;
+- an isolated environment installs the wheel and runs
+  `scripts/smoke_installed_runtime.py`: `init` with a plain-text source,
+  `scan --file` with numbered lines, capture plus ingest plan/apply (including a
+  CJK label with an explicit id), `check` printing `OK`, a source edit that
+  shifts lines reported as moved, `check --fix-lines` restoring `OK`,
+  `agent status`/`resolve`/`search` (including a CJK query), vault registration,
+  plugin installation and `export obsidian` validated against
+  `kgdistiller-obsidian-graph-v1`;
 - installed `kgdistiller`/`kgdistiller.exe` registers and queries a vault from
   an unrelated working directory on Linux, Windows, and macOS;
 - the installed wheel atomically installs the Obsidian plugin into a vault,
   configures it as enabled, and preserves existing plugin settings on update;
-- help exposes no profile, embedding, database, provider, or materialization
-  command/flag;
-- a Markdown/Typst/LaTeX fixture passes sync, check, `agent status`, exact and
-  lexical/graph query, and MCP smoke tests;
-- GraphView accepts only graph-v2, loads without writing, detects a
-  generation change and never returns mixed records; it reads the bound entry
-  Markdown and rejects missing or modified entry authorities;
-- explicit graph writes preserve accepted identities/aliases/semantic edges;
-- new projects omit empty registries and do not create portable snapshots or
-  the Obsidian graph feed by default;
-- `kgdistiller-retrieval-plan-v1` rejects `semantic_queries` and all results bind to one
-  snapshot and graph digest;
-- transactional plan/apply, idempotency, stale preconditions, lock conflict,
-  fault injection, crash recovery, and old/new reader isolation pass;
-- `store snapshot` and `store verify` cover in-place and separate snapshots,
-  safe paths, digest failures, and a cold clone immediately queried without
-  materialization;
-- `export obsidian` rejects out-of-sync graphs and unsafe outputs, writes one
-  closed typed plugin graph atomically, and can be regenerated solely from the
-  native graph;
+- sources of any extension are read as text, and no command parses source
+  syntax or converts a source;
+- `check` reports every store error and every moved, stale or ambiguous entry,
+  exits 1 for any of them, and `--fix-lines` rewrites only moved line ranges
+  under the writer lock;
+- transactional plan/apply, replay versus `request-conflict`, every semantic
+  re-validation error, lock conflict, fault injection and crash recovery pass,
+  with no content hash anywhere in requests, receipts or stored knowledge;
+- retrieval, graph traversal, MCP and the feed include every entry and edge
+  regardless of staleness;
+- `export obsidian` rejects unsafe outputs and writes one closed feed of every
+  entry and accepted edge atomically;
 - the Obsidian plugin passes contract/parser tests, type checking, and a
   production bundle build;
 - every materially updated Skill passes the active `skill-creator` validator,
   product doctor, and an isolated Agent evaluation;
-- POSIX and Windows copy/link doctor tests preserve unrelated Codex files;
-- no credential, personal graph, authority note, generated store, build
-  artifact, or private fixture is tracked in the product repository.
+- POSIX and Windows copy/link doctor tests preserve unrelated Codex and Claude
+  Code files;
+- no credential, personal knowledge, source note, build artifact, or private
+  fixture is tracked in the product repository.
 
 ## Supply-chain checklist
 
@@ -148,7 +139,7 @@ checks the embedded Cytoscape notice, and copies ignored root `main.js` and
 `styles.css` for directory tooling. Python wheels/sdists and the explicit CLI
 installer continue consuming `integrations/obsidian/{main.js,manifest.json,styles.css}`.
 The version-checked release workflow builds from the tagged checkout, tests
-metadata and contracts, attests the three assets and publishes a GitHub release.
+metadata and contracts, and publishes the three assets as a GitHub release.
 Do not replace a published version's tag or assets; increment the plugin version
 in both manifests/packages and compatibility maps before a new release.
 

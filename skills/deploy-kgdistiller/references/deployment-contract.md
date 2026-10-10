@@ -1,30 +1,32 @@
 # Deployment contract
 
-## Knowledge and optional snapshot boundary
+## Knowledge layout
 
-The knowledge project owns native Markdown, Typst and LaTeX sources,
-`.knowledge/entries/` Markdown atomic entries linked to evidence, source
-registration and durable graph records. Reviewed identities and alignments are
-optional; preserve nonempty registries and create them only when used.
-`kgdistiller-graph-v2` retains identity/alias/orphan state, accepted edges and
-reference occurrences. Entry content is read from the bound Markdown, not a
-second persisted body store. `.knowledge/` is the project's only knowledge
-root, and graph v2 is the only accepted graph schema.
+```text
+PROJECT/
+├── notes/                    # registered source documents, any text format
+└── .knowledge/
+    ├── vault.json            # stable vault identity
+    ├── sources.json          # source registration; optional document types
+    ├── entries/<id>.md       # one reviewed entry per knowledge node
+    ├── edges.jsonl           # accepted semantic edges
+    ├── .gitignore            # ignores build/
+    └── build/                # rebuildable local work (ignored)
+```
 
-`documents.jsonl` and `store.json` package an explicitly requested portable
-snapshot. They are not live canonical knowledge or prerequisites for capture,
-query, the Obsidian graph feed or ordinary Git cloning. Never generate a snapshot merely because
-a checker expects one. Existing derived evidence is retained only where used.
+The knowledge project owns its source documents and the `.knowledge/` tree.
+Each entry is Obsidian-compatible Markdown: frontmatter properties (`schema`,
+`id`, `label`, `kind`, `aliases`, `source`, `line_start`, `line_end`,
+`understanding`), the human sections, and an Evidence section quoting the cited
+source lines verbatim. `edges.jsonl` holds one accepted edge per line with
+exactly `source`, `relation`, `target`, `origin`, `confidence` and `evidence`.
+Nothing else is knowledge: `.knowledge/build/` (ingest journals, plans,
+receipts, review drafts, retrieval caches, the Obsidian graph feed) is local and
+rebuildable. `.knowledge/` is the project's only knowledge root.
+
 Opening the knowledge project as an Obsidian vault changes none of these roles.
-The product checkout and the Obsidian graph feed are not authority or backup
+The product checkout and the Obsidian graph feed are not knowledge or backup
 roots.
-
-Keep `.knowledge/build/`, journals, plans, receipts, credentials and query logs
-local and ignored. The Obsidian graph feed under `.knowledge/build/obsidian/` is
-rebuilt on demand. No database materialization is required.
-
-Any other graph schema, including pre-0.4 graphs and SQLite artifacts, fails
-closed. Stop and report it to the user; do not relabel or migrate it.
 
 ## Source extraction profiles
 
@@ -34,6 +36,7 @@ or computing classes. For example, using placeholder values:
 
 ```json
 {
+  "schema": "kgdistiller-sources-v1",
   "document_types": {
     "USER_DOCUMENT_TYPE": {
       "node_kinds": ["USER_NODE_KIND"],
@@ -51,50 +54,52 @@ or computing classes. For example, using placeholder values:
 }
 ```
 
-This is a fragment of `.knowledge/sources.json`, whose top level holds only
-`schema`, `sources` and the optional `document_types`. Each source holds only
-`id`, `root`, `files` and an optional `document_type`; any other key is
-rejected. Omit unused document types. `node_kinds` is a nonempty list of unique
-user-defined names, and `extraction_guidance` contains the user's extraction
-rules. A source
-selects a registered profile by exact name; a submitted semantic `kind` must
-belong to that profile. Registration never reclassifies existing identities.
-Its file extension selects the reader. If different files need different profiles, register separate bounded file sets.
-An omitted `document_type` leaves a source unclassified; do not silently assign
-one. Read the original `.md`, `.typ` or `.tex` source instead of converting it.
-Knowledge entries and def/pending link sheets remain Markdown.
+The top level holds only `schema`, `sources` and the optional `document_types`.
+Each source holds only `id`, `root`, `files` and an optional `document_type`;
+any other key is rejected. A source root must be inside the project and outside
+`.knowledge/`. Every file an entry cites must be admitted by exactly one
+registered source. Omit unused document types. `node_kinds` is a nonempty list
+of unique user-defined names, and `extraction_guidance` contains the user's
+extraction rules. A source selects a registered profile by exact name; every
+entry citing it must use one of its kinds. Registration never reclassifies
+existing entries. If different files need different profiles, register
+separate bounded file sets. An omitted `document_type` leaves a source
+unclassified; do not silently assign one.
 
-`kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY` exposes the
-selected source's `document_type` in `sources`, plus the corresponding
-`document_types` profile. It also works before definition markers are added.
-This read-only route lets extraction workflows read the user's policy without
-assuming graph nodes already exist. Registration alone creates no nodes and
-makes no RAG or vector-index choice.
+Sources are format-agnostic: any UTF-8 text document is read as lines, and its
+syntax is never parsed or converted. `kgdistiller --repo-root PROJECT scan --file
+RELATIVE_SOURCE` shows the admitting source, its `document_type` and `profile`,
+and the numbered lines, so extraction workflows can read the user's policy
+before any entry exists. Registration alone creates no entries and makes no
+retrieval-index choice.
 
 ## Required checks
 
-Before a snapshot or a graph feed refresh, run `check` and `agent status`. For a requested
-snapshot, run `store snapshot` then `store verify`; for a separate snapshot,
-verify its output root. Before restoring an actual existing snapshot, verify
-it. An ordinary clone without a snapshot needs source/graph checks, not a newly
-generated store. A valid graph is directly queryable through generation-checked
-`GraphView`. Report an existing unrefreshed snapshot as stale until verified.
+Before a feed refresh, a commit or a restore, run `check` and `agent status`.
+`check` must print `OK`. Entries reported `moved` are fixed with
+`check --fix-lines` after the source edit is confirmed; `stale` and `ambiguous`
+entries need a reviewed re-capture. Staleness never filters retrieval or the
+feed.
 
-Never run `sync` to mask a verification mismatch and never hand-edit manifests,
-invent digests, or delete an interrupted ingest journal. Restore a known-good
-generation or repair the native authority on its owning machine.
+Never hand-edit `edges.jsonl`, invent line ranges, or delete an interrupted
+ingest journal. Restore a known-good revision or repair the source on its owning
+machine.
 
-## Product provenance and authorities
+## Product provenance and boundaries
 
 Record installed kgdistiller version and full product commit when discoverable.
 
-The knowledge-project root may be the Obsidian editor vault; registered
-Markdown files and `.knowledge/entries/*.md` remain authority. The Obsidian
-graph feed `.knowledge/build/obsidian/semantic-graph.json` is derived and never
-a source. Do not add it to the source registry or feed it to scan, sync,
-candidate, or ingest. kgdistiller has no publishing surface; websites, course
-registries and HTML conversion belong to the repositories that own the notes.
+The Obsidian graph feed `.knowledge/build/obsidian/semantic-graph.json` is
+derived and never a source. Do not add it to the source registry or feed it to
+scan, capture or ingest. kgdistiller has no publishing surface; websites,
+course registries and HTML rendering belong to the repositories that own the
+notes.
 
-Installing, linking, snapshotting, committing and pushing are separate
-authorities. Never place private sources or secrets in a product repository,
-receipt, command output or Codex configuration.
+`kgdistiller codex link` and `kgdistiller claude link` treat installed copies
+as product-owned: `doctor` reports a copy that differs from the product source,
+and relinking replaces it or removes a retired one, discarding local edits to
+installed files. Report a differing copy before relinking.
+
+Installing, linking, committing and pushing are separate authorities. Never
+place private sources or secrets in a product repository, receipt, command
+output or agent configuration.

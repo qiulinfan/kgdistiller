@@ -7,7 +7,6 @@ export interface KgdistillerSettings {
   graphPath: string;
   showSources: boolean;
   showDefinitions: boolean;
-  showReferences: boolean;
   hiddenKnowledgeEnabled: boolean;
   hiddenKnowledgeExclusions: string[];
 }
@@ -16,7 +15,6 @@ export const DEFAULT_SETTINGS: KgdistillerSettings = {
   graphPath: ".knowledge/build/obsidian/semantic-graph.json",
   showSources: true,
   showDefinitions: true,
-  showReferences: true,
   hiddenKnowledgeEnabled: false,
   hiddenKnowledgeExclusions: [...DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS],
 };
@@ -90,7 +88,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Show source nodes")
-      .setDesc("Display registered authority files alongside concepts.")
+      .setDesc("Display the registered source documents that entries cite alongside concepts.")
       .addToggle((toggle) =>
         toggle.setValue(this.host.settings.showSources).onChange(async (value) => {
           this.host.settings.showSources = value;
@@ -101,21 +99,10 @@ export class KgdistillerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Show definition edges")
-      .setDesc("Display source → concept edges for authoritative definitions.")
+      .setDesc("Display source → concept edges for the line range each entry cites.")
       .addToggle((toggle) =>
         toggle.setValue(this.host.settings.showDefinitions).onChange(async (value) => {
           this.host.settings.showDefinitions = value;
-          await this.host.savePluginSettings();
-          await this.host.refreshGraphViews();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Show reference edges")
-      .setDesc("Display source → concept edges for ordinary source references.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.host.settings.showReferences).onChange(async (value) => {
-          this.host.settings.showReferences = value;
           await this.host.savePluginSettings();
           await this.host.refreshGraphViews();
         }),

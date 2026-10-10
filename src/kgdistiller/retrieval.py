@@ -3,42 +3,33 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import math
 import os
 import stat
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .alignment import node_fingerprint
-from .contracts import ContractError, canonical_json, sha256_json, validate_contract
+from .contracts import ContractError, canonical_json, validate_contract
 from .graph_retrieval import (
     GRAPH_SEARCH_EXECUTION_SCHEMA,
     GRAPH_SEARCH_RESULT_SCHEMA,
     GraphRetrievalPolicy,
     build_graph_context,
     graph_lanes,
-    view_content_sha256,
 )
+from .knowledge_store import SEMANTIC_RELATIONS
 from .query import (
-    DEFAULT_SEMANTIC_RELATIONS,
     GraphView,
     QueryError,
     context,
     expand,
     finalize_token_estimate,
-    load_graph_view,
     personalized_pagerank,
     resolve_concepts,
     search,
 )
-from .semantic_retrieval import (
-    SemanticRankingService,
-    SemanticRetrievalError,
-    search_document,
-)
+from .semantic_retrieval import SemanticRankingService, SemanticRetrievalError
 
 RETRIEVAL_PLAN_SCHEMA = "kgdistiller-retrieval-plan-v1"
 SEARCH_RESULT_SCHEMA = "kgdistiller-search-result-v1"
@@ -54,11 +45,9 @@ MAX_PLAN_GRAPH_SEEDS = 128
 _PLAN_FIELDS = {
     "schema",
     "question",
-    "namespace",
     "identity_queries",
     "lexical_queries",
     "graph",
-    "filters",
     "limit",
 }
 
@@ -151,11 +140,8 @@ def _validated_plan(payload: Any) -> dict[str, Any]:
     if set(payload) != _PLAN_FIELDS:
         raise RetrievalError("invalid-plan", f"{RETRIEVAL_PLAN_SCHEMA} requires exactly: {', '.join(sorted(_PLAN_FIELDS))}")
     question = payload.get("question")
-    namespace = payload.get("namespace")
     if not isinstance(question, str) or not question.strip() or len(question) > 8192:
         raise RetrievalError("invalid-plan", "plan question is invalid")
-    if not isinstance(namespace, str) or not namespace or len(namespace) > 256:
-        raise RetrievalError("invalid-plan", "plan namespace is invalid")
     _queries(payload.get("identity_queries"), "identity_queries")
     _queries(payload.get("lexical_queries"), "lexical_queries")
     if "semantic_queries" in payload:
@@ -168,19 +154,13 @@ def _validated_plan(payload: Any) -> dict[str, Any]:
     edge_types = graph.get("edge_types")
     if not isinstance(seeds, list) or len(seeds) > MAX_PLAN_GRAPH_SEEDS or len(seeds) != len(set(seeds)) or any(not isinstance(item, str) or not item for item in seeds):
         raise RetrievalError("invalid-plan", "plan graph.seed_ids is invalid")
-    if not isinstance(edge_types, list) or len(edge_types) > 16 or len(edge_types) != len(set(edge_types)) or any(item not in DEFAULT_SEMANTIC_RELATIONS for item in edge_types):
+    if not isinstance(edge_types, list) or len(edge_types) > 16 or len(edge_types) != len(set(edge_types)) or any(item not in SEMANTIC_RELATIONS for item in edge_types):
         raise RetrievalError("invalid-plan", "plan graph.edge_types is invalid")
     if graph.get("direction") not in {"out", "in", "both"} or graph.get("strategy") not in {"bfs", "ppr", "hybrid"}:
         raise RetrievalError("invalid-plan", "plan graph direction or strategy is invalid")
     depth = graph.get("max_depth")
     if isinstance(depth, bool) or not isinstance(depth, int) or not 0 <= depth <= 8:
         raise RetrievalError("invalid-plan", "plan graph.max_depth is invalid")
-    filters = payload.get("filters")
-    expected_filters = {"include_stale", "include_orphaned"}
-    if not isinstance(filters, dict) or set(filters) != expected_filters:
-        raise RetrievalError("invalid-plan", f"{RETRIEVAL_PLAN_SCHEMA} filters requires exactly: {', '.join(sorted(expected_filters))}")
-    if not all(isinstance(filters.get(key), bool) for key in ("include_stale", "include_orphaned")):
-        raise RetrievalError("invalid-plan", "plan filter flags must be booleans")
     limit = payload.get("limit")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
         raise RetrievalError("invalid-plan", "plan limit must be between 1 and 500")
@@ -203,28 +183,23 @@ def load_retrieval_plan(path: Path) -> dict[str, Any]:
     return _validated_plan(payload)
 
 
-def legacy_retrieval_plan(
+def query_retrieval_plan(
     query: str,
     *,
-    namespace: str = "personal",
     limit: int = 20,
     max_depth: int = 1,
-    include_stale: bool = False,
-    include_orphaned: bool = False,
     graph_strategy: str = "hybrid",
 ) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip() or len(query) > 4096:
-        raise RetrievalError("invalid-retrieval-request", "legacy retrieval query is invalid")
-    edge_types = sorted(DEFAULT_SEMANTIC_RELATIONS)
+        raise RetrievalError("invalid-retrieval-request", "retrieval query is invalid")
+    edge_types = sorted(SEMANTIC_RELATIONS)
     return _validated_plan(
         {
             "schema": RETRIEVAL_PLAN_SCHEMA,
             "question": query,
-            "namespace": namespace,
             "identity_queries": [query[:2048]],
             "lexical_queries": [query[:2048]],
             "graph": {"seed_ids": [], "edge_types": edge_types, "direction": "both", "max_depth": max_depth, "strategy": graph_strategy},
-            "filters": {"include_stale": include_stale, "include_orphaned": include_orphaned},
             "limit": limit,
         }
     )
@@ -274,49 +249,20 @@ def _add_lane(
                 record["path_evidence"].append(item)
 
 
-def _passes_filters(node: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
-    properties = node.get("properties")
-    properties = properties if isinstance(properties, Mapping) else {}
-    provenance = node.get("provenance")
-    provenance = provenance if isinstance(provenance, Mapping) else {}
-    source_status = properties.get("source_status")
-    active = provenance.get("active") is not False
-    if not active and not (filters["include_orphaned"] and source_status == "orphaned"):
-        return False
-    if not filters["include_stale"] and properties.get("curation_status") == "needs-review":
-        return False
-    return filters["include_orphaned"] or source_status != "orphaned"
-
-
 def execute_retrieval_plan(
-    graph_dir: GraphView | Path,
+    view: GraphView,
     plan: dict[str, Any],
     *,
     plan_mode: str = "planned",
-    namespace: str | None = None,
-    alignments: Path | None = None,
-    repo_root: Path | None = None,
-    expected_graph_sha256: str | None = None,
     ranking_service: SemanticRankingService | None = None,
     graph_policy: GraphRetrievalPolicy | None = None,
 ) -> dict[str, Any]:
     """Execute deterministic lanes and explicitly opted-in embedding candidates."""
     plan = _validated_plan(plan)
-    if plan_mode not in {"planned", "legacy"}:
-        raise RetrievalError("invalid-retrieval-request", "plan_mode must be planned or legacy")
-    if namespace is not None and namespace != plan["namespace"]:
-        raise RetrievalError("namespace-conflict", "request namespace conflicts with retrieval plan")
-    try:
-        view = graph_dir if isinstance(graph_dir, GraphView) else load_graph_view(graph_dir, alignments, repo_root=repo_root)
-    except QueryError as error:
-        raise RetrievalError("graph-unavailable", str(error)) from error
-    if expected_graph_sha256 is not None and view.snapshot["graph"]["sha256"] != expected_graph_sha256:
-        raise RetrievalError("stale-generation", "authority graph changed before retrieval execution")
+    if plan_mode not in {"planned", "query"}:
+        raise RetrievalError("invalid-retrieval-request", "plan_mode must be planned or query")
     if graph_policy is not None and not isinstance(graph_policy, GraphRetrievalPolicy):
         raise RetrievalError("invalid-graph-policy", "expected GraphRetrievalPolicy")
-    initial_content_sha256 = view_content_sha256(view) if graph_policy is not None else None
-    namespace_value = str(plan["namespace"])
-    filters = plan["filters"]
     limit = int(plan["limit"])
     fused: dict[str, dict[str, Any]] = {}
 
@@ -327,17 +273,13 @@ def execute_retrieval_plan(
     ]
     if unknown_seeds:
         raise RetrievalError(
-            "query-failed", f"unknown graph seed: {namespace_value}:{unknown_seeds[0]}"
+            "query-failed", f"unknown graph seed: {unknown_seeds[0]}"
         )
-    seed_ids = [
-        node_id
-        for node_id in plan["graph"]["seed_ids"]
-        if _passes_filters(view.nodes[node_id], filters)
-    ]
+    seed_ids = list(plan["graph"]["seed_ids"])
     explicit_seed_ids = list(seed_ids)
     identity_priority: dict[str, int] = {}
     try:
-        resolutions = resolve_concepts(view, list(plan["identity_queries"]), namespace=namespace_value, match_limit=MAX_IDENTITY_MATCHES)
+        resolutions = resolve_concepts(view, list(plan["identity_queries"]), match_limit=MAX_IDENTITY_MATCHES)
         for index, resolution in enumerate(resolutions):
             ids = [str(node["id"]) for node in resolution["matches"]]
             identity_resolutions.append(
@@ -351,8 +293,6 @@ def execute_retrieval_plan(
                 }
             )
             for node_id in ids:
-                if not _passes_filters(view.nodes[node_id], filters):
-                    continue
                 if resolution["status"] in {"exact", "alias"}:
                     identity_priority[node_id] = max(
                         identity_priority.get(node_id, 0),
@@ -372,7 +312,7 @@ def execute_retrieval_plan(
 
         lexical_best: dict[str, float] = {}
         for query in plan["lexical_queries"]:
-            for result in search(view, query, namespace=namespace_value, limit=MAX_INTERNAL_LANE_RESULTS, include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"]):
+            for result in search(view, query, limit=MAX_INTERNAL_LANE_RESULTS):
                 node_id = str(result["node"]["id"])
                 score = float(result["reasons"][0]["score"])
                 lexical_best[node_id] = max(lexical_best.get(node_id, 0.0), score)
@@ -385,9 +325,8 @@ def execute_retrieval_plan(
             try:
                 candidates, embedding_provenance = ranking_service.rank(
                     view,
-                    namespace=namespace_value,
                     question=plan["question"],
-                    eligible_ids=[node_id for node_id, node in view.nodes.items() if _passes_filters(node, filters)],
+                    eligible_ids=list(view.nodes),
                     limit=MAX_INTERNAL_LANE_RESULTS,
                 )
             except SemanticRetrievalError as error:
@@ -410,10 +349,8 @@ def execute_retrieval_plan(
             strategy = plan["graph"]["strategy"]
             bfs_seed_ids = seed_ids
             if bfs_seed_ids and strategy in {"bfs", "hybrid"}:
-                expansion = expand(view, bfs_seed_ids, namespace=namespace_value, direction=plan["graph"]["direction"], edge_types=plan["graph"]["edge_types"], max_depth=plan["graph"]["max_depth"], limit=MAX_INTERNAL_LANE_RESULTS, include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"])
+                expansion = expand(view, bfs_seed_ids, direction=plan["graph"]["direction"], edge_types=plan["graph"]["edge_types"], max_depth=plan["graph"]["max_depth"], limit=MAX_INTERNAL_LANE_RESULTS)
                 for row in expansion["nodes"]:
-                    if not _passes_filters(row["node"], filters):
-                        continue
                     path = row["path"]
                     graph_rows.append((str(row["node"]["id"]), 1.0 / (1 + int(row["depth"])), [{"lane": "graph", "seed_id": row["seed_id"]}], [{"lane": "graph", "nodes": [row["seed_id"], *[step["target"] if step["direction"] == "outgoing" else step["source"] for step in path]], "edge_types": [step["relation"] for step in path]}]))
                 _add_lane(fused, "graph", graph_rows)
@@ -421,7 +358,7 @@ def execute_retrieval_plan(
             ppr_rows: list[tuple[str, float, list[dict[str, Any]], list[dict[str, Any]]]] = []
             ppr_degraded_reason: str | None = None
             if seed_ids and strategy in {"ppr", "hybrid"}:
-                ranking = personalized_pagerank(view, {node_id: 1.0 for node_id in seed_ids}, namespace=namespace_value, edge_types=plan["graph"]["edge_types"], direction=plan["graph"]["direction"], max_depth=plan["graph"]["max_depth"], include_stale=filters["include_stale"], include_orphaned=filters["include_orphaned"], max_iterations=256, limit=MAX_INTERNAL_LANE_RESULTS)
+                ranking = personalized_pagerank(view, {node_id: 1.0 for node_id in seed_ids}, edge_types=plan["graph"]["edge_types"], direction=plan["graph"]["direction"], max_depth=plan["graph"]["max_depth"], max_iterations=256, limit=MAX_INTERNAL_LANE_RESULTS)
                 if ranking.get("converged") is False:
                     ppr_degraded_reason = "not-converged"
                 accepted_ppr_seed_ids = [str(node_id) for node_id in ranking["seeds"]]
@@ -513,11 +450,8 @@ def execute_retrieval_plan(
         try:
             reranked, reranker_provenance = ranking_service.rerank(
                 view,
-                namespace=namespace_value,
                 question=plan["question"],
                 candidate_ids=[item[3] for item in candidates],
-                expected_snapshot_sha256=embedding_provenance["snapshot_sha256"],
-                expected_graph_sha256=embedding_provenance["graph_sha256"],
             )
         except SemanticRetrievalError as error:
             raise RetrievalError(error.code, error.message) from error
@@ -537,7 +471,6 @@ def execute_retrieval_plan(
         ranked_results.sort(key=lambda item: (-item[0], item[1] if item[0] else MAX_INTERNAL_LANE_RESULTS + 1, -item[2], item[3]))
     result = {
         "schema": GRAPH_SEARCH_RESULT_SCHEMA if graph_policy is not None else MODEL_SEARCH_RESULT_SCHEMA if ranking_service is not None else SEARCH_RESULT_SCHEMA,
-        "plan_sha256": sha256_json(plan),
         "lanes": {
             "identity": _query_lane(len(plan["identity_queries"]), len({row[0] for row in identity_rows})),
             "lexical": _query_lane(len(plan["lexical_queries"]), len(lexical_rows)),
@@ -561,8 +494,6 @@ def execute_retrieval_plan(
         if reranker_provenance is not None:
             result["lanes"]["reranker"] = _query_lane(1, len(reranker_provenance["candidates"]))
             result["ranking"]["reranker"] = reranker_provenance
-    if graph_policy is not None and view_content_sha256(view) != initial_content_sha256:
-        raise RetrievalError("stale-generation", "graph source changed during retrieval execution")
     try:
         result = validate_contract(result)
     except ContractError as error:
@@ -573,9 +504,6 @@ def execute_retrieval_plan(
     execution = {
         "schema": GRAPH_SEARCH_EXECUTION_SCHEMA if graph_policy is not None else MODEL_SEARCH_EXECUTION_SCHEMA if ranking_service is not None else SEARCH_EXECUTION_SCHEMA,
         "plan_mode": plan_mode,
-        "namespace": namespace_value,
-        "snapshot_sha256": view.snapshot["snapshot_sha256"],
-        "graph_sha256": view.snapshot["graph"]["sha256"],
         "identity_resolutions": identity_resolutions,
         "result": result,
     }
@@ -592,20 +520,14 @@ def execute_retrieval_plan(
 
 
 def build_context_from_execution(
-    graph_dir: GraphView | Path,
+    view: GraphView,
     execution: dict[str, Any],
     *,
     plan: dict[str, Any],
     token_budget: int = 6000,
-    namespace: str | None = None,
-    alignments: Path | None = None,
-    repo_root: Path | None = None,
-    context_projection: str = "full",
-    support_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Pack context for a stored execution after re-validating it against the current graph."""
     plan = _validated_plan(plan)
-    if context_projection not in {"full", "compact"}:
-        raise RetrievalError("invalid-context-projection", "context projection must be full or compact")
     if not isinstance(token_budget, int) or isinstance(token_budget, bool) or not 1 <= token_budget <= MAX_CONTEXT_BUDGET:
         raise RetrievalError("invalid-context-budget", f"token budget must be between 1 and {MAX_CONTEXT_BUDGET}")
     try:
@@ -617,45 +539,20 @@ def build_context_from_execution(
         ) from error
     if execution["schema"] not in {SEARCH_EXECUTION_SCHEMA, MODEL_SEARCH_EXECUTION_SCHEMA, GRAPH_SEARCH_EXECUTION_SCHEMA}:
         raise RetrievalError("invalid-execution", "expected a supported search execution")
-    expected_plan_sha256 = sha256_json(plan)
-    if execution["result"].get("plan_sha256") != expected_plan_sha256:
-        raise RetrievalError(
-            "invalid-execution", "search result does not belong to the supplied retrieval plan"
-        )
-    if "ranking" in execution["result"] and execution["result"]["ranking"]["embedding"]["query_sha256"] != hashlib.sha256(plan["question"].encode("utf-8")).hexdigest():
-        raise RetrievalError("invalid-execution", "embedding query does not belong to the supplied retrieval plan")
-    if "ranking" in execution["result"] and "reranker" in execution["result"]["ranking"] and execution["result"]["ranking"]["reranker"]["query_sha256"] != hashlib.sha256(plan["question"].encode("utf-8")).hexdigest():
-        raise RetrievalError("invalid-execution", "reranker query does not belong to the supplied retrieval plan")
-    if execution.get("namespace") != plan["namespace"] or (namespace is not None and namespace != plan["namespace"]):
-        raise RetrievalError("namespace-conflict", "context namespace conflicts with execution")
-    try:
-        view = graph_dir if isinstance(graph_dir, GraphView) else load_graph_view(graph_dir, alignments, repo_root=repo_root)
-    except QueryError as error:
-        raise RetrievalError("graph-unavailable", str(error)) from error
-    if execution.get("snapshot_sha256") != view.snapshot["snapshot_sha256"]:
-        raise RetrievalError("stale-generation", "search execution belongs to another graph generation")
-    if execution.get("graph_sha256") != view.snapshot["graph"]["sha256"]:
-        raise RetrievalError("stale-generation", "search execution belongs to another graph generation")
-    if "ranking" in execution["result"]:
-        for candidate in execution["result"]["ranking"].get("reranker", {}).get("candidates", []):
-            node = view.nodes.get(candidate["node_id"])
-            if node is None or candidate["node_sha256"] != node_fingerprint(node) or candidate["document_sha256"] != hashlib.sha256(search_document(node).encode("utf-8")).hexdigest():
-                raise RetrievalError("stale-generation", "reranker candidate source binding does not match graph")
-    if support_selection is not None:
-        from .context_projection import build_compact_context
-        return build_compact_context(view, execution, plan, token_budget, support_selection=support_selection, node_projection=context_projection)
     if execution["schema"] == GRAPH_SEARCH_EXECUTION_SCHEMA:
-        if context_projection == "compact":
-            from .context_projection import build_compact_context
-            return build_compact_context(view, execution, plan, token_budget)
         return build_graph_context(view, execution, plan, token_budget)
-    if context_projection == "compact":
-        from .context_projection import build_compact_context
-        return build_compact_context(view, execution, plan, token_budget)
+    for candidate in execution["result"].get("ranking", {}).get("reranker", {}).get("candidates", []):
+        if candidate["node_id"] not in view.nodes:
+            raise RetrievalError("stale-execution", "reranker candidate is no longer in the graph")
+    for row in execution["result"]["results"]:
+        if row["node_id"] not in view.nodes:
+            raise RetrievalError("stale-execution", "search result is no longer in the graph")
+        for path in row["path_evidence"]:
+            if any(node_id not in view.nodes for node_id in path["nodes"]):
+                raise RetrievalError("stale-execution", "search path node is no longer in the graph")
     ids = [str(row["node_id"]) for row in execution["result"]["results"]]
     metadata = {
         "question": plan["question"],
-        "plan_sha256": expected_plan_sha256,
         "search_execution_schema": execution["schema"],
         "search_result_schema": execution["result"]["schema"],
     }
@@ -676,11 +573,11 @@ def build_context_from_execution(
     try:
         # Select complete nodes before collecting diagnostic omissions. An
         # oversized early result must not consume space needed by a later node.
-        preview = context(view, [], namespace=plan["namespace"], token_budget=content_budget)
+        preview = context(view, [], token_budget=content_budget)
         selected_ids: list[str] = []
         omitted_ids: list[str] = []
         for node_id in dict.fromkeys(ids):
-            if node_id not in view.nodes or not _passes_filters(view.nodes[node_id], plan["filters"]):
+            if node_id not in view.nodes:
                 continue
             candidate = copy.deepcopy(preview)
             candidate["nodes"].append(copy.deepcopy(view.nodes[node_id]))
@@ -692,10 +589,7 @@ def build_context_from_execution(
         bundle = context(
             view,
             selected_ids,
-            namespace=plan["namespace"],
             edge_types=plan["graph"]["edge_types"],
-            include_stale=plan["filters"]["include_stale"],
-            include_orphaned=plan["filters"]["include_orphaned"],
             token_budget=content_budget,
         )
     except QueryError as error:
@@ -715,8 +609,7 @@ def build_context_from_execution(
             "context-failed", "budget-too-small after context metadata packing"
         )
     if not bundle["nodes"] and not bundle["omissions"] and any(
-        node_id in view.nodes and _passes_filters(view.nodes[node_id], plan["filters"])
-        for node_id in ids
+        node_id in view.nodes for node_id in ids
     ):
         raise RetrievalError(
             "context-failed", "budget-too-small to include context or an omission record"

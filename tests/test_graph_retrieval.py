@@ -15,16 +15,14 @@ from kgdistiller.retrieval import (
     execute_retrieval_plan,
 )
 from kgdistiller.semantic_retrieval import SemanticRankingService
-from tests.test_query import fixture_edges, fixture_nodes, snapshot_with
+from tests.knowledge_fixture import edge_record, memory_view
+from tests.test_query import fixture_edges, fixture_nodes
 from tests.test_retrieval import retrieval_plan
 from tests.test_semantic_retrieval import FakeReranker
 
 
 def graph_fixture() -> GraphView:
-    edges = fixture_edges()
-    for edge in edges:
-        edge["confidence"] = "high"
-    return GraphView.from_snapshot(snapshot_with(fixture_nodes(), edges))
+    return memory_view(fixture_nodes(), fixture_edges())
 
 
 def candidate_plan() -> dict:
@@ -44,7 +42,7 @@ class GraphRetrievalTest(unittest.TestCase):
         return execute_retrieval_plan(self.view, plan or candidate_plan(), graph_policy=self.policy, **kwargs)
 
     def test_candidates_find_neighbors_without_promoting_identity(self) -> None:
-        original_plan, original_snapshot = candidate_plan(), copy.deepcopy(self.view.snapshot)
+        original_plan, original_nodes = candidate_plan(), copy.deepcopy(self.view.nodes)
         execution = self.execute(original_plan)
         self.assertEqual("kgdistiller-search-execution-v3", execution["schema"])
         self.assertEqual("missing", execution["identity_resolutions"][0]["status"])
@@ -56,7 +54,7 @@ class GraphRetrievalTest(unittest.TestCase):
         self.assertFalse(candidate["identity_authority"])
         self.assertEqual({"lexical"}, set(candidate["lanes"]))
         self.assertEqual(original_plan, candidate_plan())
-        self.assertEqual(original_snapshot, self.view.snapshot)
+        self.assertEqual(original_nodes, self.view.nodes)
         rows = {row["node_id"]: row for row in execution["result"]["results"]}
         self.assertEqual({"lexical"}, set(rows["measure"]["lanes"]))
         neighbor = execution["result"]["graph_retrieval"]["neighbors"][0]
@@ -82,26 +80,18 @@ class GraphRetrievalTest(unittest.TestCase):
         self.assertEqual("sigma-algebra", execution["result"]["results"][0]["node_id"])
         self.assertTrue(all(not (set(row["lanes"]) & {"graph", "ppr"}) for row in execution["result"]["results"]))
 
-    def test_high_confidence_gate_blocks_unverified_and_stale_edges(self) -> None:
+    def test_high_confidence_gate_blocks_unverified_edges(self) -> None:
         edges = fixture_edges()
         edges[1]["confidence"] = "unverified"
-        self.view = GraphView.from_snapshot(snapshot_with(fixture_nodes(), edges))
+        self.view = memory_view(fixture_nodes(), edges)
         strict = self.execute()
         self.assertEqual(0, strict["result"]["lanes"]["graph"]["results"])
-        exploratory = execute_retrieval_plan(self.view, candidate_plan(), graph_policy=GraphRetrievalPolicy(1, "current"))
+        exploratory = execute_retrieval_plan(self.view, candidate_plan(), graph_policy=GraphRetrievalPolicy(1, "all"))
         neighbor = next(row for row in exploratory["result"]["graph_retrieval"]["neighbors"] if row["node_id"] == "absolute-continuity")
         self.assertEqual("unverified", neighbor["path_evidence"][0]["steps"][0]["confidence"])
-        edges[1].update(confidence="high", curation_status="needs-review")
-        self.view = GraphView.from_snapshot(snapshot_with(fixture_nodes(), edges))
-        plan = candidate_plan(); plan["filters"]["include_stale"] = True
-        self.assertEqual(0, self.execute(plan)["result"]["lanes"]["graph"]["results"])
-
-    def test_candidate_universe_filters_before_seed_selection(self) -> None:
-        nodes = fixture_nodes()
-        nodes[1]["properties"]["curation_status"] = "needs-review"
-        self.view = GraphView.from_snapshot(snapshot_with(nodes, []))
-        execution = self.execute()
-        self.assertEqual([], execution["result"]["graph_retrieval"]["seeds"]["candidate"])
+        edges[1]["confidence"] = "high"
+        self.view = memory_view(fixture_nodes(), edges)
+        self.assertEqual(1, self.execute()["result"]["lanes"]["graph"]["results"])
 
     def test_ppr_diagnostics_and_no_root_self_boost(self) -> None:
         plan = candidate_plan(); plan["graph"]["strategy"] = "hybrid"
@@ -164,10 +154,10 @@ class GraphRetrievalTest(unittest.TestCase):
 
     def test_two_recalled_roots_preserve_comparison_support_without_rank_boost(self) -> None:
         nodes = fixture_nodes()[1:]
-        nodes[0]["properties"]["conditions"] = ["A measure is defined on measurable sets."]
-        nodes[1]["properties"]["conditions"] = ["Absolute continuity is relative to a second measure."]
-        edge = {"source": "measure", "relation": "contrasts-with", "target": "absolute-continuity", "confidence": "high", "curation_status": "current", "evidence": "These are distinct source-defined objects with different conditions."}
-        self.view = GraphView.from_snapshot(snapshot_with(nodes, [edge]))
+        nodes[0]["prerequisites"] = ["A measure is defined on measurable sets."]
+        nodes[1]["prerequisites"] = ["Absolute continuity is relative to a second measure."]
+        edge = edge_record("measure", "contrasts-with", "absolute-continuity", evidence="These are distinct source-defined objects with different conditions.")
+        self.view = memory_view(nodes, [edge])
         plan = candidate_plan()
         plan["identity_queries"] = []
         plan["lexical_queries"] = ["countably additive", "relative to a measure"]
@@ -181,7 +171,7 @@ class GraphRetrievalTest(unittest.TestCase):
         self.assertTrue(all(path["nodes"][0] != row["node_id"] and len(path["steps"]) == 1 for row in neighbors for path in row["path_evidence"]))
         context = build_context_from_execution(self.view, graph, plan=plan, token_budget=10000)
         self.assertEqual([edge], context["edges"])
-        self.assertTrue(all(node["properties"]["conditions"] for node in context["nodes"]))
+        self.assertTrue(all(node["prerequisites"] for node in context["nodes"]))
         self.assertEqual(2, sum(packet["kind"] == "graph-path" for packet in context["support_packets"]))
         with tempfile.TemporaryDirectory() as temp:
             base_adapter, graph_adapter = FakeReranker(), FakeReranker()
@@ -216,7 +206,7 @@ class GraphRetrievalTest(unittest.TestCase):
             self.assertLessEqual(len(canonical_json(context).encode()), budget)
             self.assertEqual(context, validate_contract(context))
 
-    def test_stale_generation_and_tampered_paths_fail_closed(self) -> None:
+    def test_stale_execution_and_tampered_paths_fail_closed(self) -> None:
         execution = self.execute()
         invalid = copy.deepcopy(execution)
         invalid["result"]["graph_retrieval"]["neighbors"][0]["path_evidence"][0]["steps"][0]["direction"] = "incoming"
@@ -226,9 +216,10 @@ class GraphRetrievalTest(unittest.TestCase):
         invalid["result"]["graph_retrieval"]["seeds"]["candidate"][0]["identity_authority"] = True
         with self.assertRaises(ContractError):
             validate_contract(invalid)
-        self.view.nodes["measure"]["text"] += " changed"
-        with self.assertRaisesRegex(RetrievalError, "stale-generation"):
-            build_context_from_execution(self.view, execution, plan=candidate_plan(), token_budget=10000)
+        edges = [edge for edge in self.view.edges if edge["target"] != "absolute-continuity"]
+        smaller = memory_view(fixture_nodes(), edges)
+        with self.assertRaisesRegex(RetrievalError, "stale-execution"):
+            build_context_from_execution(smaller, execution, plan=candidate_plan(), token_budget=10000)
 
     def test_no_policy_preserves_v1_v2_schema_families(self) -> None:
         plain = execute_retrieval_plan(self.view, candidate_plan())
@@ -240,7 +231,7 @@ class GraphRetrievalTest(unittest.TestCase):
         self.assertEqual("kgdistiller-search-execution-v2", model["schema"])
         self.assertNotIn("graph_retrieval", model["result"])
 
-    def test_legacy_ppr_respects_the_supplied_depth_bound(self) -> None:
+    def test_query_ppr_respects_the_supplied_depth_bound(self) -> None:
         plan = candidate_plan()
         plan["identity_queries"] = []; plan["lexical_queries"] = []
         plan["graph"].update(seed_ids=["sigma-algebra"], strategy="ppr", max_depth=1)
@@ -271,10 +262,9 @@ class GraphRetrievalTest(unittest.TestCase):
         forged["result"]["graph_retrieval"]["policy"]["max_depth"] = 8
         with self.assertRaisesRegex(RetrievalError, "depth does not match"):
             build_context_from_execution(self.view, forged, plan=candidate_plan(), token_budget=10000)
-        forged = copy.deepcopy(execution)
-        forged["result"]["graph_retrieval"]["seeds"]["candidate"][0]["document_sha256"] = "0" * 64
+        without_root = memory_view([node for node in fixture_nodes() if node["id"] != "measure"])
         with self.assertRaisesRegex(RetrievalError, "candidate graph root"):
-            build_context_from_execution(self.view, forged, plan=candidate_plan(), token_budget=10000)
+            build_context_from_execution(without_root, execution, plan=candidate_plan(), token_budget=10000)
         full = build_context_from_execution(self.view, execution, plan=candidate_plan(), token_budget=10000)
         full["support_packets"][0]["path"]["steps"][0]["evidence"] = "Forged scientific claim."
         with self.assertRaisesRegex(ContractError, "do not match the source edge"):
@@ -282,8 +272,8 @@ class GraphRetrievalTest(unittest.TestCase):
 
     def test_reverse_contrast_navigation_has_actual_incoming_proof(self) -> None:
         edges = fixture_edges()
-        edges[1].update(relation="contrasts-with", confidence="high")
-        self.view = GraphView.from_snapshot(snapshot_with(fixture_nodes(), edges))
+        edges[1].update(relation="contrasts-with")
+        self.view = memory_view(fixture_nodes(), edges)
         plan = candidate_plan()
         plan["graph"].update(seed_ids=["absolute-continuity"], edge_types=["contrasts-with"], direction="out", strategy="hybrid")
         plan["identity_queries"] = []; plan["lexical_queries"] = []

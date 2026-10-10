@@ -7,7 +7,7 @@ from typing import Any
 
 
 def _name(value: Any, label: str) -> str:
-    from .cli import KnowledgeError
+    from .sources import KnowledgeError
 
     if (not isinstance(value, str) or not value.strip() or value != value.strip()
             or any(ord(character) < 32 for character in value)):
@@ -17,7 +17,7 @@ def _name(value: Any, label: str) -> str:
 
 def parse_document_types(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Validate profiles without supplying classifications or extraction defaults."""
-    from .cli import KnowledgeError
+    from .sources import KnowledgeError
 
     profiles = payload.get("document_types", {})
     if not isinstance(profiles, dict):
@@ -41,7 +41,7 @@ def parse_document_types(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def load_document_types(registry: Path) -> dict[str, dict[str, Any]]:
-    from .cli import SOURCE_SCHEMA, KnowledgeError, read_json
+    from .sources import SOURCE_SCHEMA, KnowledgeError, read_json
 
     payload = read_json(registry, {})
     if not isinstance(payload, dict) or payload.get("schema") != SOURCE_SCHEMA:
@@ -51,7 +51,7 @@ def load_document_types(registry: Path) -> dict[str, dict[str, Any]]:
 
 def validate_document_type(value: Any, profiles: dict[str, dict[str, Any]]) -> str:
     """Validate an explicitly selected profile; callers handle omitted values."""
-    from .cli import KnowledgeError
+    from .sources import KnowledgeError
 
     name = _name(value, "document_type")
     if name not in profiles:
@@ -61,7 +61,7 @@ def validate_document_type(value: Any, profiles: dict[str, dict[str, Any]]) -> s
 
 def validate_node_kind(kind: Any, document_type: str, profiles: dict[str, dict[str, Any]]) -> str:
     """Check a reviewed semantic kind against an explicitly selected profile."""
-    from .cli import KnowledgeError
+    from .sources import KnowledgeError
 
     value = _name(kind, "knowledge node kind")
     if document_type:

@@ -4,40 +4,27 @@
   "title": "kgdistiller Obsidian semantic graph v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema", "source", "counts", "concepts", "sources", "semantic_edges",
-    "definitions", "references", "bundle_sha256"
-  ],
+  "required": ["schema", "counts", "concepts", "sources", "semantic_edges", "definitions"],
   "properties": {
     "schema": {"const": "kgdistiller-obsidian-graph-v1"},
-    "source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["graph_schema", "graph_sha256", "snapshot_sha256", "source_hashes_sha256"],
-      "properties": {
-        "graph_schema": {"const": "kgdistiller-graph-v2"},
-        "graph_sha256": {"$ref": "#/$defs/sha256"},
-        "snapshot_sha256": {"$ref": "#/$defs/sha256"},
-        "source_hashes_sha256": {"$ref": "#/$defs/sha256"}
-      }
-    },
     "counts": {"$ref": "#/$defs/counts"},
     "concepts": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "label", "authority", "curation_status", "aliases"],
+        "required": ["id", "label", "kind", "aliases", "authority", "understanding"],
         "properties": {
           "id": {"$ref": "#/$defs/id"},
           "label": {"type": "string", "minLength": 1},
-          "authority": {"$ref": "#/$defs/authority"},
-          "curation_status": {"enum": ["current", "pending", "needs-review"]},
+          "kind": {"type": "string", "minLength": 1},
           "aliases": {
             "type": "array",
             "uniqueItems": true,
             "items": {"type": "string", "minLength": 1}
-          }
+          },
+          "authority": {"$ref": "#/$defs/authority"},
+          "understanding": {"enum": ["unknown", "not-yet-understood", "understood"]}
         }
       }
     },
@@ -79,43 +66,24 @@
           "line_end": {"type": "integer", "minimum": 1}
         }
       }
-    },
-    "references": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "source_authority", "target", "label", "line"],
-        "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "source_authority": {"$ref": "#/$defs/authority"},
-          "target": {"$ref": "#/$defs/id"},
-          "label": {"type": "string", "minLength": 1},
-          "line": {"type": "integer", "minimum": 1},
-          "context": {"type": "string", "minLength": 1}
-        }
-      }
-    },
-    "bundle_sha256": {"$ref": "#/$defs/sha256"}
+    }
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "id": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
     "authority": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+\\.(?:[mM][dD]|[tT][yY][pP]|[tT][eE][xX])$"
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//).+$"
     },
     "counts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["concepts", "sources", "semantic_edges", "definitions", "references"],
+      "required": ["concepts", "sources", "semantic_edges", "definitions"],
       "properties": {
         "concepts": {"type": "integer", "minimum": 0},
         "sources": {"type": "integer", "minimum": 0},
         "semantic_edges": {"type": "integer", "minimum": 0},
-        "definitions": {"type": "integer", "minimum": 0},
-        "references": {"type": "integer", "minimum": 0}
+        "definitions": {"type": "integer", "minimum": 0}
       }
     }
   }

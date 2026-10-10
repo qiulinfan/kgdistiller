@@ -7,8 +7,11 @@ import os
 import stat
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from .knowledge_paths import knowledge_root
+from .knowledge_store import edges_file, entries_root
+from .sources import SOURCE_SCHEMA
 from .vault_registry import ensure_vault_manifest
 
 _BUILD_IGNORE_RULES = {
@@ -98,38 +101,39 @@ def initialize_project(
     registry: Path,
     *,
     source_root: Path,
-    alignments: Path | None = None,
+    files: list[str] | None = None,
     force: bool = False,
-) -> None:
+) -> dict[str, Any]:
+    """Create the source registry and an empty entry store; nothing is scanned."""
     if registry.exists() and not force:
         raise FileExistsError(f"project registry already exists: {registry}")
+    patterns = list(files) if files else ["**/*"]
+    if any(not isinstance(item, str) or not item for item in patterns):
+        raise ValueError("source file patterns must be nonempty strings")
     resolved_source = source_root if source_root.is_absolute() else project_root / source_root
-    resolved_source.mkdir(parents=True, exist_ok=True)
-    ensure_vault_manifest(project_root)
     try:
         configured_root = resolved_source.resolve().relative_to(project_root.resolve()).as_posix()
     except ValueError as error:
         raise ValueError("source root must be inside the project") from error
-    sources = [
-        {
-            "id": "local:notes",
-            "root": configured_root,
-            "files": ["**/*.md", "**/*.typ", "**/*.tex"],
-        }
-    ]
+    resolved_source.mkdir(parents=True, exist_ok=True)
+    ensure_vault_manifest(project_root)
     payload = {
-        "schema": "kgdistiller-sources-v1",
-        "sources": sources,
+        "schema": SOURCE_SCHEMA,
+        "sources": [{"id": "local:notes", "root": configured_root, "files": patterns}],
     }
+    knowledge = knowledge_root(project_root)
+    entries_root(project_root).mkdir(parents=True, exist_ok=True)
+    edges = edges_file(project_root)
+    if not edges.exists():
+        edges.write_text("", encoding="utf-8")
+    ensure_knowledge_gitignore(knowledge / ".gitignore")
     registry.parent.mkdir(parents=True, exist_ok=True)
-    default_knowledge = knowledge_root(project_root)
-    (default_knowledge / "entries").mkdir(parents=True, exist_ok=True)
-    ensure_knowledge_gitignore(default_knowledge / ".gitignore")
-    if registry.parent.resolve() != default_knowledge.resolve():
+    if registry.parent.resolve() != knowledge.resolve():
         ensure_knowledge_gitignore(registry.parent / ".gitignore")
-    registry.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    # Reviewed mappings are optional user curation. Initialization neither
-    # creates an empty registry nor touches an existing one, even with --force.
+    registry.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "initialized": str(project_root),
+        "registry": str(registry),
+        "source_root": configured_root,
+        "files": patterns,
+    }

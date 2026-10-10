@@ -1,9 +1,0 @@
-{
-  "schema": "kgdistiller-document-record-v2",
-  "source_id": "synthetic-notes",
-  "authority": "notes/synthetic.md",
-  "format": "markdown",
-  "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
-  "definition_ids": ["synthetic-concept"],
-  "reference_count": 0
-}

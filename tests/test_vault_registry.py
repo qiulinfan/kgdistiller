@@ -34,7 +34,7 @@ from kgdistiller.vault_registry import (
     unregister_vault,
     vault_manifest_path,
 )
-from tests.test_query import write_fixture_graph
+from tests.test_retrieval_cli import write_fixture_store
 
 
 class VaultRegistryTest(unittest.TestCase):
@@ -264,7 +264,7 @@ class VaultRegistryCliTest(unittest.TestCase):
             home = base / "state"
             vault = base / "知识库"
             vault.mkdir()
-            write_fixture_graph(vault)
+            write_fixture_store(vault)
 
             status, output, error = self.run_cli(
                 "--kgdistiller-home",
@@ -287,7 +287,7 @@ class VaultRegistryCliTest(unittest.TestCase):
                 "status",
             )
             self.assertEqual(0, status, error)
-            self.assertEqual("json-memory", json.loads(output)["backend"])
+            self.assertEqual({"entries": 3, "edges": 2}, json.loads(output)["counts"])
 
             status, output, error = self.run_cli(
                 "--kgdistiller-home",

@@ -49,7 +49,6 @@ export class KgdistillerGraphView extends ItemView {
       relation: "",
       showSources: host.settings.showSources,
       showDefinitions: host.settings.showDefinitions,
-      showReferences: host.settings.showReferences,
     };
   }
 
@@ -137,17 +136,16 @@ export class KgdistillerGraphView extends ItemView {
           `No semantic graph exists at ${configuredPath}. Run kgdistiller export obsidian.`,
         );
       }
-      this.graph = await parseGraphContract(await adapter.read(configuredPath));
+      this.graph = parseGraphContract(await adapter.read(configuredPath));
       this.filters.showSources = this.host.settings.showSources;
       this.filters.showDefinitions = this.host.settings.showDefinitions;
-      this.filters.showReferences = this.host.settings.showReferences;
       if (this.filters.relation && !relationOptions(this.graph).includes(this.filters.relation)) {
         this.filters.relation = "";
       }
       this.renderToolbar();
       this.renderGraph();
       this.setStatus(
-        `${this.graph.counts.concepts} concepts · ${this.graph.counts.semantic_edges} semantic edges · ${this.graph.counts.references} references`,
+        `${this.graph.counts.concepts} concepts · ${this.graph.counts.semantic_edges} semantic edges · ${this.graph.counts.sources} sources`,
         false,
       );
     } catch (error) {
@@ -182,10 +180,6 @@ export class KgdistillerGraphView extends ItemView {
     });
     this.addToggle("Definitions", this.filters.showDefinitions, (value) => {
       this.filters.showDefinitions = value;
-      this.renderGraph();
-    });
-    this.addToggle("References", this.filters.showReferences, (value) => {
-      this.filters.showReferences = value;
       this.renderGraph();
     });
     const fitButton = this.toolbarEl.createEl("button", {
@@ -286,11 +280,11 @@ export class KgdistillerGraphView extends ItemView {
           },
         },
         {
-          selector: 'node[status = "needs-review"]',
-          style: { "border-color": "#dc2626", "border-width": 4 },
+          selector: "node.understanding-understood",
+          style: { "border-color": "#059669", "border-width": 4 },
         },
         {
-          selector: 'node[status = "pending"]',
+          selector: "node.understanding-not-yet-understood",
           style: { "border-color": "#ca8a04", "border-width": 4 },
         },
         {
@@ -325,14 +319,6 @@ export class KgdistillerGraphView extends ItemView {
           },
         },
         {
-          selector: 'edge[kind = "reference"]',
-          style: {
-            "line-color": "#0284c7",
-            "target-arrow-color": "#0284c7",
-            "line-style": "dashed",
-          },
-        },
-        {
           selector: ":selected",
           style: { "overlay-color": accent, "overlay-opacity": 0.18 },
         },
@@ -353,7 +339,7 @@ export class KgdistillerGraphView extends ItemView {
     const list = this.detailEl.createEl("ul", { cls: "kgd-legend" });
     list.createEl("li", { text: "Solid colored: concept → concept semantic relation" });
     list.createEl("li", { text: "Green dotted: source → concept definition" });
-    list.createEl("li", { text: "Blue dashed: source → concept reference" });
+    list.createEl("li", { text: "Green ring: understood; amber ring: not yet understood" });
   }
 
   private showDetails(data: GraphElementData): void {
@@ -362,9 +348,10 @@ export class KgdistillerGraphView extends ItemView {
     this.detailEl.createEl("div", { cls: `kgd-kind kgd-kind-${data.kind}`, text: data.kind });
     this.detailEl.createEl("h3", { text: data.label });
     if (data.conceptId) this.detailRow("Concept ID", data.conceptId);
+    if (data.conceptKind) this.detailRow("Kind", data.conceptKind);
+    if (data.understanding) this.detailRow("Understanding", data.understanding);
     if (data.relation) this.detailRow("Relation", data.relation);
-    if (data.status) this.detailRow("Curation", data.status);
-    if (data.authority) this.detailRow("Authority", data.authority);
+    if (data.authority) this.detailRow(data.kind === "concept" ? "Entry" : "Source", data.authority);
     if (data.line) {
       this.detailRow("Location", data.lineEnd && data.lineEnd !== data.line ? `lines ${data.line}–${data.lineEnd}` : `line ${data.line}`);
     }

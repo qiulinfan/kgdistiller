@@ -6,8 +6,8 @@ Accepted node content and semantic state belong in the caller's canonical
 `.knowledge/`. Keep complete proposed content in `.knowledge/build/reviews/`
 until a supported, authorized transaction commits it. The review area is
 transient proposal storage, not an alternate accepted knowledge base. Preserve
-registered Markdown, Typst and LaTeX marker authority and the current
-source-grounded atomic-entry contract.
+the accepted entry contract: each entry cites one registered source path and line
+range and quotes those lines verbatim as Evidence.
 
 The repository's [shared model](../../../docs/concepts-and-relations.md)
 generalizes across source types. The essentials below are bundled so installed
@@ -19,16 +19,16 @@ Read the selected source's `document_type` profile from `scan --file` before
 extracting. The profile's `node_kinds` and `extraction_guidance` determine what
 knowledge to propose; no document-class enum is built into this workflow. The
 following are examples of the shared model, not a substitute for the caller's
-profile. Preserve native source evidence directly, without preparing a converted
-Markdown copy. Accepted entry bodies remain Markdown.
+profile. Cite source documents directly by path and line range; they are plain
+text to kgdistiller, whatever their format, and are never converted.
 
 - Mathematical definitions, axioms and theorems/lemmas can be knowledge nodes;
   computer-science algorithms, architectures and independently defined methods,
   quantities or components can also be nodes. Retain complete meanings,
   conditions, notation, formulas, inputs/outputs and source evidence.
 - Propositions and remarks express factual or logical relations rather than
-  becoming nodes merely through their labels. Preserve existing user-marked
-  identities until an explicit identity review decides otherwise.
+  becoming nodes merely through their labels. Preserve existing accepted
+  entries until an explicit identity review decides otherwise.
 - Examples and experiments express typed use/application relations, rather than
   creating concepts solely to hold instances. Retain applied knowledge
   references, input/context, conditions, steps, result, evidence and epistemic
@@ -72,11 +72,10 @@ ownership and identity bindings, never display names alone. Preserve other
 sources, shared content and user annotations; withdrawing one source's
 contribution does not authorize deleting a shared identity.
 
-Use `$query-kgdistiller` for identity/digest review and
-`$curate-kgdistiller-notes` / `$ingest-kgdistiller` for supported source patches,
-deltas, plan/apply and receipt contracts. A sheet navigation reference is not a
-native definition marker or canonical node ID. Do not hand-edit entries as a
-transaction substitute or edit graph files, identity registries or alignments.
+Use `$query-kgdistiller` for identity review and `$capture-kgdistiller` /
+`$ingest-kgdistiller` for deltas, plan/apply and receipts. A sheet navigation
+link is not a canonical entry id. Do not substitute hand edits of entries for a
+reviewed transaction, and never hand-edit `.knowledge/edges.jsonl`.
 
 The current `kgdistiller-agent-delta-v1` direct-edge adapter does not losslessly support full n-ary
 relations, application records or rich dependency-gap history. Simple direct
@@ -99,10 +98,11 @@ apply unless that exact scope is already explicitly authorized. Existing
 authorization is not a reason to ask again.
 
 Plan through the ingest Skill's public API and review its predicted changes.
-Stale source/target preconditions require a refreshed comparison and plan.
-Accept completion only from a committed canonical receipt whose after-digests
-match fresh status and required product checks. If contribution ownership or
-replacement behavior cannot be established, leave the operation unapplied.
+A refused apply (`stale-evidence`, `label-mismatch`, `identity-collision`)
+requires a refreshed preparation and plan. Accept completion only from a
+committed receipt followed by a passing `check` and fresh `agent status` counts.
+If contribution ownership or replacement behavior cannot be established, leave
+the operation unapplied.
 
 After verification, refresh the lightweight definition and pending projections
 with real links to the actual committed metadata. Record receipt/revision and

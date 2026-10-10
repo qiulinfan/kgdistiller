@@ -11,7 +11,7 @@ The source model separates three independent concerns:
 
 | Concern | Meaning |
 |---|---|
-| File format | How the original source is stored and read, such as Markdown, Typst or LaTeX |
+| File format | How the original document is stored. kgdistiller ignores it: every registered source is UTF-8 text read as numbered lines |
 | Document type | A user-registered extraction profile: which knowledge objects to extract and how to recognize them |
 | Knowledge domain | The subject matter of the source or an individual knowledge entry |
 
@@ -24,9 +24,9 @@ The shared evidence and identity requirements still apply.
 
 The minimum conceptual registration is a type name, its intended node types,
 and human-readable extraction rules. Use `document_type` for the source's
-association with a registered profile; existing evidence fields named
-`source_type` and `source_kind` have other meanings. A node has its own knowledge
-type; it is not typed merely as `airesearch` because its source uses that profile.
+association with a registered profile. A node has its own `kind`, chosen from
+that profile's `node_kinds`; it is not typed merely as `airesearch` because its
+source uses that profile.
 For example, an AI research source may explain an architecture and also state
 a theorem if its registered profile allows both. The profile guides extraction;
 it neither supplies missing scientific content nor creates knowledge identity.
@@ -36,19 +36,17 @@ or topic alone. Mathematical notes and AI research documents can both be `.md`
 and discuss linear algebra while using different extraction rules. An agent
 can propose a source classification from its content; the selected profile and
 its user-owned rules must be explicit when applying structured extraction.
-Registering a new type should require editing knowledge-base data, not changing
-the product code or adding a new hardcoded extraction branch.
+Registering a new type requires editing knowledge-base data, not changing the
+product code or adding a hardcoded extraction branch.
 
-Sources remain in their original files. Source-to-source conversion between
-Markdown, Typst and LaTeX is outside this target workflow: no normalized Markdown
-copy or equivalent-format companion is a prerequisite for extraction. Reading
-the original source, preserving evidence locations and linking accepted entries
-to that evidence remain necessary. A def sheet displays metadata links and is
-not a converted copy of the source. Optional rendering or downstream views do
-not become a source-conversion stage in the knowledge model.
+Sources remain in their original files and formats. kgdistiller never parses
+their syntax and never converts them: `.md`, `.typ`, `.tex`, `.txt` and any
+other text document are treated identically. Evidence is a file path, a line
+range and the quoted text of those lines. A def sheet displays links and is not
+a copy of the source.
 
-Register profiles in the existing `.knowledge/sources.json` under
-`document_types`, for example:
+Register profiles in `.knowledge/sources.json` under `document_types`, for
+example:
 
 ```json
 {
@@ -61,52 +59,34 @@ Register profiles in the existing `.knowledge/sources.json` under
 
 The block above is the value of `document_types`, not a replacement for the
 whole source registry. Add `"document_type": "worked-notes"` to the relevant
-existing source record. That record can cover a bounded set of files of any
-supported native format. Separate source records can use different profiles.
-Names and kinds are caller-supplied; new projects omit this optional mapping until
-the user registers a profile.
-Existing registries without profiles remain unclassified. Explicit unknown
-profile names or malformed registrations are errors.
+source record. That record can cover a bounded set of files of any format.
+Separate source records can use different profiles. Names and kinds are
+caller-supplied; new projects omit this optional mapping until the user
+registers a profile. Explicit unknown profile names or malformed registrations
+are errors.
 
-`kgdistiller --repo-root PROJECT scan --file SOURCE` exposes the selected
-`document_types` and per-file `sources` information without writing graph data.
-This works before a source has any knowledge markers, so an agent can read the
-extraction rules before choosing nodes. Capture accepts an optional reviewed
-`kind`; when supplied, it must belong to the source's registered profile.
-The accepted type is stored in entry frontmatter as `kgd_kind`, and projected
-as `properties.kind` with `kind_origin: reviewed`. Only reviewed nodes retain
-scanner syntax separately in `source_kind`, so synchronization preserves the
-reviewed type. Without a reviewed kind, `kind` already records the source syntax
-and no duplicate `source_kind` is stored. Removing `kgd_kind` restores `kind`
-from that source syntax and removes the separate `source_kind`. Old entries
-without an explicit reviewed kind remain readable.
-
-Entries now default to original Markdown, Typst or LaTeX evidence. Explicit
-historical Markdown evidence links still work; no automatic conversion or
-derived-file fallback is performed. New projects no longer create derived
-source directories or register converted imports automatically. Existing
-same-stem TeX/Typst authority selection remains supported for already paired
-registrations; it does not create or convert either file. Optional rendering
-and explicitly requested older import commands are separate from extraction.
+`kgdistiller --repo-root PROJECT scan --file SOURCE` returns, for each requested
+file, the admitting source id, its `document_type`, the profile
+(`node_kinds`, `extraction_guidance`, or `null` when the source has none) and
+every line with its 1-based number. It writes nothing and works before the
+source has any entries, so an agent reads the extraction rules and the exact
+line numbers before choosing nodes. Every entry's `kind` must belong to its
+source's profile when one is declared; `check` and ingest enforce this.
 
 RAG architecture is still open. Source types must not silently impose hard
 retrieval filters or choose an embedding/index backend.
 
 ## Minimum stored metadata
 
-A project's knowledge lives only in `<root>/.knowledge/`. The normal knowledge
-store consists of:
+A project's knowledge lives only in `<root>/.knowledge/`:
 
 ```text
 .knowledge/
 ├── vault.json              # stable vault identity for registration
 ├── sources.json            # bounded source registration; optional document types
-├── entries/<node-id>.md    # one editable body per accepted knowledge entry
-└── graph/
-    ├── manifest.json       # generation and source/entry bindings
-    ├── nodes.jsonl         # durable identities, metadata, aliases and orphan state
-    ├── edges.jsonl         # accepted typed relationships
-    └── references.jsonl    # source occurrences used for navigation and backlinks
+├── entries/<id>.md         # one reviewed entry per knowledge node
+├── edges.jsonl             # accepted typed relationships
+└── build/                  # rebuildable local work (ignored)
 ```
 
 A source registration holds only its `id`, `root`, `files` and an optional
@@ -114,31 +94,21 @@ A source registration holds only its `id`, `root`, `files` and an optional
 profiles. Any other key is rejected. Source registration does not create
 knowledge nodes.
 
-`kgdistiller-graph-v2` stores entry content only in the Markdown authorities.
-The loader reads their manifest-bound content and returns hydrated
-`text`/`entry` API fields; the graph holds no JSONL body copies, persisted
-diagnostics or unused classification counters. Graph v2 is the only accepted
-graph schema; any other discriminator fails closed.
-
-Create `identities.json` only for reviewed renames/aliases and `alignments.json`
-only for accepted cross-namespace mappings. Existing nonempty registries remain
-knowledge state. `documents.jsonl` and `store.json` belong to an explicitly
-requested portable snapshot; daily capture and ordinary Git clones do not
-require them. `build/` is transient work, including the Obsidian plugin's graph
-feed, which `kgdistiller export obsidian` rebuilds. These optional artifacts are
-not mandatory core directories.
-
-Graph records retain knowledge that source prose alone cannot reconstruct;
-never delete `graph/` as a cache. This compaction changes storage duplication,
-not graph identity, scientific content or the unresolved RAG architecture.
+An entry carries everything its node needs: id, label, kind, aliases, source
+path and line range, understanding, the human sections and the verbatim
+Evidence quote. `edges.jsonl` holds the accepted relations. Together they are
+the durable knowledge; nothing else under `.knowledge/` is. `build/` holds
+ingest journals, plans, receipts, review drafts, retrieval caches and the
+Obsidian plugin's graph feed, which `kgdistiller export obsidian` rebuilds.
 
 ## Sources, metadata and views
 
-Native Markdown, Typst and LaTeX markers establish explicit knowledge identity.
 Source passages supply definitions, assumptions, proofs and evidence. Reviewed
-atomic entries hold source-grounded knowledge content in `.knowledge/entries/`;
-accepted semantic relationships and registries are also durable knowledge state.
-Do not infer identity from headings, names, document order or co-occurrence.
+entries hold source-grounded knowledge content in `.knowledge/entries/`;
+accepted semantic relationships are also durable knowledge state. Knowledge
+nodes come from reviewed capture or curation guided by the source's document
+type. Do not infer identity from headings, names, document order or
+co-occurrence.
 
 Extraction prepares a metadata update, including complete meanings, formulas,
 conditions, evidence and relations. Review it against existing identities, then
@@ -222,8 +192,8 @@ must preserve what it means and the conditions under which it applies.
 A theorem includes its assumptions, conclusion and proof/source status. A
 method or algorithm includes its inputs, outputs, defining steps and conditions.
 A heading, theorem wrapper or nominalized observation alone does not establish
-an independently meaningful node. Existing user-marked identities remain intact
-until an explicit review authorizes their change; this policy is not a migration.
+an independently meaningful node. Existing entries remain intact until an
+explicit review authorizes their change.
 
 A source-local definition is admitted when that source actually explains the
 object. It need not be the first source to introduce the term. Preserve source
@@ -273,8 +243,8 @@ applications, conditions and evidence. Packing must preserve complete assertions
 and report unresolved participants. Reducing the number of concept nodes must
 not remove factual support from complete-evidence tasks.
 
-The current canonical graph supports source-grounded atomic entries and direct
-binary relations. Binary self-edges are representable. The read-only compiled
+The current knowledge store supports source-grounded entries and direct binary
+relations. Binary self-edges are representable (except for the acyclic `prerequisite-for`). The read-only compiled
 library retains authored scientific attributes but still uses node-centric
 search and comparison-claim packing. It is not a canonical write protocol and
 has no general first-class relation/application retrieval API.

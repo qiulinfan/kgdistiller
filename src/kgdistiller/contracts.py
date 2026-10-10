@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 from importlib import resources
 from typing import Any
@@ -11,7 +10,6 @@ from typing import Any
 from .json_schema import SchemaViolation, validate_json_schema
 
 DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
-MAX_NAMESPACE_LENGTH = 256
 CONTRACT_SCHEMAS = {
     name: f"{name}.schema.json"
     for name in (
@@ -24,21 +22,8 @@ CONTRACT_SCHEMAS = {
         "kgdistiller-search-result-v3",
         "kgdistiller-search-execution-v3",
         "kgdistiller-context-bundle-v2",
-        "kgdistiller-context-bundle-v3",
-        "kgdistiller-support-selection-v1",
-        "kgdistiller-source-evidence-manifest-v1",
-        "kgdistiller-source-evidence-result-v1",
-        "kgdistiller-source-evidence-context-v1",
-        "kgdistiller-source-reference-result-v1",
-        "kgdistiller-document-record-v2",
-        "kgdistiller-store-v1",
-        "kgdistiller-store-report-v1",
         "kgdistiller-obsidian-graph-v1",
     )
-}
-SELF_DIGEST_FIELDS = {
-    "kgdistiller-store-v1": "store_sha256",
-    "kgdistiller-obsidian-graph-v1": "bundle_sha256",
 }
 
 
@@ -58,25 +43,6 @@ def canonical_json(value: Any) -> str:
         )
     except (TypeError, ValueError) as error:
         raise ContractError(f"value is not finite canonical JSON: {error}") from error
-
-
-def sha256_json(value: Any) -> str:
-    """Hash canonical JSON bytes using lowercase SHA-256."""
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
-
-
-def self_digest(value: dict[str, Any], field: str) -> str:
-    """Hash an object after omitting its own digest field."""
-    payload = copy.deepcopy(value)
-    payload.pop(field, None)
-    return sha256_json(payload)
-
-
-def finalize_self_digest(value: dict[str, Any], field: str) -> dict[str, Any]:
-    """Return a copy with its canonical self-digest populated."""
-    payload = copy.deepcopy(value)
-    payload[field] = self_digest(payload, field)
-    return payload
 
 
 def parse_contract_json(text: str) -> Any:
@@ -118,21 +84,6 @@ def _format_violation(error: SchemaViolation) -> str:
     return f"contract JSON Schema violation at {path}: {error.message}"
 
 
-def _validate_document_record(payload: dict[str, Any]) -> None:
-    if payload.get("schema") != "kgdistiller-document-record-v2":
-        return
-    authority = str(payload.get("authority", ""))
-    expected_suffix = {
-        "markdown": ".md",
-        "typst": ".typ",
-        "latex": ".tex",
-    }.get(
-        payload.get("format")
-    )
-    if expected_suffix and not authority.endswith(expected_suffix):
-        raise ContractError("document format must match the authority extension")
-
-
 def _validate_search_execution(payload: dict[str, Any]) -> None:
     execution_schema = payload.get("schema")
     if execution_schema not in {"kgdistiller-search-execution-v1", "kgdistiller-search-execution-v2", "kgdistiller-search-execution-v3"}:
@@ -150,15 +101,7 @@ def _validate_search_execution(payload: dict[str, Any]) -> None:
             f"{execution_schema} must contain {result_schema}"
         )
     validate_contract(result)
-    if "ranking" in result:
-        for kind, provenance in result["ranking"].items():
-            for key in ("namespace", "snapshot_sha256", "graph_sha256"):
-                if provenance[key] != payload[key]:
-                    raise ContractError(f"{kind} ranking {key} does not match execution")
     if execution_schema.endswith("v3"):
-        for key in ("namespace", "snapshot_sha256", "graph_sha256"):
-            if result["graph_retrieval"]["binding"][key] != payload[key]:
-                raise ContractError(f"graph retrieval {key} does not match execution")
         authoritative_ids = {node_id for resolution in resolutions if resolution["status"] in {"exact", "alias"} and resolution["identity_authority"] for node_id in resolution["candidate_ids"]}
         if any(node_id not in authoritative_ids for node_id in result["graph_retrieval"]["seeds"]["identity"]):
             raise ContractError("graph identity roots require authoritative exact or alias resolution")
@@ -193,9 +136,8 @@ def _validate_model_search_result(payload: dict[str, Any]) -> None:
         if any("reranker" in row["lanes"] for row in payload["results"]):
             raise ContractError("reranked result has no reranker provenance")
         return
-    for key in ("namespace", "snapshot_sha256", "graph_sha256", "projection", "query_sha256"):
-        if reranker[key] != provenance[key]:
-            raise ContractError(f"reranker {key} does not match embedding retrieval")
+    if reranker["projection"] != provenance["projection"]:
+        raise ContractError("reranker projection does not match embedding retrieval")
     candidates = reranker["candidates"]
     candidate_ids = [candidate["node_id"] for candidate in candidates]
     if len(candidate_ids) != len(set(candidate_ids)) or len(candidates) > reranker["candidate_limit"]:
@@ -218,8 +160,8 @@ def _validate_graph_path(path: dict[str, Any], node_id: str) -> None:
     nodes, steps = path["nodes"], path["steps"]
     if len(nodes) < 2 or nodes[-1] != node_id or len(steps) != len(nodes) - 1:
         raise ContractError("graph path must connect a root to its result")
-    if [item["node_id"] for item in path["node_bindings"]] != nodes or path["edge_types"] != [step["relation"] for step in steps]:
-        raise ContractError("graph path bindings must match all nodes and edges")
+    if path["edge_types"] != [step["relation"] for step in steps]:
+        raise ContractError("graph path edge types must match its steps")
     purposes = {"prerequisite-for": "learning-prerequisite", "derived-from": "source-derivation", "contrasts-with": "comparison"}
     for index, step in enumerate(steps):
         left, right = (step["source"], step["target"]) if step["direction"] == "outgoing" else (step["target"], step["source"])
@@ -234,8 +176,6 @@ def _validate_graph_search_result(payload: dict[str, Any]) -> None:
         return
     graph = payload["graph_retrieval"]
     policy, seeds = graph["policy"], graph["seeds"]
-    if graph["binding"]["plan_sha256"] != payload["plan_sha256"]:
-        raise ContractError("graph exploration binding does not match retrieval plan")
     expected_gate = "declared-high-with-evidence" if policy["edge_policy"] == "high-confidence" else "none"
     if policy["confidence_gate"] != expected_gate:
         raise ContractError("graph confidence gate does not match edge policy")
@@ -284,7 +224,7 @@ def _validate_graph_search_result(payload: dict[str, Any]) -> None:
             _validate_graph_path(path, row["node_id"])
             if path["lane"] not in graph_lanes or path["nodes"][0] not in origins or len(path["steps"]) > policy["max_depth"]:
                 raise ContractError("graph path exceeds execution policy or declared roots")
-            if policy["edge_policy"] == "high-confidence" and any(step["confidence"] != "high" or step["curation_status"] != "current" or not step["evidence"].strip() for step in path["steps"]):
+            if policy["edge_policy"] == "high-confidence" and any(step["confidence"] != "high" or not step["evidence"].strip() for step in path["steps"]):
                 raise ContractError("graph path does not satisfy declared high-confidence gate")
         for item in row["seed_evidence"]:
             root = item["seed_id"]
@@ -295,9 +235,6 @@ def _validate_graph_search_result(payload: dict[str, Any]) -> None:
 def _validate_graph_context(payload: dict[str, Any]) -> None:
     if payload.get("schema") != "kgdistiller-context-bundle-v2":
         return
-    from .alignment import node_fingerprint
-    from .semantic_retrieval import search_document
-
     nodes = {node["id"]: node for node in payload["nodes"] if isinstance(node.get("id"), str)}
     edges = {(edge.get("source"), edge.get("relation"), edge.get("target")): edge for edge in payload["edges"]}
     if len(nodes) != len(payload["nodes"]) or len(edges) != len(payload["edges"]):
@@ -317,15 +254,11 @@ def _validate_graph_context(payload: dict[str, Any]) -> None:
         if path is None or packet["nodes"] != path["nodes"]:
             raise ContractError("graph support packet requires its complete path")
         _validate_graph_path(path, packet["node_id"])
-        for binding in path["node_bindings"]:
-            node = nodes[binding["node_id"]]
-            if binding["node_sha256"] != node_fingerprint(node) or binding["document_sha256"] != hashlib.sha256(search_document(node).encode("utf-8")).hexdigest():
-                raise ContractError("graph context node binding does not match its source")
         for step in path["steps"]:
             edge = edges.get((step["source"], step["relation"], step["target"]))
-            if edge is None or sha256_json(edge) != step["edge_sha256"]:
-                raise ContractError("graph support packet is missing its bound edge proof")
-            if any(step[key] != str(edge.get(key, default)) for key, default in (("confidence", "unverified"), ("curation_status", "unspecified"), ("evidence", ""))):
+            if edge is None:
+                raise ContractError("graph support packet is missing its edge")
+            if any(step[key] != str(edge.get(key, default)) for key, default in (("confidence", "unverified"), ("evidence", ""))):
                 raise ContractError("graph path evidence and confidence do not match the source edge")
     actual = len(canonical_json(payload).encode("utf-8"))
     if actual != payload["budget"]["estimated_tokens"] or actual > payload["budget"]["token_budget"]:
@@ -335,33 +268,29 @@ def _validate_graph_context(payload: dict[str, Any]) -> None:
 def _validate_obsidian_graph(payload: dict[str, Any]) -> None:
     if payload.get("schema") != "kgdistiller-obsidian-graph-v1":
         return
-    concepts = payload.get("concepts") or []
-    sources = payload.get("sources") or []
-    semantic_edges = payload.get("semantic_edges") or []
-    definitions = payload.get("definitions") or []
-    references = payload.get("references") or []
+    concepts = payload["concepts"]
+    sources = payload["sources"]
+    semantic_edges = payload["semantic_edges"]
+    definitions = payload["definitions"]
     expected_counts = {
         "concepts": len(concepts),
         "sources": len(sources),
         "semantic_edges": len(semantic_edges),
         "definitions": len(definitions),
-        "references": len(references),
     }
-    if payload.get("counts") != expected_counts:
+    if payload["counts"] != expected_counts:
         raise ContractError("Obsidian graph counts do not match its arrays")
-    concept_ids = [str(item["id"]) for item in concepts]
-    source_authorities = [str(item["authority"]) for item in sources]
+    concept_ids = [item["id"] for item in concepts]
+    source_authorities = [item["authority"] for item in sources]
     if len(concept_ids) != len(set(concept_ids)):
         raise ContractError("Obsidian graph contains duplicate concept IDs")
     if len(source_authorities) != len(set(source_authorities)):
         raise ContractError("Obsidian graph contains duplicate source authorities")
     concept_set = set(concept_ids)
     source_set = set(source_authorities)
-    if any(str(item["authority"]) not in source_set for item in concepts):
-        raise ContractError("Obsidian graph concept has an unknown source authority")
     edge_keys: set[tuple[str, str, str]] = set()
     for edge in semantic_edges:
-        key = (str(edge["source"]), str(edge["relation"]), str(edge["target"]))
+        key = (edge["source"], edge["relation"], edge["target"])
         if key[0] not in concept_set or key[2] not in concept_set:
             raise ContractError("Obsidian graph semantic edge has an unknown endpoint")
         if key in edge_keys:
@@ -369,32 +298,21 @@ def _validate_obsidian_graph(payload: dict[str, Any]) -> None:
         edge_keys.add(key)
     definition_targets: set[str] = set()
     for definition in definitions:
-        source = str(definition["source_authority"])
-        target = str(definition["target"])
-        if source not in source_set or target not in concept_set:
+        if definition["source_authority"] not in source_set or definition["target"] not in concept_set:
             raise ContractError("Obsidian graph definition has an unknown endpoint")
-        if int(definition["line_end"]) < int(definition["line_start"]):
+        if definition["line_end"] < definition["line_start"]:
             raise ContractError("Obsidian graph definition line range is reversed")
-        if target in definition_targets:
+        if definition["target"] in definition_targets:
             raise ContractError("Obsidian graph concept has multiple definitions")
-        definition_targets.add(target)
+        definition_targets.add(definition["target"])
     if definition_targets != concept_set:
         raise ContractError("Obsidian graph concepts must each have one definition")
-    reference_ids: set[str] = set()
-    for reference in references:
-        reference_id = str(reference["id"])
-        if (
-            str(reference["source_authority"]) not in source_set
-            or str(reference["target"]) not in concept_set
-        ):
-            raise ContractError("Obsidian graph reference has an unknown endpoint")
-        if reference_id in reference_ids:
-            raise ContractError("Obsidian graph contains duplicate reference IDs")
-        reference_ids.add(reference_id)
+    if {item["source_authority"] for item in definitions} != source_set:
+        raise ContractError("Obsidian graph sources must each define a concept")
 
 
-def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, Any]:
-    """Validate a supported contract and its self-digest, failing closed."""
+def validate_contract(payload: Any) -> dict[str, Any]:
+    """Validate a supported contract, failing closed."""
     if not isinstance(payload, dict):
         raise ContractError("contract payload must be an object")
     discriminator = payload.get("schema")
@@ -407,45 +325,9 @@ def validate_contract(payload: Any, *, verify_digest: bool = True) -> dict[str, 
         raise ContractError(f"contract schema evaluation failed: {error}") from error
     if errors:
         raise ContractError(_format_violation(errors[0]))
-    _validate_document_record(payload)
     _validate_search_execution(payload)
     _validate_model_search_result(payload)
     _validate_graph_search_result(payload)
     _validate_graph_context(payload)
-    if payload.get("schema") == "kgdistiller-context-bundle-v3":
-        from .context_projection import validate_compact_context
-        validate_compact_context(payload)
-    if payload.get("schema") in {"kgdistiller-source-evidence-manifest-v1", "kgdistiller-source-evidence-result-v1"}:
-        from .source_evidence import (
-            SourceEvidenceError,
-            validate_source_evidence_manifest,
-            validate_source_evidence_result,
-        )
-        try:
-            if payload["schema"] == "kgdistiller-source-evidence-manifest-v1":
-                validate_source_evidence_manifest(payload)
-            else:
-                validate_source_evidence_result(payload)
-        except (SourceEvidenceError, UnicodeError, ValueError) as error:
-            raise ContractError("source evidence contract binding or byte closure is invalid") from error
-    if payload.get("schema") == "kgdistiller-source-evidence-context-v1":
-        from .source_context import validate_source_context
-        from .source_evidence import SourceEvidenceError
-        try:
-            validate_source_context(payload)
-        except (SourceEvidenceError, UnicodeError, ValueError) as error:
-            raise ContractError("source context binding or byte closure is invalid") from error
-    if payload.get("schema") == "kgdistiller-source-reference-result-v1":
-        from .source_evidence import SourceEvidenceError
-        from .source_references import validate_source_reference_result
-        try:
-            validate_source_reference_result(payload)
-        except (SourceEvidenceError, UnicodeError, ValueError) as error:
-            raise ContractError("source reference result binding is invalid") from error
     _validate_obsidian_graph(payload)
-    digest_field = SELF_DIGEST_FIELDS.get(discriminator)
-    if verify_digest and digest_field is not None:
-        claimed = payload.get(digest_field)
-        if claimed != self_digest(payload, digest_field):
-            raise ContractError(f"{digest_field} does not match canonical content")
     return copy.deepcopy(payload)

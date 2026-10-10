@@ -33,7 +33,7 @@ class CompiledEndpointsTest(unittest.TestCase):
 
     def mcp(self, operation, **arguments):
         with patch("kgdistiller.mcp.load_graph_view", side_effect=AssertionError("compiled input must not load a graph")):
-            return call_tool(self.root / "nonexistent-graph", "kg_compiled_knowledge", {"library_path": str(self.library), "operation": operation, **arguments})
+            return call_tool(self.root / "nonexistent-vault", self.root / "nonexistent-vault/.knowledge/sources.json", "kg_compiled_knowledge", {"library_path": str(self.library), "operation": operation, **arguments})
 
     def test_cli_search_and_full_get_work_without_vault_registration(self):
         code, stdout, stderr = self.cli("search", "有界线性算子如何判定连续", "--limit", "1")
@@ -76,7 +76,7 @@ class CompiledEndpointsTest(unittest.TestCase):
             with self.subTest(operation=operation), self.assertRaises(QueryError):
                 self.mcp(operation)
         with self.assertRaisesRegex(QueryError, "must be absolute"):
-            call_tool(self.root, "kg_compiled_knowledge", {"library_path": "library.json", "operation": "browse"})
+            call_tool(self.root, self.root / ".knowledge/sources.json", "kg_compiled_knowledge", {"library_path": "library.json", "operation": "browse"})
 
     def test_inventory_cli_and_mcp_preserve_every_declaration_without_writes(self):
         payload = library_payload()
@@ -96,7 +96,7 @@ class CompiledEndpointsTest(unittest.TestCase):
         self.assertFalse(result["groups"][0]["senses"][-1]["available"])
         self.assertEqual("not-certified", result["source_corpus_completeness"])
         self.assertEqual(result, self.mcp("inventory", term="Ｂｏｕｎｄｅｄ　ｍａｐ"))
-        server = MCPServer(self.root / "nonexistent-graph", ranking_service=object())
+        server = MCPServer(self.root / "nonexistent-vault", self.root / "nonexistent-vault/.knowledge/sources.json", ranking_service=object())
         server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
         with patch("kgdistiller.mcp.load_graph_view", side_effect=AssertionError("inventory must not load a graph")):
             response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {

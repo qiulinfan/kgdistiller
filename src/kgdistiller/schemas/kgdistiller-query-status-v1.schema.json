@@ -1,47 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kgdistiller.dev/schemas/kgdistiller-query-status-v1.schema.json",
-  "title": "kgdistiller JSON query status v1",
+  "title": "kgdistiller entry store query status v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema", "snapshot_schema", "namespace", "snapshot_sha256",
-    "graph_schema", "graph_sha256", "generation", "counts", "backend",
-    "retrieval_lanes", "capabilities", "alignment_schema",
-    "alignment_sha256", "alignment_counts"
-  ],
+  "required": ["schema", "counts", "relations"],
   "properties": {
     "schema": {"const": "kgdistiller-query-status-v1"},
-    "snapshot_schema": {"const": "kgdistiller-agent-snapshot-v1"},
-    "namespace": {"$ref": "#/$defs/namespace"},
-    "snapshot_sha256": {"$ref": "#/$defs/sha256"},
-    "graph_schema": {"const": "kgdistiller-graph-v2"},
-    "graph_sha256": {"$ref": "#/$defs/sha256"},
-    "generation": {"$ref": "#/$defs/sha256"},
-    "counts": {"$ref": "#/$defs/counts"},
-    "backend": {"const": "json-memory"},
-    "retrieval_lanes": {"const": ["identity", "lexical", "graph", "ppr"]},
-    "capabilities": {"const": ["json-memory", "read-only-query-v3"]},
-    "alignment_schema": {"const": "kgdistiller-alignments-v1"},
-    "alignment_sha256": {"$ref": "#/$defs/sha256"},
-    "alignment_counts": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mappings"],
-      "properties": {"mappings": {"type": "integer", "minimum": 0}}
-    }
-  },
-  "$defs": {
-    "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"},
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "counts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nodes", "edges", "references"],
+      "required": ["entries", "edges"],
       "properties": {
-        "nodes": {"type": "integer", "minimum": 0},
-        "edges": {"type": "integer", "minimum": 0},
-        "references": {"type": "integer", "minimum": 0}
+        "entries": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0}
+      }
+    },
+    "relations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prerequisite-for": {"type": "integer", "minimum": 0},
+        "implies": {"type": "integer", "minimum": 0},
+        "generalizes": {"type": "integer", "minimum": 0},
+        "contrasts-with": {"type": "integer", "minimum": 0},
+        "derived-from": {"type": "integer", "minimum": 0}
       }
     }
   }

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import hashlib
+import filecmp
 import json
 import os
 import re
@@ -337,7 +337,7 @@ def _validate_manifest_agents(
             or install_as in install_names
         ):
             raise CodexProductError(
-                f"agent install name is outside the kgdistiller namespace: {name}"
+                f"agent install name is outside the kgdistiller scope: {name}"
             )
         relative = _safe_relative(item.get("path"), f"agent path for {name}")
         if relative != source_dir / f"{name}{suffix}":
@@ -458,7 +458,7 @@ def load_manifest(explicit_root: Path | None = None) -> tuple[Path, dict[str, An
         or installation.get("product_root") != "workflow-products/kgdistiller"
         or installation.get("state") != STATE_NAME
     ):
-        raise CodexProductError("workflow manifest installation namespace is invalid")
+        raise CodexProductError("workflow manifest installation scope is invalid")
     workflow_guide = _safe_relative(manifest.get("workflow_guide"), "workflow guide")
     if workflow_guide != PurePosixPath("docs", "product-workflows.md"):
         raise CodexProductError("workflow manifest guide path is invalid")
@@ -511,28 +511,42 @@ CODEX_PROFILE = RuntimeProfile(
 )
 
 
-def _asset_digest(path: Path) -> str:
+def _tree_files(path: Path) -> dict[str, Path]:
+    """Map every regular file below a path (or the file itself) by relative name."""
     if path.is_symlink():
         path = path.resolve(strict=True)
     if path.is_file():
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        return {"": path}
     if not path.is_dir():
         raise CodexProductError(f"managed asset is missing: {path}")
-    digest = hashlib.sha256()
-    for child in sorted(
-        path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()
-    ):
+    files: dict[str, Path] = {}
+    for child in path.rglob("*"):
         if child.is_symlink():
-            raise CodexProductError(f"product asset contains a symbolic link: {child}")
-        if not child.is_file():
-            continue
-        relative = child.relative_to(path).as_posix().encode("utf-8")
-        content = child.read_bytes()
-        digest.update(len(relative).to_bytes(8, "big"))
-        digest.update(relative)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return digest.hexdigest()
+            raise CodexProductError(f"managed asset contains a symbolic link: {child}")
+        if child.is_file():
+            files[child.relative_to(path).as_posix()] = child
+    return files
+
+
+def _copy_matches_source(
+    asset: dict[str, Any],
+    target: Path,
+    root: Path,
+    manifest: dict[str, Any],
+    profile: RuntimeProfile,
+) -> bool:
+    """Compare an installed copy with the product source byte for byte."""
+    if asset["kind"] == "product-root":
+        expected = {
+            path.relative_to(root).as_posix(): path
+            for path in _product_inventory_files(root, manifest, profile)
+        }
+    else:
+        expected = _tree_files(asset["source"])
+    observed = _tree_files(target)
+    return set(expected) == set(observed) and all(
+        filecmp.cmp(expected[name], observed[name], shallow=False) for name in expected
+    )
 
 
 def _runtime_home(explicit: Path | None, profile: RuntimeProfile) -> Path:
@@ -593,11 +607,11 @@ def _validate_destination(home: Path, profile: RuntimeProfile) -> None:
             metadata = os.lstat(path)
         except OSError as error:
             raise CodexProductError(
-                f"cannot inspect {profile.label} product namespace parent: {path}"
+                f"cannot inspect {profile.label} product scope parent: {path}"
             ) from error
         if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(path):
             raise CodexProductError(
-                f"{profile.label} product namespace parents must be ordinary, "
+                f"{profile.label} product scope parents must be ordinary, "
                 f"non-reparse directories: {path}"
             )
 
@@ -619,24 +633,6 @@ def _product_inventory_files(
     if missing:
         raise CodexProductError(f"product inventory contains missing files: {missing}")
     return sorted(files, key=lambda path: path.relative_to(root).as_posix())
-
-
-def _digest_inventory(root: Path, files: list[Path]) -> str:
-    digest = hashlib.sha256()
-    for child in files:
-        relative = child.relative_to(root).as_posix().encode("utf-8")
-        content = child.read_bytes()
-        digest.update(len(relative).to_bytes(8, "big"))
-        digest.update(relative)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return digest.hexdigest()
-
-
-def _product_digest(
-    root: Path, manifest: dict[str, Any], profile: RuntimeProfile
-) -> str:
-    return _digest_inventory(root, _product_inventory_files(root, manifest, profile))
 
 
 def _managed_assets(
@@ -814,24 +810,6 @@ def _copy_product_root(
         shutil.copy2(path, target)
 
 
-def _source_digest(
-    asset: dict[str, Any],
-    root: Path,
-    manifest: dict[str, Any],
-    profile: RuntimeProfile,
-) -> str:
-    if asset["kind"] == "product-root":
-        return _product_digest(root, manifest, profile)
-    return _asset_digest(asset["source"])
-
-
-def _installed_copy_digest(target: Path, kind: str, profile: RuntimeProfile) -> str:
-    if kind == "product-root":
-        installed_root, installed_manifest = profile.load_manifest(target)
-        return _product_digest(installed_root, installed_manifest, profile)
-    return _asset_digest(target)
-
-
 def _stage_asset(
     asset: dict[str, Any],
     mode: str,
@@ -885,7 +863,6 @@ def _validate_state_record(record: Any, profile: RuntimeProfile) -> dict[str, An
         "source",
         "target",
         "mode",
-        "digest",
     }:
         raise CodexProductError("managed-link state contains an invalid asset record")
     kind = record.get("kind")
@@ -909,14 +886,12 @@ def _validate_state_record(record: Any, profile: RuntimeProfile) -> dict[str, An
         allowed = False
     if not allowed:
         raise CodexProductError(
-            "managed-link state target escapes the kgdistiller namespace"
+            "managed-link state target escapes the kgdistiller scope"
         )
     if (
         record.get("mode") not in {"copy", "symlink", "junction", "hardlink"}
         or not isinstance(record.get("source"), str)
         or not Path(record["source"]).is_absolute()
-        or not isinstance(record.get("digest"), str)
-        or re.fullmatch(r"[0-9a-f]{64}", record["digest"]) is None
     ):
         raise CodexProductError("managed-link state asset provenance is invalid")
     return record
@@ -943,7 +918,7 @@ def _bind_state_source(
     observed = Path(record["source"])
     if not _same_path(observed.resolve(), expected.resolve()):
         raise CodexProductError(
-            "managed-link state source is outside the active product manifest namespace: "
+            "managed-link state source is outside the active product manifest scope: "
             f"{observed}"
         )
 
@@ -960,12 +935,7 @@ def _verify_managed_owner(
     mode = record["mode"]
     source = Path(record["source"])
     if mode == "copy":
-        if _installed_copy_digest(target, str(record["kind"]), profile) != record[
-            "digest"
-        ]:
-            raise CodexProductError(
-                f"refusing to replace a modified managed copy: {target}"
-            )
+        # Recorded copies are product-owned: link replaces them, doctor compares them.
         return
     if mode == "symlink":
         if not target.is_symlink() or not _same_path(
@@ -995,7 +965,6 @@ def _verify_managed_owner(
             and target.is_file()
             and not target.is_symlink()
             and not _is_reparse_point(target)
-            and _asset_digest(target) == record["digest"]
         ):
             return
         raise CodexProductError(f"detached managed hardlink fails closed: {target}")
@@ -1029,7 +998,7 @@ def _validate_cleanup_record(
     _bind_state_source(asset, root, profile=profile)
     backup_relative = _safe_relative(value["backup"], "managed cleanup backup")
     if len(backup_relative.parts) < 3:
-        raise CodexProductError("managed cleanup backup escapes its recovery namespace")
+        raise CodexProductError("managed cleanup backup escapes its recovery scope")
     recovery_name, transaction, *remainder = backup_relative.parts
     expected = PurePosixPath(*_safe_relative(asset["target"], "cleanup target").parts)
     if (
@@ -1037,7 +1006,7 @@ def _validate_cleanup_record(
         or re.fullmatch(r"[0-9a-f]{32}", transaction) is None
         or PurePosixPath(*remainder) != expected
     ):
-        raise CodexProductError("managed cleanup backup escapes its recovery namespace")
+        raise CodexProductError("managed cleanup backup escapes its recovery scope")
     backup = _join(home, backup_relative)
     transaction_root = home / RECOVERY_ROOT_NAME / transaction
     current = home
@@ -1152,7 +1121,6 @@ def _adoptable_link_record(asset: dict[str, Any]) -> dict[str, Any] | None:
         "source": str(asset["source"].resolve()),
         "target": asset["target_relative"],
         "mode": "junction" if junction else "symlink",
-        "digest": asset["digest"],
     }
 
 
@@ -1213,7 +1181,6 @@ def _link_runtime(
     for asset in assets:
         target = asset["target"]
         target_relative = asset["target_relative"]
-        asset["digest"] = _source_digest(asset, root, manifest, profile)
         prior = previous_by_target.get(target_relative)
         if prior is None and profile.adopt_matching_links and _path_present(target):
             prior = _adoptable_link_record(asset)
@@ -1268,7 +1235,6 @@ def _link_runtime(
                     "source": str(asset["source"].resolve()),
                     "target": asset["target_relative"],
                     "mode": selected_mode,
-                    "digest": asset["digest"],
                 }
             )
 
@@ -1476,18 +1442,19 @@ def _doctor_runtime(
         asset = expected_by_target.get(target_relative)
         if asset is None:
             raise CodexProductError(
-                f"managed-link state escapes the product namespace: {target_relative}"
+                f"managed-link state escapes the product scope: {target_relative}"
             )
         target = asset["target"]
         source = asset["source"]
-        expected_digest = _source_digest(asset, root, manifest, profile)
         _bind_state_source(record, root, asset, profile=profile)
         if not _path_present(target):
             raise CodexProductError(f"managed asset is missing: {target}")
         _verify_managed_owner(record, target, profile=profile)
-        if record.get("mode") == "copy" and record.get("digest") != expected_digest:
+        if record.get("mode") == "copy" and not _copy_matches_source(
+            asset, target, root, manifest, profile
+        ):
             raise CodexProductError(
-                "managed copy is non-live and source changed; "
+                "managed copy is non-live and differs from the product source; "
                 f"run {profile.command} link again: {source}"
             )
         selected_mode = str(record["mode"])

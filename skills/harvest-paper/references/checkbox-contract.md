@@ -17,72 +17,68 @@ kgdistiller --repo-root PROJECT harvest prepare CAPTURES.json \
 `CAPTURES.json` contains a nonempty `captures` array of ordinary reviewed
 [capture payloads](../../capture-kgdistiller/references/capture-contract.md).
 Supported actions are `add` and `update`. An already accepted entry that needs
-no change remains a direct canonical sheet link; no `reuse` action is required.
+no change remains a direct sheet link; no `reuse` action is required.
 
 ```json
 {
   "captures": [
     {
-      "name": "Selected concept",
-      "source": "notes/chapter.md",
-      "text": "A source-backed explanation of the selected definition.",
+      "label": "Measure space",
+      "source": "notes/measure.tex",
+      "line_start": 42,
+      "line_end": 47,
+      "kind": "definition",
+      "text": "A measurable space equipped with a measure.",
       "entry": {
         "understanding": "not-yet-understood",
-        "pending_prerequisites": ["A direct prerequisite still to learn."]
+        "pending_prerequisites": ["sigma-algebra: the domain of a measure; not yet studied."]
       },
       "review": {
         "action": "add",
         "reviewer": "reading-agent",
-        "evidence": "The explicit definition was checked against existing identities."
+        "evidence": "Lines 42-47 state the definition; agent resolve found no existing entry."
       }
     }
   ]
 }
 ```
 
-`name` selects a real native definition marker in the registered source. If the
-marker needs to be added, include `source_content` or `source_content_file` as
-specified by the capture contract. Each candidate's proposed source starts from
-the same current original source and changes only its selected definition and
-necessary marker. The batch combines nonoverlapping edits; conflicting or other
-unsupported edits require correction. Markdown, Typst and LaTeX keep their
-native identity and evidence requirements.
+Each capture cites a registered source by path and line range; the cited lines
+become the entry's verbatim Evidence quote. Sources are never edited, and any
+text format works the same way.
 
-Preparation writes readable drafts with proposed text, before/after structured
-entry content, knowledge type, identity review and native source diff. The type
-comparison states when an omitted `kind` preserves the existing type; a type
-change alone does not re-review the scientific text or refresh stale evidence.
-It binds generated task
-rows to these frozen proposals and returns `status: prepared`. It does not ingest
-the candidates. The review directory must be inside the project and outside
-registered sources and accepted data. To append candidates to the same sheet,
-use that sheet's existing review directory.
+Preparation writes one readable draft per item showing the before → after entry
+fields (label, kind, aliases, understanding), the entry sections before and
+after, the identity review, the cited source range and the Evidence quote. It
+binds generated task rows to these frozen proposals and returns
+`status: prepared`. It does not ingest the candidates. The review directory
+must be inside the project. The sheet must be Markdown outside
+`.knowledge/entries/` and separate from the cited source. To append candidates
+to the same sheet, use that sheet's existing review directory. A sheet that does
+not exist yet starts as `# Definition sheet` with `Coverage: partial`.
 
 The helper creates and maintains these bindings; do not ask the user to type
 internal markers or invent them from a heading, row order or name:
 
 ```markdown
-<!-- kgdistiller-projection: definition-sheet -->
 # Definition sheet
 
 Coverage: partial
 
 <!-- kgdistiller-harvest-review: RELATIVE_PATH_TO_REVIEW_JSON -->
 
-- [ ] [Selected concept (draft)](RELATIVE_PATH_TO_REVIEW_DRAFT) <!-- kgdistiller-harvest: GENERATED_TOKEN -->
+- [ ] [Measure space (draft)](RELATIVE_PATH_TO_REVIEW_DRAFT) <!-- kgdistiller-harvest: 1-measure-space -->
 ```
 
-The actual relative paths are URL-encoded and the token is generated. The
-projection marker is the first nonblank content line after optional YAML frontmatter;
-it prevents the sheet from being scanned as a native authority. Keep it there.
+The relative paths are URL-encoded. The review binding names the
+`kgdistiller-checkbox-review-v1` manifest, which stores each item under a
+readable token `<n>-<label slug>` together with its frozen payload, the draft
+text, the entry file text (or none for a new entry) and the cited source text.
 Only task rows with valid bindings to this review participate in harvest.
 Ordinary todos, copied example rows and fenced code examples are ignored.
-Preserve the generated name/link and binding; the user changes the checkbox.
-Annotations outside the bound name/link can remain in the sheet.
-
-If a user edits the draft itself, the next apply reports the difference. Review
-and prepare the affected item again before writing. Do not silently synchronize
-a stale prepared payload or turn that correction into full-source distillation.
+Preserve the generated label/link and binding; the user changes the checkbox.
+Annotations outside the bound label/link can remain in the sheet. New rows
+follow the sheet's existing line endings.
 
 ## Apply checked items
 
@@ -97,37 +93,38 @@ The request plus the checked reviewed items authorizes that scope and target.
 Do not ask for a second selection or permission. Preparing a sheet or checking
 a box without a harvest request does not initiate a write.
 
-The script checks bound labels/links, frozen drafts and source/entry freshness,
-then performs one comparison and one ingest transaction for the selected batch.
-It preserves unchecked candidates, unrelated annotations, coverage and learning
-state. A checkbox is an import selection; it does not set `understood` or resolve
-prerequisites. Only the reviewed payload can explicitly change those fields.
-Pending dependencies stay at the directly encountered layer.
+Freshness is checked by comparing text: for every checked item, the draft file,
+the target entry file and the cited source lines must equal what was stored at
+preparation. Any difference stops the run with a message naming the item; review
+it and prepare it again. The checked items are then ingested as one transaction
+with the readable request id `harvest-<review directory>-<run>`. The run is
+recorded before ingest, so an interrupted run resumes by looking up that
+request's receipt instead of writing twice.
 
-After commit, selected rows drop the `(draft)` label and point to the real
-canonical entry authorities.
-Previously synchronized items are not written again. Later checked candidates
-from the same source may incorporate disjoint changes previously committed by
-this sheet; arbitrary external source or entry changes require a targeted review.
-Do not bypass a stale or ambiguous identity check.
+Harvest preserves unchecked candidates, unrelated annotations, coverage and
+learning state. A checkbox is an import selection; it does not set `understood`
+or resolve prerequisites. Only the reviewed payload can explicitly change those
+fields. Pending dependencies stay at the directly encountered layer.
+
+After commit, selected rows drop the `(draft)` label and link to the committed
+entries. Previously committed items are not written again.
 
 | Result | Meaning and next action |
 | --- | --- |
 | `nothing-selected` | No new checked candidates remain; no write occurred. |
-| `committed` | Metadata committed and accepted entry links refreshed; report the returned receipt. |
-| `committed-sheet-pending` | Metadata committed but sheet refresh failed; retain the receipt and correct the reported refresh issue. Run apply on the same sheet to recover the stored request, even if using a different output directory. Do not prepare a duplicate write. |
+| `committed` | Entries committed and links refreshed; report the returned receipt. |
+| `committed-sheet-pending` | Entries committed but sheet refresh failed; retain the receipt and correct the reported refresh issue. Run apply on the same sheet to finish; it reuses the committed receipt. Do not prepare a duplicate write. |
 
 Unsupported scientific relations/application records remain review proposals;
 this adapter does not expand the underlying ingest model. Report concrete errors
 or remaining draft scope. Git backup is a separate operation.
 
-
 ## Correct a pending draft
 
-When a draft was edited or its evidence changed, review only the affected item
-and prepare its corrected capture payload with the same sheet and review
-output directory. The preparation command replaces that pending row's draft
-link and clears its checkbox; other rows and annotations remain unchanged. The
-old draft artifact remains available. The user can review and select the revised
-row in Obsidian. This correction path does not add another approval step to the
-normal unchanged checked-item harvest.
+When a draft was edited or its source lines changed, review only the affected
+item and prepare its corrected capture payload with the same sheet and review
+output directory. The preparation command writes a new draft revision, replaces
+that pending row's draft link and clears its checkbox; other rows and
+annotations remain unchanged. The old draft file remains available. The user can
+review and select the revised row in Obsidian. This correction path does not add
+another approval step to the normal unchanged checked-item harvest.

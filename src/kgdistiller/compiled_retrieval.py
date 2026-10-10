@@ -15,50 +15,23 @@ from __future__ import annotations
 import copy
 import json
 import math
-import re
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
-from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 from .query import _BM25_B, _BM25_K1
+from .tokens import tokenize
 
 
 class CompiledRetrievalError(ValueError):
     """Invalid compiled input or an unavailable exact lookup reference."""
 
 
-_WORD = re.compile(r"[^\W_]+", re.UNICODE)
 _NODE_TEXT = ("name", "kind", "layer", "statement", "formal", "inputs_outputs")
 _SURFACE_TEXT = ("gloss", "sense_key")
 _SURFACE_LISTS = ("head_terms", "query_forms", "zh", "symbols", "not_this")
-
-
-def _tokens(text: str) -> list[str]:
-    """Unicode words and CJK unigrams/bigrams, without a domain lexicon."""
-    result: list[str] = []
-    for word in _WORD.findall(unicodedata.normalize("NFKC", text).casefold()):
-        run = ""
-        previous_cjk: bool | None = None
-        for char in word:
-            cjk = unicodedata.name(char, "").startswith(
-                ("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH")
-            )
-            if run and cjk != previous_cjk:
-                result.extend(_run_tokens(run, bool(previous_cjk)))
-                run = ""
-            run += char
-            previous_cjk = cjk
-        result.extend(_run_tokens(run, bool(previous_cjk)))
-    return result
-
-
-def _run_tokens(run: str, cjk: bool) -> list[str]:
-    if not cjk:
-        return [run]
-    return list(run) + [a + b for a, b in pairwise(run)]
 
 
 def _mapping(value: Any, field: str) -> dict[str, Any]:
@@ -186,7 +159,7 @@ class _BM25:
 
     def rank(self, query: str, limit: int) -> list[tuple[str, float]]:
         scores: dict[str, float] = defaultdict(float)
-        for token in sorted(set(_tokens(query))):
+        for token in sorted(set(tokenize(query))):
             for ref in self.postings.get(token, []):
                 frequency = self.counts[ref][token]
                 normalization = _BM25_K1 * (
@@ -253,7 +226,7 @@ class CompiledLibrary:
             })
             for ref, entry in self._entries.items()
         }
-        self._index = _BM25({ref: _tokens(text) for ref, text in self._texts.items()})
+        self._index = _BM25({ref: tokenize(text) for ref, text in self._texts.items()})
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> CompiledLibrary:
@@ -277,7 +250,7 @@ class CompiledLibrary:
         result.update(_year(source, field))
         return result
 
-    def _source_context(self, reference: str | None) -> dict[str, Any]:
+    def _source_record(self, reference: str | None) -> dict[str, Any]:
         source = self._sources.get(reference, {})
         return {key: value for key, value in source.items() if key in {"title", "year"}}
 
@@ -286,7 +259,7 @@ class CompiledLibrary:
         result: dict[str, Any] = {"reference": reference, "available": node is not None}
         if node is not None:
             result["name"] = node["name"]
-            source = self._source_context(node.get("paper"))
+            source = self._source_record(node.get("paper"))
             if source:
                 result["source"] = copy.deepcopy(source)
             result.update(_year(node, f"nodes[{reference}]"))
@@ -318,7 +291,7 @@ class CompiledLibrary:
         source_ref = node.get("paper")
         if source_ref is not None and not isinstance(source_ref, str):
             raise CompiledRetrievalError(f"{field}.paper must be a lookup reference")
-        result["source"] = self._source_context(source_ref)
+        result["source"] = self._source_record(source_ref)
         surfaces = _mapping({} if node.get("surfaces") is None else node["surfaces"], f"{field}.surfaces")
         result["surfaces"] = _fields(surfaces, _SURFACE_TEXT, f"{field}.surfaces")
         for key in _SURFACE_LISTS:

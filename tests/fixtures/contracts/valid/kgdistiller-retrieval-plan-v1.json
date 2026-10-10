@@ -1,7 +1,6 @@
 {
   "schema": "kgdistiller-retrieval-plan-v1",
   "question": "How does the synthetic theorem depend on its premise?",
-  "namespace": "personal",
   "identity_queries": ["synthetic theorem"],
   "lexical_queries": ["synthetic theorem premise"],
   "graph": {
@@ -10,10 +9,6 @@
     "direction": "both",
     "max_depth": 1,
     "strategy": "hybrid"
-  },
-  "filters": {
-    "include_stale": false,
-    "include_orphaned": false
   },
   "limit": 20
 }

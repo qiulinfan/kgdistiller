@@ -120,10 +120,6 @@ SOFTWARE.
   background: #059669;
 }
 
-.kgd-kind-reference {
-  background: #0284c7;
-}
-
 .kgd-legend {
   color: var(--text-muted);
   font-size: var(--font-ui-small);

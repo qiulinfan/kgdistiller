@@ -1,6 +1,0 @@
-interface:
-  display_name: "Distill Paper"
-  short_description: "Full-paper dependency paths and existing-knowledge links"
-  default_prompt: "Use $distill-paper to read the full paper, trace its architecture, mathematical derivations and citation uses, and link concrete prerequisites before drafting new knowledge candidates."
-policy:
-  allow_implicit_invocation: false

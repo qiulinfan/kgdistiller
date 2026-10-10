@@ -1,29 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kgdistiller.dev/schemas/kgdistiller-ingest-request-v1.schema.json",
-  "title": "kgdistiller transactional ingest request v2",
+  "title": "kgdistiller transactional ingest request",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema",
-    "request_id",
-    "request_sha256",
-    "mode",
-    "capabilities",
-    "base_graph_sha256",
-    "base_alignment_sha256",
-    "candidate_snapshot",
-    "query_report",
-    "authority_patches",
-    "decisions",
-    "delta",
-    "alignment_decisions",
-    "review"
-  ],
+  "required": ["schema", "request_id", "mode", "capabilities", "delta", "review"],
   "properties": {
     "schema": {"const": "kgdistiller-ingest-request-v1"},
-    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
-    "request_sha256": {"$ref": "#/$defs/sha256"},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$"},
     "mode": {"enum": ["plan", "apply"]},
     "capabilities": {
       "type": "array",
@@ -31,101 +15,96 @@
       "contains": {"const": "transactional-ingest-v1"},
       "items": {"type": "string"}
     },
-    "base_graph_sha256": {"$ref": "#/$defs/sha256"},
-    "base_alignment_sha256": {"$ref": "#/$defs/sha256"},
-    "candidate_snapshot": {"$ref": "#/$defs/artifact"},
-    "query_report": {"$ref": "#/$defs/artifact"},
-    "authority_patches": {
-      "type": "array",
-      "maxItems": 128,
-      "items": {"$ref": "#/$defs/authorityPatch"}
-    },
-    "decisions": {
-      "type": "array",
-      "maxItems": 4096,
-      "items": {"$ref": "#/$defs/decision"}
-    },
-    "delta": {
-      "type": "object",
-      "required": ["schema", "remove_nodes", "nodes", "edges", "remove_edges"],
-      "properties": {
-        "schema": {"const": "kgdistiller-agent-delta-v1"},
-        "remove_nodes": {"type": "array", "maxItems": 4096},
-        "nodes": {"type": "array", "maxItems": 4096},
-        "edges": {"type": "array", "maxItems": 4096},
-        "remove_edges": {"type": "array", "maxItems": 4096}
-      }
-    },
-    "alignment_decisions": {
-      "type": "array",
-      "maxItems": 1024,
-      "items": {"$ref": "#/$defs/alignmentDecision"}
-    },
+    "delta": {"$ref": "#/$defs/delta"},
     "review": {"$ref": "#/$defs/review"}
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "artifact": {
+    "text": {"type": "string", "minLength": 1},
+    "line": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "lines": {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/line"}},
+    "delta": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "sha256"],
+      "required": ["schema", "create_entries", "update_entries", "remove_entries", "add_edges", "remove_edges"],
       "properties": {
-        "path": {"type": "string", "minLength": 1},
-        "sha256": {"$ref": "#/$defs/sha256"}
+        "schema": {"const": "kgdistiller-agent-delta-v1"},
+        "create_entries": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/entry"}},
+        "update_entries": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["expected_label", "entry"],
+            "properties": {
+              "expected_label": {"$ref": "#/$defs/text"},
+              "entry": {"$ref": "#/$defs/entry"}
+            }
+          }
+        },
+        "remove_entries": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "expected_label"],
+            "properties": {
+              "id": {"$ref": "#/$defs/id"},
+              "expected_label": {"$ref": "#/$defs/text"}
+            }
+          }
+        },
+        "add_edges": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/edge"}},
+        "remove_edges": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/edgeKey"}}
       }
     },
-    "markerState": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 200},
+    "entry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["definitions", "references"],
+      "required": ["id", "label", "kind", "aliases", "source", "line_start", "line_end", "understanding", "summary", "evidence"],
       "properties": {
-        "definitions": {"type": "array", "maxItems": 4096, "items": {"type": "string"}},
-        "references": {"type": "array", "maxItems": 4096, "items": {"type": "string"}}
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "aliases": {"type": "array", "maxItems": 1024, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "source": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "line_start": {"type": "integer", "minimum": 1},
+        "line_end": {"type": "integer", "minimum": 1},
+        "understanding": {"enum": ["unknown", "not-yet-understood", "understood"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "context": {"type": "string", "maxLength": 65536},
+        "role": {"type": "string", "maxLength": 65536},
+        "prerequisites": {"$ref": "#/$defs/lines"},
+        "pending_prerequisites": {"$ref": "#/$defs/lines"},
+        "common_confusions": {"$ref": "#/$defs/lines"},
+        "open_questions": {"$ref": "#/$defs/lines"},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 1048576}
       }
     },
-    "authorityPatch": {
+    "edgeKey": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "operation", "expected_sha256", "expected_markers"],
+      "required": ["source", "relation", "target"],
       "properties": {
-        "path": {"type": "string", "minLength": 1},
-        "operation": {"enum": ["write", "delete"]},
-        "expected_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
-        "content": {"type": "string", "maxLength": 2097152},
-        "content_sha256": {"$ref": "#/$defs/sha256"},
-        "expected_markers": {"$ref": "#/$defs/markerState"}
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"operation": {"const": "write"}}},
-          "then": {"required": ["content", "content_sha256"]},
-          "else": {"not": {"anyOf": [{"required": ["content"]}, {"required": ["content_sha256"]}]}}
-        }
-      ]
+        "source": {"$ref": "#/$defs/id"},
+        "relation": {"$ref": "#/$defs/relation"},
+        "target": {"$ref": "#/$defs/id"}
+      }
     },
-    "decision": {
+    "relation": {"enum": ["prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
+    "edge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["candidate_id", "action", "evidence"],
+      "required": ["source", "relation", "target", "origin", "confidence", "evidence"],
       "properties": {
-        "candidate_id": {"type": "string", "minLength": 1},
-        "action": {"enum": ["reuse", "add", "update", "reject", "defer"]},
-        "target_id": {"type": ["string", "null"]},
+        "source": {"$ref": "#/$defs/id"},
+        "relation": {"$ref": "#/$defs/relation"},
+        "target": {"$ref": "#/$defs/id"},
+        "origin": {"$ref": "#/$defs/text"},
+        "confidence": {"$ref": "#/$defs/text"},
         "evidence": {"type": "string", "minLength": 1, "maxLength": 16384}
-      }
-    },
-    "alignmentDecision": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["candidate_id", "target_id", "predicate", "status", "justification", "evidence"],
-      "properties": {
-        "candidate_id": {"type": "string", "minLength": 1},
-        "target_id": {"type": "string", "minLength": 1},
-        "predicate": {"enum": ["exact-match", "close-match", "broad-match", "narrow-match", "related-match", "different-from"]},
-        "status": {"enum": ["reviewed", "rejected"]},
-        "justification": {"type": "string", "minLength": 1, "maxLength": 16384},
-        "evidence": {"type": "string", "minLength": 1, "maxLength": 16384},
-        "target_namespace": {"type": "string", "default": "personal"}
       }
     },
     "review": {

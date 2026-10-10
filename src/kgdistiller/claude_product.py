@@ -111,7 +111,7 @@ def load_claude_manifest(
         or installation.get("product_root") != "workflow-products/kgdistiller"
         or installation.get("state") != STATE_NAME
     ):
-        raise ClaudeProductError("workflow manifest installation namespace is invalid")
+        raise ClaudeProductError("workflow manifest installation scope is invalid")
     workflow_guide = _safe_relative(manifest.get("workflow_guide"), "workflow guide")
     if workflow_guide != PurePosixPath("docs", "product-workflows.md"):
         raise ClaudeProductError("workflow manifest guide path is invalid")

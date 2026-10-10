@@ -2,15 +2,14 @@
 
 ## Accepted knowledge and projections
 
-`.knowledge/` holds canonical accepted content and semantic state, including the
-node metadata used for retrieval. Registered native Markdown, Typst and LaTeX
-markers retain identity authority; accepted atomic entries retain their content
-contract. A sheet is a source-scoped navigation projection of this state. It
-neither defines a new authority nor independently stores full meanings.
-The source's registered `document_type` selects user-authored extraction rules;
-it is independent of source format and knowledge domain. Keep original `.md`,
-`.typ` and `.tex` evidence links. Entries and sheet projections can be Markdown
-without converting the source itself.
+`.knowledge/` holds canonical accepted content and semantic state. Each accepted
+entry `.knowledge/entries/<id>.md` is one knowledge node: it names its source
+path and line range and quotes those lines verbatim as Evidence. Accepted edges
+live in `.knowledge/edges.jsonl`. A sheet is a source-scoped navigation
+projection of this state. It neither defines a new authority nor independently
+stores full meanings. The source's registered `document_type` selects
+user-authored extraction rules; it is independent of file format and knowledge
+domain. Sources are any registered text documents and are never converted.
 
 This applies to mathematical notes, computer-science notes, papers, blogs and
 project documents. Preserve caller-selected locations and existing filenames;
@@ -25,7 +24,7 @@ an explicitly requested operation. Sheet coverage never certifies understanding.
 
 Each sheet identifies its source/version, requested and actual coverage, missing
 material, and the verified knowledge revision or receipt when available. Use
-precise native anchors, equation labels, figure/table numbers or PDF pages.
+precise line ranges, equation labels, figure/table numbers or PDF pages.
 
 ## Definition view
 
@@ -47,7 +46,7 @@ Generate the task bindings with the
 todos and arbitrary handwritten task rows do not authorize metadata changes.
 
 The user checks desired items in Obsidian and explicitly asks to harvest.
-That combination authorizes synchronization of those reviewed items. No native
+That combination authorizes ingesting those reviewed items. No native
 question UI or separate conversational selection is required. The deterministic
 harvest script reads the prepared selections and updates successful rows to real
 canonical metadata links. Preserve unchecked rows and unrelated annotations.
@@ -56,9 +55,9 @@ already committed. The script's receipt establishes commit state.
 Edits to a linked draft require a targeted re-review and regenerated prepared
 item before apply; changed review text must not silently import an old payload.
 
-Reuse existing explicit references where navigation needs them. Sheet row
-references are navigation handles, not canonical node IDs. Resolve canonical
-identity through the registered native source and query contract; do not infer
+Reuse existing explicit links where navigation needs them. Sheet rows are
+navigation handles, not canonical entry ids. Resolve canonical identity through
+`$query-kgdistiller` (`agent resolve`, `agent search`, `agent get`); do not infer
 it from headings, row order, names or keyword overlap. Verify that the linked
 accepted record exists and matches the reviewed identity/source binding; verify
 review links against their draft files instead. Use a relative

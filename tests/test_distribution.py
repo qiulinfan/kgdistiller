@@ -16,19 +16,11 @@ class DistributionInventoryTest(unittest.TestCase):
         self.assertIn("integrations/omp/compiled_tools.ts", sdist)
         self.assertIn("docs/omp-compiled-tools.md", sdist)
 
-    def test_installed_product_contains_the_linked_latex_instructions(self) -> None:
-        wheel, sdist = CHECKER["_expected_product_files"]()
-        self.assertIn("kgdistiller/product/docs/latex-sources.md", wheel)
-        self.assertIn("docs/latex-sources.md", sdist)
-        guide = (REPO_ROOT / "docs/product-workflows.md").read_text(encoding="utf-8")
-        self.assertIn("[LaTeX source contract](latex-sources.md)", guide)
-
     def test_distribution_inventory_ignores_python_bytecode_caches(self) -> None:
         product_cache = (
             REPO_ROOT
             / "skills"
-            / "distill-paper"
-            / "scripts"
+            / "capture-kgdistiller"
             / "__pycache__"
         )
         package_cache = REPO_ROOT / "src" / "kgdistiller" / "schemas" / "__pycache__"
@@ -55,11 +47,11 @@ class DistributionInventoryTest(unittest.TestCase):
                     pass
 
         wheel_path = PurePosixPath(
-            "kgdistiller/product/skills/distill-paper/scripts/"
+            "kgdistiller/product/skills/capture-kgdistiller/"
             "__pycache__/distribution-regression.cpython-313.pyc"
         ).as_posix()
         source_path = PurePosixPath(
-            "skills/distill-paper/scripts/__pycache__/"
+            "skills/capture-kgdistiller/__pycache__/"
             "distribution-regression.cpython-313.pyc"
         ).as_posix()
         package_path = PurePosixPath(

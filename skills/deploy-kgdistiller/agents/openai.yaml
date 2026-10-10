@@ -1,4 +1,4 @@
 interface:
   display_name: "Deploy kgdistiller"
-  short_description: "Set up and restore portable Git knowledge stores"
-  default_prompt: "Use $deploy-kgdistiller to set up or refresh this file-based portable knowledge store, verify it, and explain its query-ready and Git state."
+  short_description: "Set up, check and restore a file-based knowledge project"
+  default_prompt: "Use $deploy-kgdistiller to set up or refresh this knowledge project, run check and agent status, refresh the Obsidian graph feed, and explain its Git state."

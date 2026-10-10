@@ -24,13 +24,15 @@ coverage. Respect existing filenames; otherwise use `def-sheet.md` and
 `pending-sheet.md` beside the selected source or in its caller-selected folder.
 Do not assume a paper corpus, paper-reading vault or prior sheet layout.
 
-Run `kgdistiller --repo-root PROJECT scan --file RELATIVE_AUTHORITY` for each
-selected source. Read its `sources[].document_type` and matching `document_types`
-profile: `node_kinds` and `extraction_guidance` are user-registered extraction
-rules, independent of `.md`/`.typ`/`.tex`. Do not impose a fixed
-catalog of document classes. An unassigned source keeps the explicitly requested
-scope until the user registers a profile. Read the native source directly;
-source conversion is not a prerequisite for metadata or its link sheets.
+Run `kgdistiller --repo-root PROJECT scan --file RELATIVE_SOURCE` for each
+selected source. It returns the source's `document_type`, its `profile`
+(`node_kinds` and `extraction_guidance`, the user-registered extraction rules)
+and every line with its 1-based number. A source is any registered UTF-8 text
+document; kgdistiller never parses its syntax, so the profile, not the file
+format, guides extraction. Do not impose a fixed catalog of document classes.
+An unassigned source keeps the explicitly requested scope until the user
+registers a profile. Cite the source directly by path and line range; no
+conversion is involved.
 
 Partial sheets are normal. Use the explicitly selected concepts or passages as
 the scope; do not fill every missing row or initiate full-source distillation.
@@ -42,16 +44,15 @@ material; a partial reading cannot claim completeness. Preserve unselected rows.
 Full distillation is usually appropriate for the user's own notes or familiar
 articles. New-article reading normally uses local `$capture-kgdistiller` updates.
 
-Use `$query-kgdistiller` to resolve existing identities and accepted records.
-Preserve native Markdown, Typst and LaTeX markers and atomic-entry authority.
-A heading, theorem wrapper, sheet row or navigation reference does not establish
-identity. Reclassification or removal of existing marked identities needs an
-explicit review.
+Use `$query-kgdistiller` to resolve existing identities and accepted entries.
+Accepted entries in `.knowledge/entries/` are the knowledge nodes. A heading,
+theorem wrapper, sheet row or navigation link does not establish identity.
+Reclassification or removal of an existing entry needs an explicit review.
 
 ## Prepare metadata when needed
 
 If the selected source needs new or changed metadata, read
-[references/sync-contract.md](references/sync-contract.md). Prepare the complete
+[references/update-contract.md](references/update-contract.md). Prepare the complete
 source-grounded proposal in `.knowledge/build/reviews/`, including meanings,
 conditions, formal content, evidence, factual relations, applications and
 unresolved decisions. Keep it distinct from committed metadata. `build/` is
@@ -70,13 +71,14 @@ Apply the registered profile's node kinds and extraction guidance. For example,
 the shared model admits mathematical definitions, axioms and theorems, and
 computer-science algorithms and architectures as knowledge nodes. Propositions
 and remarks express relations; examples and experiments express typed
-applications. The bundled sync contract provides the preservation rules.
+applications. The bundled update contract provides the preservation rules.
 
-Use `$curate-kgdistiller-notes`, `$query-kgdistiller` and
-`$ingest-kgdistiller` within their current supported contracts. Compilation alone
-does not authorize live writes; apply only the concrete reviewed content and
-target already authorized by the user, or obtain confirmation for that scope.
-Do not bootstrap or migrate a knowledge project or edit raw graph files.
+Use `$curate-kgdistiller-notes`, `$query-kgdistiller`, `$capture-kgdistiller`
+and `$ingest-kgdistiller` within their current supported contracts. Compilation
+alone does not authorize live writes; apply only the concrete reviewed content
+and target already authorized by the user, or obtain confirmation for that scope.
+Do not bootstrap or migrate a knowledge project, and never hand-edit
+`.knowledge/edges.jsonl`.
 
 Atomic entries support simple direct pending prerequisites and understanding.
 Current `kgdistiller-agent-delta-v1` ingest does not support full n-ary/application records or rich
@@ -90,9 +92,9 @@ API.
 Accepted rows link only to records that exist. Verify each metadata link against
 the committed record and current source/identity binding. Review candidates may
 instead have explicitly labeled draft links and Markdown task checkboxes, using
-the `$harvest-paper` and its checkbox contract.
+the `$harvest-paper` Skill and its checkbox contract.
 The user can review those drafts in Obsidian, select
-items and explicitly request `$harvest-paper` for scripted synchronization. That
+items and explicitly request `$harvest-paper` for scripted ingestion. That
 request authorizes the selected reviewed content and target; no second chat
 selection is needed. A checkbox never establishes personal understanding. Keep
 sheet rows lightweight; do not copy full definitions or claims into a second
@@ -101,5 +103,5 @@ preserving unrelated user annotations and previously created source files.
 
 Return the sheet paths, coverage, linked records, review proposal/receipt paths
 when relevant, and unsupported or unapplied scope. A canonical update requires
-a committed ingest receipt and fresh target verification; a draft or successful
+a committed ingest receipt and a passing `check`; a draft or successful
 projection refresh is not evidence of a metadata commit.

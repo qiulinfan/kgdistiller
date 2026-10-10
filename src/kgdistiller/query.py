@@ -1,83 +1,49 @@
-"""Deterministic, read-only queries over one validated JSON graph generation.
+"""Deterministic, read-only queries over the reviewed entry store.
 
-The query layer owns no secondary index or model service. A :class:`GraphView`
-is a complete immutable-in-practice snapshot of one authority generation.
+A :class:`GraphView` is one complete in-memory view of the entries under
+``.knowledge/entries/`` and the accepted edges in ``.knowledge/edges.jsonl``.
 Callers may retain a view for a request, but should load a fresh view for each
-independent CLI or MCP operation.
+independent CLI or MCP operation. Staleness of an entry's Evidence never hides
+it from a query; ``kgdistiller check`` reports it instead.
 """
 
 from __future__ import annotations
 
 import copy
-import json
 import math
-import re
-import unicodedata
 from collections import Counter, defaultdict, deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .alignment import (
-    ALIGNMENT_REPORT_SCHEMA,
-    AlignmentError,
-    empty_alignment_set,
-    extract_scoped_aliases,
-    mapping_id,
-    node_fingerprint,
-    validate_alignment_set,
+from .contracts import canonical_json
+from .entries import (
+    LIST_SECTIONS,
+    EntryError,
+    entry_relative,
+    identity_key,
+    validate_id,
 )
-from .cli import (
-    DELTA_SCHEMA,
-    GRAPH_SCHEMA,
-    ID_RE,
-    MAX_NODE_ID_LENGTH,
-    MAX_NODE_LABEL_LENGTH,
-    KnowledgeError,
-    _entry_repo_root,
+from .knowledge_store import (
+    SEMANTIC_RELATIONS,
+    KnowledgeState,
     load_state,
-    make_agent_snapshot,
 )
-from .contracts import MAX_NAMESPACE_LENGTH, canonical_json, sha256_json
+from .sources import KnowledgeError
+from .tokens import tokenize
 
-SNAPSHOT_SCHEMA = "kgdistiller-agent-snapshot-v1"
 QUERY_STATUS_SCHEMA = "kgdistiller-query-status-v1"
-COMPARISON_SCHEMA = "kgdistiller-graph-comparison-v1"
-PROPOSAL_SCHEMA = "kgdistiller-agent-proposal-v1"
 CONTEXT_SCHEMA = "kgdistiller-context-bundle-v1"
-QUERY_CAPABILITY = "json-memory"
-DEFAULT_SEMANTIC_RELATIONS = {
-    "prerequisite-for",
-    "implies",
-    "generalizes",
-    "contrasts-with",
-    "derived-from",
-}
 MAX_LIMIT = 500
 MAX_BATCH_CONCEPTS = 512
 MAX_GRAPH_SEEDS = 128
 MAX_GRAPH_DEPTH = 8
 MAX_QUERY_LENGTH = 4096
 MAX_QUERY_TERMS = 128
-MAX_SNAPSHOT_NODES = 100_000
-MAX_SNAPSHOT_EDGES = 500_000
-MAX_SNAPSHOT_REFERENCES = 500_000
-MAX_SNAPSHOT_DIAGNOSTICS = 100_000
-MAX_REFERENCE_ID_LENGTH = 256
-MAX_AUTHORITY_LENGTH = 4096
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_NAMESPACE_RE = re.compile(
-    rf"(?=.{{1,{MAX_NAMESPACE_LENGTH}}}\Z)[a-z0-9][a-z0-9._-]*"
-    r"(?::[a-z0-9][a-z0-9._-]*)*"
-)
-_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 _BM25_K1 = 1.2
 _BM25_B = 0.75
-_SEARCH_ENTRY_FIELDS = (
-    "summary", "context", "role", "prerequisites", "common_confusions",
-    "open_questions", "sources",
-)
+_SEARCH_TEXT_FIELDS = ("kind", "summary", "context", "role", *LIST_SECTIONS, "evidence")
 
 
 class QueryError(ValueError):
@@ -86,497 +52,93 @@ class QueryError(ValueError):
 
 def normalize_text(value: str) -> str:
     """Apply the only cross-language normalization used by query operations."""
-    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    return identity_key(value)
 
 
 def _strings(value: Any) -> Iterable[str]:
     if isinstance(value, str):
         if value.strip():
             yield value
-    elif isinstance(value, Mapping):
-        for key in sorted(value):
-            yield from _strings(value[key])
     elif isinstance(value, list):
         for item in value:
             yield from _strings(item)
 
 
-def _manifest_payload(graph_dir: Path) -> dict[str, Any]:
-    path = graph_dir / "manifest.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise QueryError("authority graph manifest is unavailable or invalid") from error
-    if not isinstance(payload, dict):
-        raise QueryError("authority graph manifest must be a JSON object")
-    return payload
-
-
-def _generation_token(manifest: Mapping[str, Any]) -> str:
-    return sha256_json(dict(manifest))
-
-
-def validate_agent_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Validate the self-contained snapshot contract and all graph references."""
-    if not isinstance(snapshot, dict) or snapshot.get("schema") != SNAPSHOT_SCHEMA:
-        raise QueryError(f"expected {SNAPSHOT_SCHEMA} snapshot")
-    if set(snapshot) != {
-        "schema",
-        "namespace",
-        "graph",
-        "nodes",
-        "edges",
-        "references",
-        "diagnostics",
-        "snapshot_sha256",
-    }:
-        raise QueryError("snapshot has unsupported top-level fields")
-    namespace = snapshot.get("namespace")
-    if not isinstance(namespace, str) or not _NAMESPACE_RE.fullmatch(namespace):
-        raise QueryError(f"invalid snapshot namespace: {namespace!r}")
-    rows = {
-        "nodes": snapshot.get("nodes"),
-        "edges": snapshot.get("edges"),
-        "references": snapshot.get("references"),
-    }
-    if any(not isinstance(value, list) for value in rows.values()):
-        raise QueryError("snapshot graph records must be arrays")
-    if (
-        len(rows["nodes"]) > MAX_SNAPSHOT_NODES
-        or len(rows["edges"]) > MAX_SNAPSHOT_EDGES
-        or len(rows["references"]) > MAX_SNAPSHOT_REFERENCES
-    ):
-        raise QueryError("snapshot exceeds deterministic graph limits")
-    claimed = snapshot.get("snapshot_sha256")
-    digest_payload = dict(snapshot)
-    digest_payload.pop("snapshot_sha256", None)
-    try:
-        digest = sha256_json(digest_payload)
-    except (TypeError, ValueError) as error:
-        raise QueryError("snapshot is not finite canonical JSON") from error
-    if not isinstance(claimed, str) or not _SHA256_RE.fullmatch(claimed) or digest != claimed:
-        raise QueryError("snapshot digest does not match its content")
-    graph = snapshot.get("graph")
-    if not isinstance(graph, dict) or graph.get("schema") != GRAPH_SCHEMA:
-        raise QueryError(f"snapshot has no valid {GRAPH_SCHEMA} graph identity")
-    if set(graph) != {"schema", "sha256", "counts"}:
-        raise QueryError("snapshot graph identity has unsupported fields")
-    graph_sha = graph.get("sha256")
-    if not isinstance(graph_sha, str) or not _SHA256_RE.fullmatch(graph_sha):
-        raise QueryError("snapshot graph sha256 is invalid")
-    counts = {key: len(value) for key, value in rows.items()}
-    claimed_counts = graph.get("counts")
-    if (
-        not isinstance(claimed_counts, dict)
-        or set(claimed_counts) != set(counts)
-        or any(
-            isinstance(claimed_counts.get(key), bool)
-            or not isinstance(claimed_counts.get(key), int)
-            or claimed_counts.get(key) != value
-            for key, value in counts.items()
-        )
-    ):
-        raise QueryError("snapshot counts do not match its records")
-    node_ids: list[str] = []
-    for node in rows["nodes"]:
-        if not isinstance(node, dict):
-            raise QueryError("snapshot contains an invalid node")
-        node_id = node.get("id")
-        label = node.get("label")
-        if not isinstance(node_id, str) or not ID_RE.fullmatch(node_id):
-            raise QueryError(
-                "snapshot node ID must be lowercase ASCII kebab-case and at most "
-                f"{MAX_NODE_ID_LENGTH} characters"
-            )
-        if (
-            not isinstance(label, str)
-            or not label
-            or len(label) > MAX_NODE_LABEL_LENGTH
-        ):
-            raise QueryError(
-                "snapshot node label must be a non-empty string of at most "
-                f"{MAX_NODE_LABEL_LENGTH} characters"
-            )
-        if node.get("type") != "knowledge":
-            raise QueryError("snapshot node has an unsupported type")
-        for field in ("properties", "provenance", "entry"):
-            if field in node and not isinstance(node[field], dict):
-                raise QueryError(f"snapshot node {field} must be an object")
-        if "text" in node and not isinstance(node["text"], str):
-            raise QueryError("snapshot node text must be a string")
-        properties = node.get("properties") or {}
-        aliases = properties.get("aliases", [])
-        if not isinstance(aliases, list) or any(
-            not isinstance(alias, str) for alias in aliases
-        ):
-            raise QueryError("snapshot node aliases must be an array of strings")
-        if "curation_status" in properties and properties["curation_status"] not in {
-            "current",
-            "pending",
-            "needs-review",
-        }:
-            raise QueryError("snapshot node curation status is invalid")
-        if "source_status" in properties and properties["source_status"] not in {
-            "active",
-            "orphaned",
-        }:
-            raise QueryError("snapshot node source status is invalid")
-        provenance = node.get("provenance") or {}
-        if "authority" in provenance and (
-            not isinstance(provenance["authority"], str)
-            or not provenance["authority"]
-            or len(provenance["authority"]) > MAX_AUTHORITY_LENGTH
-        ):
-            raise QueryError("snapshot node authority is invalid")
-        if "line" in provenance and (
-            isinstance(provenance["line"], bool)
-            or not isinstance(provenance["line"], int)
-            or provenance["line"] < 1
-        ):
-            raise QueryError("snapshot node source line is invalid")
-        if "page" in provenance and (
-            isinstance(provenance["page"], bool)
-            or not isinstance(provenance["page"], int)
-            or provenance["page"] < 1
-        ):
-            raise QueryError("snapshot node source page is invalid")
-        for field in ("section", "equation"):
-            if field in provenance and (
-                not isinstance(provenance[field], str)
-                or not provenance[field].strip()
-            ):
-                raise QueryError("snapshot node source location is invalid")
-        if "active" in provenance and not isinstance(provenance["active"], bool):
-            raise QueryError("snapshot node provenance.active must be boolean")
-        if (
-            not isinstance(provenance.get("authority"), str)
-            or not provenance["authority"]
-            or not any(
-                provenance.get(field) not in (None, "")
-                for field in ("line", "page", "section", "equation")
-            )
-        ):
-            raise QueryError("snapshot source-backed node has no bounded provenance")
-        node_ids.append(node_id)
-    if len(node_ids) != len(set(node_ids)):
-        raise QueryError("snapshot contains duplicate node IDs")
-    known = set(node_ids)
-    edge_keys: set[tuple[str, str, str]] = set()
-    for edge in rows["edges"]:
-        if not isinstance(edge, dict):
-            raise QueryError("snapshot contains an invalid edge")
-        source = edge.get("source")
-        relation = edge.get("relation")
-        target = edge.get("target")
-        if (
-            not isinstance(source, str)
-            or not ID_RE.fullmatch(source)
-            or not isinstance(target, str)
-            or not ID_RE.fullmatch(target)
-            or not isinstance(relation, str)
-            or relation not in DEFAULT_SEMANTIC_RELATIONS
-        ):
-            raise QueryError("snapshot contains an invalid edge")
-        key = (source, relation, target)
-        if key[0] not in known or key[2] not in known:
-            raise QueryError("snapshot contains a dangling edge")
-        if key in edge_keys:
-            raise QueryError("snapshot contains an invalid or duplicate edge")
-        if (
-            not isinstance(edge.get("evidence"), str)
-            or not edge["evidence"].strip()
-        ):
-            raise QueryError("snapshot semantic edge has no evidence")
-        if "evidence" in edge and not isinstance(edge["evidence"], str):
-            raise QueryError("snapshot edge evidence must be a string")
-        edge_keys.add(key)
-    reference_ids: set[str] = set()
-    for reference in rows["references"]:
-        if not isinstance(reference, dict):
-            raise QueryError("snapshot contains an invalid reference")
-        reference_id = reference.get("id")
-        target = reference.get("target")
-        authority = reference.get("authority")
-        if (
-            not isinstance(reference_id, str)
-            or not reference_id
-            or len(reference_id) > MAX_REFERENCE_ID_LENGTH
-            or reference_id in reference_ids
-        ):
-            raise QueryError("snapshot contains an invalid or duplicate reference ID")
-        if not isinstance(target, str) or not ID_RE.fullmatch(target) or target not in known:
-            raise QueryError("snapshot contains a dangling reference")
-        if (
-            not isinstance(authority, str)
-            or not authority
-            or len(authority) > MAX_AUTHORITY_LENGTH
-        ):
-            raise QueryError("snapshot reference authority is invalid")
-        for field in ("line", "page"):
-            if field in reference and (
-                isinstance(reference[field], bool)
-                or not isinstance(reference[field], int)
-                or reference[field] < 1
-            ):
-                raise QueryError("snapshot reference source location is invalid")
-        for field in ("section", "equation"):
-            if field in reference and (
-                not isinstance(reference[field], str) or not reference[field].strip()
-            ):
-                raise QueryError("snapshot reference source location is invalid")
-        if not any(
-            reference.get(field) not in (None, "")
-            for field in ("line", "page", "section", "equation")
-        ):
-            raise QueryError("snapshot reference has no bounded source location")
-        reference_ids.add(reference_id)
-    diagnostics = snapshot.get("diagnostics")
-    if not isinstance(diagnostics, dict) or set(diagnostics) != {"errors", "warnings"}:
-        raise QueryError("snapshot diagnostics are invalid")
-    if any(not isinstance(diagnostics[key], list) for key in ("errors", "warnings")):
-        raise QueryError("snapshot diagnostics are invalid")
-    if any(
-        len(diagnostics[key]) > MAX_SNAPSHOT_DIAGNOSTICS
-        for key in ("errors", "warnings")
-    ):
-        raise QueryError("snapshot diagnostics exceed deterministic limits")
-    for severity in ("errors", "warnings"):
-        for item in diagnostics[severity]:
-            if not isinstance(item, dict) or set(item) - {
-                "code",
-                "message",
-                "source",
-                "node",
-            }:
-                raise QueryError("snapshot diagnostics are invalid")
-            if (
-                not isinstance(item.get("code"), str)
-                or not item["code"]
-                or len(item["code"]) > 256
-                or not isinstance(item.get("message"), str)
-                or not item["message"]
-            ):
-                raise QueryError("snapshot diagnostics are invalid")
-            if "source" in item and (
-                not isinstance(item["source"], str)
-                or not item["source"]
-                or len(item["source"]) > MAX_AUTHORITY_LENGTH
-            ):
-                raise QueryError("snapshot diagnostics are invalid")
-            if "node" in item and (
-                not isinstance(item["node"], str) or not ID_RE.fullmatch(item["node"])
-            ):
-                raise QueryError("snapshot diagnostics are invalid")
-    if diagnostics["errors"]:
-        raise QueryError("snapshot diagnostics contain authority errors")
-    return {
-        "schema": SNAPSHOT_SCHEMA,
-        "namespace": namespace,
-        "counts": counts,
-        "snapshot_sha256": claimed,
-        "graph_sha256": graph_sha,
-    }
-
-
 @dataclass(frozen=True)
 class GraphView:
-    """One validated, fully loaded authority graph generation."""
+    """One fully loaded entry store: nodes are entry records, edges are accepted relations."""
 
-    graph_dir: Path
-    snapshot: dict[str, Any]
-    alignments: dict[str, Any]
-    generation: str
+    repo_root: Path
     nodes: dict[str, dict[str, Any]]
     edges: tuple[dict[str, Any], ...]
-    references: tuple[dict[str, Any], ...]
     outgoing: dict[str, tuple[dict[str, Any], ...]]
     incoming: dict[str, tuple[dict[str, Any], ...]]
-    backlinks: dict[str, tuple[dict[str, Any], ...]]
     labels: dict[str, tuple[str, ...]]
     aliases: dict[str, tuple[str, ...]]
-    scoped_aliases: dict[str, tuple[dict[str, Any], ...]]
-    source_hashes: dict[str, str]
-    repo_root: Path | None = None
 
     @classmethod
-    def load(
-        cls,
-        graph_dir: Path,
-        alignments: Path | None = None,
-        *,
-        max_attempts: int = 3,
-        repo_root: Path | None = None,
-    ) -> GraphView:
-        graph_dir = Path(graph_dir)
-        if max_attempts < 1 or max_attempts > 10:
-            raise QueryError("max_attempts must be between 1 and 10")
-        last_error: Exception | None = None
-        for _ in range(max_attempts):
-            before = _manifest_payload(graph_dir)
-            token = _generation_token(before)
-            try:
-                state = load_state(graph_dir, repo_root=repo_root)
-                snapshot = make_agent_snapshot(state)
-                validate_agent_snapshot(snapshot)
-                alignment_payload = _load_alignments(alignments)
-            except (KnowledgeError, AlignmentError, OSError, ValueError) as error:
-                last_error = error
-                after = _manifest_payload(graph_dir)
-                if token != _generation_token(after):
-                    continue
-                raise QueryError(str(error)) from error
-            after = _manifest_payload(graph_dir)
-            if token != _generation_token(after):
-                last_error = QueryError("authority graph generation changed while loading")
-                continue
-            return cls._from_snapshot(
-                graph_dir,
-                snapshot,
-                alignment_payload,
-                generation=token,
-                source_hashes=dict(before.get("source_hashes") or {}),
-                repo_root=(
-                    _entry_repo_root(graph_dir, repo_root)
-                    if before.get("entry_authorities", {}).get("entries")
-                    else repo_root
-                ),
+    def load(cls, repo_root: Path, registry: Path) -> GraphView:
+        """Read the store, refusing while an ingest install is in progress or interrupted."""
+        from .ingest import IngestPaths, journal_path
+
+        repo_root = Path(repo_root).resolve()
+        if not Path(registry).is_file():
+            raise QueryError(f"no source registry at {registry}; run kgdistiller init first")
+        if journal_path(IngestPaths(repo_root=repo_root, registry=Path(registry))).exists():
+            raise QueryError(
+                "an ingest install is in progress or was interrupted; "
+                "rerun or recover it with kgdistiller ingest apply before querying"
             )
-        raise QueryError(
-            "authority graph generation changed while loading; retry the query"
-        ) from last_error
+        try:
+            state = load_state(repo_root)
+        except (KnowledgeError, OSError, UnicodeError) as error:
+            raise QueryError(f"{error}; run kgdistiller check to list every problem") from error
+        return cls.from_state(repo_root, state)
 
     @classmethod
-    def from_snapshot(
-        cls,
-        snapshot: dict[str, Any],
-        *,
-        alignments: dict[str, Any] | None = None,
-    ) -> GraphView:
-        """Construct a test/candidate view without filesystem access."""
-        validate_agent_snapshot(snapshot)
-        validated = validate_alignment_set(alignments or empty_alignment_set())
-        return cls._from_snapshot(
-            Path("."),
-            copy.deepcopy(snapshot),
-            validated,
-            generation=sha256_json(snapshot),
-            source_hashes={},
-        )
-
-    @classmethod
-    def _from_snapshot(
-        cls,
-        graph_dir: Path,
-        snapshot: dict[str, Any],
-        alignments: dict[str, Any],
-        *,
-        generation: str,
-        source_hashes: dict[str, str],
-        repo_root: Path | None = None,
-    ) -> GraphView:
+    def from_state(cls, repo_root: Path, state: KnowledgeState) -> GraphView:
         nodes = {
-            str(node["id"]): copy.deepcopy(node)
-            for node in sorted(snapshot["nodes"], key=lambda item: str(item["id"]))
+            entry_id: {**copy.deepcopy(record), "entry": entry_relative(entry_id).as_posix()}
+            for entry_id, record in sorted(state.entries.items())
         }
-        edges = tuple(
-            copy.deepcopy(edge)
-            for edge in sorted(
-                snapshot["edges"],
-                key=lambda item: (item["source"], item["relation"], item["target"]),
-            )
-        )
-        references = tuple(
-            copy.deepcopy(reference)
-            for reference in sorted(
-                snapshot["references"],
-                key=lambda item: (
-                    str(item.get("authority", "")),
-                    int(item.get("line", 0)),
-                    str(item.get("target", "")),
-                    str(item.get("id", "")),
-                ),
-            )
-        )
+        edges = tuple(copy.deepcopy(edge) for _, edge in sorted(state.edges.items()))
         outgoing: dict[str, list[dict[str, Any]]] = defaultdict(list)
         incoming: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        backlinks: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for edge in edges:
-            outgoing[str(edge["source"])].append(edge)
-            incoming[str(edge["target"])].append(edge)
-        for reference in references:
-            backlinks[str(reference["target"])].append(reference)
+            for endpoint in (edge["source"], edge["target"]):
+                if endpoint not in nodes:
+                    raise QueryError(
+                        f"edge {edge['source']} {edge['relation']} {edge['target']} "
+                        f"has no entry for {endpoint}; run kgdistiller check"
+                    )
+            outgoing[edge["source"]].append(edge)
+            incoming[edge["target"]].append(edge)
         labels: dict[str, list[str]] = defaultdict(list)
-        aliases_by_surface: dict[str, list[str]] = defaultdict(list)
+        aliases: dict[str, list[str]] = defaultdict(list)
         for node_id, node in nodes.items():
-            label = normalize_text(str(node.get("label", "")))
-            if label:
-                labels[label].append(node_id)
-            properties = node.get("properties")
-            properties = properties if isinstance(properties, dict) else {}
-            for alias in properties.get("aliases", []):
-                normalized = normalize_text(str(alias))
-                if normalized:
-                    aliases_by_surface[normalized].append(node_id)
-        try:
-            scoped = extract_scoped_aliases(snapshot)
-        except AlignmentError as error:
-            raise QueryError(str(error)) from error
-        scoped_by_surface: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for alias in scoped["aliases"]:
-            scoped_by_surface[str(alias["normalized_surface"])].append(alias)
+            labels[normalize_text(node["label"])].append(node_id)
+            for alias in node["aliases"]:
+                aliases[normalize_text(alias)].append(node_id)
         return cls(
-            graph_dir=graph_dir,
-            repo_root=Path(repo_root).resolve() if repo_root is not None else None,
-            snapshot=copy.deepcopy(snapshot),
-            alignments=copy.deepcopy(alignments),
-            generation=generation,
+            repo_root=Path(repo_root),
             nodes=nodes,
             edges=edges,
-            references=references,
             outgoing={key: tuple(value) for key, value in outgoing.items()},
             incoming={key: tuple(value) for key, value in incoming.items()},
-            backlinks={key: tuple(value) for key, value in backlinks.items()},
             labels={key: tuple(sorted(set(value))) for key, value in labels.items()},
-            aliases={key: tuple(sorted(set(value))) for key, value in aliases_by_surface.items()},
-            scoped_aliases={
-                key: tuple(sorted(value, key=lambda item: (item["node_id"], item["id"])))
-                for key, value in scoped_by_surface.items()
-            },
-            source_hashes=dict(sorted(source_hashes.items())),
+            aliases={key: tuple(sorted(set(value))) for key, value in aliases.items()},
         )
 
 
-def _load_alignments(path: Path | None) -> dict[str, Any]:
-    if path is None:
-        return empty_alignment_set()
+def load_graph_view(repo_root: Path, registry: Path) -> GraphView:
+    return GraphView.load(repo_root, registry)
+
+
+def _node_id(value: Any, label: str) -> str:
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return empty_alignment_set()
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise QueryError("alignment registry is unavailable or invalid") from error
-    try:
-        return validate_alignment_set(payload)
-    except AlignmentError as error:
-        raise QueryError(str(error)) from error
-
-
-def load_graph_view(
-    graph_dir: Path, alignments: Path | None = None, *, max_attempts: int = 3,
-    repo_root: Path | None = None,
-) -> GraphView:
-    return GraphView.load(graph_dir, alignments, max_attempts=max_attempts, repo_root=repo_root)
-
-
-def _view(source: GraphView | Path, alignments: Path | None = None) -> GraphView:
-    return source if isinstance(source, GraphView) else load_graph_view(source, alignments)
-
-
-def _namespace(view: GraphView, namespace: str) -> None:
-    if not _NAMESPACE_RE.fullmatch(namespace):
-        raise QueryError(f"invalid namespace: {namespace!r}")
-    if namespace != view.snapshot["namespace"]:
-        raise QueryError(f"namespace is not loaded: {namespace!r}")
+        return validate_id(value)
+    except EntryError as error:
+        raise QueryError(f"{label} must be an entry id: {error}") from error
 
 
 def _limit(value: int) -> int:
@@ -585,23 +147,9 @@ def _limit(value: int) -> int:
     return value
 
 
-def _allowed(node: Mapping[str, Any], *, include_stale: bool, include_orphaned: bool) -> bool:
-    properties = node.get("properties")
-    properties = properties if isinstance(properties, Mapping) else {}
-    provenance = node.get("provenance")
-    provenance = provenance if isinstance(provenance, Mapping) else {}
-    source_status = properties.get("source_status")
-    active = provenance.get("active") is not False
-    return (
-        (active or (include_orphaned and source_status == "orphaned"))
-        and (include_stale or properties.get("curation_status") != "needs-review")
-        and (include_orphaned or source_status != "orphaned")
-    )
-
-
 def _edge_policy(value: str) -> str:
-    if not isinstance(value, str) or value not in {"current", "high-confidence"}:
-        raise QueryError("edge_policy must be current or high-confidence")
+    if not isinstance(value, str) or value not in {"all", "high-confidence"}:
+        raise QueryError("edge_policy must be all or high-confidence")
     return value
 
 
@@ -614,54 +162,29 @@ def _finite_number(value: Any) -> bool:
         return False
 
 
-def _edge_allowed(
-    edge: Mapping[str, Any], *, include_stale: bool, edge_policy: str = "current"
-) -> bool:
-    if edge_policy == "high-confidence":
-        # Confidence is authored metadata, not proof of independent review.
-        evidence = edge.get("evidence")
-        return (
-            edge.get("curation_status") == "current"
-            and edge.get("confidence") == "high"
-            and isinstance(evidence, str)
-            and bool(evidence.strip())
-        )
-    return include_stale or edge.get("curation_status") != "needs-review"
+def _edge_allowed(edge: Mapping[str, Any], *, edge_policy: str = "all") -> bool:
+    if edge_policy == "all":
+        return True
+    # Confidence is authored metadata, not proof of independent review.
+    evidence = edge.get("evidence")
+    return edge.get("confidence") == "high" and isinstance(evidence, str) and bool(evidence.strip())
 
 
-def query_status(
-    source: GraphView | Path, *, alignments: Path | None = None
-) -> dict[str, Any]:
-    view = _view(source, alignments)
-    graph = view.snapshot["graph"]
+def query_status(view: GraphView) -> dict[str, Any]:
+    relations = Counter(edge["relation"] for edge in view.edges)
     return {
         "schema": QUERY_STATUS_SCHEMA,
-        "snapshot_schema": SNAPSHOT_SCHEMA,
-        "namespace": view.snapshot["namespace"],
-        "snapshot_sha256": view.snapshot["snapshot_sha256"],
-        "graph_schema": graph["schema"],
-        "graph_sha256": graph["sha256"],
-        "generation": view.generation,
-        "counts": copy.deepcopy(graph["counts"]),
-        "backend": QUERY_CAPABILITY,
-        "retrieval_lanes": ["identity", "lexical", "graph", "ppr"],
-        "capabilities": [QUERY_CAPABILITY, "read-only-query-v3"],
-        "alignment_schema": view.alignments["schema"],
-        "alignment_sha256": sha256_json(view.alignments),
-        "alignment_counts": {"mappings": len(view.alignments["mappings"])},
+        "counts": {"entries": len(view.nodes), "edges": len(view.edges)},
+        "relations": dict(sorted(relations.items())),
     }
 
 
 def resolve_concepts(
-    source: GraphView | Path,
+    view: GraphView,
     concepts: list[str],
     *,
-    namespace: str = "personal",
     match_limit: int = MAX_LIMIT,
-    alignments: Path | None = None,
 ) -> list[dict[str, Any]]:
-    view = _view(source, alignments)
-    _namespace(view, namespace)
     match_limit = _limit(match_limit)
     if not isinstance(concepts, list) or len(concepts) > MAX_BATCH_CONCEPTS:
         raise QueryError(f"concept batch exceeds {MAX_BATCH_CONCEPTS}")
@@ -694,7 +217,7 @@ def resolve_concepts(
             status = "ambiguous"
         else:
             status = "missing"
-        record: dict[str, Any] = {
+        results.append({
             "query": raw,
             "status": status,
             "match_kind": kind,
@@ -702,32 +225,12 @@ def resolve_concepts(
             "candidate_ids": [node["id"] for node in matches],
             "overflow": total > match_limit,
             "identity_authority": total > 0,
-        }
-        # Explicit document-scoped aliases are ranking evidence only.  They are
-        # surfaced without changing the missing/ambiguous identity decision.
-        scoped = view.scoped_aliases.get(normalized, ())
-        if scoped:
-            record["ranked_candidates"] = [
-                {
-                    "id": alias["node_id"],
-                    "method": "scoped-alias",
-                    "identity_authority": False,
-                    "evidence": copy.deepcopy(alias["evidence"]),
-                }
-                for alias in scoped[:match_limit]
-            ]
-        results.append(record)
+        })
     return results
 
 
-def _tokens(text: str) -> list[str]:
-    """Tokenize complete text; only callers handling queries impose a bound."""
-    normalized = unicodedata.normalize("NFKC", text).casefold()
-    return _WORD_RE.findall(normalized)
-
-
 def _distinct_search_text(values: Iterable[str]) -> str:
-    """Avoid indexing identical rendered and structured text twice."""
+    """Avoid indexing identical text twice."""
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
@@ -739,63 +242,29 @@ def _distinct_search_text(values: Iterable[str]) -> str:
 
 
 def _node_search_fields(node: Mapping[str, Any]) -> tuple[str, str, str]:
-    """Project explicit retrieval text without granting it identity authority."""
-    properties = node.get("properties")
-    properties = properties if isinstance(properties, Mapping) else {}
-    display_name = properties.get("display_name")
-    names = (
-        display_name if isinstance(display_name, str) and display_name.strip()
-        else str(node.get("label", ""))
-    )
-    aliases = _distinct_search_text(
-        [*_strings(properties.get("aliases", [])),
-         *_strings(properties.get("paper_local_aliases", []))]
-    )
-    entry = node.get("entry")
-    entry = entry if isinstance(entry, Mapping) else {}
-    # Group conditions as entry.context commonly renders the same list.
-    conditions = "\n".join(_strings(properties.get("conditions", [])))
+    """Project an entry's label, aliases and body text for lexical and model ranking."""
+    aliases = _distinct_search_text(_strings(node.get("aliases", [])))
     body = _distinct_search_text(
-        [str(node.get("text", "")), conditions,
-         *(text for field in _SEARCH_ENTRY_FIELDS for text in _strings(entry.get(field))),
-         *_strings(properties.get("paper_key"))]
+        text for field in _SEARCH_TEXT_FIELDS for text in _strings(node.get(field))
     )
-    return names, aliases, body
+    return str(node.get("label", "")), aliases, body
 
 
-def search(
-    source: GraphView | Path,
-    query: str,
-    *,
-    namespace: str = "personal",
-    limit: int = 20,
-    include_stale: bool = False,
-    include_orphaned: bool = False,
-    alignments: Path | None = None,
-) -> list[dict[str, Any]]:
-    view = _view(source, alignments)
-    _namespace(view, namespace)
+def search(view: GraphView, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
     limit = _limit(limit)
     if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_LENGTH:
         raise QueryError(f"query must contain 1 to {MAX_QUERY_LENGTH} characters")
-    terms = set(_tokens(query)[:MAX_QUERY_TERMS])
+    terms = set(tokenize(query)[:MAX_QUERY_TERMS])
     if not terms:
         return []
     ranked: list[tuple[float, str, list[dict[str, Any]]]] = []
-    scoped_by_node: dict[str, list[str]] = defaultdict(list)
-    for surface, records in view.scoped_aliases.items():
-        for record in records:
-            scoped_by_node[str(record["node_id"])].append(surface)
     documents: dict[str, Counter[str]] = {}
     for node_id, node in view.nodes.items():
-        if not _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned):
-            continue
         label, aliases, body = _node_search_fields(node)
-        aliases = _distinct_search_text([aliases, *scoped_by_node.get(node_id, ())])
         # Fixed field repetition gives names and aliases more weight while
         # retaining standard BM25 saturation and length normalization.
         documents[node_id] = Counter(
-            _tokens(label) * 3 + _tokens(aliases) * 2 + _tokens(body)
+            tokenize(label) * 3 + tokenize(aliases) * 2 + tokenize(body)
         )
     if not documents:
         return []
@@ -833,25 +302,14 @@ def search(
     ]
 
 
-def get(
-    source: GraphView | Path,
-    node_id: str,
-    *,
-    namespace: str = "personal",
-    alignments: Path | None = None,
-) -> dict[str, Any]:
-    view = _view(source, alignments)
-    _namespace(view, namespace)
-    if not isinstance(node_id, str) or not ID_RE.fullmatch(node_id):
-        raise QueryError("concept ID must be a bounded lowercase ASCII kebab-case string")
+def get(view: GraphView, node_id: str) -> dict[str, Any]:
+    node_id = _node_id(node_id, "concept ID")
     if node_id not in view.nodes:
-        raise QueryError(f"unknown concept: {namespace}:{node_id}")
+        raise QueryError(f"unknown concept: {node_id}")
     return {
-        "namespace": namespace,
         "node": copy.deepcopy(view.nodes[node_id]),
         "incoming": copy.deepcopy(list(view.incoming.get(node_id, ()))),
         "outgoing": copy.deepcopy(list(view.outgoing.get(node_id, ()))),
-        "backlinks": copy.deepcopy(list(view.backlinks.get(node_id, ()))),
     }
 
 
@@ -863,21 +321,15 @@ def _direction(value: str) -> str:
 
 
 def expand(
-    source: GraphView | Path,
+    view: GraphView,
     seed_ids: list[str],
     *,
-    namespace: str = "personal",
     direction: str = "both",
     edge_types: list[str] | None = None,
     max_depth: int = 1,
     limit: int = 50,
-    include_stale: bool = False,
-    include_orphaned: bool = False,
-    edge_policy: str = "current",
-    alignments: Path | None = None,
+    edge_policy: str = "all",
 ) -> dict[str, Any]:
-    view = _view(source, alignments)
-    _namespace(view, namespace)
     normalized_direction = _direction(direction)
     edge_policy = _edge_policy(edge_policy)
     limit = _limit(limit)
@@ -885,20 +337,18 @@ def expand(
         raise QueryError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH}")
     if not isinstance(seed_ids, list) or not 1 <= len(seed_ids) <= MAX_GRAPH_SEEDS:
         raise QueryError(f"graph seed batch must contain 1 to {MAX_GRAPH_SEEDS} IDs")
-    if any(not isinstance(seed, str) or not ID_RE.fullmatch(seed) for seed in seed_ids):
-        raise QueryError("graph seed IDs must be bounded lowercase ASCII kebab-case strings")
+    for seed in seed_ids:
+        _node_id(seed, "graph seed ID")
     seeds = list(dict.fromkeys(seed_ids))
     if any(seed not in view.nodes for seed in seeds):
         unknown = next(seed for seed in seeds if seed not in view.nodes)
-        raise QueryError(f"unknown graph seed: {namespace}:{unknown}")
+        raise QueryError(f"unknown graph seed: {unknown}")
     if len(seeds) > limit:
         raise QueryError("graph seed batch exceeds the result limit")
-    relations = set(edge_types) if edge_types is not None else set(DEFAULT_SEMANTIC_RELATIONS)
+    relations = set(edge_types) if edge_types is not None else set(SEMANTIC_RELATIONS)
     visited: dict[str, tuple[int, list[dict[str, Any]], str]] = {}
     queue: deque[tuple[str, int, list[dict[str, Any]], str]] = deque()
     for seed in seeds:
-        if not _allowed(view.nodes[seed], include_stale=include_stale, include_orphaned=include_orphaned):
-            raise QueryError(f"graph seed is excluded by filters: {namespace}:{seed}")
         visited[seed] = (0, [], seed)
         queue.append((seed, 0, [], seed))
     traversed: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -919,10 +369,7 @@ def expand(
             candidates.extend((edge, str(edge["target"]), "outgoing") for edge in view.outgoing.get(current, ()) if edge.get("relation") == "contrasts-with")
         candidates.sort(key=lambda item: (str(item[0]["relation"]), item[1], item[2]))
         for edge, neighbor, edge_direction in candidates:
-            if edge.get("relation") not in relations or not _edge_allowed(edge, include_stale=include_stale, edge_policy=edge_policy):
-                continue
-            node = view.nodes[neighbor]
-            if not _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned):
+            if edge.get("relation") not in relations or not _edge_allowed(edge, edge_policy=edge_policy):
                 continue
             key = (str(edge["source"]), str(edge["relation"]), str(edge["target"]))
             traversed[key] = edge
@@ -946,15 +393,12 @@ def expand(
     ]
     rows.sort(key=lambda item: (item["depth"], normalize_text(str(item["node"].get("label", ""))), item["node"]["id"]))
     return {
-        "namespace": namespace,
         "seeds": seeds,
         "policy": {
             "direction": direction,
             "edge_types": sorted(relations),
             "max_depth": max_depth,
             "limit": limit,
-            "include_stale": include_stale,
-            "include_orphaned": include_orphaned,
             "edge_policy": edge_policy,
             "confidence_gate": "declared-high-with-evidence" if edge_policy == "high-confidence" else "none",
         },
@@ -965,21 +409,17 @@ def expand(
 
 
 def personalized_pagerank(
-    source: GraphView | Path,
+    view: GraphView,
     seeds: Mapping[str, float],
     *,
-    namespace: str = "personal",
     edge_types: list[str] | None = None,
     direction: str = "out",
-    include_stale: bool = False,
-    include_orphaned: bool = False,
-    edge_policy: str = "current",
+    edge_policy: str = "all",
     max_depth: int | None = None,
     damping: float = 0.85,
     max_iterations: int = 256,
     tolerance: float = 1e-10,
     limit: int = 50,
-    alignments: Path | None = None,
 ) -> dict[str, Any]:
     """Rank the policy-valid seed-reachable induced graph.
 
@@ -988,15 +428,13 @@ def personalized_pagerank(
     and rounding). For the stochastic transition with restart, its L1 distance
     from the stationary vector is bounded by residual / (1 - damping).
     """
-    view = _view(source, alignments)
-    _namespace(view, namespace)
     normalized_direction = _direction(direction)
     edge_policy = _edge_policy(edge_policy)
     limit = _limit(limit)
     if not isinstance(seeds, Mapping) or not 1 <= len(seeds) <= MAX_GRAPH_SEEDS:
         raise QueryError(f"PPR seed batch must contain 1 to {MAX_GRAPH_SEEDS} IDs")
-    if any(not isinstance(node_id, str) or not ID_RE.fullmatch(node_id) for node_id in seeds):
-        raise QueryError("PPR seed IDs must be bounded lowercase ASCII kebab-case strings")
+    for node_id in seeds:
+        _node_id(node_id, "PPR seed ID")
     if (
         not _finite_number(damping)
         or not 0 < damping < 1
@@ -1013,12 +451,8 @@ def personalized_pagerank(
         or not 0 <= max_depth <= MAX_GRAPH_DEPTH
     ):
         raise QueryError(f"max_depth must be between 0 and {MAX_GRAPH_DEPTH} or None")
-    relations = set(edge_types) if edge_types is not None else set(DEFAULT_SEMANTIC_RELATIONS)
-    valid_nodes = {
-        node_id: node
-        for node_id, node in view.nodes.items()
-        if _allowed(node, include_stale=include_stale, include_orphaned=include_orphaned)
-    }
+    relations = set(edge_types) if edge_types is not None else set(SEMANTIC_RELATIONS)
+    valid_nodes = view.nodes
     positive: dict[str, float] = {}
     for node_id, raw_weight in seeds.items():
         if isinstance(raw_weight, bool) or not isinstance(raw_weight, (int, float)):
@@ -1047,7 +481,7 @@ def personalized_pagerank(
             source_id not in valid_nodes
             or target_id not in valid_nodes
             or relation not in relations
-            or not _edge_allowed(edge, include_stale=include_stale, edge_policy=edge_policy)
+            or not _edge_allowed(edge, edge_policy=edge_policy)
         ):
             continue
         pairs: set[tuple[str, str]] = set()
@@ -1125,7 +559,6 @@ def personalized_pagerank(
         key=lambda item: (-item[1], item[0]),
     )[:limit]
     return {
-        "namespace": namespace,
         "seeds": dict(sorted(positive.items())),
         "policy": {
             "damping": damping,
@@ -1176,42 +609,21 @@ def finalize_token_estimate(value: dict[str, Any]) -> int:
 
 
 def context(
-    source: GraphView | Path,
+    view: GraphView,
     node_ids: list[str],
     *,
-    namespace: str = "personal",
     edge_types: list[str] | None = None,
-    include_stale: bool = False,
-    include_orphaned: bool = False,
     token_budget: int = 6000,
-    alignments: Path | None = None,
 ) -> dict[str, Any]:
-    """Pack selected nodes and their internal evidence under a strict budget."""
-    view = _view(source, alignments)
-    _namespace(view, namespace)
+    """Pack selected entries and the edges between them under a strict budget."""
     if isinstance(token_budget, bool) or not isinstance(token_budget, int) or token_budget < 1:
         raise QueryError("token_budget must be positive")
     allowed_relations = None if edge_types is None else set(edge_types)
-    selected = list(
-        dict.fromkeys(
-            node_id
-            for node_id in node_ids
-            if node_id in view.nodes
-            and _allowed(
-                view.nodes[node_id],
-                include_stale=include_stale,
-                include_orphaned=include_orphaned,
-            )
-        )
-    )
+    selected = list(dict.fromkeys(node_id for node_id in node_ids if node_id in view.nodes))
     bundle: dict[str, Any] = {
         "schema": CONTEXT_SCHEMA,
-        "namespace": namespace,
-        "snapshot_sha256": view.snapshot["snapshot_sha256"],
-        "graph_sha256": view.snapshot["graph"]["sha256"],
         "nodes": [],
         "edges": [],
-        "references": [],
         "omissions": [],
         "budget": {"token_budget": token_budget, "estimated_tokens": 0},
     }
@@ -1223,557 +635,22 @@ def context(
         else:
             bundle["omissions"].append({"kind": "node", "id": node_id, "reason": "token-budget"})
     included = {str(node["id"]) for node in bundle["nodes"]}
-    evidence: list[tuple[str, dict[str, Any]]] = []
-    evidence.extend(
-        ("edge", edge)
-        for edge in view.edges
-        if edge["source"] in included
-        and edge["target"] in included
-        and (allowed_relations is None or edge.get("relation") in allowed_relations)
-        and _edge_allowed(edge, include_stale=include_stale)
-    )
-    evidence.extend(("reference", ref) for ref in view.references if ref["target"] in included)
-    for kind, record in evidence:
+    for edge in view.edges:
+        if (
+            edge["source"] not in included
+            or edge["target"] not in included
+            or (allowed_relations is not None and edge["relation"] not in allowed_relations)
+        ):
+            continue
         candidate = copy.deepcopy(bundle)
-        candidate[f"{kind}s"].append(copy.deepcopy(record))
+        candidate["edges"].append(copy.deepcopy(edge))
         if finalize_token_estimate(candidate) <= token_budget:
             bundle = candidate
         else:
-            identifier = str(record.get("id") or f"{record.get('source')}:{record.get('relation')}:{record.get('target')}")
-            bundle["omissions"].append({"kind": kind, "id": identifier, "reason": "token-budget"})
+            identifier = f"{edge['source']}:{edge['relation']}:{edge['target']}"
+            bundle["omissions"].append({"kind": "edge", "id": identifier, "reason": "token-budget"})
     while bundle["omissions"] and finalize_token_estimate(bundle) > token_budget:
         bundle["omissions"].pop()
     if finalize_token_estimate(bundle) > token_budget:
         raise QueryError("budget-too-small after context packing")
     return bundle
-
-
-def _mapping_freshness(
-    mapping: Mapping[str, Any],
-    candidate: Mapping[str, Any],
-    target: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    subject = mapping.get("subject") or {}
-    object_ = mapping.get("object") or {}
-    subject_expected = str(subject.get("node_sha256", ""))
-    object_expected = str(object_.get("node_sha256", ""))
-    subject_actual = node_fingerprint(dict(candidate))
-    object_actual = node_fingerprint(dict(target)) if target is not None else ""
-    return {
-        "subject_fresh": not subject_expected or subject_expected == subject_actual,
-        "object_fresh": target is not None
-        and (not object_expected or object_expected == object_actual),
-        "subject_expected": subject_expected,
-        "subject_actual": subject_actual,
-        "object_expected": object_expected,
-        "object_actual": object_actual,
-    }
-
-
-def _candidate_registry_decisions(
-    view: GraphView,
-    candidate: Mapping[str, Any],
-    candidate_namespace: str,
-) -> tuple[str | None, set[str], list[dict[str, Any]]]:
-    """Return fresh reviewed identity/negative decisions for one candidate."""
-    reviewed_exact_target: str | None = None
-    rejected_target_ids: set[str] = set()
-    evidence: list[dict[str, Any]] = []
-    for mapping in view.alignments["mappings"]:
-        subject = mapping["subject"]
-        object_ = mapping["object"]
-        if (
-            subject["namespace"] != candidate_namespace
-            or subject["node_id"] != candidate.get("id")
-            or object_["namespace"] != view.snapshot["namespace"]
-        ):
-            continue
-        target_id = str(object_["node_id"])
-        freshness = _mapping_freshness(
-            mapping, candidate, view.nodes.get(target_id)
-        )
-        decision_fresh = bool(
-            freshness["subject_fresh"] and freshness["object_fresh"]
-        )
-        identity_authority = bool(
-            decision_fresh
-            and mapping["status"] == "reviewed"
-            and mapping["predicate"] == "exact-match"
-        )
-        record = {
-            "kind": "alignment-registry",
-            "mapping_id": mapping["id"],
-            "predicate": mapping["predicate"],
-            "status": mapping["status"],
-            "target_id": target_id,
-            "freshness": freshness,
-            "decision_fresh": decision_fresh,
-            "identity_authority": identity_authority,
-            "mapping_justification": copy.deepcopy(
-                mapping.get("mapping_justification") or []
-            ),
-            "evidence": copy.deepcopy(mapping.get("evidence") or []),
-        }
-        evidence.append(record)
-        if identity_authority:
-            reviewed_exact_target = target_id
-        if decision_fresh and (
-            (
-                mapping["status"] == "reviewed"
-                and mapping["predicate"] == "different-from"
-            )
-            or (
-                mapping["status"] == "rejected"
-                and mapping["predicate"] == "exact-match"
-            )
-        ):
-            rejected_target_ids.add(target_id)
-    evidence.sort(key=lambda item: str(item["mapping_id"]))
-    return reviewed_exact_target, rejected_target_ids, evidence
-
-
-def _identity_resolution_evidence(
-    *,
-    probe: str,
-    probe_source: str,
-    status: str,
-    candidate_ids: list[str],
-    rejected_target_ids: set[str],
-) -> dict[str, Any]:
-    rejected = sorted(set(candidate_ids).intersection(rejected_target_ids))
-    return {
-        "kind": "identity-resolution",
-        "probe": probe,
-        "probe_source": probe_source,
-        "status": status,
-        "candidate_ids": candidate_ids,
-        "rejected_target_ids": rejected,
-        "identity_authority": bool(set(candidate_ids) - set(rejected)),
-    }
-
-
-def _candidate_identity(
-    view: GraphView,
-    candidate: Mapping[str, Any],
-    reviewed_exact_target: str | None,
-    rejected_target_ids: set[str],
-) -> tuple[str, list[str], list[dict[str, Any]]]:
-    """Resolve identity from reviewed mappings or the bounded authority probes."""
-    if reviewed_exact_target is not None:
-        return (
-            "matched",
-            [reviewed_exact_target],
-            [
-                {
-                    "kind": "reviewed-exact-alignment",
-                    "target_id": reviewed_exact_target,
-                    "identity_authority": True,
-                }
-            ],
-        )
-
-    properties = candidate.get("properties")
-    properties = properties if isinstance(properties, Mapping) else {}
-    evidence: list[dict[str, Any]] = []
-
-    # Explicit target IDs and machine IDs are exact ID probes.  They never use
-    # label or alias fallback, and a fresh reviewed negative overrides them.
-    for probe, source in (
-        (str(properties.get("target_id", "")).strip(), "explicit-target-id"),
-        (str(candidate.get("id", "")).strip(), "id"),
-    ):
-        if not probe:
-            continue
-        raw_ids = [probe] if probe in view.nodes else []
-        evidence.append(
-            _identity_resolution_evidence(
-                probe=probe,
-                probe_source=source,
-                status="exact" if raw_ids else "missing",
-                candidate_ids=raw_ids,
-                rejected_target_ids=rejected_target_ids,
-            )
-        )
-        accepted_ids = [
-            target_id
-            for target_id in raw_ids
-            if target_id not in rejected_target_ids
-        ]
-        if accepted_ids:
-            return "matched", accepted_ids, evidence
-
-    # Only the candidate's canonical label participates in name identity.
-    # Candidate-declared aliases are retrieval evidence below, never identity
-    # authority.  Target aliases are authored global aliases in the target
-    # graph, so they remain valid canonical-label resolutions.
-    label = str(candidate.get("label", "")).strip()
-    if label:
-        normalized = normalize_text(label)
-        if normalized in view.labels:
-            raw_ids = list(view.labels[normalized])
-            match_kind = "label"
-        elif normalized in view.aliases:
-            raw_ids = list(view.aliases[normalized])
-            match_kind = "alias"
-        else:
-            raw_ids = []
-            match_kind = None
-        status = (
-            "exact"
-            if len(raw_ids) == 1 and match_kind == "label"
-            else "alias"
-            if len(raw_ids) == 1
-            else "ambiguous"
-            if raw_ids
-            else "missing"
-        )
-        evidence.append(
-            _identity_resolution_evidence(
-                probe=label,
-                probe_source="label",
-                status=status,
-                candidate_ids=raw_ids,
-                rejected_target_ids=rejected_target_ids,
-            )
-        )
-        accepted_ids = sorted(set(raw_ids) - rejected_target_ids)
-        if len(accepted_ids) == 1:
-            return "matched", accepted_ids, evidence
-        if len(accepted_ids) > 1:
-            return "ambiguous", accepted_ids, evidence
-    return "unmatched", [], evidence
-
-
-def align(
-    source: GraphView | Path,
-    candidate_snapshot: dict[str, Any],
-    *,
-    target_namespace: str = "personal",
-    limit_per_node: int = 10,
-    alignments: Path | None = None,
-) -> dict[str, Any]:
-    view = _view(source, alignments)
-    _namespace(view, target_namespace)
-    validation = validate_agent_snapshot(candidate_snapshot)
-    if validation["namespace"] == target_namespace:
-        raise QueryError("candidate and target namespaces must be distinct")
-    limit_per_node = _limit(limit_per_node)
-    scoped_aliases = extract_scoped_aliases(candidate_snapshot)
-    scoped_by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for alias in scoped_aliases["aliases"]:
-        scoped_by_node[str(alias["node_id"])].append(alias)
-    rows: list[dict[str, Any]] = []
-    for candidate in sorted(candidate_snapshot["nodes"], key=lambda item: str(item["id"])):
-        reviewed_exact_target, rejected_ids, registry_evidence = (
-            _candidate_registry_decisions(
-                view, candidate, validation["namespace"]
-            )
-        )
-        state, ids, evidence = _candidate_identity(
-            view, candidate, reviewed_exact_target, rejected_ids
-        )
-        ranked: dict[str, dict[str, Any]] = {}
-        for node_id in ids:
-            ranked[node_id] = {
-                "target": {
-                    "namespace": target_namespace,
-                    "id": node_id,
-                    "label": view.nodes[node_id].get("label", ""),
-                    "type": view.nodes[node_id].get("type", ""),
-                },
-                "score": 1000.0,
-                "identity_authority": state == "matched",
-                "signals": copy.deepcopy([*evidence, *registry_evidence]),
-            }
-        properties = candidate.get("properties")
-        properties = properties if isinstance(properties, Mapping) else {}
-        retrieval_probes = [
-            (str(candidate.get("label", "")), "label"),
-            *[
-                (str(alias), "candidate-alias")
-                for alias in properties.get("aliases", [])
-            ],
-        ]
-        seen_retrieval_probes: set[str] = set()
-        for probe, probe_source in retrieval_probes:
-            normalized_probe = normalize_text(probe)
-            if not normalized_probe or normalized_probe in seen_retrieval_probes:
-                continue
-            seen_retrieval_probes.add(normalized_probe)
-            for result in search(
-                view,
-                probe,
-                namespace=target_namespace,
-                limit=min(MAX_LIMIT, max(limit_per_node * 2, 10)),
-            ):
-                node_id = str(result["node"]["id"])
-                if node_id in rejected_ids:
-                    continue
-                signal = {
-                    "kind": "lexical-candidate",
-                    "probe": probe,
-                    "probe_source": probe_source,
-                    "rank": result["rank"],
-                    "score": float(result["reasons"][0]["score"]),
-                    "identity_authority": False,
-                }
-                record = ranked.get(node_id)
-                if record is None:
-                    ranked[node_id] = {
-                        "target": {
-                            "namespace": target_namespace,
-                            "id": node_id,
-                            "label": result["node"].get("label", ""),
-                            "type": result["node"].get("type", ""),
-                        },
-                        "score": signal["score"],
-                        "identity_authority": False,
-                        "signals": [signal],
-                    }
-                elif signal not in record["signals"]:
-                    record["signals"].append(signal)
-                    if not record["identity_authority"]:
-                        record["score"] = max(record["score"], signal["score"])
-        candidates = sorted(ranked.values(), key=lambda item: (-item["score"], item["target"]["id"]))[:limit_per_node]
-        rows.append(
-            {
-                "candidate_id": str(candidate["id"]),
-                "status": state,
-                "matched_target_id": ids[0] if state == "matched" else None,
-                "candidates": candidates,
-                "identity_evidence": copy.deepcopy(evidence),
-                "registry_evidence": copy.deepcopy(registry_evidence),
-                "rejected_target_ids": sorted(rejected_ids),
-            }
-        )
-    proposals: list[dict[str, Any]] = []
-    for row in rows:
-        if row["status"] == "matched":
-            continue
-        candidate = next(
-            node
-            for node in candidate_snapshot["nodes"]
-            if node["id"] == row["candidate_id"]
-        )
-        for ranked in row["candidates"][:3]:
-            target = view.nodes[ranked["target"]["id"]]
-            proposal = {
-                "subject": {
-                    "namespace": validation["namespace"],
-                    "node_id": row["candidate_id"],
-                    "node_sha256": node_fingerprint(candidate),
-                },
-                "predicate": "exact-match",
-                "object": {
-                    "namespace": target_namespace,
-                    "node_id": target["id"],
-                    "node_sha256": node_fingerprint(target),
-                },
-                "status": "proposed",
-                "mapping_justification": sorted(
-                    {
-                        str(signal["kind"])
-                        for signal in ranked["signals"]
-                        if signal.get("kind")
-                    }
-                ),
-                "evidence": copy.deepcopy(ranked["signals"]),
-                "scores": {"rank_score": ranked["score"]},
-            }
-            proposal["id"] = mapping_id(proposal)
-            proposals.append(proposal)
-    normalized_results = []
-    for row in rows:
-        status = (
-            "exact"
-            if row["status"] == "matched"
-            else "ambiguous"
-            if row["status"] == "ambiguous"
-            else "candidate"
-            if row["candidates"]
-            else "unresolved"
-        )
-        normalized_results.append(
-            {
-                "candidate": {
-                    "namespace": validation["namespace"],
-                    "id": row["candidate_id"],
-                },
-                "status": status,
-                "identity_target_id": row["matched_target_id"],
-                "candidates": copy.deepcopy(row["candidates"]),
-                "scoped_aliases": copy.deepcopy(
-                    scoped_by_node.get(row["candidate_id"], [])
-                ),
-                "registry_evidence": copy.deepcopy(row["registry_evidence"]),
-                "rejected_target_ids": copy.deepcopy(
-                    row["rejected_target_ids"]
-                ),
-            }
-        )
-    summary = {
-        name: sum(row["status"] == name for row in normalized_results)
-        for name in ("exact", "candidate", "ambiguous", "unresolved")
-    }
-    summary["total"] = len(normalized_results)
-    report = {
-        "schema": ALIGNMENT_REPORT_SCHEMA,
-        "candidate_namespace": validation["namespace"],
-        "target_namespace": target_namespace,
-        "candidate_snapshot_sha256": validation["snapshot_sha256"],
-        "target_snapshot_sha256": view.snapshot["snapshot_sha256"],
-        "alignment_sha256": sha256_json(view.alignments),
-        "alignments": rows,
-        "candidate": {
-            "namespace": validation["namespace"],
-            "snapshot_sha256": validation["snapshot_sha256"],
-        },
-        "target": {
-            "namespace": target_namespace,
-            "snapshot_sha256": view.snapshot["snapshot_sha256"],
-        },
-        "scoped_aliases": scoped_aliases,
-        "results": normalized_results,
-        "proposals": sorted(proposals, key=lambda item: item["id"]),
-        "summary": summary,
-    }
-    report["report_sha256"] = sha256_json(report)
-    return report
-
-
-def compare(
-    source: GraphView | Path,
-    candidate_snapshot: dict[str, Any],
-    *,
-    target_namespace: str = "personal",
-    alignments: Path | None = None,
-) -> dict[str, Any]:
-    view = _view(source, alignments)
-    report = align(view, candidate_snapshot, target_namespace=target_namespace)
-    mapping = {
-        row["candidate_id"]: row["matched_target_id"]
-        for row in report["alignments"]
-        if row["status"] == "matched"
-    }
-    target_edges = {(edge["source"], edge["relation"], edge["target"]) for edge in view.edges}
-    edge_rows: list[dict[str, Any]] = []
-    for edge in sorted(candidate_snapshot["edges"], key=lambda item: (item["source"], item["relation"], item["target"])):
-        translated = (mapping.get(edge["source"]), edge["relation"], mapping.get(edge["target"]))
-        if translated[0] is not None and translated[2] is not None and translated in target_edges:
-            status = "present"
-        else:
-            status = "missing"
-        edge_rows.append({"candidate_edge": copy.deepcopy(edge), "target_edge": {"source": translated[0], "relation": translated[1], "target": translated[2]}, "status": status})
-    result = {
-        "schema": COMPARISON_SCHEMA,
-        "candidate_namespace": candidate_snapshot["namespace"],
-        "target_namespace": target_namespace,
-        "alignment_sha256": report["alignment_sha256"],
-        "nodes": report["alignments"],
-        "edges": edge_rows,
-        "summary": {
-            "matched": sum(row["status"] == "matched" for row in report["alignments"]),
-            "ambiguous": sum(row["status"] == "ambiguous" for row in report["alignments"]),
-            "unmatched": sum(row["status"] == "unmatched" for row in report["alignments"]),
-            "present_edges": sum(row["status"] == "present" for row in edge_rows),
-            "missing_edges": sum(row["status"] == "missing" for row in edge_rows),
-        },
-    }
-    result["candidate"] = {
-        "namespace": candidate_snapshot["namespace"],
-        "snapshot_sha256": candidate_snapshot["snapshot_sha256"],
-        "graph_sha256": candidate_snapshot["graph"]["sha256"],
-    }
-    result["target"] = {
-        "namespace": target_namespace,
-        "snapshot_sha256": view.snapshot["snapshot_sha256"],
-        "graph_sha256": view.snapshot["graph"]["sha256"],
-    }
-    result["results"] = [
-        {
-            "candidate": {
-                "namespace": candidate_snapshot["namespace"],
-                "id": row["candidate_id"],
-            },
-            "status": row["status"],
-            "identity_target_id": row["matched_target_id"],
-            "candidates": copy.deepcopy(row["candidates"]),
-            "registry_evidence": copy.deepcopy(row["registry_evidence"]),
-            "rejected_target_ids": copy.deepcopy(row["rejected_target_ids"]),
-        }
-        for row in report["alignments"]
-    ]
-    result["alignment_report_sha256"] = report["report_sha256"]
-    result["comparison_sha256"] = sha256_json(result)
-    return result
-
-
-def propose(
-    source: GraphView | Path,
-    candidate_snapshot: dict[str, Any],
-    *,
-    target_namespace: str = "personal",
-    target_authority: str | None = None,
-    alignments: Path | None = None,
-) -> dict[str, Any]:
-    comparison = compare(source, candidate_snapshot, target_namespace=target_namespace, alignments=alignments)
-    comparison_by_id = {
-        str(row["candidate_id"]): row for row in comparison["nodes"]
-    }
-    additions = [
-        copy.deepcopy(node)
-        for node in candidate_snapshot["nodes"]
-        if comparison_by_id[str(node["id"])]["status"] == "unmatched"
-    ]
-    blockers = [
-        {
-            "code": "source-marker-required",
-            "candidate_id": node["id"],
-            "message": "Add and review an authority marker before applying node curation.",
-        }
-        for node in additions
-    ]
-    blockers.extend(
-        {
-            "code": "identity-review-required",
-            "candidate_id": row["candidate_id"],
-            "message": "Ambiguous identity requires a reviewed decision.",
-        }
-        for row in comparison["nodes"]
-        if row["status"] == "ambiguous"
-    )
-    delta_preview = {
-        "schema": DELTA_SCHEMA,
-        "remove_nodes": [],
-        "nodes": [],
-        "edges": [],
-        "remove_edges": [],
-    }
-    proposal = {
-        "schema": PROPOSAL_SCHEMA,
-        "candidate_namespace": candidate_snapshot["namespace"],
-        "target_namespace": target_namespace,
-        "target_authority": target_authority,
-        "candidate_snapshot_sha256": candidate_snapshot["snapshot_sha256"],
-        "comparison_sha256": comparison["comparison_sha256"],
-        "alignment_sha256": comparison["alignment_sha256"],
-        "operations": [
-            {"action": "review-new-node", "node": node} for node in additions
-        ],
-        "review_required": True,
-        "warnings": ["Proposal is read-only and must not be treated as committed identity."],
-        "candidate": comparison["candidate"],
-        "target": comparison["target"],
-        "results": copy.deepcopy(comparison["results"]),
-        "comparison_summary": comparison["summary"],
-        "delta_preview": delta_preview,
-        "blockers": blockers,
-        "delta_ready": False,
-        "fully_resolved": not blockers,
-        "instructions": [
-            "Review identity and source-marker operations.",
-            "Author source-backed markers before applying any proposal.",
-        ],
-    }
-    proposal["proposal_sha256"] = sha256_json(proposal)
-    return proposal

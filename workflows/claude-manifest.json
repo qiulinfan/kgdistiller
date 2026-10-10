@@ -10,7 +10,6 @@
   "workflow_resources": [
     "docs/concepts-and-relations.md",
     "docs/paper-sheets-upstream.md",
-    "docs/latex-sources.md",
     "docs/obsidian-hidden-knowledge.md"
   ],
   "linkers": [
@@ -39,10 +38,6 @@
     {
       "name": "deploy-kgdistiller",
       "path": "skills/deploy-kgdistiller"
-    },
-    {
-      "name": "distill-paper",
-      "path": "skills/distill-paper"
     },
     {
       "name": "harvest-paper",
@@ -86,7 +81,7 @@
   "workflows": [
     {
       "id": "capture-knowledge",
-      "description": "Capture one selected source-backed knowledge item, preserve personal understanding and direct pending prerequisites, then apply one reviewed transaction without full-source distillation.",
+      "description": "Capture one selected knowledge entry citing its source lines verbatim, preserve personal understanding and direct pending prerequisites, then apply one reviewed transaction without full-source distillation.",
       "steps": [
         {
           "id": "capture",
@@ -116,7 +111,7 @@
     },
     {
       "id": "curate-notes",
-      "description": "Extract a bounded registered note set, resolve identities, and apply one reviewed transaction.",
+      "description": "Extract entries and direct relations from a bounded set of registered text documents guided by their document type, resolve identities read-only, and apply one reviewed transaction.",
       "steps": [
         {
           "id": "extract",
@@ -139,20 +134,8 @@
       ]
     },
     {
-      "id": "distill-paper",
-      "description": "Explicit command: HTML-first source reading, short section guide, existing-knowledge links and candidates for user selection before import.",
-      "steps": [
-        {
-          "id": "distill",
-          "skill": "distill-paper",
-          "agent": null,
-          "mode": "author"
-        }
-      ]
-    },
-    {
       "id": "harvest-paper",
-      "description": "Explicit harvest request: synchronize reviewed def-sheet tasks checked in Obsidian through the deterministic harvest helper and transactional ingest; preserve unchecked content and understanding.",
+      "description": "Explicit harvest request: ingest reviewed def-sheet tasks checked in Obsidian through the deterministic harvest helper and one transaction, after confirming their drafts, entries and cited source lines are unchanged; preserve unchecked content and understanding.",
       "steps": [
         {
           "id": "review-and-import",
@@ -175,26 +158,8 @@
       ]
     },
     {
-      "id": "portable-store",
-      "description": "Create or verify a file-based portable generation with Markdown authorities and a query-ready JSON graph.",
-      "steps": [
-        {
-          "id": "snapshot",
-          "skill": "deploy-kgdistiller",
-          "agent": "transaction-reviewer",
-          "mode": "transaction"
-        },
-        {
-          "id": "verify",
-          "skill": "deploy-kgdistiller",
-          "agent": "transaction-reviewer",
-          "mode": "read-only"
-        }
-      ]
-    },
-    {
       "id": "export-obsidian",
-      "description": "Refresh the Obsidian plugin's typed graph feed (.knowledge/build/obsidian/semantic-graph.json); it is never registered or rescanned as authority.",
+      "description": "Check entries and edges against their sources, then refresh the Obsidian plugin's typed graph feed (.knowledge/build/obsidian/semantic-graph.json) from every entry and accepted edge; it is never registered or rescanned as a source.",
       "steps": [
         {
           "id": "verify",

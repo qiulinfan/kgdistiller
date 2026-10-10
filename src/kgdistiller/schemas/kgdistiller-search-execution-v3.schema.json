@@ -7,9 +7,6 @@
   "required": [
     "schema",
     "plan_mode",
-    "namespace",
-    "snapshot_sha256",
-    "graph_sha256",
     "identity_resolutions",
     "result"
   ],
@@ -20,17 +17,8 @@
     "plan_mode": {
       "enum": [
         "planned",
-        "legacy"
+        "query"
       ]
-    },
-    "namespace": {
-      "$ref": "#/$defs/namespace"
-    },
-    "snapshot_sha256": {
-      "$ref": "#/$defs/sha256"
-    },
-    "graph_sha256": {
-      "$ref": "#/$defs/sha256"
     },
     "identity_resolutions": {
       "type": "array",
@@ -53,16 +41,6 @@
     }
   },
   "$defs": {
-    "namespace": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256,
-      "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"
-    },
-    "sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
     "nodeId": {
       "type": "string",
       "minLength": 1,

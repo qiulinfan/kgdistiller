@@ -4,13 +4,10 @@
   "title": "kgdistiller deterministic search execution envelope v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "plan_mode", "namespace", "snapshot_sha256", "graph_sha256", "identity_resolutions", "result"],
+  "required": ["schema", "plan_mode", "identity_resolutions", "result"],
   "properties": {
     "schema": {"const": "kgdistiller-search-execution-v1"},
-    "plan_mode": {"enum": ["planned", "legacy"]},
-    "namespace": {"$ref": "#/$defs/namespace"},
-    "snapshot_sha256": {"$ref": "#/$defs/sha256"},
-    "graph_sha256": {"$ref": "#/$defs/sha256"},
+    "plan_mode": {"enum": ["planned", "query"]},
     "identity_resolutions": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/identityResolution"}},
     "result": {
       "type": "object",
@@ -20,8 +17,6 @@
     }
   },
   "$defs": {
-    "namespace": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)*$"},
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "nodeId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
     "identityResolution": {
       "type": "object",
@@ -36,11 +31,53 @@
         "identity_authority": {"type": "boolean"}
       },
       "allOf": [
-        {"if": {"properties": {"status": {"const": "exact"}}}, "then": {"properties": {"match_kind": {"enum": ["id", "label"]}, "candidate_ids": {"minItems": 1, "maxItems": 1}, "overflow": {"const": false}, "identity_authority": {"const": true}}}},
-        {"if": {"properties": {"status": {"const": "alias"}}}, "then": {"properties": {"match_kind": {"const": "alias"}, "candidate_ids": {"minItems": 1, "maxItems": 1}, "overflow": {"const": false}, "identity_authority": {"const": true}}}},
-        {"if": {"properties": {"status": {"const": "ambiguous"}}}, "then": {"properties": {"match_kind": {"enum": [null, "label", "alias"]}, "candidate_ids": {"minItems": 2, "maxItems": 500}, "identity_authority": {"const": true}}}},
-        {"if": {"properties": {"status": {"const": "ambiguous"}, "overflow": {"const": true}}}, "then": {"properties": {"candidate_ids": {"minItems": 500, "maxItems": 500}}}},
-        {"if": {"properties": {"status": {"const": "missing"}}}, "then": {"properties": {"match_kind": {"const": null}, "candidate_ids": {"maxItems": 0}, "overflow": {"const": false}, "identity_authority": {"const": false}}}}
+        {
+          "if": {"properties": {"status": {"const": "exact"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"enum": ["id", "label"]},
+              "candidate_ids": {"minItems": 1, "maxItems": 1},
+              "overflow": {"const": false},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "alias"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"const": "alias"},
+              "candidate_ids": {"minItems": 1, "maxItems": 1},
+              "overflow": {"const": false},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "ambiguous"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"enum": [null, "label", "alias"]},
+              "candidate_ids": {"minItems": 2, "maxItems": 500},
+              "identity_authority": {"const": true}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "ambiguous"}, "overflow": {"const": true}}},
+          "then": {"properties": {"candidate_ids": {"minItems": 500, "maxItems": 500}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "missing"}}},
+          "then": {
+            "properties": {
+              "match_kind": {"const": null},
+              "candidate_ids": {"maxItems": 0},
+              "overflow": {"const": false},
+              "identity_authority": {"const": false}
+            }
+          }
+        }
       ]
     }
   }

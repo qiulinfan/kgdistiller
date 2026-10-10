@@ -4,13 +4,16 @@ kgdistiller owns the deterministic engine, CLI/read-only MCP server, JSON
 Schemas, product Skills, per-runtime agent presets, and the
 runtime workflow manifests `workflows/manifest.json` (Codex) and
 `workflows/claude-manifest.json` (Claude Code). Both manifests declare the
-same Skills and workflows; only linkers and agent-preset formats differ. A
-knowledge project owns its Markdown, Typst, and
-LaTeX identity authorities and directly linked source evidence,
-`.knowledge/entries/` atomic authorities, reviewed registries, the `kgdistiller-graph-v2` graph,
-and an optional `kgdistiller-store-v1` snapshot. Publishing the notes (websites,
-course registries, marker registries, HTML conversion) belongs to the
-repositories that own them; kgdistiller has no publishing surface.
+same Skills and workflows; only linkers and agent-preset formats differ.
+
+A knowledge project owns its registered source documents, its reviewed entries
+`.knowledge/entries/<id>.md` and its accepted edges `.knowledge/edges.jsonl`.
+Sources are any UTF-8 text documents: kgdistiller reads them as numbered lines
+and never parses their syntax, so every text format is treated identically.
+Knowledge nodes come only from reviewed capture or curation guided by the
+source's user-registered document type. Publishing the notes (websites, course
+registries, HTML rendering) belongs to the repositories that own them;
+kgdistiller has no publishing surface.
 
 The manifests are the portable asset/workflow inventory. Install and validate
 the integration for the runtime you are using from a source checkout or
@@ -35,23 +38,22 @@ canonical product root. Each linker manages only manifest-declared kgdistiller
 assets and namespaced state. It must not replace global `AGENTS.md`,
 `config.toml`, `CLAUDE.md`, `settings.json`, unrelated Skills, or unrelated
 agent presets. Explicit copy mode is a snapshot and must be refreshed after
-product changes; live link modes reflect source changes.
+product changes; live link modes reflect source changes. Every installed copy
+(copy mode, or a hardlink that became detached) is product-owned: `doctor`
+reports a copy whose bytes differ from the product source, and the next `link`
+replaces it and removes retired copies, discarding any local edits made to
+those installed files. Edit the product checkout instead.
 
 ## Workflow boundaries
-
-### LaTeX sources
-
-For LaTeX knowledge sources, use the native `\kn{Name}` and `\knref{Name}`
-markers. Read the packaged [LaTeX source contract](latex-sources.md) for
-marker placement and how a TeX source is chosen over a Typst sibling.
 
 ### Fast single-item capture
 
 `$capture-kgdistiller` saves or updates one selected concept while reading. It
-uses the selected passage and necessary nearby context, one identity comparison,
-and supported transactional ingest. The deterministic preparation command builds
-the required transaction artifacts; the caller supplies source-backed content
-and reviewed identity intent. See [single-item capture](../skills/capture-kgdistiller/references/capture-contract.md).
+uses the selected passage and necessary nearby context, an identity check
+against every existing label and alias, and supported transactional ingest. The
+deterministic preparation command copies the cited source lines verbatim into
+the entry's Evidence and builds the plan and apply requests; the caller supplies
+the line range, the source-backed summary and the reviewed identity intent. See [single-item capture](../skills/capture-kgdistiller/references/capture-contract.md).
 
 This is the usual writing path for a new article. Full-source distillation is
 separately requested, generally for the user's own notes or familiar material.
@@ -80,74 +82,31 @@ The [shared model](concepts-and-relations.md) defines nodes, relations and
 applications. [Paper sheet projections](paper-sheets-upstream.md) describe the
 paper use case and current adapter limitations. Both runtime manifests install
 the same generic Skill and bundled contracts. Obsidian opens `.knowledge/`
-through the plugin's hidden-folder indexing; native source markers and
-atomic-entry authority remain intact.
+through the plugin's hidden-folder indexing; entries remain ordinary Markdown
+with their properties in frontmatter.
 
 ### Independent paper workflows
 
-Ordinary paper reading and explanation need no Skill. The former `read-paper`
-orchestrator and its dedicated reader/context presets have been removed.
-Distillation and harvesting run in the current agent. Related-work research can
-delegate independent search directions:
+Ordinary paper reading and explanation need no Skill. Harvesting runs in the
+current agent. Related-work research can delegate independent search
+directions:
 
 | Command (Codex / Claude Code) | Result |
 |---|---|
-| `$distill-paper` / `/distill-paper` | HTML-first reading, short section guide, existing links and knowledge candidates in `paper-notes.md` |
-| `$harvest-paper` / `/harvest-paper` | Scripted synchronization of reviewed def-sheet candidates checked in Obsidian |
+| `$harvest-paper` / `/harvest-paper` | Scripted ingestion of reviewed def-sheet candidates checked in Obsidian |
 | `$paper-related-work` / `/paper-related-work` | Parallel searches for cited predecessors, citing successors and bounded online discussion |
 
-These commands are independent. Distillation does not start a full explanation,
-translation, candidate graph or research survey. Related-work search needs no
-prepared archive and does not start knowledge lookup. Distillation and related-work
-search do not import knowledge. Harvesting requires an explicit request after
-human selection in the source def sheet; it does not repeat that selection in
-chat. None of these commands repeats a long explanation through agent handoffs.
+These commands are independent. Related-work search needs no prepared archive,
+does not start knowledge lookup and does not import knowledge. Harvesting
+requires an explicit request after human selection in the source def sheet; it
+does not repeat that selection in chat. Neither command repeats a long
+explanation through agent handoffs. Knowledge lookup during reading uses
+`$query-kgdistiller` at the actual use sites; an item not found is not proof the
+user does not know it, and a lookup error is not a negative match. Only the
+user's stated understanding allows treating an entry as mastered.
 
-Distillation uses a deterministic HTML fetch/text helper (`read_html.py`) so the
-source is not first rewritten by a WebFetch model. The source copy preserves
-headings, math alternatives and anchors. `lookup.py` batches the public read-only
-resolve/search calls and returns candidate titles and short summaries. The agent
-screens relevance, refines weak searches, then uses `--read` for selected IDs and
-checks definitions/conditions/provenance. No automatic first-N content retrieval
-or semantic-equivalence decision is made by the helper. The note is written once, and
-the final reply only links it. The two-minute aim never excuses lost conditions
-or treating retrieval errors as missing knowledge.
-
-Full-paper reading is a prerequisite, including proofs, substantive appendices,
-active source includes and the bibliography. Trace three source-backed paths:
-architecture components/interfaces and their reuse or changes; mathematical steps
-and the exact definitions/theorems/conditions they use; citations and the specific
-work borrowed or compared. Inspect architecture figures when text is insufficient.
-Record a compact component/step → dependency/work → use-site → personal-link map.
-Lookup candidates come from this coverage, not a title-derived keyword list.
-A known paper does not establish mastery of every internal component. Resolve
-needed citation details locally first; only inspect a cited source further to
-clarify a real dependency, without recursive literature expansion. Missing source
-coverage stays explicit. Plan for up to 30 concrete lookup terms per paper,
-including rephrasings and borrowed-paper identities; technical coverage can justify
-more. The helper accepts 30 terms or selected IDs per call, and follow-up searches
-are allowed. Selected IDs are read separately for each vault.
-
-Only citations that actually supply a reused method, component or mathematical
-result get an additional bounded paper-title/arXiv/DOI lookup. Connect a verified
-reading record to the specific borrowed part; a missing concept entry does not
-prove a paper is unread. Do not query the entire bibliography, comparison-only
-references or mere experiment tools. Familiar elementary steps can be recorded
-without separate lookup when consistent with the user's stated background;
-skipping that lookup is not the same as a verified knowledge-base match.
-
-Distillation checks the established knowledge targets or registered default via
-read-only queries. Look up methods and prerequisites at actual use sites, rather
-than broad subjects. Verify definitions and conditions for applicability, then
-report personal
-understanding separately. Only the user's stated understanding allows treating
-an entry as mastered; preserve unknown or not-yet-understood state. An item not
-found in the queried store is not proof the user does not know it. A lookup error
-is not a negative match. Preserve paper/version meaning; shared vocabulary does
-not merge identities. Store mutations remain separately authorized transactions.
-
-The existing paper Skills are explicit-command-only in both runtimes: `distill-paper`,
-`harvest-paper` and `paper-related-work`. A direct request to harvest the checked
+The paper Skills are explicit-command-only in both runtimes: `harvest-paper`
+and `paper-related-work`. A direct request to harvest the checked
 sheet is explicit harvest intent; ordinary reading or merely checking a box is
 not. Invoke related-work research
 with `$paper-related-work` (Codex) or `/paper-related-work` (Claude Code).
@@ -218,18 +177,16 @@ knowledge extraction are not redistribution: a no-redistribution notice alone
 does not justify blocking ordinary local reading. Keep full source copies local,
 separate from original knowledge notes and short necessary excerpts.
 
-`distill-paper` produces paper/version-qualified candidates with definitions or
-mechanisms, essential conditions and source locations, in the same short note.
-They are not imported graph nodes; candidate status does not establish personal
-understanding. Distillation ends with saved candidates, without prompting for
-import. The source's partial or complete def sheet can link to clearly labeled
-review drafts under `.knowledge/build/reviews/` (excluded from Obsidian
-hidden-folder indexing by default; remove `build` from the plugin's exclusion
-list to open them there). Each selectable draft has an
-ordinary Markdown task checkbox and records the complete proposal, source
-evidence, target and reviewed identity decision. Updates show the relevant
-before/after content. Full definitions remain in the linked metadata or draft,
-not copied into every sheet row.
+Knowledge candidates found while reading are prepared with `harvest prepare` as
+reviewed capture payloads that cite their source lines. They are not accepted
+entries; candidate status does not establish personal understanding. The
+source's partial or complete def sheet links to clearly labeled review drafts
+under `.knowledge/build/reviews/` (excluded from Obsidian hidden-folder indexing
+by default; remove `build` from the plugin's exclusion list to open them there).
+Each selectable draft has an ordinary Markdown task checkbox and shows the
+proposed entry fields before and after, the cited lines and the Evidence quote,
+the target and the reviewed identity decision. Full definitions remain in the
+linked entry or draft, not copied into every sheet row.
 
 The user reviews or edits those drafts in Obsidian, checks the desired rows and
 explicitly asks to harvest. That request authorizes the checked content and its
@@ -238,9 +195,10 @@ conversation or native question panel. Preparing a sheet or checking a box alone
 does not initiate a transaction. A checked task means selected for import and
 never means `understood`; preserve the separate personal understanding field.
 
-The harvest script parses the selection and prepared payloads, validates source
-and target freshness, applies supported transactional ingest and refreshes
-successful rows to real canonical links. It preserves unchecked rows, unrelated
+The harvest script parses the selection and prepared payloads, confirms by text
+comparison that each draft, target entry and cited source passage is unchanged
+since review, applies one transactional ingest and refreshes successful rows to
+real entry links. It preserves unchecked rows, unrelated
 annotations and partial coverage. The usual path reuses reviewed content and
 identity decisions without a full source reread or another model extraction.
 The agent prepares reviewed `add`/`update` capture payloads with `harvest prepare`
@@ -266,40 +224,38 @@ validate the shared fields separately and check that extension as a boolean.
 The two runtime manifests share the same Skills and workflow inventory.
 `agent: null` means no specialized preset is required: execute in the current
 agent. Named agents still refer to installed presets. Manifests describe assets,
-not automatic triggers or a scheduler. Existing paper packages and knowledge
-graphs are retained; changing these commands does not regenerate them.
+not automatic triggers or a scheduler.
 
 ### Curate registered notes
 
-Use `$curate-kgdistiller-notes` to extract one bounded authority set,
-`$query-kgdistiller` to resolve the full candidate batch through the
-generation-checked read-only `GraphView`, and `$ingest-kgdistiller` to plan and
-apply one reviewed transaction. Identity ambiguity blocks its own write path.
-`kgdistiller-graph-comparison-v1` represents identity only as `matched`,
-`ambiguous`, or `unmatched`; ambiguity blocks the write path, while content
-conflicts or enrichment of matched identities require a separate source-backed
-review rather than inference from comparison output.
+Use `$curate-kgdistiller-notes` to extract one bounded source set (read through
+`scan --file`, which returns the document-type profile and numbered lines),
+`$query-kgdistiller` to resolve the full candidate batch read-only
+(`agent resolve`, `agent search`, `agent get`), and `$ingest-kgdistiller` to
+plan and apply one reviewed transaction of entries and edges, then `check`.
+Each candidate is classified `matched`, `ambiguous` or `unmatched`; ambiguity
+blocks its own write, while content conflicts or enrichment of matched entries
+require a separate source-backed review rather than inference from retrieval
+scores.
 
-### Back up or restore a portable store
+### Set up, check and restore a project
 
-When a portable backup is requested, use `$deploy-kgdistiller` to run `check`,
-`agent status`, `store snapshot`, and `store verify`. An ordinary knowledge-project
-clone needs source/graph checks without creating a snapshot. A verified
-`kgdistiller-store-v1` clone is file-based and immediately queryable;
-there is no profile, provider, database, or materialization step. Git
-initialization, commit, remote configuration, and push remain explicit separate
-actions.
+Use `$deploy-kgdistiller` to initialize a project, register sources and
+document types, and run `check` and `agent status` after setup, a clone, a pull
+or a source edit. `check --fix-lines` repairs the line ranges of entries whose
+Evidence moved; stale entries need a reviewed re-capture. Git initialization,
+commit, remote configuration, and push remain explicit separate actions.
 
 ### Refresh the Obsidian graph feed
 
 Use `$deploy-kgdistiller` and open the knowledge-project root as the editor
-vault. Registered sources and `.knowledge/entries/*.md` remain the authorities.
+vault. Registered sources and `.knowledge/entries/*.md` remain the knowledge.
 The optional Obsidian plugin's semantic graph view reads only
 `.knowledge/build/obsidian/semantic-graph.json`
 (`kgdistiller-obsidian-graph-v1`), which `kgdistiller export obsidian` writes
-atomically from the current graph generation. It preserves typed semantic edges
-and source definition/reference edges. Never register the feed in
-`sources.json`, rescan it, or feed it to candidate/ingest.
+atomically from every entry and every accepted edge. It shows typed semantic
+edges and the source → entry definition edges. Never register the feed in
+`sources.json`, rescan it, or ingest it back.
 
 ### Native indexing of a hidden knowledge folder
 
@@ -316,10 +272,10 @@ attribution.
 
 ## Handoffs
 
-Paper-reading handoffs lead with the explanation and linked artifacts. The graph
-branch carries concrete use records and graph, snapshot and alignment digests
-from its default read-only lookup. If lookup was explicitly omitted or unavailable,
-report that state instead of fabricated lookup results. Transaction
-handoffs add canonical request/plan/receipt digests. Store, Git and the
-Obsidian graph feed each have distinct status and authority; do not collapse
-them into a generic “deployed” result.
+Paper-reading handoffs lead with the explanation and linked artifacts. Lookup
+results carry the entries actually found and their source citations; if lookup
+was explicitly omitted or unavailable, report that state instead of fabricated
+results. Transaction handoffs name the request id, the plan and the committed
+receipt, and the `check` result after commit. Git and the Obsidian graph feed
+each have distinct status; do not collapse them into a generic “deployed”
+result.

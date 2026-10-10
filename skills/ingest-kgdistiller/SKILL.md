@@ -1,13 +1,13 @@
 ---
 name: ingest-kgdistiller
-description: Apply a reviewed, source-backed knowledge update through kgdistiller's transactional ingest API and return a canonical receipt. Use after query-kgdistiller or another extractor has decided identities, native Markdown, Typst, or LaTeX authority markers, refs, entries, aliases, direct semantic edges, and optional mappings, or for explicitly authorized paper imports and reviewed cross-namespace alignment persistence.
+description: Apply a reviewed, source-backed knowledge update of entries and direct semantic edges through kgdistiller's transactional ingest API and return its readable receipt. Use after capture-kgdistiller, curate-kgdistiller-notes, query-kgdistiller or another extractor has decided identities, entries, aliases, kinds and direct relations with their cited source lines.
 ---
 
 # Ingest into kgdistiller
 
 Be the only Skill that mutates the personal knowledge base. Execute reviewed
-decisions; do not rediscover concepts or compose low-level writers as a
-substitute for the transaction API.
+decisions; do not rediscover concepts or hand-edit `.knowledge/entries/` or
+`.knowledge/edges.jsonl` as a substitute for the transaction API.
 
 ## Align language
 
@@ -21,88 +21,64 @@ Read [references/transaction-contract.md](references/transaction-contract.md)
 completely before the first write. Use the public
 `kgdistiller --repo-root PROJECT` CLI.
 
-Start with `agent status`. Require `kgdistiller-query-status-v1`, the
-`json-memory`/`read-only-query-v3` capabilities, `kgdistiller-ingest-request-v1`, and
-exact target graph, snapshot, and alignment digests from `$query-kgdistiller`.
-The ingest request separately declares `transactional-ingest-v1`; return to
-query when any precondition is stale.
+Start with `agent status` (entry and edge counts) and `check`. A store with
+errors cannot accept a transaction until they are repaired; entries reported as
+moved can be fixed first with `check --fix-lines`.
 
 ## Require a reviewed handoff
 
-Require one bounded request containing:
+Require one bounded `kgdistiller-ingest-request-v1` whose
+`kgdistiller-agent-delta-v1` lists:
 
-- one decision per candidate: reuse, add, update, reject, or defer;
-- exact registered authority paths, normalized expected source hashes, native
-  patch contents, and complete post-patch marker/ref state;
-- content-addressed candidate snapshot and query report paths;
-- one reviewed `kgdistiller-agent-delta-v1`;
-- optional reviewed alignment decisions with evidence/justification;
-- review evidence and source provenance.
+- `create_entries`: complete new entry records;
+- `update_entries`: full replacement records, each with the `expected_label`
+  the reviewer saw;
+- `remove_entries`: ids with their `expected_label`;
+- `add_edges` and `remove_edges`: direct semantic edges with concrete evidence;
 
-Reject unresolved `uncertain` or `conflict` candidates as writes. Never create
-new identities from them. Preserve unrelated prose and user-authored markers.
-Paper snapshots remain read-only unless the user explicitly authorizes exact
-selected entries or mappings for import.
+plus review evidence and source provenance. `capture prepare` and
+`harvest apply` build such requests; a curation handoff may supply one written
+to the contract. Reject unresolved or ambiguous identities as writes. Never
+create new identities from them.
 
-Keep `.md`, `.typ` and `.tex` evidence linked to the original registered source;
-do not require a derived Markdown copy before ingest. Atomic knowledge entries
-remain Markdown. A source's user-registered `document_type` supplies extraction
-guidance, not permission to create identities or bypass source review. Preserve
-reviewed semantic kinds independently of native statement syntax.
-
-Compute authority hashes over UTF-8 text with universal-newline normalization
-(CRLF/CR to LF), not raw checkout bytes. This boundary matches sync, ingest,
-store, and check.
+Every entry cites one registered source by path and line range, and its
+`evidence` must equal those lines exactly. Source documents are any registered
+text format and are never edited. A source's user-registered `document_type`
+restricts the allowed `kind` values; it never creates identities or bypasses
+review.
 
 ## Plan, review, then apply
 
-1. Build canonical `kgdistiller-ingest-request-v1` content in `plan` mode and compute
-   `request_sha256` over canonical JSON excluding that field.
-2. Run:
+1. Run:
 
    ```sh
-   kgdistiller --repo-root PROJECT ingest plan REQUEST.json --output PLAN.json
+   kgdistiller --repo-root PROJECT ingest plan PLAN_REQUEST.json --output PLAN.json
    ```
 
-3. Review predicted authority, node, edge, ref, alignment, and digest changes.
-   Planning must leave all live bytes unchanged.
-4. Change only `mode` to `apply`, recompute `request_sha256`, then run:
+   The request's `mode` must be `plan`. Planning applies the delta in memory,
+   validates the resulting store and writes nothing to the store.
+2. Review the plan's `changes` (entries created, updated, removed, aliases
+   changed, edges added and removed) and its before/after `counts`.
+3. Apply the same request with `mode: apply`:
 
    ```sh
-   kgdistiller --repo-root PROJECT ingest apply REQUEST.json \
+   kgdistiller --repo-root PROJECT ingest apply APPLY_REQUEST.json \
      --receipt RECEIPT.json
    ```
 
-5. Accept only `kgdistiller-ingest-receipt-v1` with `status: committed`, a valid
-   canonical digest, and after-digests matching fresh `agent status`.
-6. If maintaining an explicitly requested portable snapshot, refresh and verify it:
+4. Accept only `kgdistiller-ingest-receipt-v1` with `status: committed`, then run
+   `check` and `agent status` and confirm the counts match the receipt.
+5. Refresh the Obsidian graph feed only when the user uses it:
+   `kgdistiller --repo-root PROJECT export obsidian`.
 
-   ```sh
-   kgdistiller --repo-root PROJECT store snapshot
-   kgdistiller --repo-root PROJECT store verify
-   ```
-
-   This records the file-based `kgdistiller-store-v1` generation, including entry
-   Markdown and its evidence. A live knowledge project does not require
-   `documents.jsonl` or `store.json`; do not create them for ordinary capture.
-   Report an existing snapshot as stale if it was not refreshed, and verify it
-   before using it as backup. Report Git state separately; never silently
-   initialize Git, commit, or push.
-
-The engine owns locking, optimistic concurrency, staging, scan, delta apply,
-entry-Markdown installation, sync, curation, global validation, atomic graph
-generation installation, crash recovery, and idempotency. There is no
-database/index/vector rebuild. A failed
-transaction must return its stable error and preserve the before-digests.
+The engine owns the writer lock, semantic re-validation against the current
+store, atomic installation, crash recovery and idempotency. A failed transaction
+returns a stable error code and leaves the store unchanged.
 
 ## Return the receipt
 
-Return receipt path plus request/engine/schema/capability versions; before/after
-graph, alignment, and authority hashes; changed nodes, refs, edges, alignments,
-and source patches; validations, warnings, and unapplied decisions; and store
-generation/document count when refreshed.
-
-Report Git state only as `local-only`, `committed locally`, or `remote
-confirmed`, using the latter states only after the explicitly authorized action
-succeeds. Do not include authority bodies, paper text, credentials, or unbounded
-evidence.
+Return the receipt path, the request id, the changed entries and edges, the
+post-commit `check` result and any unapplied decisions. Report Git state only as
+`local-only`, `committed locally`, or `remote confirmed`, using the latter
+states only after the explicitly authorized action succeeds. Do not include
+source bodies, paper text, credentials, or unbounded evidence.

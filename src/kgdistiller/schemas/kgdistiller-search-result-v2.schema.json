@@ -6,7 +6,6 @@
   "additionalProperties": false,
   "required": [
     "schema",
-    "plan_sha256",
     "lanes",
     "results",
     "ranking"
@@ -14,9 +13,6 @@
   "properties": {
     "schema": {
       "const": "kgdistiller-search-result-v2"
-    },
-    "plan_sha256": {
-      "$ref": "#/$defs/sha256"
     },
     "lanes": {
       "type": "object",
@@ -73,10 +69,6 @@
     }
   },
   "$defs": {
-    "sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
     "nodeId": {
       "type": "string",
       "minLength": 1,
@@ -396,16 +388,10 @@
       "required": [
         "model",
         "projection",
-        "namespace",
-        "snapshot_sha256",
-        "graph_sha256",
-        "index_sha256",
         "document_count",
         "dimensions",
         "cache_status",
-        "query_source",
-        "query_sha256",
-        "cache_sha256"
+        "query_source"
       ],
       "properties": {
         "model": {
@@ -413,20 +399,6 @@
         },
         "projection": {
           "const": "kgdistiller-search-document-v1"
-        },
-        "namespace": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "snapshot_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "graph_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "index_sha256": {
-          "$ref": "#/$defs/sha256"
         },
         "document_count": {
           "type": "integer",
@@ -447,12 +419,6 @@
         },
         "query_source": {
           "const": "plan.question"
-        },
-        "query_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "cache_sha256": {
-          "$ref": "#/$defs/sha256"
         }
       }
     },
@@ -461,19 +427,11 @@
       "additionalProperties": false,
       "required": [
         "node_id",
-        "node_sha256",
-        "document_sha256",
         "score"
       ],
       "properties": {
         "node_id": {
           "$ref": "#/$defs/nodeId"
-        },
-        "node_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "document_sha256": {
-          "$ref": "#/$defs/sha256"
         },
         "score": {
           "type": "number"
@@ -486,11 +444,7 @@
       "required": [
         "model",
         "projection",
-        "namespace",
-        "snapshot_sha256",
-        "graph_sha256",
         "query_source",
-        "query_sha256",
         "candidate_limit",
         "candidates",
         "fusion"
@@ -502,22 +456,8 @@
         "projection": {
           "const": "kgdistiller-search-document-v1"
         },
-        "namespace": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "snapshot_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
-        "graph_sha256": {
-          "$ref": "#/$defs/sha256"
-        },
         "query_source": {
           "const": "plan.question"
-        },
-        "query_sha256": {
-          "$ref": "#/$defs/sha256"
         },
         "candidate_limit": {
           "type": "integer",

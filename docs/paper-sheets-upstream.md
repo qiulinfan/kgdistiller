@@ -20,22 +20,22 @@ Sheets may intentionally cover only selected concepts or passages. Record that
 partial coverage and preserve other rows. Full source distillation is explicitly
 requested; even a complete extraction does not certify the user's understanding.
 
-The source's native markers remain identity authority and its passages remain
-evidence. Accepted entries and semantic state live in `.knowledge/`. Source-side
-sheets link to those records; they do not hold another complete editable copy of
-the knowledge. An edit proposed through a sheet updates the metadata through a
-reviewed transaction before the view is regenerated.
+Reviewed entries in `.knowledge/entries/` are the knowledge nodes; each cites
+its source by path and line range and quotes those lines as Evidence, and the
+source's passages remain the evidence. Accepted edges live in
+`.knowledge/edges.jsonl`. Source-side sheets link to those records; they do not
+hold another complete editable copy of the knowledge. An edit proposed through
+a sheet updates the entries through a reviewed transaction before the view is
+regenerated.
 
 ## One hidden knowledge root
 
 Knowledge lives in the hidden `.knowledge/` tree. Obsidian sees it through the
 kgdistiller plugin's hidden-folder indexing, which keeps `build/` out of the
-native index by default. Its entries, registries and previously
-accepted semantic relationships are durable state, alongside generated artifacts.
-Graph generation preserves accepted semantic relationships; this state cannot
-be reconstructed from definition prose alone. Preserve it with the entry authorities and sources in the knowledge project's
-backup. Portable snapshots are an optional packaging operation, not a second
-required daily store. `.knowledge/build/` remains transient.
+native index by default. Its entries and accepted semantic relationships are
+the durable state; they cannot be reconstructed from definition prose alone.
+Preserve them with the sources in the knowledge project's backup.
+`.knowledge/build/` remains transient.
 
 A paper definition view contains explained source-scoped concepts, types, exact
 locations and actual metadata links. Full definitions, formulas, conditions,
@@ -57,8 +57,8 @@ annotations. Removing one source contribution does not authorize deleting a
 shared identity. A display-name match does not establish ownership.
 
 Use supported transactional ingest when it preserves the reviewed payload.
-After a committed receipt and fresh verification, refresh source views with
-links to the actual accepted records. Unsupported full n-ary assertions,
+After a committed receipt and a passing `kgdistiller check`, refresh source
+views with links to the actual accepted entries. Unsupported full n-ary assertions,
 applications and rich gap history remain explicit unapplied proposals. Simple
 direct prerequisite gaps and personal understanding use the supported entry
 fields. Do not fabricate
@@ -69,5 +69,5 @@ The caller-supplied compiled library is read-only retrieval input. A general
 lossless metadata adapter and automatic sheet synchronization are not yet
 implemented. The bundled Skill's
 [sheet contract](../skills/compile-knowledge-sheets/references/sheet-contract.md)
-and [update contract](../skills/compile-knowledge-sheets/references/sync-contract.md)
+and [update contract](../skills/compile-knowledge-sheets/references/update-contract.md)
 state the supported handoff and projection boundary.

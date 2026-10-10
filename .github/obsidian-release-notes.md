@@ -18,17 +18,25 @@ only kgdistiller knowledge root.
   (`build/` means `build`). Changing the list rescans the folder without writing
   or deleting any file.
 - The plugin reads only `.knowledge/build/obsidian/semantic-graph.json`,
-  regenerated with `kgdistiller export obsidian`. The feed no longer carries
-  note paths or fields, the **Field** filter is removed, and older feeds are
-  rejected until they are regenerated. Only `kgdistiller-graph-v2` sources are
-  accepted. Whenever a product update changes the feed contract, reinstall the
-  plugin with `kgdistiller obsidian install --replace` before or together with
+  regenerated with `kgdistiller export obsidian`. The feed is built from the
+  reviewed entries (`.knowledge/entries/<id>.md`) and the accepted edges
+  (`.knowledge/edges.jsonl`): every entry is a concept with its kind, aliases
+  and understanding state, every cited source document is a source node, and
+  every accepted edge is drawn. Sources may be any registered text document.
+  Feeds of earlier shapes (with a source generation block, references, curation
+  status or a bundle checksum) are rejected until they are regenerated. Whenever
+  a product update changes the feed contract, reinstall the plugin with
+  `kgdistiller obsidian install --replace` before or together with
   `kgdistiller export obsidian`; an older installed plugin rejects the new feed.
-- Open buttons target accepted entries (`.knowledge/entries/<node-id>.md`) for
-  concepts and the source authority file for sources, definitions and
-  references. Open targets exist only for a graph under the vault-root
-  `.knowledge/` folder. A target outside the vault index produces a notice;
-  enable hidden-folder indexing to open entries.
+- The reference layer, its **References** toggle and the **Show reference
+  edges** setting are removed; a stored `showReferences` value is ignored.
+  Concept nodes are ringed by understanding state, and the details panel shows
+  each concept's **Kind** and **Understanding**.
+- Open buttons open a concept's own entry file, and open a source or definition
+  in its source document, placing the cursor at the cited line range when the
+  document opens in a Markdown editor. Open targets exist only for a graph
+  under the vault-root `.knowledge/` folder. A target outside the vault index
+  produces a notice; enable hidden-folder indexing to open entries.
 - Stored settings are type-checked at load; a wrongly typed value falls back to
   its default and is named in a notice.
 

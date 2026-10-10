@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "kgdistiller"
 version = "0.4.0"
-description = "Local-first agentic distillation of Markdown, Typst, and LaTeX sources into a source-backed knowledge graph."
+description = "Local-first agentic distillation of registered text documents into a source-backed knowledge graph."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Qiulin Fan" }]
-keywords = ["knowledge-graph", "agents", "markdown", "typst", "latex"]
+keywords = ["knowledge-graph", "agents"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",
@@ -44,7 +44,6 @@ packages = ["src/kgdistiller"]
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
 "docs/concepts-and-relations.md" = "kgdistiller/product/docs/concepts-and-relations.md"
 "docs/paper-sheets-upstream.md" = "kgdistiller/product/docs/paper-sheets-upstream.md"
-"docs/latex-sources.md" = "kgdistiller/product/docs/latex-sources.md"
 "docs/obsidian-hidden-knowledge.md" = "kgdistiller/product/docs/obsidian-hidden-knowledge.md"
 "docs/omp-compiled-tools.md" = "kgdistiller/product/docs/omp-compiled-tools.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
@@ -67,7 +66,6 @@ include = [
   "docs/product-workflows.md",
   "docs/concepts-and-relations.md",
   "docs/paper-sheets-upstream.md",
-  "docs/latex-sources.md",
   "docs/obsidian-hidden-knowledge.md",
   "docs/omp-compiled-tools.md",
   "scripts/link-codex-product.sh",

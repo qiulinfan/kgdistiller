@@ -1,12 +1,13 @@
 # Transactional ingest contract
 
 `transactional-ingest-v1` is kgdistiller's only high-level personal-knowledge
-write API. It accepts reviewed semantic decisions and commits identity
-authorities, Markdown atomic entries, reviewed registries, and one deterministic
-`kgdistiller-graph-v2` JSON generation as a single client-visible transaction.
+write API. It accepts one reviewed delta of entries and edges and commits it as
+a single client-visible transaction: the changed `.knowledge/entries/<id>.md`
+files and `.knowledge/edges.jsonl` are installed together or not at all.
 
-Ingest does not discover concepts or decide ambiguous identities. Resolve and
-compare through the generation-checked read-only query surface first.
+Ingest does not discover concepts or decide ambiguous identities. Resolve them
+through the read-only query surface first. Source documents are only read;
+ingest never edits them.
 
 ## Commands and Python API
 
@@ -18,131 +19,144 @@ kgdistiller --repo-root PROJECT ingest apply request.json --receipt receipt.json
 ```python
 from kgdistiller.ingest import IngestPaths, apply_ingest, plan_ingest
 
+paths = IngestPaths(repo_root=project, registry=project / ".knowledge/sources.json")
 plan = plan_ingest(paths, request)
 receipt = apply_ingest(paths, request)
 ```
 
-Planning executes the transaction in isolated staging and leaves the live
-project unchanged. Apply obtains the single-writer lock and revalidates every
-precondition. The request `mode` must match the selected operation.
+The request `mode` must match the selected operation. `capture prepare` writes
+a plan request and an apply request for one reviewed capture, and
+`harvest apply` builds and applies one request for the checked sheet items.
 
-## Request boundary
+## Request
 
-The packaged request schema is
-`kgdistiller/schemas/kgdistiller-ingest-request-v1.schema.json`. A request binds:
+The packaged schema is
+`kgdistiller/schemas/kgdistiller-ingest-request-v1.schema.json`. A request is
+`{schema, request_id, mode, capabilities, delta, review}`:
 
-- `request_id`, `request_sha256`, `mode`, and
-  `capabilities: ["transactional-ingest-v1"]`;
-- base graph and alignment digests from `agent status`;
-- a content-addressed candidate snapshot and query report;
-- exact registered authority patches, normalized expected source hashes, and
-  complete post-patch marker/reference expectations;
-- one reviewed `kgdistiller-agent-delta-v1`;
-- optional reviewed alignment decisions;
-- explicit review evidence and provenance.
+- `request_id`: readable, `[A-Za-z0-9._-]`, at most 128 characters, such as
+  `capture-measure-space-1`;
+- `mode`: `plan` or `apply`;
+- `capabilities`: contains `transactional-ingest-v1`;
+- `delta`: one `kgdistiller-agent-delta-v1`;
+- `review`: `status: reviewed`, the `reviewer`, the identity `evidence` and the
+  source `provenance`.
 
-`request_sha256` is the SHA-256 of canonical compact UTF-8 JSON with sorted
-object keys after removing that field. Changing `mode` from `plan` to `apply`
-requires recomputing it.
+The delta has exactly five lists:
 
-Every candidate must have one reviewed disposition. `conflict` and `uncertain`
-results may only be rejected or deferred; they are never converted into new
-identities. Authority paths must remain within the repository, match exactly
-one bounded registered source, and use `.md`, `.typ`, or `.tex`.
+| Key | Item |
+|---|---|
+| `create_entries` | A complete entry record. |
+| `update_entries` | `{expected_label, entry}`; the entry fully replaces the current record. |
+| `remove_entries` | `{id, expected_label}`. |
+| `add_edges` | `{source, relation, target, origin, confidence, evidence}`. |
+| `remove_edges` | `{source, relation, target}`. |
 
-Authority digests use UTF-8 text after CRLF/CR is normalized to LF. Raw checkout
-bytes are not the transaction boundary.
+An entry record is `{id, label, kind, aliases, source, line_start, line_end,
+understanding, summary, evidence}` plus the optional `context`, `role`,
+`prerequisites`, `pending_prerequisites`, `common_confusions` and
+`open_questions`; see the [knowledge contract](graph-contract.md). Removing an
+entry does not cascade: its edges must be removed in the same delta.
 
-## Partial entry updates
+## Plan
 
-A transaction may curate one selected node while unrelated marked concepts in
-the same source remain pending. Entry completeness is checked for reviewed delta
-nodes and actually new or changed definitions. Changing a definition without its
-reviewed replacement entry still fails. Native marker expectations, required
-cross-file references and global graph validation remain enforced.
+Planning applies the delta to the current store in memory, validates the
+result and writes nothing to the store. It returns a readable
+`kgdistiller-ingest-plan-v1`:
 
-`curate-check --file` retains whole-file checks; its result describes the marked
-nodes, not full-source reading or personal mastery. Entry `understanding` and
-`pending_prerequisites` are independent learning metadata. Omitted learning
-fields survive updates; a supplied empty pending list explicitly clears it.
-
-The checkbox harvest workflow uses a single selected batch with one comparison
-and this same transaction. Preparing the sheet is read-only with respect to
-accepted knowledge. After an explicit harvest request, the script rechecks the
-frozen drafts and selected source/entry state, commits, then refreshes links.
-An interrupted projection refresh is recovered using the original persisted
-request and committed receipt; it does not create a second import.
-
-The [capture preparation helper](../skills/capture-kgdistiller/references/capture-contract.md) constructs one candidate comparison
-and finalized plan/apply requests from a reviewed single-item selection. It uses
-this same transaction boundary and never applies its prepared request itself.
-
-## Atomic generation install
-
-The engine:
-
-1. validates schemas, canonical digests, capabilities, artifact bindings,
-   source ownership, review coverage, and base generation;
-2. copies registered authorities and committed graph state into staging;
-3. applies the exact reviewed native patches and verifies marker/reference
-   state;
-4. synchronizes stable marker-derived identities, applies the reviewed delta
-   and mappings, and runs scoped plus global deterministic validation;
-5. backs up every live target and records a recovery journal;
-6. installs identity authorities, `.knowledge/entries/`, registries and graph
-   artifacts while holding the writer lock;
-7. persists the canonical receipt, marks the journal committed, and removes
-   the backup.
-
-There is no secondary database or embedding generation to rebuild. A fresh
-reader loads the new JSON generation into `GraphView`; generation checks prevent
-it from observing mixed files during the commit.
-
-If the process stops before the journal is committed, the next apply restores
-the recorded targets before accepting a new request. Preserve a degraded
-journal and its backups for manual recovery; never delete them to hide a mixed
-state.
-
-## Receipt, idempotency, and store refresh
-
-The packaged receipt schema is
-`kgdistiller/schemas/kgdistiller-ingest-receipt-v1.schema.json`. Accept success only
-when `status` is `committed`, the canonical receipt digest verifies, and its
-after-digests match a fresh `agent status`.
-
-Reapplying an identical canonical request returns its stored receipt. Reusing a
-`request_id` with different content is rejected. Receipts and journals are
-derived local state below `.knowledge/build/` and must not contain authority
-bodies, credentials, or model configuration.
-
-Portable snapshots are optional. For a snapshot explicitly maintained with this
-update, refresh and verify its generation:
-
-```sh
-kgdistiller --repo-root PROJECT store snapshot
-kgdistiller --repo-root PROJECT store verify
+```json
+{
+  "schema": "kgdistiller-ingest-plan-v1",
+  "request_id": "capture-measure-space-1",
+  "status": "planned",
+  "changes": {
+    "entries_created": ["measure-space"],
+    "entries_updated": [],
+    "entries_removed": [],
+    "aliases_changed": ["measure-space"],
+    "edges_added": [],
+    "edges_removed": []
+  },
+  "counts": {"before": {"entries": 315, "edges": 219}, "after": {"entries": 316, "edges": 219}}
+}
 ```
 
-This records identity authorities, Markdown entry/evidence authorities, and the
-deterministic JSON generation. If an existing snapshot is not refreshed, report
-it as stale and verify it before using it as a backup. Do not create
-`documents.jsonl` or `store.json` for ordinary capture or merely to satisfy a
-check; `check` and `agent status` validate the live knowledge project.
-Git commit, remote push, and the Obsidian graph feed remain separate
-authorities and require explicit scope.
+## Apply: lock plus semantic re-validation
+
+Apply holds the single-writer lock for the whole operation:
+
+1. finish or roll back an interrupted earlier install from its journal;
+2. if a receipt for `request_id` exists, return it when the stored request is
+   identical (compared as canonical JSON text) and fail with `request-conflict`
+   otherwise;
+3. re-validate the delta against the current store and current source text:
+   update and remove targets exist with their `expected_label`; created ids,
+   labels and aliases collide with nothing; every created or updated entry's
+   Evidence equals its cited source lines now; kinds are allowed by the
+   sources' document types; post-delta edge endpoints exist;
+   `prerequisite-for` stays acyclic; and the whole resulting store validates;
+4. write a journal, back up every target, and install the changed entry files
+   and `edges.jsonl` atomically; journal targets are restricted to
+   `entries/*.md` and `edges.jsonl`, and backups and staging are named by
+   `request_id`;
+5. write the receipt and mark the journal committed.
+
+There is no content hash of the base store: concurrent writers are excluded by the
+lock, and staleness is detected by re-validating meaning and source text at
+apply time. Nothing needs rebuilding afterwards; the next reader loads the new
+files. While a journal exists, readers and `check` fail with a clear error
+instead of reading a partial install, and the next `ingest apply` recovers it.
+Preserve a degraded journal and its backups for manual recovery; never delete
+them to hide a mixed state.
+
+## Receipt and idempotency
+
+The receipt is written to
+`.knowledge/build/kgdistiller-ingest/receipts/<request_id>.json` and validated
+against `kgdistiller-ingest-receipt-v1`:
+
+```json
+{
+  "schema": "kgdistiller-ingest-receipt-v1",
+  "request_id": "capture-measure-space-1",
+  "status": "committed",
+  "request": {"...": "the applied request"},
+  "changes": {"entries_created": ["measure-space"], "...": []},
+  "counts": {"entries": 316, "edges": 219}
+}
+```
+
+Accept success only when `status` is `committed`; then run `kgdistiller check`
+and compare `agent status` counts with the receipt. Reapplying an identical
+request returns its stored receipt. Receipts and journals are local state below
+`.knowledge/build/` and are never tracked. Git commit, remote push and the
+Obsidian graph feed are separate actions and require explicit scope.
 
 ## Stable failure behavior
 
-Important stable codes include `unsupported-schema`, `unsupported-capability`,
-`invalid-request`, `invalid-request-digest`, `unsafe-project-path`,
-`unsafe-source-path`, `source-ownership`, `stale-base-graph`,
-`stale-base-alignment`, `stale-source`, `stale-query-report`,
-`incomplete-review`, `unresolved-identity`, `duplicate-identity`,
-`marker-state-mismatch`, `scan-failed`, `delta-failed`, `sync-failed`,
-`alignment-failed`, `curation-failed`, `global-validation-failed`,
-`lock-conflict`, `request-id-conflict`, `install-failed`, and
-`rollback-failed`.
+Errors are printed as a `kgdistiller-ingest-error-v1` envelope
+`{schema, error: {code, message, stage, diagnostics}}`. The codes are:
 
-Any rejection before installation performs zero live writes. An installation
-failure restores all backed-up targets before returning; `rollback-failed`
-requires manual recovery before another write.
+| Code | Meaning |
+|---|---|
+| `invalid-request` | The request or delta violates its schema or shape. |
+| `invalid-store` | The current store, a receipt or the journal cannot be read. |
+| `lock-conflict` | Another writer holds the lock, or an interrupted ingest is pending (for `plan`). |
+| `missing-entry` | An update or removal target does not exist. |
+| `label-mismatch` | A target's current label differs from `expected_label`. |
+| `entry-exists` | A created id already exists. |
+| `identity-collision` | A label or alias is already used by another entry. |
+| `missing-source` | A cited source is missing, unsafe or not UTF-8 text. |
+| `source-not-registered` | No single registered source admits a cited path. |
+| `line-range` | A cited range exceeds the source's line count. |
+| `stale-evidence` | An entry's Evidence differs from its cited lines. |
+| `kind-not-allowed` | A kind is not in the source document type's `node_kinds`. |
+| `missing-edge` | A removed edge does not exist. |
+| `invalid-edge` | An edge has an unknown relation or malformed fields. |
+| `dangling-edge` | An edge endpoint has no entry after the delta. |
+| `cycle` | `prerequisite-for` would contain a cycle. |
+| `request-conflict` | The `request_id` was committed with a different request. |
+| `install-failed` | Installation or receipt writing failed; targets were restored. |
+
+Any rejection before installation performs zero store writes. An installation
+failure restores every backed-up target before returning.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -242,7 +241,6 @@ def install_obsidian_plugin(
             {
                 "path": name,
                 "bytes": len(assets[name]),
-                "sha256": hashlib.sha256(assets[name]).hexdigest(),
             }
             for name in PLUGIN_FILES
         ],

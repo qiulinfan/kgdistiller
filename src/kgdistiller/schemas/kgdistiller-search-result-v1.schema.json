@@ -4,10 +4,9 @@
   "title": "kgdistiller bounded deterministic search result v3",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "plan_sha256", "lanes", "results"],
+  "required": ["schema", "lanes", "results"],
   "properties": {
     "schema": {"const": "kgdistiller-search-result-v1"},
-    "plan_sha256": {"$ref": "#/$defs/sha256"},
     "lanes": {
       "type": "object",
       "additionalProperties": false,
@@ -22,7 +21,6 @@
     "results": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/result"}}
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "nodeId": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
     "edgeType": {"enum": ["prerequisite-for", "implies", "generalizes", "contrasts-with", "derived-from"]},
     "status": {"enum": ["enabled", "disabled", "degraded", "error"]},
@@ -55,10 +53,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["rank", "score"],
-      "properties": {
-        "rank": {"type": "integer", "minimum": 1, "maximum": 500},
-        "score": {"type": "number"}
-      }
+      "properties": {"rank": {"type": "integer", "minimum": 1, "maximum": 500}, "score": {"type": "number"}}
     },
     "resultLanes": {
       "type": "object",
@@ -76,10 +71,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["lane", "seed_id"],
-      "properties": {
-        "lane": {"enum": ["graph", "ppr"]},
-        "seed_id": {"$ref": "#/$defs/nodeId"}
-      }
+      "properties": {"lane": {"enum": ["graph", "ppr"]}, "seed_id": {"$ref": "#/$defs/nodeId"}}
     },
     "pathEvidence": {
       "type": "object",
@@ -98,7 +90,12 @@
       "properties": {
         "method": {"enum": ["rrf", "weighted", "single-lane"]},
         "score": {"type": "number"},
-        "explanation": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 1024}}
+        "explanation": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1024}
+        }
       }
     },
     "result": {
