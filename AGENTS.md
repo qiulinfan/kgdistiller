@@ -62,7 +62,9 @@
   frontmatter (read with PyYAML `BaseLoader`) has `node_kinds` and optional
   `relation_kinds`/`epistemic`, and whose body is the guidance. A base's sources
   are its `sources` glob→type map; each source has exactly one type. Do not
-  hardcode the owner's example types. Agents read a source's profile and
+  hardcode the owner's example types. `templates/document-types/` holds
+  optional editable starting profiles; they are bundled as data, never
+  activated by installation or `base add`. Agents read a source's profile and
   inventory through `kgd sheet SOURCE --json` and the text with their own tools.
 - Tokens (`tokens`) and name keys (`name_key`) live in `index.py`; every
   tokenizer user imports them from there.

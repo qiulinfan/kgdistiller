@@ -29,6 +29,25 @@ This repository holds the Obsidian plugin and the Python core, both at
 **1.0.0**, the first stable release. They are versioned and tagged separately: plugin tags are bare
 `x.y.z`, core tags are `core-x.y.z`.
 
+## Why the knowledge graph comes first
+
+> 我们这个 research oriented 的知识库，我之所以把知识图谱作为其最根本的核心，本质上是我认为：
+>
+> 一篇知识密集、研究性的知识源并不是每段文字都是关键，有很多东西是规范性目的或者“向读者证明我这个研究/架构有意义”。但是，它们进入我的眼睛的时候，我早就确认了它们是有意义的，因而我们真正需要的知识仅仅只是这个文章的一些知识节点而已。
+>
+> 这个 philosophy 是这个图谱的关键，因而检索“到底在哪篇文章的哪个段落”是完全依赖知识图谱的，向量和 bm25 检索也仅仅针对每个知识节点。
+
+An agent can first find a record, then inspect its original context:
+
+```sh
+kgd get research:sigma-algebra --source-lines 20
+```
+
+This reads the live cited range with 20 lines on either side. For more context,
+the agent uses the base root from `kgd base list` and the record's relative
+`source` path to read the original file. Context stays in the source; the
+record's base, path, lines and evidence already provide the connection.
+
 ## Obsidian plugin
 
 Open the [kgdistiller community listing](https://community.obsidian.md/plugins/kgdistiller),
@@ -60,6 +79,12 @@ at the cited line, and the source's sheet. The view updates as you edit records
 in Obsidian. Use the Properties panel to edit them, then run `kgd check` and
 `kgd index`; the plugin itself never writes a knowledge file. The full
 description is in [docs/obsidian.md](docs/obsidian.md).
+
+A many-to-one relation appears as a diamond with one labelled edge per
+participant: for example, `premise: [A, B]` and `conclusion: [C]` are one
+relation connecting all three records. Relations that participate in another
+relation also keep their diamond. A binary relation can be drawn as a single
+typed edge when its own relation node is not needed.
 
 ## Privacy and data boundaries
 
@@ -178,7 +203,8 @@ kgd base add ~/research --name research
 Define a document type in `~/.knowledge/types/research-notes.md`. Its
 frontmatter lists the node kinds and the relation kinds with their ordered
 roles; its body is the guidance an agent follows when extracting records from
-documents of this type. kgdistiller ships no types.
+documents of this type. No types are activated automatically; you can write
+one or adapt a [starter template](#document-types-and-starter-templates).
 
 ```markdown
 ---
@@ -232,6 +258,34 @@ that moved or no longer matches its source. `kgd accept` moves drafts into
 dense run downloads the model; set `HF_HUB_OFFLINE=1` afterwards. Every
 command prints JSON and exits 0 on success, 1 on findings or a refusal, and 2
 on a usage error.
+
+## Document types and starter templates
+
+> 我之前有另一个重要的设计：agent 并不懂你要什么样的知识节点，因而我认为一个知识源文章属于某个类型（比如 math notes、ai research），用户自己为这个类型去制定知识节点类型以供 agent 去提取。
+>
+> 我作为仓库创始人自己需要的类型（比如 math notes、ai research、cs notes），直接作为默认 templates 就可以了。
+
+A document type declares `node_kinds`, relation kinds and their roles,
+optional epistemic labels, and prose guidance for extraction. Source globs in
+`config.json` assign exactly one type to each source.
+
+Capture and compilation read that policy through `kgd sheet SOURCE --json`
+before proposing records. `kgd check` and acceptance validate kinds and roles
+against it. You can change the policy or add types without changing the engine.
+
+Templates:
+
+| Template | Knowledge to retain |
+|---|---|
+| [math-notes](templates/document-types/math-notes.md) | Definitions, axioms and precise theorems, with derivations and examples. |
+| [ai-research](templates/document-types/ai-research.md) | Defined concepts, algorithms, architectures, objectives and precise results, with comparisons and evaluations. |
+| [cs-notes](templates/document-types/cs-notes.md) | Definitions, algorithms, data structures, architectures and invariants, with implementation and complexity relations. |
+
+Copy a chosen file into `$KGDISTILLER_HOME/types/`, edit its vocabulary and
+guidance, then map the relevant source globs to its file stem. These are
+starting templates; installation and `kgd base add` leave the active type
+catalog for you to define. The templates are also bundled under
+`kgdistiller/product/templates/document-types/` in the Python package.
 
 ## Record format
 

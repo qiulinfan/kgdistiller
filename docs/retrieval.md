@@ -8,6 +8,13 @@ and the embedding model named by `config.json`: it may lag behind the files,
 and every read reports that lag, but it never differs from what a rebuild would
 produce. Drafts are never indexed.
 
+The retrieval units are accepted knowledge records, both nodes and relations,
+selected under the owner's source-type policy. Original articles are not
+independently split into ranked paragraphs. A retrieved record supplies its
+base, source path, lines and evidence; `get --source-lines` reads surrounding
+source text live when the agent needs more detail. Wider context can be read
+from the original file using the registered base root and that relative path.
+
 ## Engine
 
 The database is one SQLite file in WAL mode, built with the standard library

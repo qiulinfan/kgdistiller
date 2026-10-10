@@ -2,6 +2,13 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+- Bundle editable `math-notes`, `ai-research` and `cs-notes` document-type
+  starter templates. The owner selects, edits and registers them; installation
+  and base registration activate no default types. Document the research
+  knowledge selection policy and source-context reading in both READMEs.
+
 ## 1.0.0 — 2026-10-10
 
 The first stable release. The Python core and the Obsidian plugin both move to

@@ -63,6 +63,7 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
     roots = (
         REPO_ROOT / "skills",
         REPO_ROOT / "workflows",
+        REPO_ROOT / "templates" / "document-types",
         REPO_ROOT / ".codex" / "agents",
         REPO_ROOT / ".claude" / "agents",
     )

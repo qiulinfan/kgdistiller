@@ -6,9 +6,10 @@ base's source documents to user-defined document types, holds those types, and
 keeps the derived database and the write lock. A base is a directory, normally
 one Obsidian vault, that owns its source documents and its knowledge under
 `.knowledge/`; it is the backup unit of its knowledge. The product checkout
-owns only engine code, the Obsidian plugin bundle, Skills, presets and workflow
-definitions. kgdistiller has no publishing surface; a repository that publishes
-its notes owns its website and registries.
+owns engine code, the Obsidian plugin bundle, Skills, presets, workflow
+definitions and optional document-type starter templates. kgdistiller has no
+publishing surface; a repository that publishes its notes owns its website
+and registries.
 
 The record format and the write path are specified in [model.md](model.md),
 the database and reads in [retrieval.md](retrieval.md), the plugin in
@@ -139,6 +140,17 @@ Hugging Face progress bars are off by default; set
 `HF_HUB_DISABLE_PROGRESS_BARS=0` to watch the first download.
 
 ### Document types
+
+The owner defines which knowledge to retain from each kind of source. Capture
+and compilation read the assigned profile before extraction; file extensions
+do not select a policy. The engine validates the declared kinds and roles.
+
+Optional editable profiles are supplied in
+`templates/document-types/{math-notes,ai-research,cs-notes}.md`, also bundled
+under `kgdistiller/product/templates/document-types/` in the installed package.
+Copy a selected profile into the home's `types/`, review and edit it, and map
+the relevant source globs to its file stem. Neither installation nor
+`kgd base add` activates these templates or overwrites the owner's profiles.
 
 A type file `types/<name>.md` has a slug stem, YAML frontmatter read with
 PyYAML's `BaseLoader` and a non-empty body, the extraction guidance:

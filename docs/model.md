@@ -31,8 +31,10 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    record's fixed keys, the understanding enum, the section names
    `Search terms` and `Evidence`, the folder names `entries`, `drafts` and
    `sheets`, and the link grammar. Node kinds, relation kinds, roles and
-   epistemic labels are user data; the product ships no types and no default
-   embedding model.
+   epistemic labels are user data. Optional starting profiles live in
+   `templates/document-types/`; they become active only when the owner copies
+   and registers them in the home. The product activates no types and ships
+   no default embedding model.
 6. **Files decide validity; the database serves retrieval.** Validation and
    writes read files only. Retrieval reads the database only, except
    `get --source-lines`, which reads live source text on request.
@@ -41,6 +43,21 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    the embedding model. An incremental index produces the same rows as a
    rebuild, and losing the database costs one command plus the time to
    re-embed.
+
+## Research knowledge selection
+
+The graph is the knowledge the reader selects from a source already judged
+worth studying: concepts, precise results and relations, rather than every
+paragraph of exposition or motivation. Capture and compilation follow the
+source's owner-defined document type. They preserve the conditions, formulas,
+limitations, counterexamples and experimental evidence that affect meaning;
+section names and source syntax never determine admission.
+
+Accepted records, including relations, are the units of lexical and dense
+retrieval. Their links and evidence locate the original passages. Source text
+remains available for on-demand context through the record's base, relative
+`source` path and `lines`; `get --source-lines` reads that context live. No
+second paragraph store or source-format parser is needed for this connection.
 
 ## Data model
 

@@ -47,7 +47,8 @@ Then verify that:
 - wheel and sdist contain the Python modules, every product Skill, both
   workflow manifests, the workflow guide and every `workflow_resources`
   document of both manifests, the `.codex/agents` and `.claude/agents`
-  presets, the linkers, and the three-file Obsidian plugin bundle;
+  presets, the linkers, the editable document-type starter templates, and the
+  three-file Obsidian plugin bundle;
 - an isolated environment installs the wheel and runs
   `scripts/smoke_installed_runtime.py` with `KGDISTILLER_HOME` and `HOME` set to
   temporary directories: `base add` creates the home and the base's

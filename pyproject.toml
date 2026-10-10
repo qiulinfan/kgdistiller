@@ -40,6 +40,7 @@ packages = ["src/kgdistiller"]
 [tool.hatch.build.targets.wheel.force-include]
 "skills" = "kgdistiller/product/skills"
 "workflows" = "kgdistiller/product/workflows"
+"templates/document-types" = "kgdistiller/product/templates/document-types"
 ".codex/agents" = "kgdistiller/product/.codex/agents"
 ".claude/agents" = "kgdistiller/product/.claude/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
@@ -60,6 +61,7 @@ include = [
   "src/kgdistiller/**/*.py",
   "skills/**",
   "workflows/**",
+  "templates/document-types/*.md",
   ".codex/agents/*.toml",
   ".claude/agents/*.md",
   "docs/product-workflows.md",

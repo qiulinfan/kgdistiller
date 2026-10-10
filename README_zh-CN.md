@@ -22,6 +22,22 @@
 
 本仓库包含 Obsidian 插件和 Python 核心，二者都是 **1.0.0**，即第一个正式版本。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
 
+## 为什么以知识图谱为核心
+
+> 我们这个 research oriented 的知识库，我之所以把知识图谱作为其最根本的核心，本质上是我认为：
+>
+> 一篇知识密集、研究性的知识源并不是每段文字都是关键，有很多东西是规范性目的或者“向读者证明我这个研究/架构有意义”。但是，它们进入我的眼睛的时候，我早就确认了它们是有意义的，因而我们真正需要的知识仅仅只是这个文章的一些知识节点而已。
+>
+> 这个 philosophy 是这个图谱的关键，因而检索“到底在哪篇文章的哪个段落”是完全依赖知识图谱的，向量和 bm25 检索也仅仅针对每个知识节点。
+
+Agent 可以先检索记录，再阅读原文上下文：
+
+```sh
+kgd get research:sigma-algebra --source-lines 20
+```
+
+这会实时读取被引用的行段，以及前后各 20 行。需要更多上下文时，agent 根据 `kgd base list` 返回的 base 根目录和记录中的相对 `source` 路径读取原文件。上下文保留在来源中；现有的 base、路径、行号和 evidence 已经提供了这条连接。
+
 ## Obsidian 插件
 
 打开 [kgdistiller 社区页面](https://community.obsidian.md/plugins/kgdistiller)，点 **Add to Obsidian**，然后启用 **kgdistiller**。手动安装时，从 [plugin release](https://github.com/qiulinfan/kgdistiller/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放进 `<vault>/.obsidian/plugins/kgdistiller/`，重载 Obsidian 后启用。需要桌面版 Obsidian **1.13.7 或更新**，移动端不加载此插件。
@@ -31,6 +47,8 @@
 记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。按[安装](#安装)装好 CLI 后，`kgd obsidian install` 会把随包附带的 1.0.0 插件复制进 vault，并一起打开这个设置。如果社区页面或 release 页面提供的仍是更早的版本，就用这条命令安装。它具体改动哪些文件，见 [docs/obsidian.md](docs/obsidian.md#installation)。
 
 运行 **kgdistiller: Open typed graph**，图谱会在右侧栏打开。它画出 node、按 role 绑定的 relation、草稿和 pending term；可以只看当前记录、source 或 sheet 周围一到两层，也可以看全图，并按 kind、class、understanding 和 source 路径筛选。详情面板显示记录的 role、正文和 evidence，还有按钮打开记录本身、跳到 source 中被引用的那一行，或打开该 source 的 sheet。在 Obsidian 里改记录时视图会跟着更新。改记录用 Properties 面板，改完运行 `kgd check` 和 `kgd index`；插件本身从不写任何知识文件。完整说明见 [docs/obsidian.md](docs/obsidian.md)。
+
+多对一关系显示为一个菱形，每个参与项都有标明 role 的连边。例如 `premise: [A, B]`、`conclusion: [C]` 是连接三条记录的一条关系。作为另一条关系参与项的 relation 也保留菱形；不需要独立关系节点时，二元关系可以显示成一条带类型的边。
 
 ## 隐私与数据边界
 
@@ -97,7 +115,7 @@ uv tool update-shell
 kgd base add ~/research --name research
 ```
 
-在 `~/.knowledge/types/research-notes.md` 定义一个 document type。frontmatter 列出 node kind，以及每个 relation kind 的 role（有顺序）；正文是 agent 从这类文档里抽取记录时遵循的指引。kgdistiller 不自带任何 type。
+在 `~/.knowledge/types/research-notes.md` 定义一个 document type。frontmatter 列出 node kind，以及每个 relation kind 的 role（有顺序）；正文是 agent 从这类文档里抽取记录时遵循的指引。产品不会自动启用 type；你可以自己写，也可以修改[起始模板](#文档类型与起始模板)。
 
 ```markdown
 ---
@@ -140,6 +158,26 @@ kgd search "sigma algebra"
 ```
 
 `kgd sheet --json` 打印该 source 的 type profile 和已有记录。`kgd check` 校验 home、记录和草稿，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把草稿移进 `entries/`，要么全部成功，要么什么都不改。`kgd index` 更新数据库；第一次 dense 运行会下载模型，之后请设置 `HF_HUB_OFFLINE=1`。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
+
+## 文档类型与起始模板
+
+> 我之前有另一个重要的设计：agent 并不懂你要什么样的知识节点，因而我认为一个知识源文章属于某个类型（比如 math notes、ai research），用户自己为这个类型去制定知识节点类型以供 agent 去提取。
+>
+> 我作为仓库创始人自己需要的类型（比如 math notes、ai research、cs notes），直接作为默认 templates 就可以了。
+
+一个 document type 包含 `node_kinds`、relation kind 及其 role、可选的 epistemic 标签，以及正文中的抽取指引。`config.json` 中的 source glob 为每个来源指定恰好一个 type。
+
+Capture 和 compile 在提出记录之前，通过 `kgd sheet SOURCE --json` 读取这份策略；`kgd check` 和接受流程根据它校验 kind 与 role。你可以修改策略或增加类型，无需修改引擎。
+
+模板：
+
+| 模板 | 保留的知识 |
+|---|---|
+| [math-notes](templates/document-types/math-notes.md) | 定义、公理、精确陈述的定理，以及推导关系和例子。 |
+| [ai-research](templates/document-types/ai-research.md) | 有定义的概念、算法、架构、目标函数和精确结果，以及比较与评测关系。 |
+| [cs-notes](templates/document-types/cs-notes.md) | 定义、算法、数据结构、架构和不变量，以及实现和复杂度关系。 |
+
+把选择的文件复制到 `$KGDISTILLER_HOME/types/`，修改其中的分类、角色和指引，再将相应 source glob 映射到文件名。它们是起始模板；安装和 `kgd base add` 都把正式启用的类型目录留给你定义。Python 包中也附带这些模板，位于 `kgdistiller/product/templates/document-types/`。
 
 ## 记录格式
 
