@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kgdistiller"
 version = "0.4.0"
-description = "Local-first agentic distillation of registered text documents into a source-backed knowledge graph."
+description = "Local-first academic research knowledge base: source-backed records and role-bound relations in Obsidian vaults, indexed in one SQLite file."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -43,9 +43,10 @@ packages = ["src/kgdistiller"]
 ".codex/agents" = "kgdistiller/product/.codex/agents"
 ".claude/agents" = "kgdistiller/product/.claude/agents"
 "docs/product-workflows.md" = "kgdistiller/product/docs/product-workflows.md"
-"docs/concepts-and-relations.md" = "kgdistiller/product/docs/concepts-and-relations.md"
-"docs/paper-sheets-upstream.md" = "kgdistiller/product/docs/paper-sheets-upstream.md"
-"docs/obsidian-hidden-knowledge.md" = "kgdistiller/product/docs/obsidian-hidden-knowledge.md"
+"docs/model.md" = "kgdistiller/product/docs/model.md"
+"docs/retrieval.md" = "kgdistiller/product/docs/retrieval.md"
+"docs/obsidian.md" = "kgdistiller/product/docs/obsidian.md"
+"docs/deployment.md" = "kgdistiller/product/docs/deployment.md"
 "docs/omp-compiled-tools.md" = "kgdistiller/product/docs/omp-compiled-tools.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
@@ -59,15 +60,15 @@ packages = ["src/kgdistiller"]
 [tool.hatch.build]
 include = [
   "src/kgdistiller/**/*.py",
-  "src/kgdistiller/schemas/*.json",
   "skills/**",
   "workflows/**",
   ".codex/agents/*.toml",
   ".claude/agents/*.md",
   "docs/product-workflows.md",
-  "docs/concepts-and-relations.md",
-  "docs/paper-sheets-upstream.md",
-  "docs/obsidian-hidden-knowledge.md",
+  "docs/model.md",
+  "docs/retrieval.md",
+  "docs/obsidian.md",
+  "docs/deployment.md",
   "docs/omp-compiled-tools.md",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",

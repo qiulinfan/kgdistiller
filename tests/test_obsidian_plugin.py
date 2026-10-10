@@ -59,7 +59,7 @@ class ObsidianPluginInstallTest(unittest.TestCase):
 
     def test_replace_preserves_plugin_settings(self) -> None:
         install_obsidian_plugin(self.vault)
-        settings = b'{"showSources":false,"label":"\xe7\x9f\xa5\xe8\xaf\x86"}\n'
+        settings = b'{"showDrafts":false,"label":"\xe7\x9f\xa5\xe8\xaf\x86"}\n'
         (self.plugin / "data.json").write_bytes(settings)
         (self.plugin / "main.js").write_text("stale", encoding="utf-8")
 

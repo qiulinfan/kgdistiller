@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harvest Knowledge"
+  short_description: "Accept the drafts ticked in a source sheet"
+  default_prompt: "Use $harvest-kgdistiller to accept the drafts I ticked in this sheet and re-index the knowledge base."

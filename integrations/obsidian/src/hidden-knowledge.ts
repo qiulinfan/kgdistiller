@@ -1,6 +1,6 @@
 import { type App, normalizePath } from "obsidian";
 
-import { KNOWLEDGE_DIRECTORY } from "./contract";
+import { KNOWLEDGE_DIRECTORY } from "./records";
 
 // Adapted from Hidden Folders Access (MIT), commit
 // de3734d36997a98b81a6a6644984748af1e6b3b0, hidden-folders-indexer.ts.
@@ -46,8 +46,8 @@ interface Session {
 
 const root = KNOWLEDGE_DIRECTORY;
 
-/** Folders under the hidden root that stay out of native indexing unless the user changes them. */
-export const DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS: readonly string[] = ["build"];
+/** Folders under the hidden root that stay out of native indexing; nothing by default. */
+export const DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS: readonly string[] = [];
 
 const under = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
 const excluded = (session: Session, path: string): boolean =>
@@ -140,7 +140,7 @@ export class HiddenKnowledgeIndexer {
       entry.split("/").every((part) => part !== "" && part !== "." && part !== ".." &&
         !/[\\:\x00-\x1f]/.test(part));
     if (!Array.isArray(exclusions) || !exclusions.every(valid)) {
-      return "Excluded folders must be relative paths under the hidden folder, such as build.";
+      return "Excluded folders must be relative folder paths under the hidden folder, without empty, \".\" or \"..\" segments.";
     }
     return undefined;
   }

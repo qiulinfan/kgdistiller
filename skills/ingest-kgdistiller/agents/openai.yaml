@@ -1,4 +1,0 @@
-interface:
-  display_name: "Ingest into kgdistiller"
-  short_description: "Commit reviewed entries and edges as one transaction"
-  default_prompt: "Use $ingest-kgdistiller to plan and transactionally apply this reviewed knowledge update, then return its receipt and the check result."

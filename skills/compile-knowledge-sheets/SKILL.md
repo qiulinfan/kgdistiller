@@ -1,109 +1,106 @@
 ---
 name: compile-knowledge-sheets
-description: Create or refresh partial or complete source-scoped definition and pending link sheets to accepted knowledge metadata, and prepare reviewed metadata updates when needed. Use for requested def-sheet or pending-sheet views of mathematical notes, computer-science notes, papers, blogs, or project documents; ordinary source reading does not require this Skill.
+description: Extract source-backed knowledge records from a bounded part or the whole of a registered document, guided by its user-registered document type, as drafts for owner review, then generate the source's def/pending sheet. Use for requested whole-source or partial distillation of mathematical notes, computer-science notes, papers, blogs or project documents, including when the user asks to file or ingest a document into their kgdistiller (kgd/kgdt) knowledge base; one item while reading belongs to capture-kgdistiller.
 ---
 
 # Compile knowledge sheets
 
-Create source-scoped link views of the caller's canonical `.knowledge/` metadata.
-Definitions, conditions, evidence, relations and applications belong in accepted
-knowledge records. A definition sheet shows names, types, source locators and
-links to those records; a pending sheet links their supported dependency-gap
-state. Papers are one use case of this general workflow.
+Turn a bounded scope of one registered source into draft records the owner
+reviews, and generate the source's sheet so the owner can tick drafts for
+acceptance. Accepted records are never written by this Skill; changes to them
+are proposed in the report.
 
-Match explanations, prompts and handoffs to the user's language unless another
-language is requested. Retain technical names, identifiers, structured values,
-formulas and raw errors.
+Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 
-## Establish the source and target
+Read [references/record-format.md](references/record-format.md) before writing
+drafts and [references/sheet-contract.md](references/sheet-contract.md) before
+generating a sheet. Paths given to `kgd` may be absolute or relative to the
+working directory; the base is the registered root that contains the path.
 
-Read [references/sheet-contract.md](references/sheet-contract.md) before
-creating or refreshing a view. Establish the caller's source files, source
-version/locators, registered base, output location and requested coverage. Respect existing filenames; otherwise use `def-sheet.md` and
-`pending-sheet.md` beside the selected source or in its caller-selected folder.
-Do not assume a paper corpus, paper-reading vault or prior sheet layout.
+## 1. Set the scope
 
-Run `kgd scan --file SOURCE --base B` for each selected source, passing
-`--base B` after every command or running inside the registered base root;
-relative paths are resolved against the working directory. It returns the
-source's base and `type`, its `profile` (`node_kinds`, `relation_kinds`,
-`epistemic` and `guidance`, the user-registered extraction rules from
-`$KGDISTILLER_HOME/types/<type>.md`) and every line with its 1-based number. A
-source is a UTF-8 text document matched by the base's globs, and every source
-has exactly one type; kgdistiller never parses its syntax, so the profile, not
-the file format, guides extraction. Do not impose a fixed catalog of document
-classes. Cite the source directly by path and line range; no conversion is
-involved.
+Establish the source file(s) and the requested coverage: selected passages,
+chapters or the whole file. Full-source distillation needs an explicit request
+and is usual for the owner's own notes or familiar material; new reading
+normally uses `$capture-kgdistiller`. For a whole-source request, read proofs,
+examples and appendices too. Report actual coverage; a partial pass never
+claims completeness.
 
-Partial sheets are normal. Use the explicitly selected concepts or passages as
-the scope; do not fill every missing row or initiate full-source distillation.
-For a request to save one item while reading, use `$capture-kgdistiller`. Read
-enough local context to preserve the complete meaning of selected knowledge. For a requested complete source extraction,
-read substantive proofs, examples, appendices and experiments too. Full-source
-distillation requires an explicit request. Report actual coverage and unavailable
-material; a partial reading cannot claim completeness. Preserve unselected rows.
-Full distillation is usually appropriate for the user's own notes or familiar
-articles. New-article reading normally uses local `$capture-kgdistiller` updates.
+## 2. Read the profile and inventory
 
-Use `$query-kgdistiller` to resolve existing identities and accepted entries.
-Accepted entries in `.knowledge/entries/` are the knowledge nodes. A heading,
-theorem wrapper, sheet row or navigation link does not establish identity.
-Reclassification or removal of an existing entry needs an explicit review.
+```sh
+kgd sheet SOURCE --json
+```
 
-## Prepare metadata when needed
+It returns the base, the document type with its `node_kinds`,
+`relation_kinds` (kinds with ordered roles), `epistemic` list and guidance,
+`line_count`, and the accepted records, drafts and pending terms that already
+cite this source. Follow the type's guidance; do not infer kinds from the file
+extension or impose a built-in catalog. Read the source text with your own
+tools. An unregistered file is an error that asks for a glob in
+`$KGDISTILLER_HOME/config.json`: propose the glob and its type to the owner
+instead of registering it.
 
-If the selected source needs new or changed metadata, read
-[references/update-contract.md](references/update-contract.md). Prepare the complete
-source-grounded proposal in `.knowledge/build/reviews/`, including meanings,
-conditions, formal content, evidence, factual relations, applications and
-unresolved decisions. Keep it distinct from committed metadata. `build/` is
-excluded from Obsidian hidden-folder indexing by default; remove `build` from
-the kgdistiller plugin's exclusion list to open drafts there.
+## 3. Establish identity
 
-Treat source coverage, available definitions and user understanding separately.
-Read `entry.understanding` as `unknown`, `not-yet-understood` or `understood`;
-absence means unknown. Preserve existing status unless the user states a change.
-Finding a definition or finishing a paper never establishes understanding.
-Store only direct gaps in `pending_prerequisites`, retaining the term, required
-meaning and use context. When the user chooses to learn a pending concept, its
-own entry may expose the next layer; do not recursively resolve the chain now.
+Build the candidate batch (labels, aliases, line ranges, kinds, participants)
+first, then resolve it:
 
-Apply the registered type's node kinds, relation kinds, epistemic values and
-guidance. For example,
-the shared model admits mathematical definitions, axioms and theorems, and
-computer-science algorithms and architectures as knowledge nodes. Propositions
-and remarks express relations; examples and experiments express typed
-applications. The bundled update contract provides the preservation rules.
+```sh
+kgd resolve "LABEL" "ALIAS" ...
+kgd search "LABEL OR DEFINING PHRASE" --base B
+kgd get UID
+```
 
-Use `$curate-kgdistiller-notes`, `$query-kgdistiller`, `$capture-kgdistiller`
-and `$ingest-kgdistiller` within their current supported contracts. Compilation
-alone does not authorize live writes; apply only the concrete reviewed content
-and target already authorized by the user, or obtain confirmation for that scope.
-Do not register or migrate a base, and never hand-edit
-`.knowledge/edges.jsonl`.
+Compare definitions and conditions yourself. The same name is not the same
+concept: a homonym gets its own record, and an existing record with the same
+meaning is reused by linking it, not duplicated. Leave ambiguous candidates out
+and list them. If `lag.changed_files` is above 0, run `kgd index` first.
 
-Atomic entries support simple direct pending prerequisites and understanding.
-Current `kgdistiller-agent-delta-v1` ingest does not support full n-ary/application records or rich
-gap history. Keep unsupported proposals in the review area, report the exact adapter
-gap and defer them. Do not invent storage formats, commands, accepted entries or
-links to make a sheet look complete. A read-only compiled library is not a write
-API.
+## 4. Write drafts
 
-## Generate and verify the link views
+Write one `<root>/.knowledge/drafts/<id>.md` per new record in scope:
 
-Accepted rows link only to records that exist. Verify each metadata link against
-the committed record and current source/identity binding. Review candidates may
-instead have explicitly labeled draft links and Markdown task checkboxes, using
-the `$harvest-paper` Skill and its checkbox contract.
-The user can review those drafts in Obsidian, select
-items and explicitly request `$harvest-paper` for scripted ingestion. That
-request authorizes the selected reviewed content and target; no second chat
-selection is needed. A checkbox never establishes personal understanding. Keep
-sheet rows lightweight; do not copy full definitions or claims into a second
-editable knowledge store. Regenerate projections after a verified update,
-preserving unrelated user annotations and previously created source files.
+- nodes for the kinds the type lists as node kinds (typically definitions,
+  axioms and named, precisely stated results);
+- relations for statements connecting records, with every participant bound
+  to a declared role; self-relations and relations about relations are
+  allowed; examples and applications are relations of the kind the type
+  registers for them;
+- `requires` for direct understanding prerequisites; unexplained terms as
+  plain pending values, one level deep;
+- Evidence quotes copied verbatim from the cited lines.
 
-Return the sheet paths, coverage, linked records, review proposal/receipt paths
-when relevant, and unsupported or unapplied scope. A canonical update requires
-a committed ingest receipt and a passing `check`; a draft or successful
-projection refresh is not evidence of a metadata commit.
+Drafts may link accepted records and each other. Never set `understanding`
+without an explicit owner statement.
+
+## 5. Check
+
+```sh
+kgd check --base B
+```
+
+Every draft you wrote must pass: no `errors` entry may name it, and its
+evidence must be fresh. Fix and re-check. Pre-existing findings on other files
+are reported, not repaired.
+
+## 6. Generate the sheet
+
+```sh
+kgd sheet SOURCE
+```
+
+It writes `<root>/.knowledge/sheets/<source path>.md`, keeping the ticks of
+drafts that still exist.
+
+## 7. Stop and report
+
+Stop here. The owner reviews the drafts in Obsidian, ticks the rows to accept
+and runs `$harvest-kgdistiller` (or `kgd accept` on chosen drafts).
+
+Report the scope and actual coverage, the drafts written, reused records,
+ambiguous candidates left out, and the sheet path. List separately every change
+you would make to accepted records — edits, deletions, node-to-relation
+conversions — with the reason and source lines. Apply such a change only when
+the owner asks: edit the record in place with a stale-read-safe tool, run
+`kgd check --base B`, then `kgd index`.

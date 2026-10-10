@@ -1,4 +1,4 @@
 interface:
   display_name: "Capture Knowledge"
-  short_description: "Save one concept and its immediate learning gaps"
-  default_prompt: "Use $capture-kgdistiller to save this selected concept with its source, my understanding and direct pending prerequisites."
+  short_description: "Save one source-backed record and its direct gaps"
+  default_prompt: "Use $capture-kgdistiller to save this selected item as a source-backed record with my stated understanding and direct pending terms, then accept and index it."

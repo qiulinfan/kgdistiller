@@ -1,59 +1,64 @@
-"""Read-only MCP JSON-RPC server over a freshly loaded entry store per call."""
+"""Read-only MCP JSON-RPC server over stdio: ``kg_search``, ``kg_resolve`` and ``kg_get``.
+
+The server serves the whole home. Every tool call goes through ``retrieve``,
+which opens a fresh read-only connection to the derived database, so a call
+sees the latest ``kgd index`` and never writes anything.
+"""
 
 from __future__ import annotations
 
 import json
 import math
+import sqlite3
 import sys
-from pathlib import Path
 from typing import Any, TextIO
 
 from . import __version__
-from .contracts import canonical_json, load_contract_schema
-from .graph_retrieval import GraphRetrievalPolicy
-from .home import Base
-from .query import (
-    QueryError,
-    expand,
-    get,
-    load_graph_view,
-    personalized_pagerank,
-    query_status,
-    resolve_concepts,
-)
-from .retrieval import (
-    MAX_RETRIEVAL_RESPONSE_BYTES,
-    RETRIEVAL_PLAN_SCHEMA,
-    RetrievalError,
-    build_context_from_execution,
-    execute_retrieval_plan,
-    query_retrieval_plan,
-)
+from .home import KnowledgeError
+from .records import UNDERSTANDING
+from .retrieve import CLASSES, Filters, get, resolve, search
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_MESSAGE_JSON_DEPTH = 64
 MAX_MESSAGE_JSON_VALUES = 100_000
-MAX_TOOL_RESPONSE_BYTES = MAX_RETRIEVAL_RESPONSE_BYTES
+MAX_TOOL_RESPONSE_BYTES = 8 * 1024 * 1024
 READ_ONLY_ANNOTATIONS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+INSTRUCTIONS = (
+    "Read-only access to every base registered in the kgdistiller home: source-backed records and "
+    "role-bound relations. Same name is not same concept; compare senses before assuming identity, and "
+    "deliver source:lines with the evidence quotes. Every result reports lag; when lag.changed_files > 0, "
+    "run `kgd index` and repeat the call."
+)
 
 
-def _object_schema(properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
-    schema: dict[str, Any] = {"type": "object", "properties": properties or {}, "additionalProperties": False}
-    if required:
-        schema["required"] = required
-    return schema
+class ToolError(ValueError):
+    """A tool call that cannot be answered; reported as a tool result with ``isError``."""
 
 
-RETRIEVAL_PLAN_INPUT_SCHEMA = load_contract_schema(RETRIEVAL_PLAN_SCHEMA)
-COMMON_RETRIEVAL_PROPERTIES = {
-    "max_depth": {"type": "integer", "minimum": 0, "maximum": 8, "default": 1},
-    "graph_strategy": {"type": "string", "enum": ["bfs", "ppr", "hybrid"], "default": "hybrid"},
-    "graph_retrieval": {"type": "boolean", "default": False},
-    "graph_seed_candidates": {"type": "integer", "minimum": 1, "maximum": 32, "default": 5},
-    "graph_edge_policy": {"type": "string", "enum": ["high-confidence", "all"], "default": "high-confidence"},
+def compact_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _strings(max_length: int, max_items: int, *, min_items: int = 0, enum: tuple[str, ...] = ()) -> dict[str, Any]:
+    items: dict[str, Any] = {"type": "string", "minLength": 1, "maxLength": max_length}
+    if enum:
+        items["enum"] = list(enum)
+    return {"type": "array", "items": items, "minItems": min_items, "maxItems": max_items}
+
+
+FILTER_PROPERTIES = {
+    "base": _strings(64, 32),
+    "kind": _strings(64, 32),
+    "class": _strings(16, 2, enum=CLASSES),
+    "source": _strings(4096, 32),
+    "understanding": _strings(32, 3, enum=UNDERSTANDING),
 }
+
+
+def _object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
 def _tool(name: str, title: str, description: str, schema: dict[str, Any]) -> dict[str, Any]:
@@ -61,14 +66,31 @@ def _tool(name: str, title: str, description: str, schema: dict[str, Any]) -> di
 
 
 TOOL_DEFINITIONS = [
-    _tool("kg_compiled_knowledge", "Compiled Knowledge", "Search compiled meanings, inventory exact authored term declarations, browse explicit dependencies and claims, read complete definitions, or pack selected evidence. Inventories do not certify source-corpus completeness; search candidates and packed records do not certify scientific truth.", _object_schema({"library_path": {"type": "string", "minLength": 1, "maxLength": 4096}, "operation": {"type": "string", "enum": ["search", "browse", "get", "inventory", "pack"]}, "query": {"type": "string", "minLength": 1, "maxLength": 8192}, "term": {"type": "string", "minLength": 1, "maxLength": 8192}, "reference": {"type": "string", "minLength": 1, "maxLength": 4096}, "references": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 40}, "byte_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 24000}}, ["library_path", "operation"])),
-    _tool("kg_status", "Knowledge Graph Status", "Count the reviewed entries and accepted edges by relation.", _object_schema()),
-    _tool("kg_resolve_concepts", "Resolve Knowledge Concepts", "Resolve only explicit IDs, entry labels, and entry aliases as identity.", _object_schema({"concepts": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4096}, "minItems": 1, "maxItems": 512}}, ["concepts"])),
-    _tool("kg_search", "Search Knowledge Graph", "Execute one bounded deterministic retrieval plan or plain query.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 4096}, "plan": RETRIEVAL_PLAN_INPUT_SCHEMA, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20}, **COMMON_RETRIEVAL_PROPERTIES})),
-    _tool("kg_get_node", "Get Knowledge Node", "Read one entry with its direct incoming and outgoing typed edges.", _object_schema({"id": {"type": "string", "minLength": 1, "maxLength": 256}}, ["id"])),
-    _tool("kg_expand", "Expand Knowledge Subgraph", "Traverse a bounded typed neighborhood with explicit paths.", _object_schema({"ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "minItems": 1, "maxItems": 128}, "direction": {"type": "string", "enum": ["incoming", "outgoing", "both"], "default": "both"}, "edge_types": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 32}, "max_depth": {"type": "integer", "minimum": 0, "maximum": 8, "default": 1}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}}, ["ids"])),
-    _tool("kg_ppr", "Run Knowledge Graph PPR", "Run deterministic Personalized PageRank over the permitted typed edges; edge confidence is authored metadata, not scientific review.", _object_schema({"ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "minItems": 1, "maxItems": 128}, "edge_types": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 32}, "direction": {"type": "string", "enum": ["incoming", "outgoing", "both"], "default": "outgoing"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}}, ["ids"])),
-    _tool("kg_build_context", "Build Knowledge Context", "Pack entries and their edges from a bounded search execution.", _object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 4096}, "plan": RETRIEVAL_PLAN_INPUT_SCHEMA, "token_budget": {"type": "integer", "minimum": 1, "maximum": 200000, "default": 6000}, "result_limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50}, **COMMON_RETRIEVAL_PROPERTIES})),
+    _tool(
+        "kg_search", "Search Knowledge",
+        "Rank records and relations across every base by fusing a lexical lane and a name lane. Filters "
+        "repeat: OR within one filter, AND across filters.",
+        _object_schema({
+            "query": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 40},
+            **FILTER_PROPERTIES,
+        }, ["query"]),
+    ),
+    _tool(
+        "kg_resolve", "Resolve Knowledge Terms",
+        "For each term list its senses (records named exactly so), mentions (records whose name contains "
+        "it) and pending uses. Names never establish identity.",
+        _object_schema({"terms": _strings(4096, 128, min_items=1), **FILTER_PROPERTIES}, ["terms"]),
+    ),
+    _tool(
+        "kg_get", "Get Knowledge Records",
+        "Read complete records by uid (base:id, or a bare id held by one base) with their outgoing and "
+        "incoming links; source_lines adds the live cited source range widened by that many lines.",
+        _object_schema({
+            "uids": _strings(256, 128, min_items=1),
+            "source_lines": {"type": "integer", "minimum": 0, "maximum": 200},
+        }, ["uids"]),
+    ),
 ]
 TOOL_SCHEMAS = {tool["name"]: tool["inputSchema"] for tool in TOOL_DEFINITIONS}
 
@@ -162,136 +184,74 @@ def _validate_arguments(name: str, arguments: Any) -> dict[str, Any]:
     if arguments is None:
         arguments = {}
     if not isinstance(arguments, dict):
-        raise QueryError("tool arguments must be an object")
+        raise ToolError("tool arguments must be an object")
     schema = TOOL_SCHEMAS[name]
-    properties = schema.get("properties") or {}
+    properties = schema["properties"]
     unexpected = sorted(set(arguments) - set(properties))
     if unexpected:
-        raise QueryError(f"unexpected tool arguments: {', '.join(unexpected)}")
-    for required in schema.get("required") or []:
+        raise ToolError(f"unexpected tool arguments: {', '.join(unexpected)}")
+    for required in schema["required"]:
         if required not in arguments:
-            raise QueryError(f"missing required tool argument: {required}")
+            raise ToolError(f"missing required tool argument: {required}")
     for key, value in arguments.items():
         field = properties[key]
-        expected = str(field.get("type", ""))
+        expected = field["type"]
         if not _check_json_type(value, expected):
-            raise QueryError(f"tool argument {key} must be {expected}")
-        if expected == "string":
-            if len(value) < int(field.get("minLength", 0)) or len(value) > int(field.get("maxLength", len(value))):
-                raise QueryError(f"tool argument {key} has an invalid length")
-            if field.get("enum") and value not in field["enum"]:
-                raise QueryError(f"tool argument {key} has an unsupported value")
-        elif expected == "integer" and (value < int(field.get("minimum", value)) or value > int(field.get("maximum", value))):
-            raise QueryError(f"tool argument {key} is outside its allowed range")
-        elif expected == "array":
-            if len(value) < int(field.get("minItems", 0)) or len(value) > int(field.get("maxItems", len(value))):
-                raise QueryError(f"tool argument {key} has an invalid item count")
-            items = field.get("items") or {}
-            if items.get("type") and not all(_check_json_type(item, items["type"]) for item in value):
-                raise QueryError(f"tool argument {key} contains invalid items")
-            if items.get("enum") and not all(item in items["enum"] for item in value):
-                raise QueryError(f"tool argument {key} contains unsupported items")
-            if items.get("type") == "string" and any(
-                len(item) < int(items.get("minLength", 0))
-                or len(item) > int(items.get("maxLength", len(item)))
-                for item in value
-            ):
-                raise QueryError(f"tool argument {key} contains an invalid string length")
-    if name in {"kg_search", "kg_build_context"} and (("query" in arguments) == ("plan" in arguments)):
-        raise QueryError(f"tool {name} requires exactly one of query or plan")
-    if name in {"kg_search", "kg_build_context"} and not arguments.get("graph_retrieval", False):
-        unused = sorted({"graph_seed_candidates", "graph_edge_policy"}.intersection(arguments))
-        if unused:
-            raise QueryError("graph options require graph_retrieval: " + ", ".join(unused))
-    if "plan" in arguments:
-        controls = {"max_depth", "graph_strategy", "limit" if name == "kg_search" else "result_limit"}
-        conflict = sorted(controls.intersection(arguments))
-        if conflict:
-            raise QueryError("retrieval plan cannot be combined with plain-query controls: " + ", ".join(conflict))
+            raise ToolError(f"tool argument {key} must be {expected}")
+        if expected == "string" and not field["minLength"] <= len(value) <= field["maxLength"]:
+            raise ToolError(f"tool argument {key} has an invalid length")
+        if expected == "integer" and not field["minimum"] <= value <= field["maximum"]:
+            raise ToolError(f"tool argument {key} is outside its allowed range")
+        if expected == "array":
+            if not field["minItems"] <= len(value) <= field["maxItems"]:
+                raise ToolError(f"tool argument {key} has an invalid item count")
+            items = field["items"]
+            if not all(isinstance(item, str) for item in value):
+                raise ToolError(f"tool argument {key} contains invalid items")
+            if any(not items["minLength"] <= len(item) <= items["maxLength"] for item in value):
+                raise ToolError(f"tool argument {key} contains an invalid string length")
+            if "enum" in items and not all(item in items["enum"] for item in value):
+                raise ToolError(f"tool argument {key} contains unsupported items")
     return arguments
 
 
-def call_tool(
-    base: Base,
-    name: str,
-    raw_arguments: Any,
-    *,
-    ranking_service: Any = None,
-) -> dict[str, Any]:
-    """Execute one tool against exactly one complete, freshly loaded GraphView."""
-    if name not in TOOL_SCHEMAS:
-        raise QueryError(f"unknown tool: {name}")
-    arguments = _validate_arguments(name, raw_arguments)
-    if name == "kg_compiled_knowledge":
-        from .compiled_retrieval import CompiledLibrary, CompiledRetrievalError
+def _filters(arguments: dict[str, Any]) -> Filters:
+    return Filters(
+        base=tuple(arguments.get("base", ())),
+        kind=tuple(arguments.get("kind", ())),
+        class_=tuple(arguments.get("class", ())),
+        source=tuple(arguments.get("source", ())),
+        understanding=tuple(arguments.get("understanding", ())),
+    )
 
-        library_path = Path(arguments["library_path"])
-        if not library_path.is_absolute():
-            raise QueryError("compiled library_path must be absolute")
-        operation = arguments["operation"]
-        if operation == "search" and "query" not in arguments:
-            raise QueryError("compiled search requires query")
-        if operation == "get" and "reference" not in arguments:
-            raise QueryError("compiled get requires reference")
-        if operation == "inventory" and "term" not in arguments:
-            raise QueryError("compiled inventory requires term")
-        if operation == "inventory" and any(key in arguments for key in ("limit", "byte_budget")):
-            raise QueryError("compiled inventory does not rank or truncate declarations")
-        if operation == "pack" and "references" not in arguments:
-            raise QueryError("compiled pack requires references")
-        try:
-            library = CompiledLibrary.from_path(library_path)
-            if operation == "search":
-                return {"candidates": library.search(arguments["query"], limit=arguments.get("limit", 40))}
-            if operation == "browse":
-                return library.browse(arguments.get("reference"))
-            if operation == "get":
-                return library.get(arguments["reference"])
-            if operation == "inventory":
-                return library.inventory(arguments["term"])
-            return library.pack(arguments["references"], byte_budget=arguments.get("byte_budget", 24000))
-        except (CompiledRetrievalError, OSError) as error:
-            raise QueryError(str(error)) from error
-    view = load_graph_view(base)
-    if name == "kg_status":
-        return query_status(view)
-    if name == "kg_resolve_concepts":
-        return {"results": resolve_concepts(view, list(arguments["concepts"]))}
-    if name == "kg_get_node":
-        return get(view, str(arguments["id"]))
-    if name == "kg_expand":
-        return expand(view, list(arguments["ids"]), direction=str(arguments.get("direction", "both")), edge_types=arguments.get("edge_types"), max_depth=int(arguments.get("max_depth", 1)), limit=int(arguments.get("limit", 50)))
-    if name == "kg_ppr":
-        return personalized_pagerank(view, {str(node_id): 1.0 for node_id in arguments["ids"]}, edge_types=arguments.get("edge_types"), direction=str(arguments.get("direction", "outgoing")), limit=int(arguments.get("limit", 50)))
-    if "plan" in arguments:
-        plan = dict(arguments["plan"])
-        plan_mode = "planned"
-    else:
-        limit_key = "limit" if name == "kg_search" else "result_limit"
-        plan = query_retrieval_plan(str(arguments["query"]), limit=int(arguments.get(limit_key, 20 if name == "kg_search" else 50)), max_depth=int(arguments.get("max_depth", 1)), graph_strategy=str(arguments.get("graph_strategy", "hybrid")))
-        plan_mode = "query"
-    graph_policy = GraphRetrievalPolicy(candidate_limit=int(arguments.get("graph_seed_candidates", 5)), edge_policy=str(arguments.get("graph_edge_policy", "high-confidence"))) if arguments.get("graph_retrieval", False) else None
-    execution = execute_retrieval_plan(view, plan, plan_mode=plan_mode, ranking_service=ranking_service, graph_policy=graph_policy)
+
+def call_tool(name: str, raw_arguments: Any) -> dict[str, Any]:
+    """Run one tool over a fresh read-only connection."""
+    if name not in TOOL_SCHEMAS:
+        raise ToolError(f"unknown tool: {name}")
+    arguments = _validate_arguments(name, raw_arguments)
     if name == "kg_search":
-        return execution
-    return build_context_from_execution(view, execution, plan=plan, token_budget=int(arguments.get("token_budget", 6000)))
+        return search(arguments["query"], limit=arguments.get("limit", 40), filters=_filters(arguments))
+    if name == "kg_resolve":
+        return resolve(arguments["terms"], filters=_filters(arguments))
+    return get(arguments["uids"], source_lines=arguments.get("source_lines"))
 
 
 def _tool_result(value: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
-    text = canonical_json(value)
+    text = compact_json(value)
     if len(text.encode("utf-8")) > MAX_TOOL_RESPONSE_BYTES:
-        raise QueryError(
-            f"tool response exceeds the {MAX_TOOL_RESPONSE_BYTES}-byte limit"
-        )
+        raise ToolError(f"tool response exceeds the {MAX_TOOL_RESPONSE_BYTES}-byte limit; narrow the call")
     return {"content": [{"type": "text", "text": text}], "structuredContent": value, "isError": is_error}
+
+
+def _tool_error(name: str, message: str) -> dict[str, Any]:
+    return _tool_result({"error": {"code": "tool-error", "message": message, "tool": name if name in TOOL_SCHEMAS else "unknown"}}, is_error=True)
 
 
 class MCPServer:
     """Small stateful MCP dispatcher for newline-delimited stdio transport."""
 
-    def __init__(self, base: Base, *, ranking_service: Any = None):
-        self.base = base
-        self.ranking_service = ranking_service
+    def __init__(self) -> None:
         self.initialized = False
         self.protocol_version = MCP_PROTOCOL_VERSION
 
@@ -314,7 +274,7 @@ class MCPServer:
                 return _protocol_error(request_id, -32602, "Invalid params")
             requested = str(params.get("protocolVersion", ""))
             self.protocol_version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
-            return _result(request_id, {"protocolVersion": self.protocol_version, "capabilities": {"tools": {"listChanged": False}, "experimental": {"queryBackend": "json-memory"}}, "serverInfo": {"name": "kgdistiller", "version": __version__}, "instructions": "Read-only access to a source-backed knowledge graph of reviewed entries. Resolve identities before assuming equivalence and retain evidence."})
+            return _result(request_id, {"protocolVersion": self.protocol_version, "capabilities": {"tools": {"listChanged": False}}, "serverInfo": {"name": "kgdistiller", "version": __version__}, "instructions": INSTRUCTIONS})
         if notification:
             return None
         if method == "ping":
@@ -329,33 +289,21 @@ class MCPServer:
                 return _protocol_error(request_id, -32602, "Invalid params")
             name = str(params.get("name", ""))
             try:
-                options = {}
-                if name in {"kg_search", "kg_build_context"}:
-                    options["ranking_service"] = self.ranking_service
-                value = call_tool(self.base, name, params.get("arguments"), **options)
-                return _result(request_id, _tool_result(value))
-            except RetrievalError as error:
-                return _result(request_id, _tool_result({"error": error.to_payload()}, is_error=True))
-            except (QueryError, OSError, ValueError) as error:
-                return _result(request_id, _tool_result({"error": {"code": "tool-error", "message": str(error), "tool": name}}, is_error=True))
+                return _result(request_id, _tool_result(call_tool(name, params.get("arguments"))))
+            except (ToolError, KnowledgeError, OSError, sqlite3.Error) as error:
+                return _result(request_id, _tool_error(name, str(error)))
             except Exception:  # noqa: BLE001
-                return _result(request_id, _tool_result({"error": {"code": "tool-error", "message": "tool execution failed", "tool": name if name in TOOL_SCHEMAS else "unknown"}}, is_error=True))
+                return _result(request_id, _tool_error(name, "tool execution failed"))
         return _protocol_error(request_id, -32601, "Method not found")
 
 
-def serve_stdio(
-    base: Base,
-    *,
-    ranking_service: Any = None,
-    input_stream: TextIO | None = None,
-    output_stream: TextIO | None = None,
-) -> None:
+def serve_stdio(*, input_stream: TextIO | None = None, output_stream: TextIO | None = None) -> None:
     source = input_stream or sys.stdin
     destination = output_stream or sys.stdout
-    server = MCPServer(base, ranking_service=ranking_service)
+    server = MCPServer()
     for raw_line, oversized in _bounded_input_lines(source):
         if oversized:
-            destination.write(canonical_json(_protocol_error(None, -32700, "Parse error")) + "\n")
+            destination.write(compact_json(_protocol_error(None, -32700, "Parse error")) + "\n")
             destination.flush()
             continue
         try:
@@ -365,5 +313,5 @@ def serve_stdio(
         else:
             response = server.handle(message)
         if response is not None:
-            destination.write(canonical_json(response) + "\n")
+            destination.write(compact_json(response) + "\n")
             destination.flush()

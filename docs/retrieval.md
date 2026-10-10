@@ -1,235 +1,332 @@
-# Text, model, and graph retrieval
+# Index and retrieval
 
-The deterministic core ranks candidates over the reviewed entries and accepted
-edges. Model inference is optional and belongs to adapters. None of these
-scores creates an identity, alias, knowledge node, or semantic edge. Every
-entry and every accepted edge is retrievable: an entry that `check` reports as
-moved, stale or ambiguous is never filtered out.
+Every read goes through one derived database, `$KGDISTILLER_HOME/index.sqlite`.
+`kgd index` is its only writer; `search`, `resolve`, `get` and the MCP server
+read it. The database is a pure function of `config.json` and the
+`entries/*.md` files of the registered, available bases ([model.md](model.md)):
+it may lag behind the files, and every read reports that lag, but it never
+differs from what a rebuild would produce. Drafts are never indexed.
 
-For exact enumeration of authored sense groups and head-term uses, the read-only
-[compiled inventory](compiled-retrieval.md) returns complete entries without
-ranking or a result limit. Its scope is compiled declarations, and source-corpus
-completeness is not certified.
+This release has the lexical phase only. The embedding phase and the dense
+search lane arrive in a later release (S3); until then `vec` is always NULL,
+`meta.embedding` is always `''`, search fuses the lexical and name lanes, and
+`kgd index --no-embed` behaves exactly like `kgd index`.
 
-## BM25 text entry
+## Engine
 
-`kgdistiller agent search` uses BM25 with fixed `k1=1.2`, `b=0.75` over three
-fields of each entry: the label (weight 3), the aliases (weight 2), and the
-body (weight 1): kind, Summary, Context, Role, Prerequisites, Pending
-prerequisites, Common confusions, Open questions and the Evidence quote.
-Identical strings are indexed once. Paths and line numbers are not indexed.
+The database is one SQLite file in WAL mode, built with the standard library
+`sqlite3` module and FTS5 over pre-tokenized text. It needs no SQLite
+extension loading. Every open checks for FTS5 and fails with a clear message
+when the SQLite build lacks it. The trigram tokenizer and contentless FTS
+tables are not used.
 
-Tokenization is shared with the compiled library (`kgdistiller.tokens`): text is
-NFKC-normalized and casefolded, split into Unicode words (compound hyphens and
-apostrophes split), and every CJK run yields each character and each adjacent
-character pair. No domain lexicon is used, so a query for `测度` or `度论`
-matches an entry containing `测度论`, while ASCII words behave as plain words.
-Query terms are bounded at 128; document text is not truncated. Identity
-resolution (`agent resolve`) is separate: it matches ids, labels and aliases
-exactly after NFKC/casefold/whitespace normalization.
+## Schema (`PRAGMA user_version = 1`)
 
-## Local model adapter
+```sql
+PRAGMA journal_mode = WAL;
 
-Install the optional extra:
+CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- one row: ('embedding', <model id that produced every non-NULL vec, or ''>)
 
-```sh
-python -m pip install 'kgdistiller[retrieval]'
-kgd agent search 'QUESTION' --embedding --base B
-kgd agent search 'QUESTION' --embedding --rerank --base B
-kgd agent context 'QUESTION' --embedding --rerank --budget 6000 --base B
-kgd mcp --base B --embedding --rerank --models-offline
+CREATE TABLE record(
+  rowid         INTEGER PRIMARY KEY,           -- stable: upserted with ON CONFLICT(uid) DO UPDATE
+  uid           TEXT NOT NULL UNIQUE,          -- base:id
+  base          TEXT NOT NULL,
+  id            TEXT NOT NULL,
+  class         TEXT NOT NULL CHECK (class IN ('node','relation')),
+  kind          TEXT NOT NULL,
+  label         TEXT NOT NULL,
+  aliases       TEXT NOT NULL,                 -- JSON array
+  source        TEXT NOT NULL,
+  line_start    INTEGER NOT NULL,
+  line_end      INTEGER NOT NULL,
+  understanding TEXT NOT NULL,                 -- unknown | not-yet-understood | understood
+  epistemic     TEXT,
+  body          TEXT NOT NULL,                 -- prose before "## Search terms" / "## Evidence"
+  search_terms  TEXT NOT NULL,                 -- '' when absent
+  evidence      TEXT NOT NULL,                 -- JSON array of quotes
+  mtime_ns      INTEGER NOT NULL,              -- stat of entries/<id>.md when parsed
+  size          INTEGER NOT NULL,
+  text          TEXT NOT NULL,                 -- unified text: FTS (and later embedding) input
+  vec           BLOB                           -- NULL in this release
+);
+CREATE INDEX record_source ON record(base, source, line_start);
+CREATE INDEX record_kind   ON record(kind);
+
+CREATE TABLE link(
+  src      TEXT NOT NULL,                      -- record uid
+  role     TEXT NOT NULL,                      -- 'requires' or a role name
+  pos      INTEGER NOT NULL,                   -- position in that list; repeats allowed
+  dst      TEXT,                               -- target uid; may name a missing record
+  term     TEXT,                               -- pending term text
+  term_key TEXT,                               -- name_key(term)
+  CHECK ((dst IS NULL) <> (term IS NULL)),
+  PRIMARY KEY (src, role, pos)
+) WITHOUT ROWID;
+CREATE INDEX link_dst  ON link(dst);
+CREATE INDEX link_term ON link(term_key);
+
+CREATE TABLE name(
+  key TEXT NOT NULL, uid TEXT NOT NULL, is_label INTEGER NOT NULL,   -- name_key(label) and of each alias
+  PRIMARY KEY (key, uid)
+) WITHOUT ROWID;
+
+CREATE VIRTUAL TABLE fts USING fts5(tokens, tokenize = 'unicode61 remove_diacritics 0');
+-- rowid = record.rowid; tokens = ' '.join(tokens(record.text))
 ```
 
-Run these with `--base B`, or from inside a registered base root. `kgd mcp
-[--base B]` serves the one base selected when it starts.
+There is no file table (a row carries its own stat), no base table (bases come
+from `config.json`), no tree or passage table (the tree is the `source` path),
+no pending table (pending gaps are `link` rows with `term`) and no
+document-type column, so editing `types/` never forces re-indexing. `kgd
+index`, the reads and `kgd base list` load `config.json` only: a malformed
+type file fails `check`, `sheet`, `accept` and `harvest`, never the index or
+retrieval.
 
-Source checkouts may use `pip install -e '.[retrieval]'`. Plain search, status,
-identity tools and `--help` do not import/load model inference. The optional
-dependency is Sentence Transformers 6.1.0; no training extra, FAISS, service or
-daemon is required.
+## Unified text
 
-Default models are fixed upstream revisions:
+Each record has one text, used for FTS:
 
-| Operation | Model | Revision | Upstream license |
-|---|---|---|---|
-| Embedding | `BAAI/bge-m3` | `5617a9f61b028005a4858fdac845db406aefb181` | MIT |
-| Reranker | `BAAI/bge-reranker-v2-m3` | `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` | Apache-2.0 |
+```text
+{label}
+{aliases joined "; "}                      omitted when empty
+{kind}[ · {epistemic}]
+{body}                                     omitted when empty
+{search_terms}                             omitted when empty
+{role}: {v1}; {v2}; …                      one line per role, roles in name order
+requires: {v1}; {v2}; …                    last
+> {quote}                                  one line per quote, whitespace-normalized
+{source}
+```
 
-Weights remain in the Hugging Face cache and are not shipped in this product.
-Inference runs locally; loading uses `trust_remote_code=False`, `token=False`.
-The explicit model mode permits downloading missing public weights unless
-`--models-offline` is selected. Offline missing files fail explicitly.
+Each `{v}` is the linked record's label, its uid when that record is missing,
+or the pending term verbatim. The text excludes understanding, the record's own
+id, line numbers, the base name and paths under `.knowledge`. Linked labels are
+part of the text, so a relation is found by its participants' names, and a
+label change cascades to every record that links it.
 
-Options shared by search/context and MCP launch:
+## Tokens and name keys
 
-- `--model-device cpu|mps|cuda`: defaults to CPU. An unavailable requested device is
-  an error; no transparent CPU fallback.
-- `--model-batch-size N`: defaults to 4, bounded 1–64.
-- `--model-max-length N`: defaults to 8192, bounded 1–8192 and checked against model
-  support. Documents and query/document pairs are token-counted before inference;
-  excessive input fails instead of silently truncating a late condition.
-- `--embedding-model`, `--embedding-revision`, `--reranker-model`,
-  `--reranker-revision`: the local Hub adapter requires explicit 40-character
-  commit revisions; mutable branch/tag names are rejected.
-- `--rerank-candidates N`: defaults to 50, bounded 1–500. Requires both embedding and
-  reranker selection; unused model options are rejected.
-- `--model-cache-dir PATH`: defaults to `.knowledge/build/retrieval`; it must be
-  a real directory outside `.knowledge/entries/`.
+Both live in `kgdistiller/index.py`.
 
-Embedding uses the complete entry projection (`kgdistiller-search-document-v1`:
-the label, aliases and the same body fields as BM25, including Evidence) and the
-original `plan.question`,
-including Chinese text. BGE-M3 uses its revision-defined prompts and pooling,
-normalized embeddings, float32 and cosine scoring. No v1.5 instruction prefix is
-added. BM25 and embedding candidates are combined by the existing RRF. Embedding
-matches do not automatically become authoritative identity matches. Graph
-exploration uses them as candidate roots only when explicitly selected below.
+- `tokens(s)`: NFKC, casefold, Unicode words (runs of letters and digits),
+  plus every character and every adjacent character pair of each CJK run, with
+  no lexicon. `测度` therefore matches a record containing `测度论`.
+- `name_key(s) = " ".join(re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", s).casefold()))`.
 
-Reranker uses `CrossEncoder` over the original question and complete candidate
-projection. Its raw logits are relevance scores, not truth probabilities. The
-fused pool is cut to the configured candidate count before applying the request's
-result limit. Final ordering uses fixed RRF of the base pool rank and raw model
-rank, `1/(60+base_rank)+1/(60+model_rank)`, declaring `rrf-base-reranker` in v2
-provenance. Raw logits remain recorded separately. Exact/alias identity priority
-remains ahead of model ordering.
+## `kgd index [--rebuild] [--no-embed]`
 
-## Contracts and cache
+`index` always covers every registered base.
 
-Input plans remain `kgdistiller-retrieval-plan-v1`. Plain execution/result remain
-v1. Explicit model selection returns `kgdistiller-search-execution-v2` containing
-`kgdistiller-search-result-v2`; it records the embedding/reranker lanes, model
-descriptors, effective inference settings, projection version, document count,
-cache status and reranker candidates. Context records the actual
-execution/result schema. Do not describe model scores as lexical scores or add
-undeclared fields to v1.
+**Opening.** If `index.sqlite` is missing, cannot be opened or has
+`user_version` ≠ 1, it is deleted together with `-wal` and `-shm`, created
+with `meta.embedding = ''` and fully built. This is the one-command restore; a
+derived file needs no compatibility path.
 
-The provider-neutral `SemanticRankingService` accepts an adapter with
-`metadata(kind)`, `encode_documents`, `encode_queries` and, for reranking,
-`score_pairs`. Core checks count, dimensions, finite non-boolean numbers and
-nonzero vector norms. Unknown/duplicate IDs, malformed caches and model
-failures are explicit errors. If the model descriptor changes while the model
-is running, the request fails with `model-descriptor-changed` instead of mixing
-inputs.
+**Lexical phase**, in one `BEGIN IMMEDIATE` transaction with a 30 s busy
+timeout:
 
-The document vector cache keeps one file per embedding model,
-`<model-cache-dir>/vectors-<model name slug>.json`:
+1. With `--rebuild`, delete every row of `record`, `link`, `name` and `fts`
+   inside the same transaction. The file is never swapped, so WAL readers keep
+   their snapshot until commit.
+2. Delete the rows of bases no longer in `config.json`. Leave the rows of
+   registered bases whose root is unavailable untouched and report those bases.
+3. For each available base, list the regular `entries/*.md` files; a
+   symlinked record file is reported as unparseable and a symlinked
+   `.knowledge` or `entries/` refuses the run. A file is parsed when it has
+   no row or its `(st_mtime_ns, st_size)` differs from its row; a row whose
+   file is gone is deleted.
+4. Parse structurally (frontmatter shape, value grammar, body grammar). Types,
+   kinds, link existence and evidence freshness belong to `check`. An
+   unparseable file keeps no row and is reported, so it is re-parsed on every
+   run until fixed. Values resolve to uids textually: `[[x]]` in base `b`
+   becomes `b:x`, `[[c:x]]` becomes `c:x`.
+5. Upsert with `INSERT … ON CONFLICT(uid) DO UPDATE`, which keeps the rowid,
+   then replace the record's `link` and `name` rows. A changed understanding
+   is reported in `understanding_changed`.
+6. Recompute the unified text of every row from the stored labels and links.
+   Where it differs from the stored text, rewrite the `fts` row (delete and
+   insert by rowid).
+7. Commit.
+
+**Report.**
 
 ```json
-{
-  "schema": "kgdistiller-vector-cache-v1",
-  "model": {"provider": "...", "model": "BAAI/bge-m3", "revision": "...", "inference": {}},
-  "records": {"measure-space": {"text": "Name: Measure space\nAliases: ...", "vector": [0.01]}}
-}
+{"created": false, "rebuild": false,
+ "bases": {"notes": {"parsed": 3, "deleted": 0, "unparseable": [{"path": "/abs/…/x.md", "message": "…"}]}},
+ "unavailable": [], "understanding_changed": [{"uid": "notes:measure", "from": "unknown", "to": "understood"}],
+ "reused": 0, "embedded": 0, "unembedded": 0, "truncated": []}
 ```
 
-Records are keyed by entry id and store the exact projected text that was
-embedded. A different model descriptor discards every record. An entry is
-re-embedded when its current projection differs from the stored text or it has
-no record; records of vanished ids are dropped; the file is rewritten
-atomically only when something changed, and is bounded at 256 MiB. There is no
-query or rerank persistence. The cache is derived, never authority, and can be
-deleted at any time; only re-embedding costs time. Changing reranker settings
-does not invalidate document vectors. MCP reuses its selected service within
-the existing process; it introduces no separate daemon. Explicit model failures
-never silently switch to BM25.
+`created` says the file was (re)created. `reused`, `embedded` and `truncated`
+belong to the embedding phase and stay `0` and `[]` in this release;
+`unembedded` counts the rows when `config.embedding` is set and is `0`
+otherwise. The exit code is 1 when a file was unparseable or a base was
+unavailable.
 
-Adapters must produce each value from its corresponding input and declared
-settings; any corpus-dependent preprocessing state must be part of the
-descriptor. Document and query encoding are distinct operations. Duplicate
-inputs are inferred once. Scores remain relevance values, never truth scores.
+**Invariants** (tested). After any sequence of file edits, an incremental
+`kgd index` produces the same rows as `kgd index --rebuild` and as a build from
+a deleted database, comparing `record` (without rowid, mtime_ns and size),
+`link`, `name`, and `fts` joined by uid. No module of the package imports
+`hashlib`.
 
-## Opt-in graph exploration
+**Restore.** Delete `index.sqlite*` in the home and run `kgd index`.
 
-```sh
-kgd agent search 'QUESTION' --graph-retrieval --base B
-kgd agent context 'QUESTION' --graph-retrieval --budget 24000 --base B
-kgd agent search 'QUESTION' --embedding --rerank --graph-retrieval --base B
+## Reads and lag
+
+`search`, `resolve`, `get` and the MCP server open the database read-only
+(`file:…?mode=ro`); they never create, migrate or write it. A missing database
+is an error that says to run `kgd index`. Every result carries:
+
+```json
+"lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}
 ```
 
-`--graph-seed-candidates N` selects the first N filtered text/embedding RRF
-candidates, default 5, bounded 1–32. These are navigation hypotheses with
-`identity_authority: false`; they never create aliases, change identity matches,
-or rewrite the input plan. Explicit and resolved identity seeds remain separately
-recorded. Graph traversal contributes support paths, not query relevance scores.
-V3 answer ranking and its reranker pool use identity/text/embedding evidence;
-graph neighbors remain separately visible as bounded navigation candidates.
-Pure graph-only requests return navigation rows with relevance score 0.
+- `changed_files`: new, modified or deleted `entries/*.md` compared with the
+  rows by stat, plus rows of bases no longer registered.
+- `unavailable_bases`: registered bases whose root is missing.
+- `unembedded`: rows with `vec IS NULL` when `meta.embedding` is set; `0` in
+  this release.
+- `embedding_changed`: `config.embedding` (or `''`) differs from
+  `meta.embedding`. With an embedding model configured it is `true` until the
+  dense lane exists.
 
-`--graph-edge-policy high-confidence|all` defaults to high-confidence, which
-admits edges that declare `confidence: high` and carry nonempty evidence. This
-is a declaration gate, not an independent scientific audit. `all` admits every
-accepted edge for exploratory navigation. Edge freshness is never a gate.
-Unused graph policy controls are rejected without `--graph-retrieval`.
+When `changed_files` is above 0, run `kgd index` and repeat the read.
 
-When source review warrants that declaration, author the literal `high` value.
-Keep qualifications such as "source-explicit, not an independent proof" in the
-edge evidence; a descriptive confidence string is preserved but does not pass
-the high-confidence gate. Verify actual permitted-edge counts and returned
-support paths after ingest. Enabling graph retrieval alone does not establish
-that any edge contributed evidence.
+## Filters
 
-Planned requests also select their relation types explicitly: an empty
-`graph.edge_types` array selects no edges. To traverse semantic relations,
-enumerate the permitted types in the plan as well as choosing a positive depth.
-An exploration policy does not silently rewrite those plan filters.
+`search` and `resolve` take the same repeatable filters: `--base B`,
+`--kind K`, `--class node|relation`, `--source PREFIX` (a base-relative source
+path prefix) and `--understanding U`. Values are ORed within a filter and ANDed
+across filters, applied in SQL in every lane. `get` addresses records by uid
+and takes no filters.
 
-Existing graph strategy, relation, direction and depth controls still apply.
-BFS and PPR use the same permitted, depth-bounded graph. PPR runs at most 256
-iterations and reports its final L1 residual; nonconverged scores are discarded
-from navigation ordering with a degraded-lane diagnostic. Disconnected components do not
-consume PPR iteration work. `contrasts-with` traverses symmetrically while paths
-retain the authored edge direction.
+## `kgd search QUERY [--limit 40] [filters]`
 
-Opt-in execution uses `kgdistiller-search-execution-v3` and result v3. Provenance
-records the policy, separate seed origins, convergence and full typed path
-evidence. Input plan v1 and ordinary v1/v2 execution remain supported. MCP exposes the equivalent per-call
-`graph_retrieval`, `graph_seed_candidates`, and `graph_edge_policy` controls on
-`kg_search` and `kg_build_context`.
+Two lanes each produce a ranked uid list:
 
-Graph context uses `kgdistiller-context-bundle-v2`. Each support packet includes
-its root, complete path nodes, node conditions and edge evidence as one budgeted
-unit. Support neighbors are distinct from ranked answers. A packet that cannot
-fit produces an explicit gap/omission count. Complete path packets contain
-every endpoint and edge source. Direct-source packets make
-no relationship-closure claim. Learning prerequisites, derivation and comparison
-are navigation purposes, not logical entailment. This mode does not certify all
-necessary premises for a theorem or research claim. The historical `--budget`
-and `estimated_tokens` names denote a conservative canonical UTF-8 byte estimate,
-not a model tokenizer count. Large source records and full multi-node paths
-require a larger budget; definitions and conditions are never truncated to fit.
+1. **Lexical.** `fts MATCH` over the OR of the deduplicated, quoted
+   `tokens(QUERY)`, ordered by `bm25(fts)`, top 200.
+2. **Name.** Candidate keys are every contiguous run of 1–12 words of
+   `name_key(QUERY)`, plus every substring of length 1–12 of each CJK run. They
+   are looked up in `name`; the ranking is: key equal to `name_key(QUERY)`
+   first, then longer keys, then labels before aliases, then uid.
 
-When a stored execution is turned into context, every referenced entry and
-edge is checked against the current store: a missing entry, or an edge whose
-confidence or evidence text changed, fails with `stale-execution`.
+Reciprocal rank fusion combines them: score = Σ 1/(60 + rank), ranks from 1,
+ties broken by uid. There are no boosts, intent rules or thresholds.
+
+```json
+{"query": "measure space", "lanes": ["lexical", "name"],
+ "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false},
+ "results": [{"uid": "notes:measure-space", "class": "node", "kind": "definition", "label": "Measure space",
+   "base": "notes", "source": "notes/math/measure-theory/chapters/01-sigma-algebra.tex",
+   "lines": "206-224", "understanding": "understood", "epistemic": null, "gloss": "三元组 …",
+   "ranks": {"lexical": 3, "name": 1},
+   "requires": [{"uid": "notes:sigma-algebra", "label": "σ-algebra"}, {"term": "measurable space"}],
+   "participants": {},
+   "in": [{"uid": "notes:probability-space", "kind": "definition", "role": "requires"}],
+   "truncated": {"requires": 0, "participants": 0, "in": 0}}]}
+```
+
+A rank is `null` for a lane that did not return the record. `participants`
+(relations only) maps each role to its values; `in` lists the records that
+link this one, with the linking role. `requires`, each role list and `in` are
+capped at 12 entries; `truncated` counts what was cut. Pending terms are not
+search results; use `resolve`.
+
+## `kgd resolve TERM... [filters]`
+
+For each term, unranked and unlimited, sorted by base, source and line:
+
+```json
+{"terms": [{"term": "measure", "key": "measure",
+   "senses":   [{"uid": "notes:measure", "label": "Measure", "kind": "definition", "class": "node",
+                 "base": "notes", "source": "…", "lines": "40-52", "gloss": "…"}],
+   "mentions": [{"uid": "notes:measure-space", "label": "Measure space", "…": "…"}],
+   "pending":  [{"owner": "notes:outer-measure", "role": "requires", "term": "measure"}]}],
+ "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
+```
+
+- `senses`: records whose label or alias key equals `name_key(TERM)`;
+- `mentions`: records whose label or alias key contains it as a whole-word
+  phrase, or as a substring when the term is CJK;
+- `pending`: `link` rows whose `term_key` equals it.
+
+`resolve` serves identity checks before writing and sense enumeration. A sense
+is a candidate, never an identity: compare definitions.
+
+## `kgd get UID... [--source-lines N]`
+
+```json
+{"records": [{"uid": "notes:sum-of-two-subspaces-is-a-subspace", "base": "notes", "id": "…",
+   "class": "relation", "kind": "implies", "label": "…", "aliases": [], "source": "…", "lines": "24-32",
+   "understanding": "unknown", "epistemic": "stated", "gloss": "…", "body": "…", "search_terms": "",
+   "evidence": ["…"],
+   "out": [{"role": "premise", "pos": 0, "uid": "notes:subspace", "label": "Subspace", "exists": true},
+           {"role": "requires", "pos": 0, "term": "vector space"}],
+   "in": [{"uid": "…", "label": "…", "kind": "…", "role": "…"}],
+   "source_text": "23\t…\n24\t…"}],
+ "missing": ["notes:unknown-id"],
+ "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
+```
+
+A UID is `base:id`, or a bare id when exactly one base has it; a bare id held
+by several bases is an error listing them. `out` lists roles first, then
+`requires`. `--source-lines N` adds `source_text`: the cited range widened by
+N lines on each side, read live from the source with line numbers, or `null`
+when the source cannot be read or is not a registered source of its base that
+resolves inside the base root (so a hand-written `../` path, an absolute path
+or a symlink leaving the root is never read). This is the only read of source
+text; no passages are stored.
+
+## MCP server: `kgd mcp`
+
+`kgd mcp` takes no arguments. It is a read-only stdio server over the whole
+home with three tools that mirror the CLI and return the same JSON:
+
+| Tool | Arguments |
+|---|---|
+| `kg_search` | `query` (required), `limit` (1–500, default 40), filters `base`, `kind`, `class`, `source`, `understanding` (arrays) |
+| `kg_resolve` | `terms` (required array), the same filters |
+| `kg_get` | `uids` (required array), `source_lines` (0–200) |
+
+Inputs are bounded and unknown arguments are rejected. Each call opens a fresh
+read-only connection, so it sees every `kgd index` that committed since the
+previous call. A missing database is a tool error that says to run
+`kgd index`. Responses are capped at 8 MiB. There are no write tools; Skills
+write through the CLI.
 
 ## Evaluation
 
 The primary metric is complete-evidence task success: the fraction of declared
 tasks whose actual returned evidence jointly supports every necessary fact,
 condition, intended sense and source scope, without unsupported scientific
-assertions. Its theoretical ceiling is 100%, independent of a fixed ranking
-cutoff. Check source availability and evidence-budget feasibility before
-freezing a benchmark. Keep failed tasks in the declared denominator; report
-unsupported requests, ambiguity and source limitations explicitly rather than
-silently dropping or relabelling cases after evaluation.
+assertions. Its ceiling is 100%, independent of a ranking cutoff. Check source
+availability and evidence-budget feasibility before freezing a benchmark. Keep
+failed tasks in the declared denominator; report unsupported requests,
+ambiguity and source limitations explicitly rather than dropping or
+relabelling cases after evaluation.
 
-Derive and freeze necessary facts and conditions from the question and original
-sources before inspecting the selected packet or system answer. Source-selection
-hints do not establish an exhaustive source scope. Alternative witnesses may
-satisfy the same requirement only when meaning, conditions, source scope, units
-and conventions agree. Node references, declared graph links and storage
-metadata do not establish scientific coverage or definition equivalence.
-A correctly stated scientific limitation can satisfy a request for qualifications;
-unsettled support actually required by the question remains an evidence gap.
+Derive and freeze necessary facts and conditions from the question and
+original sources before inspecting the selected packet or system answer.
+Alternative witnesses satisfy the same requirement only when meaning,
+conditions, source scope, units and conventions agree. Record references,
+declared links and storage metadata do not establish scientific coverage or
+definition equivalence. Use development cases for iteration and keep heldout
+questions out of compilation and tuning. Report ranking, candidate coverage,
+packing gaps, answer correctness, latency and model cost separately.
 
-Use development cases for iteration and keep heldout questions and requirements
-out of compilation and tuning. Report ranking, candidate coverage, packing gaps,
-answer correctness, latency and model cost separately. Negative controls and
-false abstention remain separate checks. Whole entries and complete declared
-inventory membership do not by themselves certify question-level completeness.
-Keep sources, questions, relevant units and mappings fixed across comparisons.
+Measurements behind the current design, from the design research on the
+40-paper S5b library (222 questions, deterministic candidate recall):
 
-Preserve the historical Oct 4 twenty-paper P@5 report and its original denominator:
-its 1–4 relevant units per positive query give a fixed-set ceiling of
-115/(42*5)=54.76%. This is a ranking diagnostic; use complete-evidence task
-success to evaluate whether the required evidence was actually delivered.
+| Candidate lanes | Full@40 |
+|---|---|
+| FTS5 over whole records (lexical alone) | 85.6 |
+| FTS5 + dense | 90.5 |
+| FTS5 + dense + name | 91.0 |
+
+Whole-record BM25 scored 53.6 against 45.5 for passage BM25, which is why the
+unit of retrieval is the record. Using graph closure as a ranking lane raised
+Full@40 but cut Full@10 from 73.9 to 63.1, so closure is delivered as links on
+each result instead. On the 316 notes records, the name lane ranks
+`notes:measure-space` first for the query "measure space".

@@ -412,7 +412,7 @@ def _validate_workflows(
                 raise CodexProductError(
                     f"workflow {workflow_id} references an unknown product asset"
                 )
-            if step.get("mode") not in {"read-only", "author", "transaction", "export"}:
+            if step.get("mode") not in {"read-only", "author", "write"}:
                 raise CodexProductError(
                     f"workflow {workflow_id} has an invalid step mode"
                 )

@@ -260,7 +260,7 @@ class BaseAddTest(HomeTestCase):
         result = add_base(root)
         self.assertEqual(result["home"], str(self.home))
         self.assertEqual(result["added"], {"name": "notes", "path": root.as_posix(), "root": str(root),
-                                           "available": True, "entries": 0})
+                                           "available": True, "records": 0, "drafts": 0})
         self.assertEqual(self.config(), {"bases": {"notes": {"path": root.as_posix(), "sources": {}}},
                                          "embedding": None})
         self.assertTrue((root / ".knowledge/entries").is_dir())
@@ -353,7 +353,7 @@ class BaseRemoveAndListTest(HomeTestCase):
         with self.assertRaisesRegex(KnowledgeError, r"unknown base 'kb'; registered bases: \(none\)"):
             remove_base("kb")
 
-    def test_list_reports_availability_and_entries(self) -> None:
+    def test_list_reports_availability_records_and_drafts(self) -> None:
         first = self.directory("first")
         second = self.directory("second")
         add_base(first)
@@ -361,11 +361,15 @@ class BaseRemoveAndListTest(HomeTestCase):
         for name in ("a", "b"):
             (first / ".knowledge/entries" / f"{name}.md").write_text("x\n", encoding="utf-8")
         (first / ".knowledge/entries/notes.txt").write_text("x\n", encoding="utf-8")
+        (first / ".knowledge/drafts").mkdir()
+        (first / ".knowledge/drafts/c.md").write_text("x\n", encoding="utf-8")
         shutil.rmtree(second)
         result = list_bases()
         self.assertEqual(result["home"], str(self.home))
-        self.assertEqual([(item["name"], item["available"], item["entries"]) for item in result["bases"]],
-                         [("first", True, 2), ("second", False, None)])
+        self.assertEqual(
+            [(item["name"], item["available"], item["records"], item["drafts"]) for item in result["bases"]],
+            [("first", True, 2, 1), ("second", False, None, None)],
+        )
         with self.assertRaisesRegex(KnowledgeError, "base second is unavailable"):
             resolve_base("second", self.tmp)
 
@@ -534,9 +538,62 @@ class BaseCommandTest(HomeTestCase):
         status, out, err = self.run_main("base", "rm", "kb")
         self.assertEqual(status, 0, err)
         self.assertEqual(json.loads(out)["removed"]["name"], "kb")
+        self.assertEqual(json.loads(out)["dangling"], [])
         status, out, err = self.run_main("base", "rm", "kb")
         self.assertEqual((status, out), (1, ""))
         self.assertIn("unknown base", err)
+
+    def test_list_adds_index_counts_and_lag(self) -> None:
+        kb = self.registered_pair()
+        status, out, err = self.run_main("base", "list")
+        self.assertEqual(status, 0, err)
+        listed = {item["name"]: item for item in json.loads(out)["bases"]}
+        self.assertEqual(
+            {"name", "path", "root", "available", "records", "drafts", "indexed", "lag"}, set(listed["kb"])
+        )
+        self.assertEqual((listed["kb"]["records"], listed["kb"]["drafts"], listed["kb"]["indexed"]), (1, 1, 0))
+        self.assertEqual(listed["kb"]["lag"], {"changed_files": 1, "unavailable_bases": [], "unembedded": 0,
+                                               "embedding_changed": False})
+        status, _, err = self.run_main("index")
+        self.assertEqual(status, 0, err)
+        listed = {item["name"]: item for item in json.loads(self.run_main("base", "list")[1])["bases"]}
+        self.assertEqual((listed["kb"]["indexed"], listed["kb"]["lag"]["changed_files"]), (1, 0))
+        self.assertEqual((listed["other"]["indexed"], listed["other"]["records"]), (1, 1))
+        shutil.rmtree(kb)
+        listed = {item["name"]: item for item in json.loads(self.run_main("base", "list")[1])["bases"]}
+        self.assertEqual((listed["kb"]["available"], listed["kb"]["records"], listed["kb"]["lag"]["unavailable_bases"]),
+                         (False, None, ["kb"]))
+
+    def test_rm_lists_the_foreign_links_left_dangling(self) -> None:
+        self.registered_pair()
+        status, out, err = self.run_main("base", "rm", "kb")
+        self.assertEqual(status, 0, err)
+        self.assertEqual(json.loads(out)["dangling"], [{
+            "path": str(self.tmp / "other/.knowledge/entries/uses-measure.md"),
+            "role": "requires",
+            "value": "[[kb:measure]]",
+        }])
+        self.assertTrue((self.tmp / "kb/.knowledge/entries/measure.md").is_file())
+
+    def registered_pair(self) -> Path:
+        """Bases kb and other; other's record requires kb's record through a foreign link."""
+        roots = {name: self.directory(name) for name in ("kb", "other")}
+        self.write_type("notes-type")
+        for name, root in roots.items():
+            add_base(root)
+            (root / "notes").mkdir()
+            (root / "notes/a.md").write_text("Title\nA measure is additive.\n", encoding="utf-8")
+        payload = self.config()
+        for name in roots:
+            payload["bases"][name]["sources"] = {"notes/*.md": "notes-type"}
+        self.write_config(payload)
+        record = "---\nlabel: {label}\nkind: definition\nsource: notes/a.md\nlines: 2\n{extra}---\nProse.\n\n## Evidence\n\n> A measure\n"
+        (roots["kb"] / ".knowledge/entries/measure.md").write_text(record.format(label="Measure", extra=""), encoding="utf-8")
+        (roots["kb"] / ".knowledge/drafts").mkdir()
+        (roots["kb"] / ".knowledge/drafts/draft.md").write_text(record.format(label="Draft", extra=""), encoding="utf-8")
+        (roots["other"] / ".knowledge/entries/uses-measure.md").write_text(
+            record.format(label="Uses measure", extra='requires: ["[[kb:measure]]", plain term]\n'), encoding="utf-8")
+        return roots["kb"]
 
 
 if __name__ == "__main__":

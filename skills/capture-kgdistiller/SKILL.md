@@ -1,112 +1,104 @@
 ---
 name: capture-kgdistiller
-description: Save or update one source-backed knowledge entry while reading, citing its source lines verbatim and preserving personal understanding and direct pending prerequisites. Use for requests to capture this concept, remember this definition, or update one entry; full-source distillation belongs to compile-knowledge-sheets.
+description: Save or update one source-backed knowledge record while reading — a node, a relation or an example — citing its source lines verbatim, recording direct pending terms and the owner's stated understanding, then accepting and indexing it. Use for requests to capture this concept, remember this definition or result, or update one record; whole-source extraction belongs to compile-knowledge-sheets.
 ---
 
 # Capture one knowledge item
 
-Save the selected knowledge to the caller's registered base through one bounded
-transaction. Use the current passage and just enough nearby context to
-preserve its definition and conditions. Do not turn this into a full-source read,
-a survey, a recursive prerequisite search or a new base.
-This is the usual writing path while reading a new article. Full-source
-distillation is separately requested, typically for the user's own notes or
-already familiar material.
+Save the item the owner selected while reading as one record in its registered
+base. Use the current passage and just enough nearby context to keep its
+statement and conditions complete. This is the usual writing path while reading
+a new article; do not turn it into a full-source read, a survey, a recursive
+prerequisite search or a new base.
 
-Match the user's language. Retain technical names, formulas, type/status labels,
-structured keys and raw errors.
+Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 
-## Select and understand the item
+Read [references/record-format.md](references/record-format.md) before writing
+a record. Paths given to `kgd` may be absolute or relative to the working
+directory; the base is the registered root that contains the path.
 
-Establish the target base, registered source, selected concept and the exact
-line range that defines or states it from the current conversation. Ask only for
-an essential missing target or a genuinely ambiguous meaning. Read additional
-local context only when a defining condition or source statement is incomplete.
-
-Read the source's type profile and numbered text before preparing content:
+## 1. Read the profile
 
 ```sh
-kgd scan --file SOURCE --base B
+kgd sheet SOURCE --json
 ```
 
-Pass `--base B` after every command, or run inside the registered base root;
-relative paths are resolved against the working directory. The result names the
-source's base and `type`, its `profile` (`node_kinds`, `relation_kinds`,
-`epistemic`, `guidance`), and lists every line with its 1-based number. A source
-is a UTF-8 text document matched by the base's globs in
-`$KGDISTILLER_HOME/config.json`, and every source has exactly one type;
-kgdistiller never parses its syntax, so `.md`, `.typ`, `.tex` and `.txt` are
-read the same way. Follow the user-registered type; do not infer a document
-type from the extension or substitute a built-in type list. An unregistered
-file cannot be captured; report it instead of registering a glob silently.
+It returns the source's base, document type, `node_kinds`, `relation_kinds`
+(each kind with its roles), `epistemic` list, guidance, `line_count`, and the
+records, drafts and pending terms that already cite this source. Follow that
+type; do not infer kinds from the file extension. Read the source text with
+your own tools and fix the exact 1-based line range that states the item. An
+unregistered file is an error that asks for a glob in
+`$KGDISTILLER_HOME/config.json`: report it instead of registering one.
 
-Keep the full definition and essential assumptions in the entry. Definitions,
-axioms, precise theorems, algorithms and architectures may be nodes. A claim or
-example belongs to a relation/application; do not manufacture a concept merely
-to fit the entry API. Preserve unsupported complete assertions as review
-proposals and identify the remaining adapter gap.
+## 2. Establish identity
 
-If a selected term is only mentioned and not explained, record it as a direct
-pending prerequisite of the current owning knowledge entry. Do not invent its
-definition or a canonical target. If no owner is established, keep the gap as a
-source-scoped review proposal until that ownership is resolved.
+```sh
+kgd resolve "LABEL" "ALIAS" ...
+kgd search "LABEL OR DEFINING PHRASE"
+kgd get UID
+```
 
-## Preserve learning state and stop at one layer
+`resolve` lists, per term, the `senses` (records whose label or alias equals
+it), `mentions` and `pending` uses, across every base. Compare definitions and
+conditions yourself: the same name is not the same concept, and a homonym in
+another paper or base is a separate record. Decide whether the item is new or
+an existing record. If `lag.changed_files` is above 0, run `kgd index` first so
+the comparison sees current files.
 
-Read any existing entry's `understanding`. The values are `unknown`,
-`not-yet-understood` and `understood`. Record the user's explicit statement and
-preserve existing state otherwise. Saving a definition, reading its source or
-matching an entry never establishes understanding.
+## 3. Write
 
-`pending_prerequisites` holds concise direct gaps: term, required meaning and
-source/use context, including whether the gap is a missing definition or a
-known definition the user still needs to learn. A verified existing entry may be
-linked while remaining a learning gap. Add no target node for an unresolved term.
-When the user later chooses to study that prerequisite, its own entry can record
-its next layer. Stop here during this capture.
+**New item.** Write `<root>/.knowledge/drafts/<id>.md` in the record format,
+with `id = slug(label)` (append `-2`, `-3`, … on a collision), then accept it:
 
-Read existing learning fields before changing their lists. Omitted fields keep
-their current values on an update; an explicitly supplied pending list replaces
-that list, and `[]` clears it. Resolve only the item the user has actually
-understood or asked to update. Finding an external source alone does not clear a
-learning gap.
+```sh
+kgd accept <root>/.knowledge/drafts/<id>.md
+```
 
-## Prepare and apply one bounded update
+The owner's capture request is the consent; do not ask again. Copy the Evidence
+quotes verbatim from the cited lines. Link existing records by id (`"[[id]]"`,
+or `"[[base:id]]"` for another base); a link to a draft you also wrote needs
+both drafts in the same `accept`. A refusal lists each problem and writes
+nothing: fix the draft and accept again.
 
-Use the product's [capture preparation contract](references/capture-contract.md)
-for the payload and CLI. The payload cites the source path and line range; the
-helper copies those lines verbatim into the entry's Evidence section, checks the
-kind against the source's document type, checks the label and aliases against
-every existing entry, and writes the plan and apply requests. Do not hand-write
-the Evidence quote or the request files. Keep prepared artifacts in the base's
-`.knowledge/build/reviews/` or another directory under its `.knowledge/` and
-outside `.knowledge/entries/`. `build/` is excluded from Obsidian hidden-folder
-indexing by default; remove `build` from the kgdistiller plugin's exclusion list
-to open drafts there.
+**Existing item.** Edit `<root>/.knowledge/entries/<id>.md` in place with an
+editing tool that refuses when the file changed since you read it (Claude Code
+`Edit`, Codex `apply_patch`); never rewrite a whole record from an earlier
+read. Then:
 
-Supply a source-grounded summary and an explicit reviewed add/update intent. A
-new entry gets a readable id derived from its label; a label without an ASCII
-slug, such as a Chinese term, needs an explicit `id`. An update names its target
-entry id. Source documents are never edited. Before adding, resolve the name
-with `$query-kgdistiller` (`agent resolve`, then `agent search` when needed);
-name similarity alone cannot establish semantic identity, and the helper refuses
-a label or alias that already identifies another entry.
+```sh
+kgd check --base B
+```
 
-Hand the generated requests to `$ingest-kgdistiller`: plan, inspect the listed
-changes, and apply the authorized scope. A user's concrete request to save this
-item is authorization for that item; do not ask for the same permission again.
-Preparation does not itself commit knowledge. A refused apply (for example
-`stale-evidence` after the source changed) needs a fresh preparation, not an
-overridden gate.
+Fix every `errors` item that names your file. `moved` evidence after a source
+edit is repaired with `kgd check --base B --fix-lines`; `stale` evidence needs
+the quote re-copied from the source.
 
-The transaction leaves other knowledge in the source untouched. Verify the
-committed receipt, run `kgd check --base B`, and return a link
-to the accepted entry plus its understanding and direct remaining gaps. If a
-source def/pending sheet exists or was requested, refresh only its affected rows
-and retain `partial` coverage. Preserve unrelated rows and annotations. A partial
-sheet need not be filled before capture ends.
-If the user wants to review several items before saving, prepare them with
-`kgd harvest prepare … --base B` so the sheet gets clearly labeled draft links as
-Markdown tasks. The user selects those items in Obsidian and explicitly requests
-`$harvest-paper` to ingest them. A checkbox selects an import; it does not change
-understanding.
+## 4. Pending terms, one level
+
+A term the passage uses without explaining becomes a plain value (not a link)
+in `requires` or in the role where it occurs. Do not invent its definition or
+a target, and do not resolve the next level now. When the owner later studies
+it, that capture records its own direct gaps.
+
+## 5. Understanding
+
+Set `understanding` only from the owner's explicit statement in this
+conversation (`unknown`, `not-yet-understood`, `understood`). Saving, reading
+or finding a definition never establishes it. Preserve an existing value
+unless the owner changes it.
+
+## 6. Index
+
+```sh
+kgd index
+```
+
+Every knowledge write ends with this, so search sees the change.
+
+## 7. Report
+
+Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
+`check` result for an in-place edit, the pending terms recorded, and the
+`index` result. Name any refusal and what was left unwritten. If the owner
+wants a sheet for this source, `kgd sheet SOURCE` regenerates it.

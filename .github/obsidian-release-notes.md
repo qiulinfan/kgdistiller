@@ -1,48 +1,47 @@
-kgdistiller Obsidian 0.1.5 reads the hidden `.knowledge/` tree, which is now the
-only kgdistiller knowledge root.
+kgdistiller Obsidian 0.1.5 draws the records in the vault's hidden `.knowledge/`
+tree live from Obsidian's metadata cache. There is no exported file to keep in
+sync: editing a record in Obsidian, or writing one with `kgd`, updates the view.
 
-- The default **Semantic graph path** is
-  `.knowledge/build/obsidian/semantic-graph.json`. The view reads it through the
-  vault adapter, so it loads even when the path is excluded from native
-  indexing, hidden indexing is off, or the vault runs on mobile. The view
-  re-checks the file when Obsidian regains focus or the active leaf changes and
-  reloads only when it changed. Loads are serialized, so simultaneous focus and
-  leaf-change events reload once; **Reload typed graph** forces a reload.
-- Hidden-folder indexing always targets `.knowledge`; the **Hidden folder
-  path** setting is removed and a stored `hiddenKnowledgeFolder` value is
-  ignored.
-- A new **Excluded folders** setting lists folders under `.knowledge` that stay
-  out of native indexing. The default is `build`, which keeps the transient
-  `.knowledge/build/` tree out of search, links and the native graph. Remove
-  `build` to open review drafts there. Leading and trailing slashes are dropped
-  (`build/` means `build`). Changing the list rescans the folder without writing
-  or deleting any file.
-- The plugin reads only `.knowledge/build/obsidian/semantic-graph.json`,
-  regenerated with `kgdistiller export obsidian`. The feed is built from the
-  reviewed entries (`.knowledge/entries/<id>.md`) and the accepted edges
-  (`.knowledge/edges.jsonl`): every entry is a concept with its kind, aliases
-  and understanding state, every cited source document is a source node, and
-  every accepted edge is drawn. Sources may be any registered text document.
-  Feeds of earlier shapes (with a source generation block, references, curation
-  status or a bundle checksum) are rejected until they are regenerated. Whenever
-  a product update changes the feed contract, reinstall the plugin with
-  `kgdistiller obsidian install --replace` before or together with
-  `kgdistiller export obsidian`; an older installed plugin rejects the new feed.
-- The reference layer, its **References** toggle and the **Show reference
-  edges** setting are removed; a stored `showReferences` value is ignored.
-  Concept nodes are ringed by understanding state, and the details panel shows
-  each concept's **Kind** and **Understanding**.
-- Open buttons open a concept's own entry file, and open a source or definition
-  in its source document, placing the cursor at the cited line range when the
-  document opens in a Markdown editor. Open targets exist only for a graph
-  under the vault-root `.knowledge/` folder. A target outside the vault index
-  produces a notice; enable hidden-folder indexing to open entries.
-- Stored settings are type-checked at load; a wrongly typed value falls back to
-  its default and is named in a notice.
+- **Live model.** The plugin reads the frontmatter of
+  `.knowledge/entries/*.md` (accepted records) and `.knowledge/drafts/*.md`
+  (proposed records) from the metadata cache. It builds the model once the
+  cache is resolved and then updates it on each metadata change, deletion and
+  rename under those two folders. Values are resolved textually with the same
+  link grammar as `kgd`: `[[id]]`, `[[base:id]]` and
+  `[[.knowledge/entries/id]]`, ignoring a `.md` suffix and display text,
+  matched after NFKC normalization and casefolding. A local link resolves to
+  `entries/<id>.md`; a draft's link also resolves to `drafts/<id>.md`.
+- **Nodes.** A record with no role values is a node, ringed green when
+  understood and amber when not yet understood.
+- **Requires arrows.** Each `requires` link is a dashed arrow. Pending terms
+  are not drawn.
+- **Typed binary edges and loops.** A relation with exactly two link values,
+  both in roles, that no other record links to is one edge labelled with its
+  kind. Values in two roles give an arrow from the first role's value to the
+  second in frontmatter order; two values in one role give an undirected edge;
+  the same record twice gives a loop.
+- **N-ary diamonds.** Every other relation, including any relation that another
+  record links to, is a diamond with one role-labelled edge per value.
+- **Dashed drafts.** Drafts have a dashed outline and dashed edges. The
+  **Show drafts** setting (default on) and the toolbar toggle hide them.
+- **Other bases and missing records.** `[[base:id]]` targets are grey stubs
+  labelled with the uid; local links to a missing record are drawn in red.
+- **Controls.** The toolbar filters by kind and toggles drafts. The legend
+  explains nodes, relations and drafts. The details pane shows the label,
+  kind, class, roles and `requires` of the selected record, with an
+  **Open record** button.
+- Relation kinds take colours from a fixed palette in sorted kind order.
 
-Hidden indexing remains optional, desktop-only and off by default. It uses
-private desktop adapter APIs and reports unsupported environments or a conflict
-with Hidden Folders Access.
+Removed: `contract.ts` and its feed parser, the **Semantic graph path**,
+**Show source nodes** and **Show definition edges** settings, and the re-checks
+on window focus and active-leaf change. Stored values of the removed settings
+are ignored. The **Excluded folders** setting stays, and its default is now
+empty, so the whole `.knowledge` folder is indexed.
+
+The model needs Obsidian to index `.knowledge`: enable **Index hidden
+knowledge folder** in the plugin settings (desktop only). Hidden indexing uses
+private desktop adapter APIs and reports unsupported environments or a
+conflict with Hidden Folders Access.
 
 The source adapts Hidden Folders Access 2.1.1 at commit
 `de3734d36997a98b81a6a6644984748af1e6b3b0`. Its full original MIT license and

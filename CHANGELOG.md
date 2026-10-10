@@ -1,99 +1,151 @@
 # Changelog
 
-All notable changes are documented here. Beginning with 0.4, published
-`kgdistiller-*` schema names are immutable; incompatible data-contract changes
-require incrementing the affected contract version.
+All notable changes are documented here.
 
 ## 0.4.0 — unreleased
 
-- Make sources format-agnostic: a knowledge source is any registered UTF-8 text
-  document, read as numbered lines and never parsed. Remove the Markdown, Typst
-  and LaTeX marker scanners (`--[[X]]--`, `[[X]]`, `#kn`, `\kn{}` and their
-  reference forms), TeX masking, reference scanning (`references.jsonl`),
-  Typst/TeX sibling pairing and the rule that source markers define nodes.
-  Markers survive only as a frontend convention of the repositories that
-  publish notes.
-- Make reviewed entries the node store. Each `.knowledge/entries/<id>.md`
-  (`kgdistiller-entry-v1`) carries `schema`, `id`, `label`, `kind`, `aliases`,
-  `source`, `line_start`, `line_end` and `understanding` as plain Obsidian
-  properties, the human sections, and an Evidence section quoting the cited
-  source lines verbatim. Unknown keys and sections are rejected. Ids are
-  readable slugs of the label (an explicit id when the label has none), never
-  hash-derived; the `_kgd-` fallback filename is gone.
-- Keep accepted semantic edges in one file, `.knowledge/edges.jsonl`, with
-  exactly `source`, `relation`, `target`, `origin`, `confidence` and `evidence`
-  and the five relations `prerequisite-for`, `implies`, `generalizes`,
-  `contrasts-with` and `derived-from`. Remove `kgdistiller-graph-v2`,
-  `graph/nodes.jsonl`, `graph/references.jsonl`, `graph/manifest.json`,
-  `identities.json` (aliases now live in entries), `alignments.json`, edge
-  `evidence_fingerprints`/`stale_endpoints` and every curation status.
-- Add `kgdistiller check [--fix-lines]`: it validates entries and edges
-  (schema, unique ids, labels and aliases, registered and readable sources,
-  line ranges, document-type kinds, edge endpoints, acyclic
-  `prerequisite-for`) and reports an entry as moved, stale or ambiguous by
-  searching its whitespace-normalized Evidence quote in the source.
-  `--fix-lines` rewrites only moved line ranges, under the home lock.
-- Report staleness without gating it: remove every needs-review, orphan and
-  curation gate from query, retrieval, graph traversal, MCP and the Obsidian
-  feed, together with `--include-stale`/`--include-orphaned`. The graph edge
-  policy is `high-confidence|all`.
-- `scan --file SOURCE --base B` returns the file's path, its base, its document
-  type and that type's profile (`node_kinds`, `relation_kinds`, `epistemic`,
-  `guidance`) with numbered lines. Every registered source has exactly one type,
-  so there is no unclassified source or null profile. `init` is removed:
-  `base add` registers a base.
-- Rewrite transactional ingest on the entry store. A
-  `kgdistiller-ingest-request-v1` carries one `kgdistiller-agent-delta-v1`
-  (`create_entries`, `update_entries` with `expected_label`, `remove_entries`,
-  `add_edges`, `remove_edges`). Apply holds the home lock, re-validates the
-  delta semantically against the current store and source text
-  (`stale-evidence`, `label-mismatch`, `identity-collision`, `dangling-edge`
-  and other stable codes), installs entries and edges atomically through a
-  journal and writes a readable `kgdistiller-ingest-receipt-v1` keyed by
-  `request_id`. Replays are detected by comparing the stored request text.
-  Source documents are never edited: authority patches and marker
-  expectations are gone.
-- Capture cites `source`, `line_start` and `line_end`, copies the cited lines
-  verbatim as Evidence, checks the kind against the source's document type and
-  the names against every entry, keeps an old label as an alias on rename, and
-  names requests `capture-<id>-<n>`. Harvest detects changes by comparing the
-  draft, entry and cited source text, ingests each run as
-  `harvest-<review>-<run>` and drops the definition-sheet projection marker.
-- `GraphView`, CLI and MCP read the entries and `edges.jsonl` directly; node
-  records are entry records plus their `entry` path, and loading refuses a
-  store while an ingest journal exists. `kgdistiller-query-status-v1` reports
-  entry, edge and relation counts.
-- Match CJK text lexically: the shared tokenizer (`kgdistiller.tokens`) emits
-  CJK unigrams and bigrams, so `测度` finds `测度论`. BM25 and the embedding
-  projection index aliases, kind, the human sections and the Evidence quote.
-- Keep the optional local embedding/reranker lane (`kgdistiller[retrieval]`,
-  pinned BGE-M3 models) with one rebuildable vector cache file per model, keyed
-  by entry id and storing the embedded text; an entry is re-embedded when its
-  text differs.
-- Remove every SHA-256, digest and fingerprint mechanism: entry
-  `kgd_source_sha256`/`kgd_definition_sha256`, node, edge and manifest hashes,
-  `graph_sha256`, `snapshot_sha256`, registry and identity digests,
-  `request_sha256`, `base_graph_sha256`, plan, receipt, retrieval and context
-  digests, `bundle_sha256` and the plugin's digest check, compiled-library and
-  OMP tool hashes, hash-keyed vector caches, installer link-state digests and
-  the release attestation step.
-- Remove commands and features without replacement: `sync`, `build`, `apply`,
-  `search`, `show`, `stats`, `audit`, `snapshot`, `curate-check`, `reconcile`,
-  `derive locate|install` with derived Markdown and the derived cache,
-  `store snapshot|verify` with `kgdistiller-store-v1`, `documents.jsonl` and
-  `store.json`, `candidate build|validate`, `agent align|compare|propose`,
-  namespaces such as `paper:<digest>`, the raw source-evidence lane (`agent
-  evidence`, `agent evidence-resolve`), support selection, the compact context
-  projection (`kgdistiller-context-bundle-v3`), the `distill-paper` Skill, the
-  stress harness and the global `--graph`, `--identities` and `--alignments`
-  options. Also remove the global `--repo-root`, `--vault`,
-  `--kgdistiller-home` and `--registry` options, the `vault` command group,
-  `init`, the `KGDISTILLER_VAULT` and `KGDISTILLER_INGEST_*` environment
-  variables, and the `kgdistiller-vault-v1`, `kgdistiller-vault-registry-v1` and
-  `kgdistiller-sources-v1` contracts.
-- Remove the `paper-related-work` Skill, both `kgdistiller-related-work-scout`
-  agent presets (Claude Code and Codex) and their `paper-related-work`
-  workflow.
+### Knowledge model and storage
+
+- Store knowledge as records. Each accepted record is
+  `<base>/.knowledge/entries/<id>.md`: YAML frontmatter with the fixed keys
+  `label`, `kind`, `source`, `lines`, `aliases`, `understanding`, `epistemic`
+  and `requires` (Obsidian's `tags` and `cssclasses` accepted and ignored),
+  every other key a role list declared for the kind, and a Markdown body of
+  prose, an optional `## Search terms` section and a final `## Evidence`
+  section of verbatim source quotes. The id is the file stem; there is no `id`
+  or `schema` field. A record with a non-empty role list is a relation, any
+  other record a node; relations have unbounded arity, may repeat a participant
+  and may have relations as participants. Values are quoted links (`[[id]]`,
+  `[[base:id]]`, `[[.knowledge/entries/id]]`) or plain pending terms. The
+  frontmatter is read with PyYAML `BaseLoader` and never re-serialized. The
+  format is specified in `docs/model.md`.
+- Add drafts and sheets. `.knowledge/drafts/<id>.md` holds proposed new records
+  in the same format; `.knowledge/sheets/<source path>.md` is the generated
+  def/pending view of one source, whose only read-back state is the draft
+  checkboxes.
+- Add the write path: `kgd accept DRAFT... [--dry-run]` validates the selected
+  drafts together under the home lock and moves them into `entries/` with
+  `os.link` then `os.unlink`, never overwriting, refusing with
+  `select [[x]] too` when a draft links an unselected draft, and reporting
+  `understanding_set`; `kgd harvest SHEET [--dry-run]` accepts the ticked
+  drafts of a sheet and regenerates it; `kgd sheet SOURCE [--json]` writes a
+  sheet, keeping ticks, or prints the source's extraction profile and
+  inventory. Accepted records are edited in place with stale-read-safe tools.
+- Replace `check` with the JSON report `{errors: [{path, rule, message}],
+  stale, moved}` over the home, records and drafts: config and type shape,
+  glob conflicts, ids, frontmatter, registered sources and line ranges, kinds
+  and roles from the document type, link grammar and resolution (including
+  draft rules and foreign bases), body grammar, and evidence freshness by
+  whitespace-normalized quote search. `--fix-lines` rewrites only the `lines:`
+  line of moved records under the home lock and reports `fixed` and `skipped`.
+- Add the derived database `$KGDISTILLER_HOME/index.sqlite` (SQLite with FTS5,
+  tables `meta`, `record`, `link`, `name`, `fts`) and its only writer
+  `kgd index [--rebuild] [--no-embed]`: one transaction, stat-based change
+  detection, upserts that keep rowids, unparseable files keeping no row,
+  recomputed unified text so label changes cascade, and an incremental run that
+  equals a rebuild and a build from a deleted database. A missing, damaged or
+  other-version database is recreated, so restore is one command. Every read
+  reports `lag`.
+- Add `kgd search` (a lexical FTS5 lane and a name lane over labels and
+  aliases, fused by reciprocal rank fusion, with `--base`, `--kind`, `--class`,
+  `--source` and `--understanding` filters), `kgd resolve` (senses, mentions
+  and pending uses of terms) and `kgd get [--source-lines N]` (complete records
+  with out- and in-links and live cited source text). All are read-only and
+  global across bases. The dense embedding lane and the embedding phase of
+  `kgd index` are not part of this release; `embedding` stays `null` and
+  `--no-embed` has no effect until they arrive.
+- Rewrite `kgd mcp` as a read-only server over the whole home with exactly
+  `kg_search`, `kg_resolve` and `kg_get`, inline input schemas and a fresh
+  read-only connection per call. It takes no arguments.
+- Move the tokenizer into `kgdistiller.index` (`tokens`, with CJK unigrams and
+  bigrams, and `name_key`).
+- Extend `kgd base list` with record and draft counts, the indexed row count
+  and per-base lag, and `kgd base rm` with the `[[name:…]]` links left
+  dangling in other bases.
+- Remove the previous storage and its tooling: the `kgdistiller-entry-v1`
+  entry format (`schema`, `id`, `line_start`, `line_end`, fixed human
+  sections), `.knowledge/edges.jsonl` and its five fixed relations,
+  transactional ingest (`ingest plan|apply`, requests, plans, receipts,
+  journals), `capture prepare`, `harvest prepare|apply` and its review
+  manifests, the in-memory `GraphView` with BM25, embedding, reranker and graph
+  retrieval lanes, retrieval plans, search executions and context bundles, the
+  per-model vector cache, `export obsidian` and its graph feed, the `agent`,
+  `scan`, `capture`, `ingest` and `export` command groups, `kg_compiled_knowledge`
+  and every other previous MCP tool, `mcp --base` and the model flags, and
+  every `kgdistiller-*` JSON Schema with its validator. Output shapes are
+  documented in `docs/model.md` and `docs/retrieval.md` and asserted by tests.
+
+### Home and sources
+
+- Add a cross-platform installed `kgdistiller`/`kgd` command and one global
+  home, `$KGDISTILLER_HOME` (default `~/.knowledge`; the only environment
+  variable for kgdistiller's own home and data, absolute after `~` expansion;
+  the runtime linkers still honor `CODEX_HOME` and `CLAUDE_CONFIG_DIR`). Its
+  `config.json` (`{"bases": {name: {"path", "sources"}}, "embedding"}`) is
+  written atomically; `types/<name>.md` are user document types whose
+  frontmatter (`node_kinds`, optional `relation_kinds` with ordered roles and
+  `epistemic`) is read with PyYAML `BaseLoader` and whose body is the guidance.
+  A base's `sources` map globs relative to its root to types with Python glob
+  semantics: `*` stays in one segment, `**` spans directories, hidden files and
+  directories never match, and a file matched by globs of two types is an
+  error. `kgd base add PATH [--name N]`, `base rm NAME` and `base list` manage
+  bases; `base add` creates the home with its `.gitignore` on first use and
+  creates `<root>/.knowledge/entries/`, and stores paths under the user's home
+  as `~/…`. A path argument belongs to the registered root containing its real
+  path, with no upward walk and no default. No base root may contain another,
+  and the home may not lie inside a base root. A dedicated
+  `$KGDISTILLER_HOME/lock`, held by `accept`, `harvest`, `check --fix-lines`
+  and `base add|rm`, serializes writers. The `~/.kgdistiller/vaults.json`
+  registry, `.knowledge/vault.json` and the per-base `sources.json` are gone.
+- Add `pyyaml>=6` as the single runtime dependency.
+- Make the hidden `.knowledge/` tree the only knowledge root.
+- Make sources format-agnostic: a knowledge source is any registered UTF-8
+  text document, read as numbered lines and never parsed. Remove the Markdown,
+  Typst and LaTeX marker scanners (`--[[X]]--`, `[[X]]`, `#kn`, `\kn{}` and
+  their reference forms), TeX masking, reference scanning, Typst/TeX sibling
+  pairing and the rule that source markers define nodes. Markers survive only
+  as a frontend convention of the repositories that publish notes.
+- Remove every SHA-256, digest and fingerprint mechanism from records,
+  storage, outputs, the plugin, the compiled library and OMP tools, the
+  installer link state and the release workflow. Ids are readable slugs, never
+  hash-derived; evidence freshness compares text, and the index compares file
+  stat. The one remaining commit-id pin is the Hugging Face model revision
+  validated by the sentence-transformers adapter, which nothing calls yet; it
+  goes when the dense lane arrives with a model id only.
+- Remove every publishing surface: `serve` and its static app, `publish`,
+  `export site`, `export latex` and `export latex-registry`, the Typst
+  knowledge registry and label rendering, the concept-note projection copies,
+  and the course, field and topic taxonomy.
+- Remove the rest of the 0.3 surface: `sync`, `build`, `apply`, `show`,
+  `stats`, `audit`, `snapshot`, `curate-check`, `reconcile`,
+  `derive locate|install` with derived Markdown, `store snapshot|verify`,
+  `candidate build|validate`, `agent align|compare|propose`, namespaces such
+  as `paper:<digest>`, identity and alignment registries, the raw
+  source-evidence lane, support selection, the global `--repo-root`, `--vault`,
+  `--kgdistiller-home`, `--registry`, `--graph`, `--identities` and
+  `--alignments` options, the `vault` group, `init`, and the
+  `KGDISTILLER_VAULT` and `KGDISTILLER_INGEST_*` environment variables.
+
+### Skills and agent integration
+
+- Rewrite the Skills for the record model: `capture-kgdistiller` (one item as a
+  draft plus `kgd accept`, or an in-place edit plus `kgd check`),
+  `compile-knowledge-sheets` (bounded or whole-source drafts and the sheet;
+  it absorbs note curation), `query-kgdistiller` (search, resolve and get, or
+  the MCP tools) and `deploy-kgdistiller` (registration, check, index and
+  restore, plugin, runtime links). Every Skill that writes knowledge finishes
+  with `kgd index`. Capture and compile ship identical copies of
+  `references/record-format.md`.
+- Rename `harvest-paper` to `harvest-kgdistiller`, a generic Skill with model
+  invocation enabled in both runtimes that runs `kgd harvest` then
+  `kgd index`.
+- Remove the `ingest-kgdistiller`, `curate-kgdistiller-notes`,
+  `paper-related-work` and `distill-paper` Skills and the `note-curator`,
+  `transaction-reviewer` and `related-work-scout` presets in both runtimes;
+  `query-reviewer` is the one shipped preset. Workflow step modes are
+  `read-only`, `author` and `write`. The manifests' `workflow_resources` are
+  `docs/model.md`, `docs/retrieval.md`, `docs/obsidian.md` and
+  `docs/deployment.md`.
 - Port the full product integration to Claude Code: transactional
   `kgdistiller claude link` / `kgdistiller claude doctor` driven by
   `workflows/claude-manifest.json` install the Skills, the Claude Code agent
@@ -104,69 +156,31 @@ require incrementing the affected contract version.
   `{kind, mode, name, source, target}`. Installed copies are product-owned:
   `doctor` reports a differing copy, and relinking replaces it or removes a
   retired one, discarding local edits to installed files.
-- Add a cross-platform installed `kgdistiller`/`kgd` command and one global
-  home, `$KGDISTILLER_HOME` (default `~/.knowledge`; the only environment
-  variable for kgdistiller's own home and data, absolute after `~` expansion;
-  the runtime linkers still honor `CODEX_HOME` and `CLAUDE_CONFIG_DIR`). Its `config.json`
-  (`{"bases": {name: {"path", "sources"}}, "embedding"}`) is written atomically;
-  `types/<name>.md` are user document types whose frontmatter (`node_kinds`,
-  optional `relation_kinds` and `epistemic`) is read with PyYAML `BaseLoader`
-  and whose body is the guidance. A base's `sources` map globs relative to its
-  root to types with Python glob semantics: `*` stays in one segment, `**`
-  spans directories, hidden files and directories never match, and a file
-  matched by globs of two types is an error. `kgd base add PATH [--name N]`,
-  `base rm NAME` and `base list` manage bases; `base add` creates the home with
-  its `.gitignore` on first use and creates `<root>/.knowledge/entries/`, and
-  stores paths under the user's home as `~/…`. Base-bound commands take a
-  per-command `--base NAME`; otherwise the base is the registered root
-  containing the cwd, with no upward walk and no default. No base root may
-  contain another, and the home may not lie inside a base root. A dedicated
-  `$KGDISTILLER_HOME/lock`, held by `base add|rm`, `check --fix-lines` and
-  ingest/harvest apply, replaces the per-base `writer.lock`. The
-  `~/.kgdistiller/vaults.json` registry and `.knowledge/vault.json` are gone.
-- Add `pyyaml>=6` as the first runtime dependency.
-- Make the hidden `.knowledge/` tree the only knowledge root; every CLI default
-  resolves below the selected base's `.knowledge/`.
-- Establish the `kgdistiller-*` schema namespace with independent v1 contracts.
-  Pre-0.4 schema aliases and readers are not retained.
-- Replace the disposable SQLite Agent index with an in-memory `GraphView` used
-  by CLI and MCP.
-- Add deterministic `kgdistiller-retrieval-plan-v1`,
-  `kgdistiller-search-result-v1..v3`, `kgdistiller-search-execution-v1..v3`
-  and `kgdistiller-context-bundle-v1..v2` contracts for identity, lexical,
-  optional embedding and bounded graph retrieval.
-- Remove every publishing surface: `serve` and its static app, `publish`,
-  `export site`, `export latex` and `export latex-registry`, the Typst
-  knowledge registry and label rendering, the concept-note projection copies of
-  `export obsidian`, and the course, field and topic taxonomy with its
-  `contains` relation. Sources are registered only as glob→type entries under
-  `bases.<name>.sources` in `$KGDISTILLER_HOME/config.json`; the per-base
-  `sources.json` with its source ids, roots and file lists is gone.
-- Add a read-only Obsidian plugin and its `kgdistiller-obsidian-graph-v1` feed,
-  which `kgdistiller export obsidian` writes atomically to
-  `.knowledge/build/obsidian/semantic-graph.json` from every entry and accepted
-  edge: concepts with kind, aliases, entry path and understanding, the cited
-  source documents, semantic edges and definition line ranges. The feed is never
-  registered or rescanned: an `--output` inside the base root must lie under
-  `.knowledge/` and outside `entries/`.
-- Package that plugin in the Python distribution and add cross-platform
+
+### Obsidian plugin
+
+- Release Obsidian plugin 0.1.5, versioned independently of the Python core
+  (release notes in `.github/obsidian-release-notes.md`). The typed graph is
+  built live from Obsidian's metadata cache of `.knowledge/entries/` and
+  `.knowledge/drafts/`, with link resolution identical to `kgd` and no feed,
+  polling or database: node records as nodes, `requires` as dashed arrows,
+  relations with two link values as typed edges or loops, every other relation
+  as a diamond with role-labelled edges, drafts dashed behind a toggle, foreign
+  links as stubs and missing targets marked dangling. Hidden-folder indexing is
+  fixed to `.knowledge` with an exclusion list that is empty by default. The
+  feed contract, the graph path and the source and definition layers are gone.
+- Package that plugin in the Python distribution with cross-platform
   `kgdistiller obsidian install [--base B]`, with atomic replacement and
-  settings preservation, selecting a registered base from any working
-  directory.
-- Remove superseded 0.3 database/vector design specifications; Git history is
-  their archive.
+  settings preservation.
+
+### Project
+
 - Require Python 3.11 or newer.
 - Pin ruff 0.16.10 in the `dev` dependency group and run
   `ruff check src tests scripts` in CI.
-- Release Obsidian plugin 0.1.5, versioned independently of the Python core
-  (release notes in `.github/obsidian-release-notes.md`): hidden-folder
-  indexing fixed to `.knowledge` with an exclusion list (default `build`); the
-  default graph path `.knowledge/build/obsidian/semantic-graph.json`, loaded
-  through the vault adapter and re-checked on focus or leaf change; a contract
-  for the entries-and-edges feed with any safe relative source path and no
-  digest; no reference layer; nodes styled by understanding with Kind and
-  Understanding details; Open buttons for an entry's own file and a source at
-  its cited lines; and type-checked stored settings.
+- Replace the documentation set with `docs/model.md`, `docs/retrieval.md`,
+  `docs/obsidian.md`, `docs/deployment.md`, `docs/product-workflows.md` and
+  `docs/release.md`; Git history is the archive of the superseded designs.
 
 ## 0.3.0
 

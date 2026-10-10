@@ -1,162 +1,126 @@
 ---
 name: query-kgdistiller
-description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must batch-resolve canonical names and aliases, run lexical, optional embedding or graph retrieval, read one entry with its edges, expand a bounded neighborhood, build a source-backed context bundle, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
+description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must search records across every registered base, resolve names to their senses, mentions and pending uses, read complete records with their links and cited source lines, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Query kgdistiller
 
-Treat kgdistiller as an opaque, read-only external brain. Return a bounded,
-evidence-backed result; never load the complete knowledge base into model
-context.
+Treat kgdistiller as a read-only external brain. Return a bounded,
+evidence-backed answer; never load the whole knowledge base into context.
 
-## Align language
+Match the owner's language. Keep commands, uids, keys and raw errors
+unchanged.
 
-Match user-facing explanations, prompts, and handoffs to the user's language
-unless the user requests another language. Keep commands, identifiers, schema
-keys and action codes, and raw errors unchanged.
+## What is searched
 
-## Keep the boundary read-only
+Knowledge is records: nodes (concepts and precisely stated results) and
+relations (statements binding records to named roles; applications and
+examples are relations too). Every record has a uid `<base>:<id>`, a `source`
+path, a `lines` range and verbatim Evidence quotes. Pending terms are plain
+values a record uses without a link. Every read goes through the derived
+database `$KGDISTILLER_HOME/index.sqlite`, covers every registered base unless
+filtered, and reports `lag`.
 
-- Use the bounded query interface instead of reading `.knowledge/entries/` or
-  `.knowledge/edges.jsonl` wholesale.
-- Never edit a source, entry, edge file, or the home's `config.json` or types.
-- Never run `capture`, `ingest`, `harvest`, `check --fix-lines` or another
-  writer.
-- Never promote lexical, embedding, acronym, translation, or topology similarity
-  into identity.
+## Boundary
 
-Use the read-only MCP tools when available (`kg_status`, `kg_resolve_concepts`,
-`kg_search`, `kg_get_node`, `kg_expand`, `kg_ppr`, `kg_build_context`); they
-serve the one base selected when `kgd mcp [--base B]` started. Otherwise use
-`kgd agent ... --base B`, or run `kgd agent ...` inside a registered base root,
-and consume its JSON output. Relative paths such as `--plan` are resolved
-against the working directory. Every call loads the entries and edges into one in-memory view; do not
-reimplement loading or indexing in the Skill.
+- Never edit a source, a record, a draft, a sheet or the home's `config.json`
+  and types.
+- Never run `kgd accept`, `kgd harvest`, `kgd check --fix-lines` or
+  `kgd base add|rm`, and never write drafts.
+- The one write allowed is the derived refresh `kgd index` when results report
+  lag (below).
+- Never promote lexical, name, translation, acronym or link similarity into
+  identity.
 
-Start with `kg_status` or:
+## Tools
 
-```sh
-kgd agent status --base B
-```
-
-It returns `kgdistiller-query-status-v1` with the entry and edge counts and the
-count of each relation. A read never authorizes a write.
-
-Every entry is returned, including entries whose Evidence quote no longer
-matches their source; such staleness is reported only by `kgd check` and
-never hides knowledge from retrieval. If an answer depends on a cited source
-passage, read the entry's `source`, `line_start`, `line_end` and `evidence`
-fields and say when `check` reports that entry as stale.
-
-## Resolve identities first
-
-Resolve the whole batch of names with `kg_resolve_concepts` or:
+Use the MCP tools of `kgd mcp` when they are available: `kg_search`,
+`kg_resolve` and `kg_get`. The server is read-only, serves the whole home and
+opens a fresh connection per call. Otherwise use the CLI; both print the same
+JSON.
 
 ```sh
-kgd agent resolve "Concept A" "Concept B" --base B
+kgd search "QUESTION OR TERMS" [--limit 40] [filters]
+kgd resolve "TERM" ... [filters]
+kgd get UID ... [--source-lines N]
 ```
 
-Each result has a `status`: `exact` (an id or canonical label), `alias` (a
-unique alias), `ambiguous` (several entries share the name) or `missing`.
-Names are compared after NFKC normalization, casefolding and whitespace
-collapsing. `exact` and `alias` are identity-authoritative; anything else needs
-review.
+Filters, repeatable with OR within one filter and AND across filters:
+`--base B`, `--kind K`, `--class node|relation`, `--source PREFIX` (a
+base-relative path prefix, such as one paper's folder) and
+`--understanding unknown|not-yet-understood|understood`.
 
-Then read only what is needed:
+**search** ranks records by two lanes fused with reciprocal rank fusion:
 
-```sh
-kgd agent get ENTRY_ID --base B
-kgd agent expand ENTRY_ID --direction both --depth 1 --base B
-kgd agent ppr ENTRY_ID --limit 10 --base B
-```
+- lexical: FTS5 over each record's text (label, aliases, kind, body, search
+  terms, participant and prerequisite labels, evidence and source path), with
+  CJK text indexed as characters and adjacent pairs, so `测度` finds `测度论`;
+- name: exact and contained label and alias keys of the query.
 
-`agent get` returns the entry record (label, kind, aliases, source and line
-range, understanding, sections and Evidence, plus its `entry` path) with its
-incoming and outgoing edges. `expand` and `ppr` walk the accepted edges.
+Each result carries `uid`, `class`, `kind`, `label`, `base`, `source`,
+`lines`, `understanding`, `epistemic`, `gloss`, `ranks` per lane, `requires`,
+`participants` (for relations, by role), `in` (records that cite or require
+it) and `truncated` counts for those lists. Put source-language forms in the
+query when the owner reads in another language.
 
-## Search and build context
+**resolve** returns, for each term, `senses` (label or alias equal to the term
+after normalization), `mentions` (containing it as a phrase, or as a substring
+for CJK) and `pending` (records using it as an unlinked term). It is unranked
+and unlimited.
 
-For anything beyond exact resolution:
+**get** returns complete records: fixed fields, `body`, `search_terms`,
+`evidence`, `out` links by role and position (with labels, or the pending
+term, and whether the target exists), `in` links, and `missing` uids. A bare id
+works when exactly one base has it. `--source-lines N` adds `source_text`, the
+cited range ±N lines read live from the source with line numbers.
 
-```sh
-kgd agent search "QUESTION OR TERMS" --base B
-kgd agent context "QUESTION" --budget 6000 --base B
-```
+## Lag
 
-Lexical search is BM25 over each entry's label, aliases, kind, summary,
-context, role, list sections and Evidence. Tokens are NFKC/casefolded Unicode
-words; CJK text is indexed as single characters and adjacent pairs, so a
-Chinese sub-word such as `测度` matches `测度论`. Put source-language forms in
-the query when the user reads in another language.
+Every result has `lag`: `changed_files`, `unavailable_bases`, `unembedded`,
+`embedding_changed`. When `lag.changed_files` is above 0, record files changed
+since the last index: run `kgd index` and repeat the query. Report
+`unavailable_bases` as missing coverage.
 
-For a precise, repeatable retrieval, write one `kgdistiller-retrieval-plan-v1`
-with `question`, `identity_queries` (canonical names and identity-authoritative
-aliases), `lexical_queries` (concise discriminating terms), `graph` (`seed_ids`
-only after identity is established, `edge_types`, `direction`, `max_depth`,
-`strategy`) and `limit`, then run `agent search --plan PLAN.json`. Exact
-identity evidence takes precedence over score fusion.
+## Deliver evidence
 
-Two optional lanes exist:
+Answer from returned records, citing each as `source:lines` with its uid and
+the relevant evidence quote; use `get --source-lines N` when the answer needs
+the surrounding source text. A record whose evidence `kgd check` reports as
+stale is still returned; say so when the answer depends on the cited passage.
 
-- `--embedding` (and `--rerank`) adds the local BGE-M3 embedding lane and a
-  cross-encoder reranker. It requires the `kgdistiller[retrieval]` extra and
-  returns `kgdistiller-search-execution-v2`. Use it when lexical search misses a
-  paraphrased question; use `--models-offline` when weights are already cached.
-- `--graph-retrieval` adds bounded graph navigation from the top candidates and
-  returns `kgdistiller-search-execution-v3`; `--graph-edge-policy` is
-  `high-confidence` (edges declared `confidence: high` with evidence) or `all`.
+## Prerequisite lookup while reading
 
-Embedding, rerank and graph signals only rank review candidates; none of them
-creates identity. Preserve each lane's status and reason in the handoff.
+For a prerequisite used at a specific source step, resolve the precise names,
+then inspect bounded content for applicability: the required statement, domain
+and conditions. Return the use site, the record found and whether it supplies
+the needed step. Distinguish, for example, an Lp from an ℓp setting, or a weak
+from a strong law of large numbers, when the source needs that distinction.
 
-### Prerequisite lookup during reading
+Available knowledge is not personal mastery. Report each record's
+`understanding` separately; skip an explanation only when the owner has stated
+`understood`. Surface direct pending terms without expanding their ancestry. A
+failed query is not a missing concept, and a missing record is not proof the
+owner lacks the subject.
 
-For a prerequisite used at a specific source step, accept a batch of precise
-names plus required statements, domains and conditions. Resolve the names, then
-inspect bounded content for applicability. This is a use of existing knowledge,
-not an identity merge.
+## Identity classification for authoring
 
-Return the use site, required formulation, verified existing entry and relevant
-content, and whether the entry actually supplies the needed step. For example,
-distinguish an Lp from an ell-p setting or a weak from a strong law of large
-numbers when the source requires that distinction. If a broad theorem contains
-the needed special case, record why its conditions apply. Name matches with a
-different sense remain unresolved.
+When a capture or compile asks whether candidates already exist, classify
+each:
 
-An applicable match establishes available knowledge, not personal mastery.
-Return the entry's `understanding` separately: `unknown`, `not-yet-understood`
-or `understood`. Skip a tutorial on the basis of mastery only when the user has
-stated understanding, while retaining the current use conditions. Surface
-direct `pending_prerequisites` without recursively expanding their ancestry.
-Finding a definition or a successful query never upgrades understanding. Never
-generalize a concept's status to an entire discipline. An unavailable query is
-not a missing concept, and a missing concept is not proof the user lacks the
-surrounding subject. Do not query generic subject names as substitutes for
-actual prerequisite uses.
+- `matched`: `resolve` lists a sense whose content has the same meaning and
+  conditions; return its uid;
+- `ambiguous`: several plausible senses or records remain; return them with
+  non-authoritative reasons;
+- `unmatched`: no record has this meaning; the author may write a new draft.
 
-### Identity classification for authoring
+Names, translations and aliases are retrieval evidence only. Read the bounded
+definitions before calling a hit `matched`. Homonyms stay separate records:
+same-named mechanisms of two papers, or of two bases, are distinct unless an
+explicit relation says they are equivalent.
 
-When an extractor asks whether candidates already exist, classify each one:
+## Handoff
 
-- `matched`: `agent resolve` returned `exact` or `alias`, and the entry's
-  content has the same meaning and conditions; return its id;
-- `ambiguous`: several plausible entries or senses remain; return ranked
-  candidates with non-authoritative reasons;
-- `unmatched`: no entry has this meaning; the extractor may author a new entry.
-
-Spelling, translation and aliases from the candidate side are retrieval
-evidence only. Inspect bounded definitions and defining conditions before
-calling a lexical hit `matched`. Failed exact lookup is not enough to call a
-candidate unmatched while plausible senses remain. Same-named paper-scoped
-mechanisms keep separate entries unless their meaning has been reviewed as
-equivalent.
-
-## Return a compact handoff
-
-Return one record per candidate: query, status, established entry id,
-authoritative evidence, bounded content excerpts with their source and line
-range, retrieval reasons, and caller action (`reuse`, `author-new`, or
-`review`). Report operations used, result counts, ambiguity and omitted
-context. Make no repository changes. Return personal understanding and direct
-pending prerequisites separately from identity match and definition
-availability.
+Return one entry per question or candidate: the query, uids found with
+`source:lines` and quotes, the classification when asked, the owner's
+understanding, direct pending terms, the lag state and any `kgd index` run.
+Report omitted context and ambiguity. Make no other changes.

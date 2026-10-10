@@ -1,5 +1,6 @@
 """The hidden .knowledge/ tree is a base's only knowledge root."""
 
+import json
 import os
 import subprocess
 import sys
@@ -8,8 +9,7 @@ import unittest
 from pathlib import Path
 
 from kgdistiller.home import KNOWLEDGE_DIRECTORY, knowledge_root
-from tests.knowledge_fixture import make_fixture, use_temporary_home
-from tests.test_read_adapters import build_entry_store
+from tests.knowledge_fixture import make_record_home, use_temporary_home
 
 
 def run_cli(cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -51,14 +51,18 @@ class KnowledgeRootTest(unittest.TestCase):
 
 class KnowledgeRootDefaultsTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.fixture = make_fixture(self)
-        build_entry_store(self.fixture)
-        self.root = self.fixture.root
+        self.kb = make_record_home(self)
+        self.root = self.kb.root
+        self.kb.write_source("notes/a.txt", "Title\nA measure space is a triple.\n")
+        frontmatter = "label: Measure space\nkind: definition\nsource: notes/a.txt\nlines: 2"
+        self.kb.write_record("measure-space", frontmatter, "A triple.", ["A measure space"])
+        self.kb.write_record("measure", frontmatter.replace("Measure space", "Measure"), "A set function.",
+                             ["A measure"], folder="drafts")
 
     def test_default_commands_use_the_hidden_tree(self) -> None:
         result = run_cli(self.root.parent, "check", "--base", "kb")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertIn("OK: 2 entries, 1 edges", result.stdout)
+        self.assertEqual(json.loads(result.stdout), {"errors": [], "stale": [], "moved": []})
         self.assertNotIn("knowledge", {path.name for path in self.root.iterdir()})
 
     @unittest.skipIf(os.name == "nt", "directory symlinks need extra privileges on Windows")
@@ -68,16 +72,22 @@ class KnowledgeRootDefaultsTest(unittest.TestCase):
             (self.root / ".knowledge").rename(target)
             (self.root / ".knowledge").symlink_to(target, target_is_directory=True)
             before = sorted(path.relative_to(target) for path in target.rglob("*"))
-            for arguments in (
-                ("agent", "status"),
-                ("agent", "resolve", "beta"),
-                ("check",),
-                ("export", "obsidian"),
+            for arguments, names_the_symlink in (
+                (("check", "--base", "kb"), True),
+                (("check", "--base", "kb", "--fix-lines"), True),
+                (("sheet", "notes/a.txt"), True),
+                (("sheet", "notes/a.txt", "--json"), True),
+                (("accept", ".knowledge/drafts/measure.md"), False),
+                (("index",), True),
             ):
                 with self.subTest(arguments=arguments):
-                    result = run_cli(self.root.parent, *arguments, "--base", "kb")
-                    self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn("knowledge tree must not be a symlink", result.stderr)
+                    result = run_cli(self.root, *arguments)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    if names_the_symlink:
+                        self.assertIn("must not be a symlink", result.stdout + result.stderr)
+                    else:
+                        self.assertIn("refused", json.loads(result.stdout))
+            self.assertFalse((self.kb.home / "index.sqlite").exists())
             other = self.root.parent / "other"
             other.mkdir()
             (other / ".knowledge").symlink_to(target, target_is_directory=True)

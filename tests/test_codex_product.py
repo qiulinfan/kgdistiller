@@ -77,7 +77,7 @@ class CodexProductTests(unittest.TestCase):
             {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")},
             {item["name"] for item in manifest["skills"]},
         )
-        self.assertEqual(3, len(manifest["agents"]))
+        self.assertEqual(1, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
         self.assertEqual(
             len({item["id"] for item in manifest["workflows"]}),
@@ -118,7 +118,7 @@ class CodexProductTests(unittest.TestCase):
             linked = link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             self.assertEqual("linked", linked["status"])
             self.assertEqual(self.expected_skills, linked["skills"])
-            self.assertEqual(3, linked["agents"])
+            self.assertEqual(1, linked["agents"])
             self.assertEqual(
                 "user guidance\n", agents_guidance.read_text(encoding="utf-8")
             )
@@ -547,7 +547,7 @@ class CodexProductTests(unittest.TestCase):
             initial = link_product(codex_home=home, mode="auto", source_root=source)
             self.assertTrue(initial["real_time"])
 
-            old_name = "harvest-paper"
+            old_name = "harvest-kgdistiller"
             new_name = "harvest-sheets"
             old_source = source / "skills" / old_name
             new_source = source / "skills" / new_name
@@ -604,7 +604,7 @@ class CodexProductTests(unittest.TestCase):
             source = copy_product_root(root / "product")
             home = root / "codex-home"
             link_product(codex_home=home, mode="copy", source_root=source)
-            name = "harvest-paper"
+            name = "harvest-kgdistiller"
             target = home / "skills" / name / "SKILL.md"
             target.write_text("foreign replacement\n", encoding="utf-8")
 

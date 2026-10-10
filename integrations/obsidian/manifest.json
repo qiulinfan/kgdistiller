@@ -3,7 +3,7 @@
   "name": "kgdistiller",
   "version": "0.1.5",
   "minAppVersion": "1.13.7",
-  "description": "Explore typed semantic relations between reviewed knowledge entries and the source documents they cite.",
+  "description": "Preview kgdistiller records and role-bound relations as a typed graph.",
   "author": "Qiulin Fan",
   "authorUrl": "https://github.com/qiulinfan",
   "isDesktopOnly": false

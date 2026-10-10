@@ -1,4 +1,4 @@
 interface:
   display_name: "Deploy kgdistiller"
-  short_description: "Register, check and restore a file-based knowledge base"
-  default_prompt: "Use $deploy-kgdistiller to register this base in the ~/.knowledge home, review its source globs and document types, run check and agent status, refresh the Obsidian graph feed, and explain its Git state."
+  short_description: "Register, check, index and restore knowledge bases"
+  default_prompt: "Use $deploy-kgdistiller to register this base in the ~/.knowledge home, review its source globs and document types, run check, build the index, install the Obsidian plugin and explain its Git state."

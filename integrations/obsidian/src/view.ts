@@ -2,7 +2,6 @@ import cytoscape, { type Core, type EventObject } from "cytoscape";
 import {
   App,
   ItemView,
-  MarkdownView,
   Notice,
   normalizePath,
   setIcon,
@@ -10,15 +9,19 @@ import {
   WorkspaceLeaf,
 } from "obsidian";
 
-import { isSafeVaultPath, parseGraphContract, type KgGraphContract } from "./contract";
 import {
   graphElements,
+  graphModel,
+  kindOptions,
   openTarget,
-  relationOptions,
+  valueLabel,
+  type FrontmatterRecord,
   type GraphElementData,
   type GraphFilters,
-  type OpenTarget,
+  type KnowledgeModel,
+  type ResolvedValue,
 } from "./graph-model";
+import { DRAFTS_DIRECTORY, ENTRIES_DIRECTORY } from "./records";
 import type { KgdistillerSettings } from "./settings";
 
 export const VIEW_TYPE_KGDISTILLER_GRAPH = "kgdistiller-graph-view";
@@ -27,10 +30,12 @@ export const KGDISTILLER_ICON = "flask-conical";
 export interface GraphViewHost {
   app: App;
   settings: KgdistillerSettings;
+  /** The live records from the metadata cache. */
+  knowledgeRecords(): FrontmatterRecord[];
 }
 
 export class KgdistillerGraphView extends ItemView {
-  private graph: KgGraphContract | null = null;
+  private model: KnowledgeModel | null = null;
   private cytoscape: Core | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private toolbarEl: HTMLElement | null = null;
@@ -38,18 +43,10 @@ export class KgdistillerGraphView extends ItemView {
   private detailEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private filters: GraphFilters;
-  /** Path, mtime and size of the graph file the view last tried to load. */
-  private loadedStamp: string | null = null;
-  /** Loads run one at a time; focus and leaf-change often fire together. */
-  private refreshQueue: Promise<void> = Promise.resolve();
 
   constructor(leaf: WorkspaceLeaf, private readonly host: GraphViewHost) {
     super(leaf);
-    this.filters = {
-      relation: "",
-      showSources: host.settings.showSources,
-      showDefinitions: host.settings.showDefinitions,
-    };
+    this.filters = { kind: "", showDrafts: host.settings.showDrafts };
   }
 
   getViewType(): string {
@@ -75,7 +72,7 @@ export class KgdistillerGraphView extends ItemView {
     this.showHelp();
     this.resizeObserver = new ResizeObserver(() => this.cytoscape?.resize());
     this.resizeObserver.observe(this.graphEl);
-    await this.refresh();
+    this.refresh();
   }
 
   async onClose(): Promise<void> {
@@ -85,150 +82,76 @@ export class KgdistillerGraphView extends ItemView {
     this.cytoscape = null;
   }
 
-  /**
-   * Reload only when the graph file changed since the last load. Vault events do
-   * not fire for a graph under an excluded or unindexed hidden folder, so the
-   * plugin calls this when Obsidian regains focus or the active leaf changes.
-   */
-  refreshIfChanged(): Promise<void> {
-    return this.enqueue(async () => {
-      if (!this.toolbarEl) return;
-      const configuredPath = normalizePath(this.host.settings.graphPath.trim());
-      try {
-        if (isSafeVaultPath(configuredPath, /\.json$/) &&
-            (await this.graphStamp(configuredPath)) === this.loadedStamp) return;
-      } catch {
-        // The load below reports the stat failure in the view.
-      }
-      await this.loadGraph();
-    });
-  }
-
-  refresh(): Promise<void> {
-    return this.enqueue(() => this.loadGraph());
-  }
-
-  private enqueue(task: () => Promise<void>): Promise<void> {
-    const next = this.refreshQueue.then(task);
-    this.refreshQueue = next.catch(() => undefined);
-    return next;
-  }
-
-  private async graphStamp(path: string): Promise<string | null> {
-    const stat = await this.app.vault.adapter.stat(path);
-    return stat ? `${path}:${stat.mtime}:${stat.size}` : null;
-  }
-
-  private async loadGraph(): Promise<void> {
-    if (!this.toolbarEl || !this.graphEl || !this.statusEl) return;
-    try {
-      this.loadedStamp = null;
-      const configuredPath = normalizePath(this.host.settings.graphPath.trim());
-      if (!isSafeVaultPath(configuredPath, /\.json$/)) {
-        throw new Error("The semantic graph setting must be a safe vault-relative JSON path.");
-      }
-      // Read through the adapter so a graph below an excluded or unindexed hidden
-      // folder still loads; such paths have no TFile in the vault index.
-      const adapter = this.app.vault.adapter;
-      this.loadedStamp = await this.graphStamp(configuredPath);
-      if (!(await adapter.exists(configuredPath))) {
-        throw new Error(
-          `No semantic graph exists at ${configuredPath}. Run kgdistiller export obsidian.`,
-        );
-      }
-      this.graph = parseGraphContract(await adapter.read(configuredPath));
-      this.filters.showSources = this.host.settings.showSources;
-      this.filters.showDefinitions = this.host.settings.showDefinitions;
-      if (this.filters.relation && !relationOptions(this.graph).includes(this.filters.relation)) {
-        this.filters.relation = "";
-      }
-      this.renderToolbar();
-      this.renderGraph();
-      this.setStatus(
-        `${this.graph.counts.concepts} concepts · ${this.graph.counts.semantic_edges} semantic edges · ${this.graph.counts.sources} sources`,
-        false,
-      );
-    } catch (error) {
-      this.graph = null;
-      this.cytoscape?.destroy();
-      this.cytoscape = null;
-      this.graphEl.empty();
-      this.graphEl.createDiv({
-        cls: "kgd-empty-state",
-        text: error instanceof Error ? error.message : String(error),
-      });
-      this.setStatus("Graph unavailable", true);
+  /** Re-render from the plugin's current records; called whenever the model changes. */
+  refresh(): void {
+    if (!this.toolbarEl || !this.graphEl) return;
+    this.model = graphModel(this.host.knowledgeRecords());
+    if (this.filters.kind && !kindOptions(this.model, this.filters.showDrafts).includes(this.filters.kind)) {
+      this.filters.kind = "";
     }
+    this.renderToolbar();
+    this.renderGraph();
+    const records = [...this.model.records.values()];
+    const drafts = records.filter((record) => record.draft).length;
+    const relations = records.filter((record) => !record.draft && record.recordClass === "relation").length;
+    this.setStatus(`${records.length - drafts - relations} nodes · ${relations} relations · ${drafts} drafts`);
+  }
+
+  /** Apply the stored drafts setting, then re-render. */
+  applySettings(): void {
+    this.filters.showDrafts = this.host.settings.showDrafts;
+    this.refresh();
   }
 
   private renderToolbar(): void {
-    if (!this.toolbarEl || !this.graph) return;
+    if (!this.toolbarEl || !this.model) return;
     this.toolbarEl.empty();
-    this.addSelect(
-      "Relation",
-      "All semantic relations",
-      relationOptions(this.graph),
-      this.filters.relation,
-      (value) => {
-        this.filters.relation = value;
-        this.renderGraph();
-      },
-    );
-    this.addToggle("Sources", this.filters.showSources, (value) => {
-      this.filters.showSources = value;
+    const wrapper = this.toolbarEl.createEl("label", { cls: "kgd-control" });
+    wrapper.createSpan({ text: "Kind" });
+    const select = wrapper.createEl("select", { attr: { "aria-label": "Kind" } });
+    select.createEl("option", { text: "All kinds", value: "" });
+    for (const kind of kindOptions(this.model, this.filters.showDrafts)) {
+      select.createEl("option", { text: kind, value: kind });
+    }
+    select.value = this.filters.kind;
+    select.addEventListener("change", () => {
+      this.filters.kind = select.value;
       this.renderGraph();
     });
-    this.addToggle("Definitions", this.filters.showDefinitions, (value) => {
-      this.filters.showDefinitions = value;
-      this.renderGraph();
+
+    const toggle = this.toolbarEl.createEl("label", { cls: "kgd-toggle" });
+    const input = toggle.createEl("input", { type: "checkbox" });
+    input.checked = this.filters.showDrafts;
+    toggle.createSpan({ text: "Show drafts" });
+    input.addEventListener("change", () => {
+      this.filters.showDrafts = input.checked;
+      this.refresh();
     });
+
     const fitButton = this.toolbarEl.createEl("button", {
       cls: "clickable-icon kgd-icon-button",
       attr: { "aria-label": "Fit graph" },
     });
     setIcon(fitButton, "scan");
     fitButton.addEventListener("click", () => this.cytoscape?.fit(undefined, 36));
-    const refreshButton = this.toolbarEl.createEl("button", {
-      cls: "clickable-icon kgd-icon-button",
-      attr: { "aria-label": "Reload graph" },
-    });
-    setIcon(refreshButton, "refresh-cw");
-    refreshButton.addEventListener("click", () => void this.refresh());
-  }
-
-  private addSelect(
-    label: string,
-    emptyLabel: string,
-    options: string[],
-    selected: string,
-    onChange: (value: string) => void,
-  ): void {
-    if (!this.toolbarEl) return;
-    const wrapper = this.toolbarEl.createEl("label", { cls: "kgd-control" });
-    wrapper.createSpan({ text: label });
-    const select = wrapper.createEl("select", { attr: { "aria-label": label } });
-    select.createEl("option", { text: emptyLabel, value: "" });
-    for (const option of options) select.createEl("option", { text: option, value: option });
-    select.value = selected;
-    select.addEventListener("change", () => onChange(select.value));
-  }
-
-  private addToggle(label: string, checked: boolean, onChange: (value: boolean) => void): void {
-    if (!this.toolbarEl) return;
-    const wrapper = this.toolbarEl.createEl("label", { cls: "kgd-toggle" });
-    const input = wrapper.createEl("input", { type: "checkbox" });
-    input.checked = checked;
-    wrapper.createSpan({ text: label });
-    input.addEventListener("change", () => onChange(input.checked));
   }
 
   private renderGraph(): void {
-    if (!this.graphEl || !this.graph) return;
+    if (!this.graphEl || !this.model) return;
     this.cytoscape?.destroy();
+    this.cytoscape = null;
     this.graphEl.empty();
-    const elements = graphElements(this.graph, this.filters);
+    if (this.model.records.size === 0) {
+      this.graphEl.createDiv({
+        cls: "kgd-empty-state",
+        text: `No records in ${ENTRIES_DIRECTORY} or ${DRAFTS_DIRECTORY}. ` +
+          "Enable hidden-folder indexing in the kgdistiller settings so Obsidian reads the knowledge folder.",
+      });
+      return;
+    }
+    const elements = graphElements(this.model, this.filters);
     if (elements.length === 0) {
-      this.graphEl.createDiv({ cls: "kgd-empty-state", text: "No nodes match these filters." });
+      this.graphEl.createDiv({ cls: "kgd-empty-state", text: "No records match these filters." });
       return;
     }
     const computedStyle = getComputedStyle(this.contentEl);
@@ -271,13 +194,16 @@ export class KgdistillerGraphView extends ItemView {
           },
         },
         {
-          selector: 'node[kind = "source"]',
-          style: {
-            shape: "round-rectangle",
-            "background-color": "#d97706",
-            width: 42,
-            height: 24,
-          },
+          selector: "node.kgd-relation",
+          style: { shape: "diamond", "background-color": "data(color)", width: 22, height: 22, "font-size": 9 },
+        },
+        {
+          selector: "node.kgd-stub",
+          style: { "background-color": "#9ca3af", width: 20, height: 20, color: textMuted },
+        },
+        {
+          selector: "node.kgd-dangling",
+          style: { "background-color": "#dc2626", width: 18, height: 18, color: "#dc2626" },
         },
         {
           selector: "node.understanding-understood",
@@ -288,11 +214,16 @@ export class KgdistillerGraphView extends ItemView {
           style: { "border-color": "#ca8a04", "border-width": 4 },
         },
         {
+          selector: "node.kgd-draft",
+          style: { "border-style": "dashed", "border-color": textMuted, "border-width": 3, "background-opacity": 0.55 },
+        },
+        {
           selector: "edge",
           style: {
             width: 2,
             "curve-style": "bezier",
-            "target-arrow-shape": "triangle",
+            "line-color": textMuted,
+            "target-arrow-color": textMuted,
             "arrow-scale": 0.8,
             label: "data(label)",
             "font-size": 9,
@@ -303,20 +234,28 @@ export class KgdistillerGraphView extends ItemView {
           },
         },
         {
-          selector: 'edge[kind = "semantic"]',
-          style: {
-            "line-color": "data(color)",
-            "target-arrow-color": "data(color)",
-            width: 3,
-          },
+          selector: "edge.kgd-relation-edge, edge.kgd-role",
+          style: { "line-color": "data(color)", "target-arrow-color": "data(color)" },
         },
         {
-          selector: 'edge[kind = "definition"]',
-          style: {
-            "line-color": "#059669",
-            "target-arrow-color": "#059669",
-            "line-style": "dotted",
-          },
+          selector: "edge.kgd-relation-edge",
+          style: { width: 3 },
+        },
+        {
+          selector: "edge.kgd-directed, edge.kgd-role",
+          style: { "target-arrow-shape": "triangle" },
+        },
+        {
+          selector: "edge.kgd-requires",
+          style: { "line-style": "dashed", "target-arrow-shape": "vee" },
+        },
+        {
+          selector: "edge.kgd-draft",
+          style: { "line-style": "dashed", opacity: 0.7 },
+        },
+        {
+          selector: "edge.kgd-dangling",
+          style: { "line-color": "#dc2626", "target-arrow-color": "#dc2626" },
         },
         {
           selector: ":selected",
@@ -334,33 +273,48 @@ export class KgdistillerGraphView extends ItemView {
     this.detailEl.empty();
     this.detailEl.createEl("h3", { text: "Graph semantics" });
     this.detailEl.createEl("p", {
-      text: "Select a node or edge to inspect it. Semantic edges retain their direction, relation type, and evidence.",
+      text: "Select a node or edge to inspect its record. The graph follows the records in the vault as you edit them.",
     });
     const list = this.detailEl.createEl("ul", { cls: "kgd-legend" });
-    list.createEl("li", { text: "Solid colored: concept → concept semantic relation" });
-    list.createEl("li", { text: "Green dotted: source → concept definition" });
-    list.createEl("li", { text: "Green ring: understood; amber ring: not yet understood" });
+    list.createEl("li", { text: "Circle: node record; green ring understood, amber ring not yet understood" });
+    list.createEl("li", { text: "Coloured edge: relation with two participants, labelled with its kind" });
+    list.createEl("li", { text: "Diamond: any other relation, with one edge per role value" });
+    list.createEl("li", { text: "Dashed arrow: requires" });
+    list.createEl("li", { text: "Dashed outline: draft, not yet accepted" });
+    list.createEl("li", { text: "Grey: record in another base; red: missing record" });
   }
 
   private showDetails(data: GraphElementData): void {
-    if (!this.detailEl) return;
+    if (!this.detailEl || !this.model) return;
     this.detailEl.empty();
-    this.detailEl.createEl("div", { cls: `kgd-kind kgd-kind-${data.kind}`, text: data.kind });
-    this.detailEl.createEl("h3", { text: data.label });
-    if (data.conceptId) this.detailRow("Concept ID", data.conceptId);
-    if (data.conceptKind) this.detailRow("Kind", data.conceptKind);
-    if (data.understanding) this.detailRow("Understanding", data.understanding);
-    if (data.relation) this.detailRow("Relation", data.relation);
-    if (data.authority) this.detailRow(data.kind === "concept" ? "Entry" : "Source", data.authority);
-    if (data.line) {
-      this.detailRow("Location", data.lineEnd && data.lineEnd !== data.line ? `lines ${data.line}–${data.lineEnd}` : `line ${data.line}`);
+    const record = data.path ? this.model.records.get(data.path) : undefined;
+    if (!record) {
+      this.detailEl.createEl("div", { cls: `kgd-kind kgd-kind-${data.element}`, text: data.element });
+      this.detailEl.createEl("h3", { text: data.label });
+      if (data.element === "stub") this.detailRow("Record in another base", data.uid ?? data.label);
+      if (data.element === "dangling") this.detailRow("Missing record", `${ENTRIES_DIRECTORY}/${data.label}.md`);
+      if (data.role) this.detailRow("Role", data.role);
+      return;
     }
-    if (data.evidence) {
-      this.detailEl.createEl("h4", { text: "Evidence" });
-      this.detailEl.createEl("blockquote", { text: data.evidence });
+    const badge = record.draft ? "draft" : record.recordClass;
+    this.detailEl.createEl("div", { cls: `kgd-kind kgd-kind-${badge}`, text: badge });
+    this.detailEl.createEl("h3", { text: record.label });
+    this.detailRow("Kind", record.kind || "(none)");
+    this.detailRow("Class", record.recordClass);
+    if (record.understanding && record.understanding !== "unknown") this.detailRow("Understanding", record.understanding);
+    if (record.epistemic) this.detailRow("Epistemic", record.epistemic);
+    if (record.source) this.detailRow("Source", record.lines ? `${record.source} · L${record.lines}` : record.source);
+    for (const role of record.roles) this.detailRow(role.role, this.values(role.values));
+    if (record.requires.length > 0) this.detailRow("requires", this.values(record.requires));
+    const target = openTarget(data);
+    if (target) {
+      const button = this.detailEl.createEl("button", { cls: "mod-cta", text: "Open record" });
+      button.addEventListener("click", () => void this.openVaultPath(target.path));
     }
-    const target = openTarget(data, normalizePath(this.host.settings.graphPath.trim()));
-    if (target) this.addOpenButton(target, data.kind === "concept" ? "Open entry" : "Open source");
+  }
+
+  private values(values: ResolvedValue[]): string {
+    return values.map((value) => valueLabel(this.model!, value)).join(", ");
   }
 
   private detailRow(label: string, value: string): void {
@@ -370,32 +324,16 @@ export class KgdistillerGraphView extends ItemView {
     row.createSpan({ text: value });
   }
 
-  private addOpenButton(target: OpenTarget, label: string): void {
-    if (!this.detailEl) return;
-    const button = this.detailEl.createEl("button", { cls: "mod-cta", text: label });
-    button.addEventListener("click", () => void this.openVaultPath(target.path, target.line));
-  }
-
-  private async openVaultPath(path: string, line?: number): Promise<void> {
+  private async openVaultPath(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
     if (!(file instanceof TFile)) {
-      new Notice(
-        `kgdistiller cannot open ${path}: it is not in the vault index. ` +
-        "Enable hidden-folder indexing in the kgdistiller settings for files under the hidden knowledge folder.",
-      );
+      new Notice(`kgdistiller cannot open ${path}: it is not in the vault index.`);
       return;
     }
-    const leaf = this.app.workspace.getLeaf(false);
-    await leaf.openFile(file);
-    if (line && leaf.view instanceof MarkdownView) {
-      leaf.view.editor.setCursor({ line: Math.max(0, line - 1), ch: 0 });
-      leaf.view.editor.focus();
-    }
+    await this.app.workspace.getLeaf(false).openFile(file);
   }
 
-  private setStatus(text: string, error: boolean): void {
-    if (!this.statusEl) return;
-    this.statusEl.setText(text);
-    this.statusEl.toggleClass("kgd-status-error", error);
+  private setStatus(text: string): void {
+    this.statusEl?.setText(text);
   }
 }

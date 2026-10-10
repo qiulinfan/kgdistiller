@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import tarfile
 import zipfile
@@ -39,11 +40,21 @@ def _expected_package_files() -> set[str]:
         relative = path.relative_to(PACKAGE_ROOT)
         if _is_python_cache(relative):
             continue
-        if path.suffix == ".py" or relative.parts[0] == "schemas":
+        if path.suffix == ".py":
             expected.add(PurePosixPath("kgdistiller", *relative.parts).as_posix())
-    if not any(name.startswith("kgdistiller/schemas/") for name in expected):
-        raise RuntimeError("source schema inventory is empty")
     return expected
+
+
+def _manifest_documents() -> list[Path]:
+    """The workflow guide and resources that both runtime manifests install."""
+    documents: list[Path] = []
+    for name in ("manifest.json", "claude-manifest.json"):
+        manifest = json.loads((REPO_ROOT / "workflows" / name).read_text(encoding="utf-8"))
+        for relative in [manifest["workflow_guide"], *manifest.get("workflow_resources", [])]:
+            path = REPO_ROOT.joinpath(*PurePosixPath(relative).parts)
+            if path not in documents:
+                documents.append(path)
+    return documents
 
 
 def _expected_product_files() -> tuple[set[str], set[str]]:
@@ -61,7 +72,7 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         for path in root.rglob("*")
         if path.is_file() and not _is_python_cache(path.relative_to(root))
     ]
-    files.append(REPO_ROOT / "docs" / "product-workflows.md")
+    files.extend(_manifest_documents())
     files.append(REPO_ROOT / "docs" / "omp-compiled-tools.md")
     files.append(REPO_ROOT / "integrations" / "omp" / "compiled_tools.ts")
     files.extend(
@@ -167,14 +178,13 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, tarfile.TarError, zipfile.BadZipFile) as error:
         print(f"distribution check failed: {error}", file=sys.stderr)
         return 1
-    schemas = sum(name.startswith("kgdistiller/schemas/") for name in expected)
     modules = sum(name.endswith(".py") for name in expected)
     product = sum(name.startswith("kgdistiller/product/") for name in expected)
     obsidian = sum(
         name.startswith("kgdistiller/obsidian_plugin/") for name in expected
     )
     print(
-        f"distribution check passed: modules={modules} schemas={schemas} "
+        f"distribution check passed: modules={modules} "
         f"product={product} obsidian={obsidian} "
         f"wheel={wheel.name} sdist={sdist.name}"
     )

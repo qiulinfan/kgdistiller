@@ -1,6 +1,0 @@
-interface:
-  display_name: "Harvest Paper"
-  short_description: "Ingest checked Obsidian def-sheet items into knowledge"
-  default_prompt: "Use $harvest-paper to ingest my checked def-sheet items into accepted knowledge entries with the deterministic harvest script, preserving unchecked items and personal understanding."
-policy:
-  allow_implicit_invocation: false

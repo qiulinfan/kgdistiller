@@ -1,325 +1,178 @@
+"""The read-only MCP server: tool surface, input bounds, response cap and fresh read-only connections."""
+
 from __future__ import annotations
 
+import io
+import json
 import unittest
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
-from kgdistiller.home import resolve_base
+from kgdistiller.index import index
 from kgdistiller.mcp import (
     MAX_TOOL_RESPONSE_BYTES,
     TOOL_DEFINITIONS,
     MCPServer,
+    ToolError,
     call_tool,
+    serve_stdio,
 )
-from kgdistiller.query import QueryError, load_graph_view, query_status
-from kgdistiller.semantic_retrieval import (
-    SemanticRankingService,
-    search_document,
-)
-from tests.knowledge_fixture import use_temporary_home
-from tests.test_retrieval_cli import (
-    FakeReranker,
-    authority_bytes,
-    retrieval_plan,
-    write_fixture_store,
-    write_graph_retrieval_fixture,
-)
-from tests.test_semantic_retrieval import FakeEmbedding
+from kgdistiller.retrieve import search
+from tests.knowledge_fixture import make_record_home
+
+SOURCE = "Title\nA measure space is a triple.\nA measure is countably additive.\n测度论研究可测空间。\n"
+
+
+def node(label: str, lines: str, extra: str = "") -> str:
+    return f"label: {label}\nkind: definition\nsource: notes/a.txt\nlines: {lines}\n{extra}".rstrip("\n")
 
 
 class MCPTest(unittest.TestCase):
     def setUp(self) -> None:
-        home = use_temporary_home(self)
-        self.root = home.parent / "kb"
-        self.root.mkdir()
-        self.graph = write_fixture_store(self.root)
-        self.base = resolve_base("kb", self.root)
+        self.kb = make_record_home(self)
+        self.kb.write_source("notes/a.txt", SOURCE)
+        self.kb.write_record("measure-space", node("Measure space", "2", 'requires: ["[[measure]]"]'),
+                             "A triple.", ["A measure space"])
+        self.kb.write_record("measure", node("Measure", "3", "aliases: [测度]"), "A set function.", ["A measure"])
+        index()
 
-    def _files(self) -> dict[str, bytes]:
-        return {
-            path.relative_to(self.root).as_posix(): path.read_bytes()
-            for path in self.root.rglob("*")
-            if path.is_file()
-        }
-
-    def test_tool_surface_is_exactly_the_json_memory_surface(self) -> None:
-        names = {tool["name"] for tool in TOOL_DEFINITIONS}
-        self.assertEqual(
-            {
-                "kg_compiled_knowledge",
-                "kg_status",
-                "kg_resolve_concepts",
-                "kg_search",
-                "kg_get_node",
-                "kg_expand",
-                "kg_ppr",
-                "kg_build_context",
-            },
-            names,
-        )
-        ppr = next(tool for tool in TOOL_DEFINITIONS if tool["name"] == "kg_ppr")
-        self.assertEqual(
-            {
-                "ids",
-                "edge_types",
-                "direction",
-                "limit",
-            },
-            set(ppr["inputSchema"]["properties"]),
-        )
-        resolve = next(
-            tool for tool in TOOL_DEFINITIONS if tool["name"] == "kg_resolve_concepts"
-        )
-        self.assertEqual(
-            4096,
-            resolve["inputSchema"]["properties"]["concepts"]["items"]["maxLength"],
-        )
-
-    def test_identity_and_node_id_inputs_are_bounded(self) -> None:
-        with self.assertRaisesRegex(QueryError, "invalid string length"):
-            call_tool(self.base,
-                "kg_resolve_concepts",
-                {"concepts": ["x" * 4097]},
-            )
-        with self.assertRaisesRegex(QueryError, "invalid length"):
-            call_tool(self.base, "kg_get_node", {"id": "x" * 257})
-
-    def test_mcp_fails_closed_before_emitting_an_oversized_tool_result(self) -> None:
-        server = MCPServer(self.base)
-        server.initialized = True
-        with patch(
-            "kgdistiller.mcp.call_tool",
-            return_value={"blob": "x" * (MAX_TOOL_RESPONSE_BYTES + 1)},
-        ):
-            response = server.handle(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {"name": "kg_status", "arguments": {}},
-                }
-            )
-        self.assertTrue(response["result"]["isError"])
-        self.assertIn(
-            "tool response exceeds",
-            response["result"]["structuredContent"]["error"]["message"],
-        )
-
-    def test_mcp_and_python_core_are_equivalent_and_do_not_write(self) -> None:
-        before = self._files()
-        direct = call_tool(self.base, "kg_status", {})
-        self.assertEqual(query_status(load_graph_view(self.base)), direct)
-
-        server = MCPServer(self.base)
-        initialized = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {"protocolVersion": "2025-11-25"},
-            }
-        )
-        self.assertEqual("json-memory", initialized["result"]["capabilities"]["experimental"]["queryBackend"])
+    def server(self) -> MCPServer:
+        server = MCPServer()
+        server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}})
         server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        response = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "kg_status", "arguments": {}},
-            }
-        )
-        self.assertEqual(direct, response["result"]["structuredContent"])
-        self.assertEqual(before, self._files())
+        return server
 
-    def test_each_tool_call_loads_a_complete_fresh_view(self) -> None:
-        entry = self.graph / "entries/measure.md"
-        original = entry.read_text(encoding="utf-8")
-        entry.write_text(original.replace("aliases:\n  - 测度", "aliases:\n  - 测度\n  - Mass function"), encoding="utf-8")
-        resolved = call_tool(self.base, "kg_resolve_concepts", {"concepts": ["mass function"]})
-        self.assertEqual(["measure"], resolved["results"][0]["candidate_ids"])
-        # A malformed manual edit is rejected; no partial view is returned.
-        entry.write_text(original.replace("label: Measure", "label: Measure\nstatus: current"), encoding="utf-8")
-        with self.assertRaisesRegex(QueryError, "unknown frontmatter key"):
-            call_tool(self.base, "kg_status", {})
-        entry.write_text(original, encoding="utf-8")
-        self.assertEqual({"entries": 3, "edges": 2}, call_tool(self.base, "kg_status", {})["counts"])
+    def call(self, server: MCPServer, name: str, arguments: Any) -> dict[str, Any]:
+        response = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                  "params": {"name": name, "arguments": arguments}})
+        return response["result"]
 
-    def test_graph_mcp_controls_are_per_request_and_fail_closed_when_unused(self) -> None:
-        for name in ("kg_search", "kg_build_context"):
-            schema = next(tool["inputSchema"] for tool in TOOL_DEFINITIONS if tool["name"] == name)
-            self.assertEqual(False, schema["properties"]["graph_retrieval"]["default"])
-            self.assertEqual(5, schema["properties"]["graph_seed_candidates"]["default"])
-            self.assertEqual("high-confidence", schema["properties"]["graph_edge_policy"]["default"])
-            for controls in ({"graph_seed_candidates": 5}, {"graph_edge_policy": "high-confidence"},
-                             {"graph_retrieval": False, "graph_seed_candidates": 5}):
-                with self.subTest(name=name, controls=controls), self.assertRaisesRegex(QueryError, "require graph_retrieval"):
-                    call_tool(self.base, name, {"query": "collection", **controls})
-            for controls in ({"graph_retrieval": 1}, {"graph_retrieval": True, "graph_seed_candidates": True},
-                             {"graph_retrieval": True, "graph_seed_candidates": 0},
-                             {"graph_retrieval": True, "graph_seed_candidates": 33},
-                             {"graph_retrieval": True, "graph_edge_policy": "reviewed"}):
-                with self.subTest(name=name, controls=controls), self.assertRaises(QueryError):
-                    call_tool(self.base, name, {"query": "collection", **controls})
-        with self.assertRaisesRegex(QueryError, "unexpected"):
-            call_tool(self.base, "kg_status", {"graph_retrieval": True})
-        server = MCPServer(self.base)
-        server.initialized = True
-        response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "kg_search", "arguments": {"query": "collection", "graph_edge_policy": "high-confidence"}}})
-        self.assertTrue(response["result"]["isError"])
-        self.assertIn("require graph_retrieval", response["result"]["structuredContent"]["error"]["message"])
+    def snapshot(self) -> dict[str, tuple[bytes, int]]:
+        """Every file under the home and the base, except SQLite's own WAL coordination files."""
+        found = {}
+        for directory in (self.kb.home, self.kb.root):
+            for path in sorted(directory.rglob("*")):
+                if path.is_file() and not path.name.endswith(("-wal", "-shm")):
+                    found[str(path)] = (path.read_bytes(), path.stat().st_mtime_ns)
+        return found
 
-    def test_graph_mcp_search_and_context_preserve_complete_bounded_source_paths(self) -> None:
-        self.graph = write_graph_retrieval_fixture(self.root)
-        before = authority_bytes(self.graph)
-        server = MCPServer(self.base)
-        server.initialized = True
-        arguments = {"query": "collection", "graph_retrieval": True, "graph_seed_candidates": 1, "max_depth": 1}
-        response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "kg_search", "arguments": arguments}})
-        self.assertFalse(response["result"]["isError"])
-        execution = response["result"]["structuredContent"]
-        self.assertEqual("kgdistiller-search-execution-v3", execution["schema"])
-        rows = {row["node_id"]: row for row in execution["result"]["results"]}
-        self.assertEqual({"sigma-algebra"}, set(rows))
-        metadata = execution["result"]["graph_retrieval"]
-        self.assertEqual([], metadata["seeds"]["identity"])
-        self.assertFalse(metadata["seeds"]["candidate"][0]["identity_authority"])
-        self.assertFalse(metadata["policy"]["confidence_is_independent_review"])
-        self.assertTrue(metadata["ppr"]["converged"])
-        neighbors = {row["node_id"]: row for row in metadata["neighbors"]}
-        self.assertEqual({"measure"}, set(neighbors))
-        self.assertEqual("navigation", neighbors["measure"]["fusion"]["method"])
-        self.assertEqual(0.0, neighbors["measure"]["fusion"]["score"])
-        self.assertEqual(["sigma-algebra", "measure"], neighbors["measure"]["path_evidence"][0]["nodes"])
-        plan = retrieval_plan()
-        plan.update(question="collection", identity_queries=[], lexical_queries=["collection"])
-        bundle = call_tool(self.base, "kg_build_context", {"plan": plan, "graph_retrieval": True, "graph_seed_candidates": 1, "token_budget": 18000})
-        self.assertEqual("kgdistiller-context-bundle-v2", bundle["schema"])
-        self.assertEqual("kgdistiller-search-execution-v3", bundle["search_execution_schema"])
-        packet = next(item for item in bundle["support_packets"] if item["node_id"] == "absolute-continuity")
-        self.assertEqual(["sigma-algebra", "measure", "absolute-continuity"], packet["nodes"])
-        self.assertEqual(2, len(packet["path"]["steps"]))
-        self.assertTrue(all(step["evidence"] and step["confidence"] == "high" for step in packet["path"]["steps"]))
-        self.assertFalse(packet["logical_entailment"])
-        self.assertEqual(["Domain is a sigma algebra."], next(node for node in bundle["nodes"] if node["id"] == "measure")["prerequisites"])
-        self.assertEqual(2, len(bundle["edges"]))
-        self.assertLessEqual(bundle["budget"]["estimated_tokens"], 18000)
-        plain = call_tool(self.base, "kg_search", {"query": "collection", "graph_retrieval": False})
-        self.assertEqual("kgdistiller-search-execution-v1", plain["schema"])
-        self.assertEqual(plain["result"]["results"], execution["result"]["results"])
-        self.assertEqual(before, authority_bytes(self.graph))
+    def test_tool_surface_is_exactly_search_resolve_get(self) -> None:
+        self.assertEqual(["kg_search", "kg_resolve", "kg_get"], [tool["name"] for tool in TOOL_DEFINITIONS])
+        filters = {"base", "kind", "class", "source", "understanding"}
+        properties = {tool["name"]: set(tool["inputSchema"]["properties"]) for tool in TOOL_DEFINITIONS}
+        self.assertEqual(properties, {
+            "kg_search": {"query", "limit", *filters},
+            "kg_resolve": {"terms", *filters},
+            "kg_get": {"uids", "source_lines"},
+        })
+        for tool in TOOL_DEFINITIONS:
+            self.assertFalse(tool["inputSchema"]["additionalProperties"])
+            self.assertTrue(tool["annotations"]["readOnlyHint"])
+        listed = self.server().handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        self.assertEqual(TOOL_DEFINITIONS, listed["result"]["tools"])
 
-    def test_graph_mcp_policy_relaxation_and_model_composition_are_explicit(self) -> None:
-        self.graph = write_graph_retrieval_fixture(self.root)
-        relaxed = call_tool(self.base, "kg_search", {"query": "collection", "graph_retrieval": True, "graph_seed_candidates": 1, "graph_edge_policy": "all", "graph_strategy": "bfs"})
-        self.assertEqual(["sigma-algebra"], [row["node_id"] for row in relaxed["result"]["results"]])
-        self.assertIn("unverified-result", [row["node_id"] for row in relaxed["result"]["graph_retrieval"]["neighbors"]])
-        self.assertEqual("all", relaxed["result"]["graph_retrieval"]["policy"]["edge_policy"])
-        adapter = FakeReranker()
-        service = SemanticRankingService(adapter, cache_dir=self.root / "vectors", rerank=True, candidate_limit=1)
-        embedded = call_tool(self.base, "kg_search", {"query": "如何给可测集合赋予大小？", "graph_retrieval": True, "graph_seed_candidates": 1}, ranking_service=service)
-        self.assertEqual("kgdistiller-search-execution-v3", embedded["schema"])
-        self.assertIn("embedding", embedded["result"]["ranking"])
-        self.assertEqual([], embedded["result"]["graph_retrieval"]["seeds"]["identity"])
-        self.assertEqual(["measure"], [item["node_id"] for item in embedded["result"]["graph_retrieval"]["seeds"]["candidate"]])
-        self.assertTrue(all(not item["identity_authority"] for item in embedded["result"]["graph_retrieval"]["seeds"]["candidate"]))
-        without_graph = call_tool(self.base, "kg_search", {"query": "如何给可测集合赋予大小？"}, ranking_service=service)
-        self.assertEqual("kgdistiller-search-execution-v2", without_graph["schema"])
-        self.assertEqual(without_graph["result"]["results"], embedded["result"]["results"])
-        self.assertEqual(without_graph["result"]["ranking"]["reranker"]["candidates"], embedded["result"]["ranking"]["reranker"]["candidates"])
-        # Reranker scores are not persisted; each request scores its own pool.
-        self.assertEqual(2, len(adapter.pair_calls))
-        for _, documents in adapter.pair_calls:
-            self.assertEqual([search_document(load_graph_view(self.base).nodes["measure"])], documents)
-        self.assertEqual(0, service.last_cache_stats["document_inference_items"])
+    def test_initialize_describes_a_read_only_whole_home_server(self) -> None:
+        server = MCPServer()
+        self.assertEqual(-32002, server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["error"]["code"])
+        result = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})["result"]
+        self.assertEqual({"tools": {"listChanged": False}}, result["capabilities"])
+        self.assertIn("Read-only", result["instructions"])
+        self.assertIn("run `kgd index`", result["instructions"])
+        self.assertEqual({}, server.handle({"jsonrpc": "2.0", "id": 2, "method": "ping"})["result"])
 
-    def test_opted_in_service_applies_to_search_and_context_only(self) -> None:
-        adapter = FakeEmbedding()
-        service = SemanticRankingService(adapter, cache_dir=self.root / "vectors")
-        authority_before = {path.name: path.read_bytes() for path in self.graph.glob("*") if path.is_file()}
-        query = "如何给可测集合赋予大小？"
+    def test_inputs_are_bounded_and_unknown_arguments_rejected(self) -> None:
+        cases = {
+            "unexpected tool arguments: base_path": ("kg_search", {"query": "q", "base_path": "/x"}),
+            "missing required tool argument: query": ("kg_search", {}),
+            "query has an invalid length": ("kg_search", {"query": "x" * 4097}),
+            "limit is outside": ("kg_search", {"query": "q", "limit": 0}),
+            "limit must be integer": ("kg_search", {"query": "q", "limit": True}),
+            "class contains unsupported items": ("kg_search", {"query": "q", "class": ["edge"]}),
+            "base contains invalid items": ("kg_search", {"query": "q", "base": [1]}),
+            "terms has an invalid item count": ("kg_resolve", {"terms": []}),
+            "terms contains an invalid string length": ("kg_resolve", {"terms": ["x" * 4097]}),
+            "uids has an invalid item count": ("kg_get", {"uids": ["kb:x"] * 129}),
+            "source_lines is outside": ("kg_get", {"uids": ["kb:x"], "source_lines": -1}),
+            "arguments must be an object": ("kg_get", ["kb:x"]),
+            "unknown tool: kg_compiled_knowledge": ("kg_compiled_knowledge", {}),
+        }
+        server = self.server()
+        for message, (name, arguments) in cases.items():
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ToolError, message):
+                    call_tool(name, arguments)
+                result = self.call(server, name, arguments)
+                self.assertTrue(result["isError"])
+                self.assertIn(message, result["structuredContent"]["error"]["message"])
 
-        plain = call_tool(self.base, "kg_search", {"query": query})
-        self.assertEqual("kgdistiller-search-execution-v1", plain["schema"])
-        self.assertNotIn("embedding", plain["result"]["lanes"])
-        embedded = call_tool(self.base, "kg_search", {"query": query}, ranking_service=service)
-        self.assertEqual("kgdistiller-search-execution-v2", embedded["schema"])
-        self.assertEqual("measure", embedded["result"]["results"][0]["node_id"])
-        context = call_tool(self.base, "kg_build_context", {"query": query, "token_budget": 6000},
-                            ranking_service=service)
-        self.assertEqual("kgdistiller-search-execution-v2", context["search_execution_schema"])
-        self.assertIn("measure", [node["id"] for node in context["nodes"]])
-        self.assertEqual(1, adapter.document_calls)
-        self.assertEqual([[query], [query]], adapter.query_calls)
-        source_view = load_graph_view(self.base)
-        self.assertEqual([search_document(source_view.nodes[node_id]) for node_id in sorted(source_view.nodes)], adapter.document_inputs[0])
+    def test_response_size_is_capped(self) -> None:
+        server = self.server()
+        with patch("kgdistiller.mcp.call_tool", return_value={"blob": "x" * (MAX_TOOL_RESPONSE_BYTES + 1)}):
+            result = self.call(server, "kg_search", {"query": "q"})
+        self.assertTrue(result["isError"])
+        self.assertIn("tool response exceeds", result["structuredContent"]["error"]["message"])
 
-        self.assertEqual(call_tool(self.base, "kg_status", {}),
-                         call_tool(self.base, "kg_status", {}, ranking_service=service))
-        resolution = call_tool(self.base, "kg_resolve_concepts", {"concepts": [query]}, ranking_service=service)
-        self.assertEqual("missing", resolution["results"][0]["status"])
-        self.assertEqual([[query], [query]], adapter.query_calls)
-        self.assertEqual(authority_before, {path.name: path.read_bytes() for path in self.graph.glob("*") if path.is_file()})
+    def test_calls_match_the_core_and_write_nothing(self) -> None:
+        before = self.snapshot()
+        server = self.server()
+        found = self.call(server, "kg_search", {"query": "measure space", "class": ["node"], "limit": 5})
+        self.assertFalse(found["isError"])
+        self.assertEqual(search("measure space", limit=5), found["structuredContent"])
+        self.assertEqual(json.loads(found["content"][0]["text"]), found["structuredContent"])
+        self.assertEqual("kb:measure-space", found["structuredContent"]["results"][0]["uid"])
+        resolved = self.call(server, "kg_resolve", {"terms": ["测度"]})["structuredContent"]
+        self.assertEqual(["kb:measure"], [sense["uid"] for sense in resolved["terms"][0]["senses"]])
+        got = self.call(server, "kg_get", {"uids": ["measure-space"], "source_lines": 0})["structuredContent"]
+        self.assertEqual("2\tA measure space is a triple.", got["records"][0]["source_text"])
+        self.assertEqual(before, self.snapshot())
 
-    def test_server_forwards_same_service_only_to_retrieval_tools(self) -> None:
-        service = object()
-        server = MCPServer(self.base, ranking_service=service)
-        server.initialized = True
-        with patch("kgdistiller.mcp.call_tool", return_value={"ok": True}) as operation:
-            for index, name in enumerate(("kg_search", "kg_build_context", "kg_status", "kg_resolve_concepts")):
-                response = server.handle({"jsonrpc": "2.0", "id": index, "method": "tools/call",
-                                          "params": {"name": name, "arguments": {}}})
-                self.assertFalse(response["result"]["isError"])
-                if name in {"kg_search", "kg_build_context"}:
-                    self.assertIs(service, operation.call_args.kwargs["ranking_service"])
-                else:
-                    self.assertNotIn("ranking_service", operation.call_args.kwargs)
+    def test_kg_get_reads_no_file_outside_the_registered_sources(self) -> None:
+        outside = self.kb.home.parent / "private.txt"
+        outside.write_text("secret line\n", encoding="utf-8")
+        (self.kb.root / "notes/link.txt").symlink_to(outside)
+        sources = {"traversal": "../private.txt", "absolute": str(outside), "escaping-link": "notes/link.txt"}
+        for identifier, source in sources.items():
+            self.kb.write_record(identifier, node(identifier, "1").replace("notes/a.txt", source), "Text.", ["Title line"])
+        index()
+        server = self.server()
+        got = self.call(server, "kg_get", {"uids": [f"kb:{name}" for name in sources], "source_lines": 2})
+        self.assertFalse(got["isError"])
+        self.assertEqual([None] * 3, [record["source_text"] for record in got["structuredContent"]["records"]])
+        self.assertNotIn("secret", json.dumps(got))
 
-    def test_mcp_reranker_service_reuses_vectors_and_does_not_resolve_identity(self) -> None:
-        adapter = FakeReranker()
-        service = SemanticRankingService(adapter, cache_dir=self.root / "vectors", rerank=True, candidate_limit=2)
-        server = MCPServer(self.base, ranking_service=service)
-        server.initialized = True
-        query = "如何给可测集合赋予大小？"
-        for index, name in enumerate(("kg_search", "kg_build_context")):
-            response = server.handle({"jsonrpc": "2.0", "id": index, "method": "tools/call",
-                                      "params": {"name": name, "arguments": {"query": query}}})
-            self.assertFalse(response["result"]["isError"])
-            content = response["result"]["structuredContent"]
-            if name == "kg_search":
-                rows = content["result"]["results"]
-                self.assertEqual(["measure", "sigma-algebra"], [row["node_id"] for row in rows])
-                self.assertEqual([{"rank": 2, "score": 0.0}, {"rank": 1, "score": 3.0}],
-                                 [row["lanes"]["reranker"] for row in rows])
-                self.assertTrue(all(row["fusion"]["method"] == "rrf" for row in rows))
-                self.assertAlmostEqual(rows[0]["fusion"]["score"], rows[1]["fusion"]["score"])
-                provenance = content["result"]["ranking"]["reranker"]
-                self.assertEqual("rrf-base-reranker", provenance["fusion"])
-                self.assertEqual(2, provenance["candidate_limit"])
-                self.assertEqual(["measure", "sigma-algebra"], [candidate["node_id"] for candidate in provenance["candidates"]])
-            else:
-                self.assertEqual("kgdistiller-search-execution-v2", content["search_execution_schema"])
-                self.assertEqual("measure", content["nodes"][0]["id"])
-        self.assertEqual(1, adapter.document_calls)
-        self.assertEqual([query, query], [question for question, _ in adapter.pair_calls])
-        source_view = load_graph_view(self.base)
-        self.assertEqual([search_document(source_view.nodes[node_id]) for node_id in ("measure", "sigma-algebra")], adapter.pair_calls[0][1])
-        self.assertEqual(0, service.last_cache_stats["document_inference_items"])
-        before = len(adapter.pair_calls)
-        resolution = call_tool(self.base, "kg_resolve_concepts", {"concepts": [query]}, ranking_service=service)
-        self.assertEqual("missing", resolution["results"][0]["status"])
-        self.assertEqual(before, len(adapter.pair_calls))
+    def test_each_call_opens_a_fresh_connection(self) -> None:
+        server = self.server()
+        self.assertEqual([], self.call(server, "kg_resolve", {"terms": ["mass"]})["structuredContent"]["terms"][0]["senses"])
+        self.kb.write_record("mass", node("Mass", "3"), "A total.", ["A measure"])
+        lagging = self.call(server, "kg_resolve", {"terms": ["mass"]})["structuredContent"]
+        self.assertEqual((lagging["terms"][0]["senses"], lagging["lag"]["changed_files"]), ([], 1))
+        index()
+        fresh = self.call(server, "kg_resolve", {"terms": ["mass"]})["structuredContent"]
+        self.assertEqual((["kb:mass"], 0), ([sense["uid"] for sense in fresh["terms"][0]["senses"]], fresh["lag"]["changed_files"]))
 
-    def test_mcp_context_and_get_node_read_entries(self) -> None:
-        context = call_tool(self.base,
-            "kg_build_context",
-            {"query": "measure", "token_budget": 5000},
-        )
-        self.assertEqual("kgdistiller-context-bundle-v1", context["schema"])
-        self.assertNotIn("references", context)
-        node = call_tool(self.base, "kg_get_node", {"id": "measure"})
-        self.assertEqual({"node", "incoming", "outgoing"}, set(node))
-        self.assertEqual(".knowledge/entries/measure.md", node["node"]["entry"])
-        self.assertEqual("A countably additive set function.", node["node"]["evidence"])
+    def test_missing_database_is_a_tool_error(self) -> None:
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{self.kb.home / 'index.sqlite'}{suffix}").unlink(missing_ok=True)
+        result = self.call(self.server(), "kg_search", {"query": "measure"})
+        self.assertTrue(result["isError"])
+        self.assertIn("run `kgd index`", result["structuredContent"]["error"]["message"])
+        self.assertFalse((self.kb.home / "index.sqlite").exists())
+
+    def test_stdio_framing(self) -> None:
+        lines = [
+            "not json",
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                        "params": {"name": "kg_get", "arguments": {"uids": ["kb:measure"]}}}),
+        ]
+        output = io.StringIO()
+        serve_stdio(input_stream=io.StringIO("\n".join(lines) + "\n"), output_stream=output)
+        responses = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(-32700, responses[0]["error"]["code"])
+        self.assertEqual(1, responses[1]["id"])
+        self.assertEqual("kb:measure", responses[2]["result"]["structuredContent"]["records"][0]["uid"])
 
 
 if __name__ == "__main__":

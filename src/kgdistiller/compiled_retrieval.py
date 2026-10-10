@@ -21,8 +21,10 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .query import _BM25_B, _BM25_K1
-from .tokens import tokenize
+from .index import tokens as tokenize
+
+_BM25_K1 = 1.2
+_BM25_B = 0.75
 
 
 class CompiledRetrievalError(ValueError):

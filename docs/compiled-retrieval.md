@@ -12,7 +12,7 @@ complete evidence set. Search scores do not establish concept identity or
 scientific truth. Missing authored targets remain visible; names do not silently
 resolve them.
 
-Compilation follows the [shared knowledge model](concepts-and-relations.md)
+Compilation follows the shared knowledge model
 across papers, mathematical notes, CS notes and other sources. Definitions,
 axioms, precise theorems, algorithms and architectures can be knowledge nodes.
 Propositions, remarks, observations and hypotheses express relations; examples
@@ -63,21 +63,6 @@ semantic index. Direct edge `origin` records acquisition/derivation metadata;
 it remains navigable in `get` and is excluded from evidence packing and indexing.
 Other node/source machine metadata remains outside the existing scientific
 projection.
-
-```sh
-kgdistiller agent compiled --library library.json search 'What does this definition require?'
-kgdistiller agent compiled --library library.json browse
-kgdistiller agent compiled --library library.json browse 'an existing source or sense reference'
-kgdistiller agent compiled --library library.json get 'an existing knowledge reference'
-kgdistiller agent compiled --library library.json inventory 'an authored term or group name'
-kgdistiller agent compiled --library library.json pack 'first reference' 'second reference' --budget 24000
-```
-
-Paths are supplied by the caller. These commands need no registered base or
-home. MCP exposes the same operations through `kg_compiled_knowledge`
-with an absolute `library_path` and `operation: search|browse|get|inventory|pack`.
-The inventory operation requires `term` and accepts no ranking limit or packing
-budget.
 
 `inventory(term)` enumerates all explicitly declared members of matching term
 groups and all nodes whose authored `surfaces.head_terms` contain an exact match.

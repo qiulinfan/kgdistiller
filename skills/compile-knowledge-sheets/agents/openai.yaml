@@ -1,4 +1,4 @@
 interface:
   display_name: "Compile Knowledge Sheets"
-  short_description: "Create partial or complete knowledge link sheets"
-  default_prompt: "Use $compile-knowledge-sheets to create or refresh definition and pending link sheets for this source, preparing reviewed metadata updates when needed."
+  short_description: "Draft records from a source and generate its sheet"
+  default_prompt: "Use $compile-knowledge-sheets to extract draft records from this source within the requested scope, check them and generate its def/pending sheet for my review."

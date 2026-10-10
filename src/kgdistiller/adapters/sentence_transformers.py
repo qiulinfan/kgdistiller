@@ -5,12 +5,19 @@ import re
 from importlib.metadata import version
 from typing import Any
 
-from ..semantic_retrieval import SemanticRetrievalError
-
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 DEFAULT_EMBEDDING_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
 DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_RERANKER_REVISION = "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e"
+
+
+class EmbeddingError(RuntimeError):
+    """Explicit model failure; callers must not silently change lanes."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"{code}: {message}")
 
 
 class SentenceTransformersAdapter:
@@ -24,25 +31,25 @@ class SentenceTransformersAdapter:
                  reranker_revision: str = DEFAULT_RERANKER_REVISION):
         if (not isinstance(model, str) or not model.strip() or len(model) > 256
                 or not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)):
-            raise SemanticRetrievalError("invalid-model-settings", "model and immutable revision are required")
+            raise EmbeddingError("invalid-model-settings", "model and immutable revision are required")
         if (not isinstance(reranker_model, str) or not reranker_model.strip() or len(reranker_model) > 256
                 or not isinstance(reranker_revision, str) or not re.fullmatch(r"[0-9a-f]{40}", reranker_revision)):
-            raise SemanticRetrievalError("invalid-model-settings", "reranker model and immutable revision are required")
+            raise EmbeddingError("invalid-model-settings", "reranker model and immutable revision are required")
         if (not isinstance(max_length, int) or isinstance(max_length, bool) or not 1 <= max_length <= 8192
                 or not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= 64
                 or device not in {"cpu", "mps", "cuda"}):
-            raise SemanticRetrievalError("invalid-model-settings", "invalid device, input length or batch size")
+            raise EmbeddingError("invalid-model-settings", "invalid device, input length or batch size")
         try:
             import torch
             from sentence_transformers import CrossEncoder, SentenceTransformer
         except ImportError as error:
-            raise SemanticRetrievalError(
+            raise EmbeddingError(
                 "model-dependency-missing", "install kgdistiller[retrieval]"
             ) from error
         if device == "mps" and not torch.backends.mps.is_available():
-            raise SemanticRetrievalError("model-device-unavailable", "MPS was requested but is unavailable")
+            raise EmbeddingError("model-device-unavailable", "MPS was requested but is unavailable")
         if device == "cuda" and not torch.cuda.is_available():
-            raise SemanticRetrievalError("model-device-unavailable", "CUDA was requested but is unavailable")
+            raise EmbeddingError("model-device-unavailable", "CUDA was requested but is unavailable")
         self.model = model
         self.revision = revision
         self.reranker_model = reranker_model
@@ -62,7 +69,7 @@ class SentenceTransformersAdapter:
 
     def metadata(self, kind: str) -> dict[str, Any]:
         if kind not in {"embedding", "reranker"}:
-            raise SemanticRetrievalError("model-operation-unavailable", "adapter operation is unavailable")
+            raise EmbeddingError("model-operation-unavailable", "adapter operation is unavailable")
         if kind == "reranker":
             return {"provider": "sentence-transformers", "model": self.reranker_model,
                     "revision": self.reranker_revision,
@@ -87,9 +94,9 @@ class SentenceTransformersAdapter:
                     trust_remote_code=False, model_kwargs={"dtype": self._torch.float32},
                 )
             except Exception as error:
-                raise SemanticRetrievalError("model-load-failed", "local embedding model could not be loaded") from error
+                raise EmbeddingError("model-load-failed", "local embedding model could not be loaded") from error
             if self.max_length > model.max_seq_length:
-                raise SemanticRetrievalError("model-input-limit", "requested length exceeds the model's supported length")
+                raise EmbeddingError("model-input-limit", "requested length exceeds the model's supported length")
             model.max_seq_length = self.max_length
             self._embedder = model
         return self._embedder
@@ -101,11 +108,11 @@ class SentenceTransformersAdapter:
         prompt = model.prompts.get(prompt_name, "")
         for text in texts:
             if not isinstance(text, str) or not text.strip():
-                raise SemanticRetrievalError("invalid-model-input", "embedding input must be nonempty text")
+                raise EmbeddingError("invalid-model-input", "embedding input must be nonempty text")
             tokens = model.tokenizer(prompt + text, truncation=False, add_special_tokens=True)
             length = len(tokens["input_ids"])
             if length > self.max_length:
-                raise SemanticRetrievalError(
+                raise EmbeddingError(
                     "model-input-too-long", f"embedding input uses {length} tokens; limit is {self.max_length}"
                 )
 
@@ -119,7 +126,7 @@ class SentenceTransformersAdapter:
             vectors = operation(texts, normalize_embeddings=True, batch_size=self.batch_size,
                                 show_progress_bar=False, convert_to_numpy=True)
         except Exception as error:
-            raise SemanticRetrievalError("model-inference-failed", "embedding inference failed on the selected device") from error
+            raise EmbeddingError("model-inference-failed", "embedding inference failed on the selected device") from error
         return vectors.tolist()
 
     def encode_documents(self, documents: list[str]) -> list[list[float]]:
@@ -139,11 +146,11 @@ class SentenceTransformersAdapter:
                     model_kwargs={"dtype": self._torch.float32},
                 )
             except Exception as error:
-                raise SemanticRetrievalError("model-load-failed", "local reranker model could not be loaded") from error
+                raise EmbeddingError("model-load-failed", "local reranker model could not be loaded") from error
             supported = min(model.tokenizer.model_max_length,
                             getattr(model.model.config, "max_position_embeddings", self.max_length))
             if self.max_length > supported:
-                raise SemanticRetrievalError("model-input-limit", "requested length exceeds the reranker's supported length")
+                raise EmbeddingError("model-input-limit", "requested length exceeds the reranker's supported length")
             self._reranker = model
         return self._reranker
 
@@ -151,19 +158,19 @@ class SentenceTransformersAdapter:
         if not documents:
             return []
         if not isinstance(question, str) or not question.strip():
-            raise SemanticRetrievalError("invalid-model-input", "reranker question must be nonempty text")
+            raise EmbeddingError("invalid-model-input", "reranker question must be nonempty text")
         model = self._load_reranker()
         if getattr(model, "default_prompt_name", None) is not None:
-            raise SemanticRetrievalError(
+            raise EmbeddingError(
                 "model-input-configuration", "rerankers with implicit prompt templates require a dedicated adapter"
             )
         for document in documents:
             if not isinstance(document, str) or not document.strip():
-                raise SemanticRetrievalError("invalid-model-input", "reranker documents must be nonempty text")
+                raise EmbeddingError("invalid-model-input", "reranker documents must be nonempty text")
             pair = model.tokenizer(question, document, truncation=False, add_special_tokens=True)
             length = len(pair["input_ids"])
             if length > self.max_length:
-                raise SemanticRetrievalError(
+                raise EmbeddingError(
                     "model-input-too-long", f"reranker pair uses {length} tokens; limit is {self.max_length}"
                 )
         try:
@@ -171,5 +178,5 @@ class SentenceTransformersAdapter:
                                    batch_size=self.batch_size, show_progress_bar=False,
                                    activation_fn=self._torch.nn.Identity(), convert_to_numpy=True)
         except Exception as error:
-            raise SemanticRetrievalError("model-inference-failed", "reranker inference failed on the selected device") from error
+            raise EmbeddingError("model-inference-failed", "reranker inference failed on the selected device") from error
         return scores.tolist()

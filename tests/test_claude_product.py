@@ -75,7 +75,7 @@ class ClaudeProductTests(unittest.TestCase):
             {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")},
             {item["name"] for item in manifest["skills"]},
         )
-        self.assertEqual(3, len(manifest["agents"]))
+        self.assertEqual(1, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
         self.assertEqual(
             len({item["id"] for item in manifest["workflows"]}),
@@ -144,7 +144,7 @@ class ClaudeProductTests(unittest.TestCase):
             )
             self.assertEqual("linked", linked["status"])
             self.assertEqual(self.expected_skills, linked["skills"])
-            self.assertEqual(3, linked["agents"])
+            self.assertEqual(1, linked["agents"])
             self.assertEqual([], linked["adopted"])
             self.assertEqual(str(home), linked["claude_home"])
             self.assertEqual(["CLAUDE.md", "settings.json"], linked["protected"])
@@ -165,11 +165,7 @@ class ClaudeProductTests(unittest.TestCase):
                 if record["kind"] == "agent"
             )
             self.assertEqual(
-                [
-                    "agents/kgdistiller-note-curator.md",
-                    "agents/kgdistiller-query-reviewer.md",
-                    "agents/kgdistiller-transaction-reviewer.md",
-                ],
+                ["agents/kgdistiller-query-reviewer.md"],
                 installed_agents,
             )
             for target in installed_agents:
@@ -212,7 +208,7 @@ class ClaudeProductTests(unittest.TestCase):
             source = copy_product_root(root / "product")
             home = root / ".claude"
             (home / "skills").mkdir(parents=True)
-            for name in ("query-kgdistiller", "ingest-kgdistiller"):
+            for name in ("query-kgdistiller", "capture-kgdistiller"):
                 try:
                     create_directory_link(
                         source / "skills" / name, home / "skills" / name
@@ -225,7 +221,7 @@ class ClaudeProductTests(unittest.TestCase):
             )
             self.assertEqual("linked", linked["status"])
             self.assertEqual(
-                ["skills/ingest-kgdistiller", "skills/query-kgdistiller"],
+                ["skills/capture-kgdistiller", "skills/query-kgdistiller"],
                 linked["adopted"],
             )
             self.assertTrue(linked["real_time"])
@@ -276,14 +272,14 @@ class ClaudeProductTests(unittest.TestCase):
     def test_agent_preset_frontmatter_is_validated(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-claude-") as temporary:
             source = copy_product_root(Path(temporary) / "product")
-            preset = source / ".claude" / "agents" / "note-curator.md"
+            preset = source / ".claude" / "agents" / "query-reviewer.md"
             text = preset.read_text(encoding="utf-8")
             preset.write_text(
-                text.replace("name: kgdistiller-note-curator", "name: rogue-agent"),
+                text.replace("name: kgdistiller-query-reviewer", "name: rogue-agent"),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
-                ClaudeProductError, "kgdistiller-note-curator"
+                ClaudeProductError, "kgdistiller-query-reviewer"
             ):
                 load_claude_manifest(source)
 

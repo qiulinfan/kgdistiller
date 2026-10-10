@@ -110,14 +110,31 @@ SOFTWARE.
   text-transform: uppercase;
 }
 
-.kgd-kind-concept,
-.kgd-kind-semantic {
+.kgd-kind-node {
   background: #7c3aed;
 }
 
-.kgd-kind-source,
-.kgd-kind-definition {
-  background: #059669;
+.kgd-kind-relation {
+  background: #2563eb;
+}
+
+.kgd-kind-draft {
+  background: transparent;
+  border: 1px dashed var(--text-muted);
+  color: var(--text-muted);
+}
+
+.kgd-kind-stub {
+  background: #9ca3af;
+}
+
+.kgd-kind-dangling {
+  background: #dc2626;
+}
+
+.kgd-kind-role,
+.kgd-kind-requires {
+  background: #64748b;
 }
 
 .kgd-legend {

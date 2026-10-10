@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS, HiddenKnowledgeIndexer } from "../src/hidden-knowledge";
 const DEFAULT = [...DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS];
+const SCRATCH = ["scratch"];
 const filesystem = vi.hoisted(() => ({ lstat: vi.fn(), readdir: vi.fn() }));
 const loadFilesystem = () => filesystem as unknown as Pick<typeof import("node:fs/promises"), "lstat" | "readdir">;
 vi.mock("obsidian", () => ({ normalizePath: (path: string) => path.normalize("NFC") }));
@@ -325,47 +326,55 @@ describe("native hidden knowledge indexing", () => {
     expect(loaded.has(next)).toBe(true);
   });
 
-  it("excludes build/ by default on the initial scan, nested listings and watcher events", async () => {
+  it("indexes the whole knowledge folder by default", async () => {
+    const { indexer, disk, loaded } = fixture();
+    expect(DEFAULT).toEqual([]);
+    disk.set(".knowledge/sheets", "folder");
+    disk.set(".knowledge/sheets/chapter.tex.md", "file");
+    expect((await indexer.configure(true, DEFAULT)).state).toBe("enabled");
+    expect(loaded.has(".knowledge/sheets/chapter.tex.md")).toBe(true);
+    expect(loaded.has(".knowledge/entries/definition.md")).toBe(true);
+  });
+  it("excludes a listed folder on the initial scan, nested listings and watcher events", async () => {
     const { indexer, disk, loaded, adapter, events } = fixture();
-    expect(DEFAULT).toEqual(["build"]);
-    disk.set(".knowledge/build", "folder");
-    disk.set(".knowledge/build/obsidian", "folder");
-    disk.set(".knowledge/build/obsidian/semantic-graph.json", "file");
-    disk.set(".knowledge/builder.md", "file");
+    disk.set(".knowledge/scratch", "folder");
+    disk.set(".knowledge/scratch/notes", "folder");
+    disk.set(".knowledge/scratch/notes/chapter.tex.md", "file");
+    disk.set(".knowledge/scratchy.md", "file");
     const nativeList = adapter.listRecursiveChild;
     const nativeReconcile = adapter.reconcileFile;
-    expect((await indexer.configure(true, DEFAULT)).state).toBe("enabled");
-    expect([...loaded.keys()].filter((path) => path.includes("build")).sort()).toEqual([".knowledge/builder.md"]);
-    await adapter.listRecursiveChild(".knowledge/build", "obsidian");
-    await adapter.listRecursiveChild(".knowledge", "build");
-    const graph = ".knowledge/build/obsidian/semantic-graph.json";
-    await adapter.reconcileFile(graph, graph);
-    await adapter.reconcileFile(".knowledge/build", ".knowledge/build", false);
-    expect([...loaded.keys()].some((path) => path.startsWith(".knowledge/build/") || path === ".knowledge/build")).toBe(false);
-    expect(events.some((event) => event.includes(".knowledge/build/") || event.endsWith(".knowledge/build"))).toBe(false);
-    expect(nativeList).not.toHaveBeenCalledWith(".knowledge/build", "obsidian");
-    expect(nativeReconcile).not.toHaveBeenCalledWith(graph, graph);
+    expect((await indexer.configure(true, SCRATCH)).state).toBe("enabled");
+    expect([...loaded.keys()].filter((path) => path.includes("scratch")).sort()).toEqual([".knowledge/scratchy.md"]);
+    await adapter.listRecursiveChild(".knowledge/scratch", "notes");
+    await adapter.listRecursiveChild(".knowledge", "scratch");
+    const sheet = ".knowledge/scratch/notes/chapter.tex.md";
+    await adapter.reconcileFile(sheet, sheet);
+    await adapter.reconcileFile(".knowledge/scratch", ".knowledge/scratch", false);
+    expect([...loaded.keys()].some((path) => path.startsWith(".knowledge/scratch/") || path === ".knowledge/scratch")).toBe(false);
+    expect(events.some((event) => event.includes(".knowledge/scratch/") || event.endsWith(".knowledge/scratch"))).toBe(false);
+    expect(nativeList).not.toHaveBeenCalledWith(".knowledge/scratch", "notes");
+    expect(nativeReconcile).not.toHaveBeenCalledWith(sheet, sheet);
     expect(adapter.reconcileDeletion).not.toHaveBeenCalled();
   });
-  it("indexes build/ when the exclusion list is empty", async () => {
+  it("indexes scratch/ when the exclusion list is empty", async () => {
     const { indexer, disk, loaded } = fixture();
-    disk.set(".knowledge/build", "folder");
-    disk.set(".knowledge/build/review.md", "file");
+    disk.set(".knowledge/scratch", "folder");
+    disk.set(".knowledge/scratch/review.md", "file");
     expect((await indexer.configure(true, [])).state).toBe("enabled");
-    expect(loaded.has(".knowledge/build")).toBe(true);
-    expect(loaded.has(".knowledge/build/review.md")).toBe(true);
+    expect(loaded.has(".knowledge/scratch")).toBe(true);
+    expect(loaded.has(".knowledge/scratch/review.md")).toBe(true);
   });
   it("changing exclusions evicts and admits cache entries without touching disk", async () => {
     const { indexer, disk, loaded, adapter } = fixture();
-    disk.set(".knowledge/build", "folder");
-    disk.set(".knowledge/build/review.md", "file");
-    await indexer.configure(true, DEFAULT);
+    disk.set(".knowledge/scratch", "folder");
+    disk.set(".knowledge/scratch/review.md", "file");
+    await indexer.configure(true, SCRATCH);
     const original = [...disk];
     const hooks = adapter.reconcileFile;
     adapter.reconcileDeletion.mockClear();
     expect((await indexer.configure(true, ["entries"])).state).toBe("enabled");
     expect(adapter.reconcileFile).toBe(hooks);
-    expect(loaded.has(".knowledge/build/review.md")).toBe(true);
+    expect(loaded.has(".knowledge/scratch/review.md")).toBe(true);
     expect(loaded.has(".knowledge/entries")).toBe(false);
     expect(loaded.has(".knowledge/entries/definition.md")).toBe(false);
     expect(adapter.reconcileDeletion.mock.calls.map(([path]) => path))
@@ -374,19 +383,19 @@ describe("native hidden knowledge indexing", () => {
     const entry = ".knowledge/entries/definition.md";
     await adapter.reconcileFile(entry, entry);
     expect(loaded.has(entry)).toBe(false);
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true, SCRATCH);
     expect(loaded.has(entry)).toBe(true);
-    expect(loaded.has(".knowledge/build/review.md")).toBe(false);
+    expect(loaded.has(".knowledge/scratch/review.md")).toBe(false);
     expect([...disk]).toEqual(original);
   });
-  it.each(["", "/build", "../x", "a\\b", ".", "build/", "a//b", " build"])("rejects invalid exclusion %j without hooks", async (entry) => {
+  it.each(["", "/scratch", "../x", "a\\b", ".", "scratch/", "a//b", " scratch"])("rejects invalid exclusion %j without hooks", async (entry) => {
     const { indexer, adapter } = fixture();
     const original = adapter.listRecursiveChild;
     expect((await indexer.configure(true, [entry])).state).toBe("invalid");
     expect(adapter.listRecursiveChild).toBe(original);
     expect(adapter.watchHiddenRecursive).not.toHaveBeenCalled();
   });
-  it.each([["build"], "build", null, 7, { build: true }])("rejects a non-array or non-string exclusion setting %j", async (value) => {
+  it.each([["scratch"], "scratch", null, 7, { scratch: true }])("rejects a non-array or non-string exclusion setting %j", async (value) => {
     const { indexer, adapter } = fixture();
     const original = adapter.listRecursiveChild;
     const exclusions = Array.isArray(value) ? [value] : value;

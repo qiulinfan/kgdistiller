@@ -1,16 +1,17 @@
 {
   "schema": "kgdistiller-claude-workflows-v1",
   "product": "kgdistiller",
-  "version": 1,
+  "version": 2,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
   },
   "workflow_guide": "docs/product-workflows.md",
   "workflow_resources": [
-    "docs/concepts-and-relations.md",
-    "docs/paper-sheets-upstream.md",
-    "docs/obsidian-hidden-knowledge.md"
+    "docs/model.md",
+    "docs/retrieval.md",
+    "docs/obsidian.md",
+    "docs/deployment.md"
   ],
   "linkers": [
     {
@@ -32,20 +33,12 @@
       "path": "skills/compile-knowledge-sheets"
     },
     {
-      "name": "curate-kgdistiller-notes",
-      "path": "skills/curate-kgdistiller-notes"
-    },
-    {
       "name": "deploy-kgdistiller",
       "path": "skills/deploy-kgdistiller"
     },
     {
-      "name": "harvest-paper",
-      "path": "skills/harvest-paper"
-    },
-    {
-      "name": "ingest-kgdistiller",
-      "path": "skills/ingest-kgdistiller"
+      "name": "harvest-kgdistiller",
+      "path": "skills/harvest-kgdistiller"
     },
     {
       "name": "query-kgdistiller",
@@ -54,43 +47,27 @@
   ],
   "agents": [
     {
-      "name": "note-curator",
-      "path": ".claude/agents/note-curator.md",
-      "install_as": "kgdistiller-note-curator.md"
-    },
-    {
       "name": "query-reviewer",
       "path": ".claude/agents/query-reviewer.md",
       "install_as": "kgdistiller-query-reviewer.md"
-    },
-    {
-      "name": "transaction-reviewer",
-      "path": ".claude/agents/transaction-reviewer.md",
-      "install_as": "kgdistiller-transaction-reviewer.md"
     }
   ],
   "workflows": [
     {
       "id": "capture-knowledge",
-      "description": "Capture one selected knowledge entry citing its source lines verbatim, preserve personal understanding and direct pending prerequisites, then apply one reviewed transaction without full-source distillation.",
+      "description": "Capture one selected item while reading as a source-backed record: write a draft citing its lines verbatim and accept it, or edit an existing record in place and check it, recording direct pending terms and only the owner's stated understanding, then index.",
       "steps": [
         {
           "id": "capture",
           "skill": "capture-kgdistiller",
           "agent": null,
-          "mode": "author"
-        },
-        {
-          "id": "commit",
-          "skill": "ingest-kgdistiller",
-          "agent": null,
-          "mode": "transaction"
+          "mode": "write"
         }
       ]
     },
     {
       "id": "compile-knowledge-sheets",
-      "description": "Prepare source-grounded knowledge metadata updates and source-scoped definition/pending link views for notes, papers, blogs and project documents; apply only supported reviewed transactions.",
+      "description": "Extract draft records from a bounded scope of one registered source guided by its document type, check them and generate the source's def/pending sheet for owner review; changes to accepted records are only proposed.",
       "steps": [
         {
           "id": "compile",
@@ -101,56 +78,38 @@
       ]
     },
     {
-      "id": "curate-notes",
-      "description": "Extract entries and direct relations from a bounded set of registered text documents guided by their document type, resolve identities read-only, and apply one reviewed transaction.",
+      "id": "harvest-kgdistiller",
+      "description": "Accept the drafts the owner ticked in a source sheet with one kgd harvest call, report refused rows, then index.",
       "steps": [
         {
-          "id": "extract",
-          "skill": "curate-kgdistiller-notes",
-          "agent": "note-curator",
-          "mode": "author"
-        },
+          "id": "harvest",
+          "skill": "harvest-kgdistiller",
+          "agent": null,
+          "mode": "write"
+        }
+      ]
+    },
+    {
+      "id": "query-knowledge",
+      "description": "Search, resolve and read records across every registered base read-only, deliver source:lines with evidence quotes, classify candidate identity, and refresh the derived index only when results report lag.",
+      "steps": [
         {
-          "id": "resolve",
+          "id": "query",
           "skill": "query-kgdistiller",
           "agent": "query-reviewer",
           "mode": "read-only"
-        },
-        {
-          "id": "commit",
-          "skill": "ingest-kgdistiller",
-          "agent": "transaction-reviewer",
-          "mode": "transaction"
         }
       ]
     },
     {
-      "id": "harvest-paper",
-      "description": "Explicit harvest request: ingest reviewed def-sheet tasks checked in Obsidian through the deterministic harvest helper and one transaction, after confirming their drafts, entries and cited source lines are unchanged; preserve unchecked content and understanding.",
+      "id": "deploy-kgdistiller",
+      "description": "Register bases, source globs and document types in the home, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes.",
       "steps": [
         {
-          "id": "review-and-import",
-          "skill": "harvest-paper",
+          "id": "deploy",
+          "skill": "deploy-kgdistiller",
           "agent": null,
-          "mode": "transaction"
-        }
-      ]
-    },
-    {
-      "id": "export-obsidian",
-      "description": "Check entries and edges against their sources, then refresh the Obsidian plugin's typed graph feed (.knowledge/build/obsidian/semantic-graph.json) from every entry and accepted edge; it is never registered or rescanned as a source.",
-      "steps": [
-        {
-          "id": "verify",
-          "skill": "deploy-kgdistiller",
-          "agent": "transaction-reviewer",
-          "mode": "read-only"
-        },
-        {
-          "id": "export",
-          "skill": "deploy-kgdistiller",
-          "agent": "transaction-reviewer",
-          "mode": "export"
+          "mode": "write"
         }
       ]
     }

@@ -1,6 +1,9 @@
-import { Notice, Platform, Plugin, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TFile, debounce, type TAbstractFile } from "obsidian";
+
+import type { FrontmatterRecord } from "./graph-model";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
+import { isRecordPath } from "./records";
 
 import {
   KGDISTILLER_ICON,
@@ -22,6 +25,11 @@ export default class KgdistillerPlugin extends Plugin {
   private lastHiddenKnowledgeConfiguration?: string;
   private hiddenKnowledgeRequest = 0;
   private unloaded = false;
+  /** Frontmatter of every file under .knowledge/entries and .knowledge/drafts, by vault path. */
+  private records = new Map<string, Readonly<Record<string, unknown>>>();
+  private modelResolved = false;
+  /** Metadata events arrive per file; re-render open views once a burst settles. */
+  private readonly scheduleRefresh = debounce(() => this.refreshGraphViews(), 250, true);
 
   async onload(): Promise<void> {
     await this.loadPluginSettings();
@@ -44,7 +52,10 @@ export default class KgdistillerPlugin extends Plugin {
     this.addCommand({
       id: "reload-typed-graph",
       name: "Reload typed graph",
-      callback: () => void this.refreshGraphViews(),
+      callback: () => {
+        this.rebuildModel();
+        this.refreshGraphViews();
+      },
     });
     this.addCommand({
       id: "rescan-hidden-knowledge-folder",
@@ -54,37 +65,51 @@ export default class KgdistillerPlugin extends Plugin {
     this.settingsTab = new KgdistillerSettingTab(this.app, this);
     this.addSettingTab(this.settingsTab);
 
-    const refreshIfGraph = (file: TAbstractFile, oldPath?: string): void => {
-      const expected = normalizePath(this.settings.graphPath);
-      if (file.path === expected || oldPath === expected) void this.refreshGraphViews();
-    };
-    this.registerEvent(this.app.vault.on("create", (file) => refreshIfGraph(file)));
-    this.registerEvent(this.app.vault.on("modify", (file) => refreshIfGraph(file)));
-    this.registerEvent(this.app.vault.on("delete", (file) => refreshIfGraph(file)));
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => refreshIfGraph(file, oldPath)),
-    );
-    // Vault events never fire for a graph under an excluded or unindexed hidden
-    // folder (the default `.knowledge/build/`), so re-check the file when the
-    // user returns to Obsidian or switches leaves.
-    this.registerDomEvent(window, "focus", () => void this.refreshChangedGraphViews());
-    this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => void this.refreshChangedGraphViews()),
-    );
+    this.rebuildModel();
+    const cache = this.app.metadataCache;
+    // `resolved` fires after the initial indexing and again after later batches;
+    // the full build happens once, and later changes arrive per file.
+    this.registerEvent(cache.on("resolved", () => {
+      if (this.modelResolved) return;
+      this.modelResolved = true;
+      this.rebuildModel();
+      this.refreshGraphViews();
+    }));
+    this.registerEvent(cache.on("changed", (file, _data, metadata) => {
+      if (!isRecordPath(file.path)) return;
+      this.records.set(file.path, metadata.frontmatter ?? {});
+      this.scheduleRefresh();
+    }));
+    this.registerEvent(cache.on("deleted", (file) => {
+      if (this.records.delete(file.path)) this.scheduleRefresh();
+    }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => this.renameRecord(file, oldPath)));
   }
 
-  async refreshChangedGraphViews(): Promise<void> {
-    await Promise.all(
-      this.app.workspace
-        .getLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH)
-        .map(async (leaf) => {
-          if (leaf.view instanceof KgdistillerGraphView) await leaf.view.refreshIfChanged();
-        }),
-    );
+  /** The live records the graph model is built from. */
+  knowledgeRecords(): FrontmatterRecord[] {
+    return [...this.records].map(([path, frontmatter]) => ({ path, frontmatter }));
+  }
+
+  /** Read every record and draft from the metadata cache. */
+  rebuildModel(): void {
+    this.records.clear();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!isRecordPath(file.path)) continue;
+      this.records.set(file.path, this.app.metadataCache.getFileCache(file)?.frontmatter ?? {});
+    }
+  }
+
+  private renameRecord(file: TAbstractFile, oldPath: string): void {
+    const removed = this.records.delete(oldPath);
+    const added = file instanceof TFile && isRecordPath(file.path);
+    if (added) this.records.set(file.path, this.app.metadataCache.getFileCache(file)?.frontmatter ?? {});
+    if (removed || added) this.scheduleRefresh();
   }
 
   onunload(): void {
     this.unloaded = true;
+    this.scheduleRefresh.cancel();
     this.hiddenKnowledgeIndexer?.dispose();
   }
 
@@ -101,14 +126,16 @@ export default class KgdistillerPlugin extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
 
-  async refreshGraphViews(): Promise<void> {
-    await Promise.all(
-      this.app.workspace
-        .getLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH)
-        .map(async (leaf) => {
-          if (leaf.view instanceof KgdistillerGraphView) await leaf.view.refresh();
-        }),
-    );
+  refreshGraphViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH)) {
+      if (leaf.view instanceof KgdistillerGraphView) leaf.view.refresh();
+    }
+  }
+
+  applyGraphSettings(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_GRAPH)) {
+      if (leaf.view instanceof KgdistillerGraphView) leaf.view.applySettings();
+    }
   }
 
   async savePluginSettings(): Promise<void> {

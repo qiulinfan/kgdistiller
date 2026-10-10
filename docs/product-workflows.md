@@ -1,25 +1,35 @@
 # kgdistiller product workflows
 
-kgdistiller owns the deterministic engine, CLI/read-only MCP server, JSON
-Schemas, product Skills, per-runtime agent presets, and the
-runtime workflow manifests `workflows/manifest.json` (Codex) and
-`workflows/claude-manifest.json` (Claude Code). Both manifests declare the
-same Skills and workflows; only linkers and agent-preset formats differ.
+kgdistiller owns the deterministic engine, the CLI and read-only MCP server,
+the product Skills, per-runtime agent presets, and the runtime workflow
+manifests `workflows/manifest.json` (Codex) and `workflows/claude-manifest.json`
+(Claude Code). Both manifests declare the same Skills and workflows; only
+linkers and agent-preset formats differ.
 
 A base is a directory registered in `$KGDISTILLER_HOME/config.json` (default
-`~/.knowledge/config.json`). It owns the source documents its globs map to
-user-registered document types, its reviewed entries
-`.knowledge/entries/<id>.md` and its accepted edges `.knowledge/edges.jsonl`.
-Sources are any UTF-8 text documents: kgdistiller reads them as numbered lines
-and never parses their syntax, so every text format is treated identically.
-Knowledge nodes come only from reviewed capture or curation guided by the
-source's user-registered document type. Publishing the notes (websites, course
-registries, HTML rendering) belongs to the repositories that own them;
-kgdistiller has no publishing surface.
+`~/.knowledge/config.json`). Its knowledge is records in
+`.knowledge/entries/<id>.md`: nodes, and relations that bind records to the
+roles their user-registered document type declares. Proposed records wait in
+`.knowledge/drafts/`, and `.knowledge/sheets/` holds the generated def/pending
+view of each source. Sources are any UTF-8 text documents read as numbered
+lines; kgdistiller never parses their syntax. Retrieval reads the derived
+database `$KGDISTILLER_HOME/index.sqlite`, which `kgd index` keeps up to date.
+Publishing the notes belongs to the repositories that own them.
 
-The manifests are the portable asset/workflow inventory. Install and validate
-the integration for the runtime you are using from a source checkout or
-package with:
+Reference documents installed with this guide:
+
+- [model.md](model.md): records, grammar, drafts, sheets, `check`, `accept`,
+  `harvest`, `sheet` and the lock;
+- [retrieval.md](retrieval.md): the database, `kgd index`, lag, `search`,
+  `resolve`, `get` and the MCP tools;
+- [obsidian.md](obsidian.md): editing records in Obsidian and the plugin's
+  live graph;
+- [deployment.md](deployment.md): installation, registration, restore and Git.
+
+## Installing the integration
+
+The manifests are the portable asset and workflow inventory. Install and
+validate the integration for the runtime in use:
 
 ```sh
 kgdistiller codex link
@@ -35,185 +45,124 @@ The portable entry is
 `$CODEX_HOME/workflow-products/kgdistiller/workflows/manifest.json` for Codex
 and `workflow-products/kgdistiller/workflows/claude-manifest.json` below the
 Claude Code home (`$CLAUDE_CONFIG_DIR` when set, otherwise `.claude` in the
-user profile) for Claude Code; resolve `workflow_guide` relative to that
-canonical product root. Each linker manages only manifest-declared kgdistiller
-assets and namespaced state. It must not replace global `AGENTS.md`,
-`config.toml`, `CLAUDE.md`, `settings.json`, unrelated Skills, or unrelated
-agent presets. Explicit copy mode is a snapshot and must be refreshed after
-product changes; live link modes reflect source changes. Every installed copy
-(copy mode, or a hardlink that became detached) is product-owned: `doctor`
-reports a copy whose bytes differ from the product source, and the next `link`
-replaces it and removes retired copies, discarding any local edits made to
-those installed files. Edit the product checkout instead.
+user profile) for Claude Code; resolve `workflow_guide` and
+`workflow_resources` relative to that canonical product root. Each linker
+manages only manifest-declared kgdistiller assets and namespaced state. It
+never replaces global `AGENTS.md`, `config.toml`, `CLAUDE.md`, `settings.json`,
+unrelated Skills or unrelated agent presets. Copy mode is a snapshot that must
+be refreshed after product changes; live link modes follow the source. Every
+installed copy is product-owned: `doctor` reports a copy whose bytes differ
+from the product source, and the next `link` replaces it and removes retired
+copies, discarding local edits to installed files.
 
-## Workflow boundaries
+## Workflows
 
-### Fast single-item capture
+| Workflow | Skill | Mode | Steps |
+|---|---|---|---|
+| `capture-knowledge` | `capture-kgdistiller` | write | `kgd sheet FILE --json`; `kgd resolve`/`kgd search` to compare senses; a new item as a draft plus `kgd accept`, or an existing record edited in place plus `kgd check --base B`; pending terms one level deep; understanding only from the owner's statement; `kgd index`; report uids and the receipt. |
+| `compile-knowledge-sheets` | `compile-knowledge-sheets` | author | Set the bounded scope; `kgd sheet FILE --json`; `resolve`/`search` for identity; drafts for new records; `kgd check --base B` with every draft passing; `kgd sheet FILE`; stop and report proposed changes to accepted records. |
+| `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; `kgd index`; report refused rows. |
+| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get [--source-lines N]` or the MCP tools; deliver `source:lines` and quotes; on lag run `kgd index` and repeat. |
+| `deploy-kgdistiller` | `deploy-kgdistiller` | write | `kgd base add`; sources and types in the home; `kgd check`; `kgd index`; `kgd obsidian install` and hidden indexing; `kgd claude link`/`kgd codex link` and both doctors. |
 
-`$capture-kgdistiller` saves or updates one selected concept while reading. It
-uses the selected passage and necessary nearby context, an identity check
-against every existing label and alias, and supported transactional ingest. The
-deterministic preparation command copies the cited source lines verbatim into
-the entry's Evidence and builds the plan and apply requests; the caller supplies
-the line range, the source-backed summary and the reviewed identity intent. See [single-item capture](../skills/capture-kgdistiller/references/capture-contract.md).
+Step modes mean:
 
-This is the usual writing path for a new article. Full-source distillation is
-separately requested, generally for the user's own notes or familiar material.
-Familiarity does not automatically establish any entry's understanding state.
+- `read-only`: reads knowledge and changes nothing but the derived database
+  (`kgd index` when a result reports lag);
+- `author`: writes drafts and generated sheets, never accepted records;
+- `write`: changes accepted knowledge or the home through `kgd` commands or
+  in-place record edits.
 
-Entries preserve explicit `understanding` and one layer of
-`pending_prerequisites`. Full reading, successful retrieval and current curation
-do not establish personal mastery. A partial source remains partial and its
-unrelated uncurated concepts do not block the selected update. Full-source
-distillation remains a separate explicit request using the same knowledge model.
+`agent: null` means the step runs in the current agent; a named agent refers
+to an installed preset. Manifests describe assets, not automatic triggers or a
+scheduler.
 
-### Source-scoped knowledge sheets
+**Every Skill that writes knowledge finishes with `kgd index`**, so database
+lag stays rare. Edits the owner makes in Obsidian lag until the next
+`kgd index`; every read reports that lag.
 
-`$compile-knowledge-sheets` / `/compile-knowledge-sheets` creates or refreshes
-partial or complete definition and pending link views for papers, mathematical notes, CS notes,
-blogs and project documents. Full knowledge content belongs in accepted
-`.knowledge/` metadata; source sheets display names, types, locations and links.
-New or changed content first forms a reviewed metadata proposal and uses supported
-transactional ingest. Unsupported relations, applications or gap state remain
-unapplied proposals. Ordinary source reading does not activate this Skill.
-Prepared proposals may appear as clearly labeled draft links with Markdown task
-checkboxes. The user selects them directly in Obsidian, then explicitly requests
-harvest. Accepted rows link to real metadata; a draft link is visibly distinct.
+## Capture while reading
 
-The [shared model](concepts-and-relations.md) defines nodes, relations and
-applications. [Paper sheet projections](paper-sheets-upstream.md) describe the
-paper use case and current adapter limitations. Both runtime manifests install
-the same generic Skill and bundled contracts. Obsidian opens `.knowledge/`
-through the plugin's hidden-folder indexing; entries remain ordinary Markdown
-with their properties in frontmatter.
+`$capture-kgdistiller` saves one item the owner selected while reading: a
+node, a relation or an example. It reads the type profile with
+`kgd sheet FILE --json`, compares existing senses with `kgd resolve` and
+`kgd search` (the same name is not the same concept), and then either writes a
+draft and runs `kgd accept` on it (the capture request is the consent) or edits
+the existing record in place with a stale-read-safe editing tool followed by
+`kgd check --base B`. Unexplained terms become plain pending values, one level
+deep. `understanding` is set only from the owner's explicit statement. It ends
+with `kgd index` and reports the uids, the receipt and `understanding_set`.
 
-### Independent paper workflows
+This is the usual writing path for a new article. Familiarity does not
+establish any record's understanding.
 
-Ordinary paper reading and explanation need no Skill. Harvesting runs in the
-current agent:
+## Compile a source
 
-| Command (Codex / Claude Code) | Result |
-|---|---|
-| `$harvest-paper` / `/harvest-paper` | Scripted ingestion of reviewed def-sheet candidates checked in Obsidian |
+`$compile-knowledge-sheets` extracts a bounded scope of one registered source,
+up to the whole file when the owner asks for full distillation, typically for
+the owner's own notes or familiar material. It writes drafts only, checks that
+they pass `kgd check`, generates the sheet with `kgd sheet FILE` and stops.
+Changes it would make to accepted records (edits, deletions, node-to-relation
+conversions) are listed in its report and applied in place only when the owner
+asks, followed by `kgd check` and `kgd index`. It also serves requests to file
+or ingest a document into the knowledge base.
 
-Harvesting requires an explicit request after human selection in the source def
-sheet; it does not repeat that selection in chat or a long explanation through
-agent handoffs. Knowledge lookup during reading uses
-`$query-kgdistiller` at the actual use sites; an item not found is not proof the
-user does not know it, and a lookup error is not a negative match. Only the
-user's stated understanding allows treating an entry as mastered.
+## Review and harvest
 
-The `harvest-paper` Skill is explicit-command-only in both runtimes. A direct
-request to harvest the checked sheet is explicit harvest intent; ordinary
-reading or merely checking a box is not. Codex sets
-`allow_implicit_invocation: false`; Claude Code sets `disable-model-invocation: true`.
-General note curation, query, ingest and deployment keep their existing triggers.
+The owner reviews the drafts in Obsidian (with the plugin's hidden indexing on,
+`.knowledge/` opens like any folder), edits them if needed and ticks the rows
+to accept in the source's sheet. A checkbox means "selected for acceptance",
+never "understood". `$harvest-kgdistiller` then runs `kgd harvest SHEET`,
+which accepts exactly the ticked drafts in one call, regenerates the sheet and
+prints the receipt, followed by `kgd index`. A refusal changes nothing and
+lists the rows to fix, usually `select [[x]] too`. Harvest never re-extracts.
+Deleting a draft rejects it. Model invocation is enabled for this Skill in
+both runtimes.
 
+## Query
 
-Knowledge candidates found while reading are prepared with `harvest prepare` as
-reviewed capture payloads that cite their source lines. They are not accepted
-entries; candidate status does not establish personal understanding. The
-source's partial or complete def sheet links to clearly labeled review drafts
-under `.knowledge/build/reviews/` (excluded from Obsidian hidden-folder indexing
-by default; remove `build` from the plugin's exclusion list to open them there).
-Each selectable draft has an ordinary Markdown task checkbox and shows the
-proposed entry fields before and after, the cited lines and the Evidence quote,
-the target and the reviewed identity decision. Full definitions remain in the
-linked entry or draft, not copied into every sheet row.
+`$query-kgdistiller` and the `query-reviewer` preset read through
+`kgd search`, `kgd resolve` and `kgd get`, or the MCP tools `kg_search`,
+`kg_resolve` and `kg_get` of `kgd mcp`, across every registered base. Answers
+cite `source:lines` with evidence quotes. When a result reports
+`lag.changed_files > 0`, the reader runs `kgd index` and repeats the query;
+that derived refresh is its only write. Lookup during reading happens at the
+actual use sites; a record not found is not proof the owner lacks the concept,
+and only the owner's stated understanding allows treating a record as
+mastered. Identity classification for authoring returns `matched`,
+`ambiguous` or `unmatched` per candidate.
 
-The user reviews or edits those drafts in Obsidian, checks the desired rows and
-explicitly asks to harvest. That request authorizes the checked content and its
-stated target. Do not ask the user to repeat selection or confirmation in a
-conversation or native question panel. Preparing a sheet or checking a box alone
-does not initiate a transaction. A checked task means selected for import and
-never means `understood`; preserve the separate personal understanding field.
+## Set up, check and restore
 
-The harvest script parses the selection and prepared payloads, confirms by text
-comparison that each draft, target entry and cited source passage is unchanged
-since review, applies one transactional ingest and refreshes successful rows to
-real entry links. It preserves unchecked rows, unrelated
-annotations and partial coverage. The usual path reuses reviewed content and
-identity decisions without a full source reread or another model extraction.
-The agent prepares reviewed `add`/`update` capture payloads with `harvest prepare`
-during candidate preparation; an explicit harvest runs `harvest apply` on the
-sheet. See the [checkbox contract](../skills/harvest-paper/references/checkbox-contract.md)
-for exact commands and generated task bindings. Ordinary todos are ignored.
-Draft text edits require a targeted re-review before the prepared payload is
-applied; the script rejects mismatches instead of importing stale content.
-The agent handles only actual ambiguity, invalid input, stale content or an
-unsupported operation. A metadata commit followed by a failed sheet refresh is
-recovered from its receipt before another write is attempted.
+`$deploy-kgdistiller` registers bases (`kgd base add`), writes source globs and
+document types into the home, runs `kgd check` (`--fix-lines` after a source
+edit moves cited lines), builds the index (`kgd index`; delete `index.sqlite*`
+and rerun it to restore), installs the Obsidian plugin and links the agent
+runtimes. Git initialization, commits, remotes and pushes remain separate
+explicit actions.
 
-Report the real committed receipt, accepted entry links and any remaining
-unapplied items. Changed or unsupported content requires a revised review, not
-silent rewriting. Harvest requires no frontend, server, background listener or
-runtime-specific selection UI.
+## Reading papers
 
-Invocation controls follow [OpenAI's Skill metadata](https://learn.chatgpt.com/docs/build-skills#optional-metadata)
-and [Claude Code's invocation controls](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).
-The built-in Codex quick validator currently rejects Claude's extension key;
-validate the shared fields separately and check that extension as a boolean.
+Ordinary paper reading and explanation need no Skill. For paper source
+reading, prefer HTML, then the LaTeX source package, then the PDF. Do not
+require TeX manifests for HTML or PDF reading. Local source acquisition and
+original knowledge extraction are not redistribution: a no-redistribution
+notice alone does not justify blocking ordinary local reading. Keep full source
+copies local, separate from original knowledge notes and short necessary
+excerpts.
 
-The two runtime manifests share the same Skills and workflow inventory.
-`agent: null` means no specialized preset is required: execute in the current
-agent. Named agents still refer to installed presets. Manifests describe assets,
-not automatic triggers or a scheduler.
-
-### Curate registered notes
-
-Use `$curate-kgdistiller-notes` to extract one bounded source set (read through
-`kgd scan --file SOURCE --base B`, which returns the source's base, its type and
-that type's profile (`node_kinds`, `relation_kinds`, `epistemic`, `guidance`)
-with numbered lines),
-`$query-kgdistiller` to resolve the full candidate batch read-only
-(`agent resolve`, `agent search`, `agent get`), and `$ingest-kgdistiller` to
-plan and apply one reviewed transaction of entries and edges, then `check`.
-Each candidate is classified `matched`, `ambiguous` or `unmatched`; ambiguity
-blocks its own write, while content conflicts or enrichment of matched entries
-require a separate source-backed review rather than inference from retrieval
-scores.
-
-### Set up, check and restore a base
-
-Use `$deploy-kgdistiller` to register a base with `kgd base add PATH [--name N]`,
-write its source globs under `bases.<name>.sources` in
-`$KGDISTILLER_HOME/config.json` and its document types as
-`$KGDISTILLER_HOME/types/<name>.md`, and run `check` and `agent status` with
-`--base B` (or from inside the base root) after setup, a clone, a pull
-or a source edit. `check --fix-lines` repairs the line ranges of entries whose
-Evidence moved; stale entries need a reviewed re-capture. Git initialization,
-commit, remote configuration, and push remain explicit separate actions.
-
-### Refresh the Obsidian graph feed
-
-Use `$deploy-kgdistiller` and open the base root as the editor vault. Registered sources and `.knowledge/entries/*.md` remain the knowledge.
-The optional Obsidian plugin's semantic graph view reads only
-`.knowledge/build/obsidian/semantic-graph.json`
-(`kgdistiller-obsidian-graph-v1`), which `kgdistiller export obsidian` writes
-atomically from every entry and every accepted edge. It shows typed semantic
-edges and the source → entry definition edges. The feed lives under the hidden
-`.knowledge/build/` directory, which no source glob ever matches; never rescan
-it or ingest it back.
-
-### Native indexing of a hidden knowledge folder
-
-The Obsidian plugin also offers an optional desktop indexer for the vault-root
-`.knowledge` folder (not configurable). **Index hidden knowledge folder** is
-off by default. It exposes the folder through Obsidian's normal file and
-metadata cache so supported files participate in editing, links, backlinks,
-search and the native graph. Folders on its exclusion list, `build` by
-default, stay out of that index. It does not move knowledge data, change the
-semantic graph path, or create a new source authority. See the
-[hidden knowledge folder guide](obsidian-hidden-knowledge.md) for settings,
-exclusions, rescan behavior, desktop capability limits and upstream
-attribution.
+Evidence needs a registered source: a local UTF-8 text file inside a base,
+matched by one of its globs, whose lines the record cites and quotes verbatim.
+To capture from a paper, keep its text (an extracted Markdown or the LaTeX
+source) in the base and register a glob for it, or capture into an authored
+reading note that is itself a registered source. A PDF or a web page cannot be
+cited directly.
 
 ## Handoffs
 
-Paper-reading handoffs lead with the explanation and linked artifacts. Lookup
-results carry the entries actually found and their source citations; if lookup
-was explicitly omitted or unavailable, report that state instead of fabricated
-results. Transaction handoffs name the request id, the plan and the committed
-receipt, and the `check` result after commit. Git and the Obsidian graph feed
-each have distinct status; do not collapse them into a generic “deployed”
-result.
+Reading handoffs lead with the explanation and the records actually found,
+with their uids and `source:lines`; if a lookup was omitted or unavailable,
+say so instead of inventing results. Write handoffs name the uids, the accept
+receipt or the `check` result, and the `index` report. Git state and the
+Obsidian plugin each have their own status; do not collapse them into a
+generic "deployed" result.

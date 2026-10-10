@@ -4,59 +4,89 @@
 
 ```text
 $KGDISTILLER_HOME/            # default ~/.knowledge; owner data
-├── config.json               # bases, their source globs, embedding
+├── config.json               # bases, their source globs, embedding model id
 ├── types/<USER_TYPE>.md      # one user-defined document type per file
 ├── .gitignore                # "index.sqlite*" and "lock"
+├── index.sqlite (-wal, -shm) # derived database; deleting it loses nothing
 └── lock                      # writer lock; its contents are meaningless
 
 BASE_ROOT/
 ├── notes/                    # registered source documents, any text format
 └── .knowledge/
-    ├── entries/<id>.md       # one reviewed entry per knowledge node
-    ├── edges.jsonl           # accepted semantic edges
-    └── build/                # rebuildable local work (ignored by the base)
+    ├── entries/<id>.md       # accepted records: nodes and relations
+    ├── drafts/<id>.md        # proposed new records, same format
+    └── sheets/<source>.md    # generated def/pending sheets
 ```
 
 `KGDISTILLER_HOME` is the only environment variable for kgdistiller's own home
 and data (the runtime linkers also honor `CODEX_HOME` and `CLAUDE_CONFIG_DIR`);
-it must be absolute after `~` expansion. A base owns its source documents and its
-`.knowledge/` tree, the base's only knowledge root. Each entry is
-Obsidian-compatible Markdown: frontmatter properties (`schema`, `id`, `label`,
-`kind`, `aliases`, `source`, `line_start`, `line_end`, `understanding`), the
-human sections, and an Evidence section quoting the cited source lines
-verbatim. `edges.jsonl` holds one accepted edge per line with exactly `source`,
-`relation`, `target`, `origin`, `confidence` and `evidence`. Nothing else in a
-base is knowledge: `.knowledge/build/` (ingest journals, plans, receipts,
-review drafts, retrieval caches, the Obsidian graph feed) is local and
-rebuildable.
+it must be absolute after `~` expansion. `config.json` and `types/` cannot be
+derived; `index.sqlite*` and `lock` can, and the home's `.gitignore` excludes
+them.
 
-Opening a base root as an Obsidian vault changes none of these roles. The
-product checkout and the Obsidian graph feed are not knowledge or backup roots.
+A base owns its sources and its `.knowledge/` tree, the base's only knowledge
+root. Under `.knowledge/` the product reads and writes only `entries/`,
+`drafts/` and `sheets/`; anything else there is ignored. Commit all three with
+the base: drafts and sheet ticks are unharvested review state that should
+travel between machines. kgdistiller writes no `.gitignore` into a base.
+
+## Record format
+
+A record is YAML frontmatter plus a Markdown body:
+
+```markdown
+---
+label: Sum of two subspaces is a subspace
+kind: implies
+premise:
+  - "[[subspace]]"
+conclusion:
+  - "[[sum-of-subspaces]]"
+epistemic: stated
+source: notes/linear-algebra/chapters/01-review.tex
+lines: 24-32
+---
+若 $U_1,U_2$ 是 $V$ 的 subspaces，则 $U_1+U_2$ 也是 subspace。
+
+## Evidence
+
+> 两个 subspace \(U_{1},U_{2}\) 的 sum \(U_{1} + U_{2}\) 也是一个 subspace
+```
+
+- Fixed keys: `label`, `kind`, `source`, `lines` (required), `aliases`,
+  `understanding`, `epistemic`, `requires`; `tags` and `cssclasses` are
+  accepted and ignored. The id is the file stem.
+- Every other key is a role declared for `kind` by the source's type. A record
+  with a non-empty role list is a relation; otherwise it is a node.
+- Values are quoted links (`"[[id]]"`, `"[[base:id]]"`,
+  `"[[.knowledge/entries/id]]"`) or plain pending terms.
+- The body ends with `## Evidence`: verbatim quotes of the cited lines, one
+  blockquote each. An optional `## Search terms` section comes just before it.
 
 ## Base registration
 
-`kgd base add BASE_ROOT [--name NAME]` creates the home on first use, records
-the base in `config.json` and creates `BASE_ROOT/.knowledge/entries/`.
-`kgd base list` shows every base; `kgd base rm NAME` removes only the
-registration. Both writers hold the home lock and write `config.json`
-atomically. Base names match `^[a-z0-9][a-z0-9-]*$`.
-
-A command finds its base through `--base NAME` after the command, or through
-the registered root that contains the working directory's real path. There is
-no upward search, no default base and no base identity file. Outside every
-registered root without `--base`, a command refuses and lists the registered
-bases.
+`kgd base add BASE_ROOT [--name NAME]` creates the home on first use
+(`config.json` as `{"bases": {}, "embedding": null}`, an empty `types/` and the
+`.gitignore`), records the base and creates `BASE_ROOT/.knowledge/entries/`.
+`kgd base rm NAME` removes only the registration and prints `dangling`: the
+`[[NAME:…]]` links that other bases still hold. Both hold the home lock and
+write `config.json` atomically. Base names match `^[a-z0-9][a-z0-9-]*$`.
 
 - No base root may equal, contain or lie inside another base root.
 - The home may not equal or lie inside a base root.
 - `path` is stored as `~/…` when the root lies under the user's home, otherwise
   as an absolute path. A moved base needs its `path` edited by hand.
+- A path argument belongs to the registered root that contains its real path;
+  there is no upward search and no base identity file.
+
+`kgd base list` prints, per base, `name`, `path`, `root`, `available`,
+`records` and `drafts` (file counts), `indexed` (rows in the database) and
+`lag`.
 
 ## Source globs and document types
 
-Names, kinds and guidance are supplied by the user; the product does not
-pre-register research, mathematics or computing classes. For example, using
-placeholder values, `config.json`:
+Names, kinds and guidance come from the owner; the product ships no types.
+With placeholder values, `config.json`:
 
 ```json
 {
@@ -80,59 +110,81 @@ and `types/USER_TYPE.md`:
 node_kinds: [USER_NODE_KIND]
 relation_kinds:
   USER_RELATION_KIND: [USER_ROLE, USER_OTHER_ROLE]
+  example: [uses, setting]
 epistemic: [USER_STATUS]
 ---
-The user's rules for nodes, relations, applications and pending gaps.
+The owner's rules for nodes, relations, examples and pending terms.
 ```
 
 - The top level holds exactly `bases` and `embedding`; each base holds exactly
-  `path` and `sources`. `embedding` is `null` or a model id.
+  `path` and `sources`. Keep `embedding` `null`: the index is lexical plus name
+  until the dense lane arrives.
 - Each `sources` key is a glob relative to the base root with Python glob
   semantics: `*` stays within one path segment, `**` spans directories, and
   hidden files and directories (`.knowledge/`, `.obsidian/`, `.git/`) never
-  match. A glob is non-empty and relative, uses `/`, and contains no `..` or
-  hidden segment.
-- Each value names an existing type file. Several globs may match one file
-  when they name the same type; globs naming two different types for one file
-  are an error. Every registered source therefore has exactly one type, and
-  there is no unclassified source.
-- A type file has a slug stem and frontmatter read with PyYAML's `BaseLoader`
-  (every scalar stays a string). `node_kinds` is a required nonempty list of
-  unique slugs; `relation_kinds` maps a kind to a nonempty list of unique role
-  slugs; `epistemic` is a list of slugs. No kind is both a node kind and a
-  relation kind. The non-empty body is the extraction guidance.
-- Every entry citing a source uses one of its type's `node_kinds`, and every
-  file an entry cites must be a registered source. Registration never
-  reclassifies existing entries.
+  match.
+- Each value names an existing type file. Globs naming two different types for
+  one file are an error, so every source has exactly one type.
+- A type file has a slug stem and frontmatter read with PyYAML's `BaseLoader`.
+  `node_kinds` is a required non-empty list of unique slugs; `relation_kinds`
+  maps each kind to a non-empty list of unique role slugs (no dots, never a
+  fixed key); `epistemic` is a list of slugs, and without it records may not
+  carry `epistemic`. No kind is both a node kind and a relation kind. The
+  non-empty body is the extraction guidance.
 
-Sources are format-agnostic: any UTF-8 text document is read as lines, and its
-syntax is never parsed or converted. `kgd scan --file SOURCE --base NAME`
-shows the source's base, its `type` and `profile` (`node_kinds`,
-`relation_kinds`, `epistemic`, `guidance`) and the numbered lines, so
-extraction workflows can read the user's policy before any entry exists.
-Registration alone creates no entries and makes no retrieval-index choice.
+Sources are format-agnostic: any UTF-8 text document is read as lines and
+never parsed or converted. `kgd sheet SOURCE --json` shows a source's base,
+type, kinds, roles, guidance and line count, so extraction reads the owner's
+policy before any record exists.
 
-## Required checks
+## Check
 
-Before a feed refresh, a commit or a restore, run `check` and `agent status`.
-`check` must print `OK`. Entries reported `moved` are fixed with
-`check --fix-lines` after the source edit is confirmed; `stale` and `ambiguous`
-entries need a reviewed re-capture. Staleness never filters retrieval or the
-feed.
+`kgd check [--base B]... [--fix-lines]` reads files only and prints JSON:
 
-Never hand-edit `edges.jsonl`, invent line ranges, or delete an interrupted
-ingest journal. Restore a known-good revision or repair the source on its owning
-machine.
+```json
+{"errors": [{"path": "/abs/.knowledge/entries/x.md", "rule": "link", "message": "…"}],
+ "stale": ["/abs/.knowledge/entries/y.md"],
+ "moved": [{"path": "/abs/.knowledge/entries/z.md", "lines": "40-46"}]}
+```
+
+`rule` is one of `config`, `type`, `source-type`, `id`, `frontmatter`,
+`source`, `kind`, `link`, `body`. The exit code is 1 when any list is
+non-empty. `moved` evidence (each quote found exactly once elsewhere in the
+source) is repaired by `--fix-lines`, which rewrites only the `lines:` line
+under the home lock and adds `fixed` and `skipped` lists. `stale` evidence
+needs the quote re-copied from the source by a reviewed edit. Staleness never
+hides a record from retrieval.
+
+## Index and restore
+
+`kgd index [--rebuild] [--no-embed]` brings `index.sqlite` up to date with the
+`entries/` files of every registered, available base, re-parsing files whose
+stat changed. Its JSON report lists per base `parsed`, `deleted` and
+`unparseable`, plus `unavailable` bases and `understanding_changed`; it exits 1
+when a file is unparseable or a base is unavailable. `--rebuild` re-derives
+every row in place. `--no-embed` has no effect until the dense lane exists.
+
+Restore after a lost or damaged database in one step:
+
+```sh
+rm -f "$KGDISTILLER_HOME/index.sqlite" "$KGDISTILLER_HOME/index.sqlite-wal" "$KGDISTILLER_HOME/index.sqlite-shm"
+kgd index
+```
+
+A missing, unreadable or other-version database is also rebuilt automatically
+by `kgd index`. Readers (`search`, `resolve`, `get`, MCP) open it read-only and
+report `lag`; a missing database tells them to run `kgd index`.
 
 ## Product provenance and boundaries
 
-Record installed kgdistiller version and full product commit when discoverable.
+Record the installed kgdistiller version and full product commit when
+discoverable. kgdistiller has no publishing surface; websites, course
+registries and HTML rendering belong to the repositories that own the notes.
 
-The Obsidian graph feed `.knowledge/build/obsidian/semantic-graph.json` is
-derived and never a source. It lies under the hidden `.knowledge/build/`, which
-no glob matches; never feed it to scan, capture or ingest. kgdistiller has no
-publishing surface; websites, course registries and HTML rendering belong to
-the repositories that own the notes.
+`kgd obsidian install --base NAME [--replace]` installs the bundled plugin; the
+owner then enables **Index hidden knowledge folder** in its settings so
+Obsidian indexes `.knowledge/`. The plugin reads record frontmatter live from
+Obsidian's metadata cache; there is nothing to export.
 
 `kgdistiller codex link` and `kgdistiller claude link` treat installed copies
 as product-owned: `doctor` reports a copy that differs from the product source,
@@ -140,5 +192,6 @@ and relinking replaces it or removes a retired one, discarding local edits to
 installed files. Report a differing copy before relinking.
 
 Installing, linking, committing and pushing are separate authorities. Never
-place private sources, the home's `config.json` or types, or secrets in a
-product repository, receipt, command output or agent configuration.
+place private sources, records, the home's `config.json` or types, the
+database or secrets in a product repository, receipt, command output or agent
+configuration.

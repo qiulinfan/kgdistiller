@@ -1,4 +1,4 @@
-"""Exercise the installed wheel end to end on a plain-text source and the entry store."""
+"""Exercise the installed wheel end to end: base, records, drafts, check, index and retrieval."""
 
 from __future__ import annotations
 
@@ -10,14 +10,57 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from kgdistiller.contracts import validate_contract
-
 SOURCE = (
     "Chapter one\n"
     "A measure space is a triple (X, F, mu)\n"
     "with mu countably additive.\n"
     "测度论研究可测空间上的集合函数。\n"
 )
+TYPE = (
+    "---\nnode_kinds: [definition, concept]\nrelation_kinds:\n  implies: [premise, conclusion]\n---\n\n"
+    "Definitions are nodes; statements connecting them are relations.\n"
+)
+MEASURE_SPACE = """---
+label: Measure space
+kind: definition
+source: notes/measure.txt
+lines: 2-3
+aliases: [测度空间]
+---
+A set with a sigma-algebra and a measure.
+
+## Evidence
+
+> A measure space is a triple (X, F, mu)
+> with mu countably additive.
+"""
+ADDITIVITY = """---
+label: Measure space implies countable additivity
+kind: implies
+source: notes/measure.txt
+lines: 3
+premise: ["[[measure-space]]"]
+conclusion: [countable additivity]
+---
+The measure of a measure space is countably additive.
+
+## Evidence
+
+> with mu countably additive.
+"""
+MEASURE_THEORY = """---
+label: 测度论
+kind: concept
+source: notes/measure.txt
+lines: 4
+---
+The study of set functions on measurable spaces.
+
+## Evidence
+
+> 测度论研究可测空间上的集合函数。
+"""
+CLEAN = {"errors": [], "stale": [], "moved": []}
 
 
 def executable() -> Path:
@@ -73,106 +116,94 @@ class Runtime:
         return value
 
 
-def capture(runtime: Runtime, root: Path, workspace: Path, name: str, payload: dict[str, Any]) -> None:
-    """Prepare one reviewed capture, then plan and apply its ingest request."""
-    path = workspace / f"{name}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    prepared = runtime.object("capture", "prepare", str(path), "--output", ".knowledge/build/reviews",
-                              "--base", "research", cwd=root)
-    require(prepared.get("status") == "prepared", f"capture {name} was not prepared")
-    planned = runtime.object("ingest", "plan", prepared["artifacts"]["plan"], "--base", "research", cwd=workspace)
-    require(planned.get("status") == "planned", f"ingest plan for {name} failed")
-    receipt = runtime.object("ingest", "apply", prepared["artifacts"]["apply"], cwd=root)
-    require(receipt.get("status") == "committed", f"ingest apply for {name} failed")
-
-
 def register(runtime: Runtime, root: Path, outside: Path) -> None:
     """Register the base, then map its .txt notes to a user-defined document type."""
-    added = runtime.object("base", "add", str(root), "--name", "research", cwd=outside)
-    require(added.get("added", {}).get("name") == "research", "base add failed")
+    added = runtime.object("base", "add", str(root), "--name", "smoke", cwd=outside)
+    require(added.get("added", {}).get("name") == "smoke", "base add failed")
     require((runtime.home / "config.json").is_file(), "home config.json is missing")
     require((runtime.home / "types").is_dir(), "home types/ is missing")
     require((runtime.home / ".gitignore").read_text(encoding="utf-8") == "index.sqlite*\nlock\n",
             "home .gitignore mismatch")
-    require((root / ".knowledge/entries").is_dir(), "base add did not create .knowledge/entries")
     require([path.name for path in (root / ".knowledge").iterdir()] == ["entries"],
             "base add wrote more than .knowledge/entries/ into the base")
     require(not (runtime.user / ".knowledge").exists(), "state was created in the default user home")
     config_path = runtime.home / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    config["bases"]["research"]["sources"] = {"notes/*.txt": "smoke-notes"}
+    config["bases"]["smoke"]["sources"] = {"notes/*.txt": "smoke-notes"}
     staged = config_path.with_name(".config.json.smoke")
     staged.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(staged, config_path)
-    (runtime.home / "types/smoke-notes.md").write_text(
-        "---\nnode_kinds: [definition, concept]\n---\n\nExtract every defined term and named idea.\n",
-        encoding="utf-8",
-    )
-    listed = runtime.object("base", "list", cwd=outside)
-    require([item["name"] for item in listed["bases"]] == ["research"], "base list mismatch")
+    (runtime.home / "types/smoke-notes.md").write_text(TYPE, encoding="utf-8")
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="kgdistiller-wheel-runtime-") as raw:
         temporary = Path(raw).resolve()
         runtime = Runtime(temporary)
-        root = temporary / "research"
-        workspace = temporary / "workspace"
+        root = temporary / "vault"
         outside = temporary / "outside"
-        for directory in (root, workspace, outside):
+        for directory in (root, outside):
             directory.mkdir()
-        refused = runtime.text("agent", "status", cwd=outside, expect=1)
+        refused = runtime.text("search", "measure", cwd=outside, expect=1)
         require("kgd base add" in refused, f"missing home was not reported: {refused}")
         require(not runtime.home.exists(), "a read created the home")
         register(runtime, root, outside)
         (root / ".obsidian").mkdir()
         source = root / "notes/measure.txt"
-        source.parent.mkdir()
-        source.write_text(SOURCE, encoding="utf-8")
-        scanned = runtime.object("scan", "--file", "notes/measure.txt", cwd=root)
-        require(scanned["files"][0]["lines"][1] == {"line": 2, "text": "A measure space is a triple (X, F, mu)"},
-                "scan did not number the source lines")
-        require(scanned["files"][0]["type"] == "smoke-notes", "scan did not report the document type")
+        write(source, SOURCE)
+        write(root / ".knowledge/entries/measure-space.md", MEASURE_SPACE)
+        write(root / ".knowledge/entries/measure-space-implies-countable-additivity.md", ADDITIVITY)
+        write(root / ".knowledge/drafts/measure-theory.md", MEASURE_THEORY)
 
-        review = {"reviewer": "smoke", "evidence": "Read in the installed-wheel smoke test."}
-        capture(runtime, root, workspace, "measure-space", {
-            "label": "Measure space", "source": "notes/measure.txt", "line_start": 2, "line_end": 3,
-            "kind": "definition", "aliases": ["测度空间"], "text": "A set with a sigma-algebra and a measure.",
-            "review": {"action": "add", **review},
-        })
-        capture(runtime, root, workspace, "measure-theory", {
-            "label": "测度论", "id": "measure-theory", "source": "notes/measure.txt", "line_start": 4,
-            "line_end": 4, "kind": "concept", "text": "The study of measures.",
-            "review": {"action": "add", **review},
-        })
-        require(runtime.text("check", "--base", "research", cwd=outside) == "OK: 2 entries, 0 edges\n",
-                "fresh store check failed")
+        profile = runtime.object("sheet", "notes/measure.txt", "--json", cwd=root)
+        require(profile["type"] == "smoke-notes" and profile["line_count"] == 4, f"sheet --json profile: {profile}")
+        require([row["class"] for row in profile["records"]] == ["node", "relation"], "sheet --json records mismatch")
+        require([row["id"] for row in profile["drafts"]] == ["measure-theory"], "sheet --json drafts mismatch")
+        written = runtime.object("sheet", "measure.txt", cwd=root / "notes")
+        sheet = root / ".knowledge/sheets/notes/measure.txt.md"
+        require(written == {"sheet": str(sheet)} and sheet.is_file(), f"sheet was not written: {written}")
+        require("- [ ] [[.knowledge/drafts/measure-theory|测度论]]" in sheet.read_text(encoding="utf-8"),
+                "sheet does not list the draft")
+        receipt = runtime.object("accept", ".knowledge/drafts/measure-theory.md", cwd=root)
+        require(receipt == {"created": ["smoke:measure-theory"], "understanding_set": []}, f"accept receipt: {receipt}")
 
-        source.write_text("Preface\n\n" + SOURCE, encoding="utf-8")
-        moved = runtime.text("check", cwd=root / "notes", expect=1)
-        require("moved measure-space: notes/measure.txt:2-3 -> 4-5" in moved, f"moved Evidence not reported: {moved}")
-        fixed = runtime.text("check", "--fix-lines", "--base", "research", cwd=outside)
-        require("fixed measure-space: notes/measure.txt:2-3 -> 4-5" in fixed, f"moved Evidence not fixed: {fixed}")
-        require(fixed.endswith("OK: 2 entries, 0 edges\n"), f"check --fix-lines failed: {fixed}")
-        require("line_start: 4" in (root / ".knowledge/entries/measure-space.md").read_text(encoding="utf-8"),
+        require(runtime.object("check", cwd=outside) == CLEAN, "fresh records did not check clean")
+        write(source, "Preface\n\n" + SOURCE)
+        moved = json.loads(runtime.text("check", "--base", "smoke", cwd=outside, expect=1))
+        require(sorted(item["lines"] for item in moved["moved"]) == ["4-5", "5-5", "6-6"],
+                f"moved evidence was not reported: {moved}")
+        fixed = runtime.object("check", "--fix-lines", cwd=root)
+        require(len(fixed["fixed"]) == 3 and fixed["moved"] == [] and fixed["skipped"] == [],
+                f"check --fix-lines failed: {fixed}")
+        require("\nlines: 4-5\n" in (root / ".knowledge/entries/measure-space.md").read_text(encoding="utf-8"),
                 "fixed line range was not written")
+        require(runtime.object("check", cwd=root) == CLEAN, "check after --fix-lines is not clean")
 
-        status = runtime.object("agent", "status", "--base", "research", cwd=outside)
-        require(status.get("counts") == {"entries": 2, "edges": 0}, "wrong store counts")
-        require(runtime.object("agent", "status", cwd=root / "notes") == status, "cwd-inside-root lookup failed")
-        outside_refusal = runtime.text("agent", "status", cwd=outside, expect=1)
-        require("not inside any registered base root" in outside_refusal and "research" in outside_refusal,
-                f"a cwd outside every base was not refused: {outside_refusal}")
-        resolved = runtime.json("agent", "resolve", "测度空间", "测度论", "--base", "research", cwd=outside)
-        require([row.get("candidate_ids") for row in resolved] == [["measure-space"], ["measure-theory"]],
-                "identity resolution failed")
-        searched = runtime.object("agent", "search", "Measure space", "--base", "research", cwd=outside)
-        require(searched["result"]["results"][0]["node_id"] == "measure-space", "lexical search failed")
-        cjk = runtime.object("agent", "search", "测度", cwd=root)
-        require("measure-theory" in [row["node_id"] for row in cjk["result"]["results"]], "CJK search failed")
+        report = runtime.object("index", "--no-embed", cwd=outside)
+        require(report["created"] and report["bases"]["smoke"]["parsed"] == 3, f"index report: {report}")
+        require((runtime.home / "index.sqlite").is_file(), "index.sqlite is not in the home")
+        found = runtime.object("search", "measure space", cwd=outside)
+        require(found["results"][0]["uid"] == "smoke:measure-space", f"search ranking: {found['results'][:3]}")
+        require(found["lag"]["changed_files"] == 0, "search reported lag after index")
+        cjk = runtime.object("search", "测度", cwd=outside)
+        require("smoke:measure-theory" in [row["uid"] for row in cjk["results"]], "CJK search failed")
+        resolved = runtime.object("resolve", "测度空间", "countable additivity", cwd=outside)
+        require([sense["uid"] for sense in resolved["terms"][0]["senses"]] == ["smoke:measure-space"],
+                "resolve senses mismatch")
+        require([item["owner"] for item in resolved["terms"][1]["pending"]]
+                == ["smoke:measure-space-implies-countable-additivity"], "resolve pending mismatch")
+        got = runtime.object("get", "measure-space", "--source-lines", "1", cwd=outside)
+        record = got["records"][0]
+        require(record["source_text"] is not None and record["source_text"].startswith("3\t"),
+                f"get --source-lines failed: {record.get('source_text')}")
+        require([link["role"] for link in record["in"]] == ["premise"], "get in-links mismatch")
 
-        plugin = runtime.object("obsidian", "install", "--base", "research", cwd=outside)
-        require(plugin.get("schema") == "kgdistiller-obsidian-plugin-install-v1", "Obsidian plugin install failed")
+        plugin = runtime.object("obsidian", "install", "--base", "smoke", cwd=outside)
         require(plugin.get("status") == "installed", "Obsidian plugin install status mismatch")
         for name in ("main.js", "manifest.json", "styles.css"):
             require((root / ".obsidian/plugins/kgdistiller" / name).is_file(),
@@ -180,21 +211,12 @@ def main() -> int:
         require(json.loads((root / ".obsidian/community-plugins.json").read_text(encoding="utf-8"))
                 == ["kgdistiller"], "Obsidian plugin was not configured as enabled")
 
-        feed = runtime.object("export", "obsidian", "--base", "research", cwd=outside)
-        require(feed.get("status") == "exported", "Obsidian graph feed export failed")
-        feed_path = root / ".knowledge/build/obsidian/semantic-graph.json"
-        require(feed_path.is_file(), "Obsidian graph feed is missing")
-        graph = validate_contract(json.loads(feed_path.read_text(encoding="utf-8")))
-        require(graph["schema"] == "kgdistiller-obsidian-graph-v1", "Obsidian graph feed schema mismatch")
-        require(graph["counts"] == {"concepts": 2, "sources": 1, "semantic_edges": 0, "definitions": 2},
-                "Obsidian graph feed counts mismatch")
-
-        require(not any(root.rglob("*.sqlite")), "self-contained runtime created SQLite")
+        require(not any(".sqlite" in path.name for path in root.rglob("*")), "the index was written into the base")
         require(not (runtime.user / ".knowledge").exists(), "the runtime wrote to the default user home")
 
     print(
-        "installed command, base add and --base lookup, capture and ingest, check --fix-lines, CJK search, "
-        "Obsidian plugin and graph feed smoke passed"
+        "installed command, base add, sheet and accept, check --fix-lines, index, search (including CJK), "
+        "resolve, get and Obsidian plugin smoke passed"
     )
     return 0
 

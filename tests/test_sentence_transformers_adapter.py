@@ -3,8 +3,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from kgdistiller.adapters.sentence_transformers import SentenceTransformersAdapter
-from kgdistiller.semantic_retrieval import SemanticRetrievalError
+from kgdistiller.adapters.sentence_transformers import (
+    EmbeddingError,
+    SentenceTransformersAdapter,
+)
 
 
 class Array:
@@ -76,7 +78,7 @@ class AdapterTest(unittest.TestCase):
 
     def test_late_document_content_is_not_silently_truncated(self):
         adapter = SentenceTransformersAdapter(max_length=5)
-        with self.assertRaisesRegex(SemanticRetrievalError, "model-input-too-long"):
+        with self.assertRaisesRegex(EmbeddingError, "model-input-too-long"):
             adapter.encode_documents(["one two three four late-condition"])
         self.assertEqual([], adapter._embedder.calls)
 
@@ -86,19 +88,19 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual([-3., 4.], scores)
         self.assertEqual("raw-logit", adapter.metadata("reranker")["inference"]["activation"])
         self.assertEqual("identity", adapter._reranker.calls[0][1]["activation_fn"])
-        with self.assertRaisesRegex(SemanticRetrievalError, "model-input-too-long"):
+        with self.assertRaisesRegex(EmbeddingError, "model-input-too-long"):
             adapter.score_pairs("one two three", ["four five six seven"])
         self.assertEqual(1, len(adapter._reranker.calls))
 
     def test_device_error_never_silently_switches_to_cpu(self):
-        with self.assertRaisesRegex(SemanticRetrievalError, "model-device-unavailable"):
+        with self.assertRaisesRegex(EmbeddingError, "model-device-unavailable"):
             SentenceTransformersAdapter(device="mps")
 
     def test_revision_configured_passage_prompt_counts_toward_input_limit(self):
         adapter = SentenceTransformersAdapter(max_length=6)
         model = adapter._load_embedding()
         model.prompts = {"passage": "one two three "}
-        with self.assertRaisesRegex(SemanticRetrievalError, "model-input-too-long"):
+        with self.assertRaisesRegex(EmbeddingError, "model-input-too-long"):
             adapter.encode_documents(["four five"])
         self.assertEqual([], model.calls)
 
@@ -106,7 +108,7 @@ class AdapterTest(unittest.TestCase):
         adapter = SentenceTransformersAdapter()
         model = adapter._load_reranker()
         model.default_prompt_name = "unaccounted-template"
-        with self.assertRaisesRegex(SemanticRetrievalError, "model-input-configuration"):
+        with self.assertRaisesRegex(EmbeddingError, "model-input-configuration"):
             adapter.score_pairs("question", ["document"])
         self.assertEqual([], model.calls)
 
@@ -114,12 +116,12 @@ class AdapterTest(unittest.TestCase):
         for kwargs in [{"batch_size": True}, {"max_length": 0}, {"revision": ""}, {"revision": "main"},
                        {"reranker_revision": "latest"},
                        {"reranker_revision": ""}, {"device": "auto"}]:
-            with self.subTest(kwargs=kwargs), self.assertRaises(SemanticRetrievalError):
+            with self.subTest(kwargs=kwargs), self.assertRaises(EmbeddingError):
                 SentenceTransformersAdapter(**kwargs)
         adapter = SentenceTransformersAdapter()
-        with self.assertRaisesRegex(SemanticRetrievalError, "invalid-model-input"):
+        with self.assertRaisesRegex(EmbeddingError, "invalid-model-input"):
             adapter.encode_queries([""])
-        with self.assertRaisesRegex(SemanticRetrievalError, "invalid-model-input"):
+        with self.assertRaisesRegex(EmbeddingError, "invalid-model-input"):
             adapter.score_pairs("", ["doc"])
 
 

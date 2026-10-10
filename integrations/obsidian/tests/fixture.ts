@@ -1,58 +1,61 @@
-import type { KgGraphContract } from "../src/contract";
+import type { FrontmatterRecord } from "../src/graph-model";
 
-export function graphFixture(): KgGraphContract {
-  return {
-    schema: "kgdistiller-obsidian-graph-v1",
-    counts: {
-      concepts: 2,
-      sources: 1,
-      semantic_edges: 1,
-      definitions: 2,
-    },
-    concepts: [
-      {
-        id: "measure",
-        label: "Measure",
-        kind: "definition",
-        aliases: ["测度"],
-        authority: ".knowledge/entries/measure.md",
-        understanding: "not-yet-understood",
-      },
-      {
-        id: "sigma-algebra",
-        label: "Sigma algebra",
-        kind: "definition",
-        aliases: [],
-        authority: ".knowledge/entries/sigma-algebra.md",
-        understanding: "understood",
-      },
-    ],
-    sources: [
-      {
-        authority: "notes/chapter.tex",
-      },
-    ],
-    semantic_edges: [
-      {
-        source: "sigma-algebra",
-        relation: "prerequisite-for",
-        target: "measure",
-        evidence: "A measure is defined on a sigma algebra.",
-      },
-    ],
-    definitions: [
-      {
-        source_authority: "notes/chapter.tex",
-        target: "measure",
-        line_start: 5,
-        line_end: 7,
-      },
-      {
-        source_authority: "notes/chapter.tex",
-        target: "sigma-algebra",
-        line_start: 1,
-        line_end: 3,
-      },
-    ],
-  };
+const entry = (id: string, frontmatter: Record<string, unknown>): FrontmatterRecord =>
+  ({ path: `.knowledge/entries/${id}.md`, frontmatter });
+const draft = (id: string, frontmatter: Record<string, unknown>): FrontmatterRecord =>
+  ({ path: `.knowledge/drafts/${id}.md`, frontmatter });
+const SOURCE = { source: "notes/chapter.tex", lines: "3-7" };
+
+/**
+ * Frontmatter as Obsidian's metadata cache reports it for a small base. Each
+ * record exercises one rendering case named in its comment.
+ */
+export function recordFixture(): FrontmatterRecord[] {
+  return [
+    // nodes; a requires link and a pending term
+    entry("sigma-algebra", { label: "Sigma algebra", kind: "definition", ...SOURCE, understanding: "understood", tags: ["math"] }),
+    entry("measure", {
+      label: "Measure", kind: "definition", ...SOURCE, aliases: ["测度"],
+      understanding: "not-yet-understood", requires: ["[[sigma-algebra]]", "measurable space"],
+    }),
+    entry("measure-space", { label: "Measure space", kind: "definition", ...SOURCE, lines: 9 }),
+    // binary: two link values in two roles, directed in frontmatter order
+    entry("sigma-algebra-prerequisite-for-measure", {
+      label: "Sigma algebra prerequisite for measure", kind: "prerequisite-for", ...SOURCE,
+      prerequisite: ["[[sigma-algebra]]"], dependent: ["[[measure]]"],
+    }),
+    // self-relation: the same record twice in one role
+    entry("measure-equals-itself", {
+      label: "Measure equals itself", kind: "equivalent", ...SOURCE, side: ["[[measure]]", "[[Measure|the measure]]"],
+    }),
+    // n-ary: three link values, a diamond
+    entry("measure-space-triple", {
+      label: "Measure space triple", kind: "composes", ...SOURCE,
+      whole: ["[[measure-space]]"], part: ["[[.knowledge/entries/sigma-algebra.md]]", "[[measure]]"],
+    }),
+    // relation about relations; its participants become diamonds
+    entry("triple-contrasts-prerequisite", {
+      label: "Triple contrasts prerequisite", kind: "contrasts", ...SOURCE,
+      subject: ["[[measure-space-triple]]"], contrast: ["[[sigma-algebra-prerequisite-for-measure]]"],
+    }),
+    // foreign participant and a pending term
+    entry("kl-divergence-example", {
+      label: "KL divergence example", kind: "example", ...SOURCE,
+      uses: ["[[notes:kl-divergence]]", "[[measure]]"], setting: ["finite sets"],
+    }),
+    // dangling local link
+    entry("missing-premise", {
+      label: "Missing premise", kind: "implies", ...SOURCE,
+      premise: ["[[missing-record]]"], conclusion: ["[[measure-space]]"],
+    }),
+    // drafts: a node and a relation linking it
+    draft("null-set", { label: "Null set", kind: "definition", ...SOURCE, requires: ["[[measure]]"] }),
+    draft("null-set-implies-measure-zero", {
+      label: "Null set implies measure zero", kind: "implies", ...SOURCE,
+      premise: ["[[null-set]]"], conclusion: ["[[measure]]"],
+    }),
+    // not records: other knowledge folders and ordinary notes are ignored
+    { path: ".knowledge/sheets/notes/chapter.tex.md", frontmatter: {} },
+    { path: "notes/chapter.md", frontmatter: { label: "Chapter", kind: "definition" } },
+  ];
 }

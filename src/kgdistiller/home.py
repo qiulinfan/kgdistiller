@@ -119,6 +119,11 @@ class Base:
         conflicts = {path: sorted(names) for path, names in found.items() if len(names) > 1}
         return mapping, conflicts
 
+    def holds(self, relative: str) -> bool:
+        """Whether the base-relative path resolves, through any symlink, to a regular file inside the root."""
+        real = _realpath(self.root / relative)
+        return _contains(self.root, real) and real.is_file()
+
     def type_of(self, path: str | PurePath) -> DocumentType:
         relative = PurePath(path).as_posix()
         mapping, conflicts = self.source_types()
@@ -211,7 +216,8 @@ def _check_glob(pattern: Any, where: str) -> None:
             raise KnowledgeError(f"{where}: source glob {pattern!r} has an empty or hidden segment")
 
 
-def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType]) -> Home:
+def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType] | None) -> Home:
+    """Validate config.json; with ``types`` None the glob type names are not checked against types/."""
     where = str(home / CONFIG_FILENAME)
     if not isinstance(payload, dict) or set(payload) != CONFIG_KEYS:
         raise KnowledgeError(f"{where}: the top level must have exactly the keys bases and embedding")
@@ -233,9 +239,9 @@ def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType]) -> H
             raise KnowledgeError(f"{where}: base {name} sources must map globs to type names")
         for pattern, type_name in entry["sources"].items():
             _check_glob(pattern, f"{where}: base {name}")
-            if not isinstance(type_name, str) or type_name not in types:
+            if not isinstance(type_name, str) or (types is not None and type_name not in types):
                 raise KnowledgeError(f"{where}: base {name} glob {pattern!r} names unknown type {type_name!r}")
-        bases[name] = Base(name, stored, _realpath(stored), dict(entry["sources"]), types)
+        bases[name] = Base(name, stored, _realpath(stored), dict(entry["sources"]), types or {})
     home_real = _realpath(home)
     for base in bases.values():
         for other in bases.values():
@@ -243,7 +249,7 @@ def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType]) -> H
                 raise KnowledgeError(f"{where}: base {other.name} root lies inside base {base.name} root")
         if _contains(base.root, home_real) or _realpath(base.root / KNOWLEDGE_DIRECTORY) == home_real:
             raise KnowledgeError(f"{where}: the home {home} lies inside base {base.name} root {base.root}")
-    return Home(home, bases, embedding, types)
+    return Home(home, bases, embedding, types or {})
 
 
 def _read_config(home: Path) -> Any:
@@ -260,17 +266,18 @@ def _load_types(home: Path) -> dict[str, DocumentType]:
     return {path.stem: load_type(path) for path in sorted(directory.glob("*.md"))}
 
 
-def load_home(home: Path) -> Home:
+def load_home(home: Path, *, types: bool = True) -> Home:
+    """The validated home; ``types=False`` reads config.json only, for the derived index and its reads."""
     if not (home / CONFIG_FILENAME).is_file():
         raise _missing_home(home)
-    return _parse_config(home, _read_config(home), _load_types(home))
+    return _parse_config(home, _read_config(home), _load_types(home) if types else None)
 
 
 def registered_bases() -> dict[str, Base]:
     return load_home(home_directory()).bases
 
 
-def _containing(bases: dict[str, Base], path: Path) -> Base | None:
+def base_for_path(bases: dict[str, Base], path: Path | str) -> Base | None:
     """The registered base whose root contains the path's realpath; no upward walk."""
     real = _realpath(path)
     return next((base for base in bases.values() if _contains(base.root, real)), None)
@@ -284,7 +291,7 @@ def resolve_base(name: str | None, cwd: Path) -> Base:
         if base is None:
             raise KnowledgeError(f"unknown base {name!r}; registered bases: {registered}")
     else:
-        base = _containing(bases, cwd)
+        base = base_for_path(bases, cwd)
         if base is None:
             raise KnowledgeError(
                 f"{cwd} is not inside any registered base root; registered bases: {registered}; "
@@ -355,15 +362,20 @@ def _stored_path(root: Path) -> str:
     return root.as_posix()
 
 
+def _count(directory: Path) -> int:
+    return sum(1 for path in directory.glob("*.md") if path.is_file())
+
+
 def _describe(base: Base) -> dict[str, Any]:
-    entries = base.root / KNOWLEDGE_DIRECTORY / "entries"
+    knowledge = base.root / KNOWLEDGE_DIRECTORY
     available = base.root.is_dir()
     return {
         "name": base.name,
         "path": base.path,
         "root": str(base.root),
         "available": available,
-        "entries": sum(1 for path in entries.glob("*.md") if path.is_file()) if available else None,
+        "records": _count(knowledge / "entries") if available else None,
+        "drafts": _count(knowledge / "drafts") if available else None,
     }
 
 
@@ -418,7 +430,7 @@ def remove_base(name: str) -> dict[str, Any]:
 
 
 def list_bases() -> dict[str, Any]:
-    home = load_home(home_directory())
+    home = load_home(home_directory(), types=False)
     return {
         "home": str(home.directory),
         "bases": [_describe(home.bases[name]) for name in sorted(home.bases)],
