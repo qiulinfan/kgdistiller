@@ -172,6 +172,35 @@ def navigate(runtime: Runtime, root: Path, outside: Path) -> None:
             in packet["gaps"], f"pack not-packed gap missing: {packet['gaps']}")
 
 
+def obsidian(runtime: Runtime, root: Path, outside: Path) -> None:
+    """Install the plugin by base name, then again from the base root with settings and a link format to keep."""
+    plugin_root = root / ".obsidian/plugins/kgdistiller"
+    settings = plugin_root / "data.json"
+
+    def read(path: Path) -> Any:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    plugin = runtime.object("obsidian", "install", "--base", "smoke", cwd=outside)
+    require(plugin.get("status") == "installed", f"Obsidian plugin install status mismatch: {plugin}")
+    for name in ("main.js", "manifest.json", "styles.css"):
+        require((plugin_root / name).is_file(), f"installed Obsidian plugin is missing {name}")
+    require(read(root / ".obsidian/community-plugins.json") == ["kgdistiller"],
+            "Obsidian plugin was not configured as enabled")
+    require(read(settings) == {"hiddenKnowledgeEnabled": True}, "hidden indexing was not enabled")
+    require(plugin.get("warnings") == [], f"unexpected Obsidian install warnings: {plugin.get('warnings')}")
+
+    settings.write_text(json.dumps({"hiddenKnowledgeEnabled": False, "showDrafts": False}), encoding="utf-8")
+    (root / ".obsidian/app.json").write_text(json.dumps({"newLinkFormat": "relative"}), encoding="utf-8")
+    again = runtime.object("obsidian", "install", cwd=root)
+    require(again.get("status") == "current", f"Obsidian plugin reinstall status mismatch: {again}")
+    require(read(settings) == {"hiddenKnowledgeEnabled": True, "showDrafts": False},
+            "plugin settings were not merged")
+    warnings = again.get("warnings")
+    require(isinstance(warnings, list) and len(warnings) == 1 and "newLinkFormat" in warnings[0],
+            f"relative newLinkFormat was not reported: {warnings}")
+    runtime.text("obsidian", "install", cwd=outside, expect=1)
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="kgdistiller-wheel-runtime-") as raw:
         temporary = Path(raw).resolve()
@@ -239,20 +268,15 @@ def main() -> int:
         require([link["role"] for link in record["in"]] == ["premise"], "get in-links mismatch")
         navigate(runtime, root, outside)
 
-        plugin = runtime.object("obsidian", "install", "--base", "smoke", cwd=outside)
-        require(plugin.get("status") == "installed", "Obsidian plugin install status mismatch")
-        for name in ("main.js", "manifest.json", "styles.css"):
-            require((root / ".obsidian/plugins/kgdistiller" / name).is_file(),
-                    f"installed Obsidian plugin is missing {name}")
-        require(json.loads((root / ".obsidian/community-plugins.json").read_text(encoding="utf-8"))
-                == ["kgdistiller"], "Obsidian plugin was not configured as enabled")
+        obsidian(runtime, root, outside)
 
         require(not any(".sqlite" in path.name for path in root.rglob("*")), "the index was written into the base")
         require(not (runtime.user / ".knowledge").exists(), "the runtime wrote to the default user home")
 
     print(
         "installed command, base add, sheet and accept, check --fix-lines, index, search (including CJK), "
-        "resolve, get, neighbors, browse, pack and Obsidian plugin smoke passed"
+        "resolve, get, neighbors, browse, pack and Obsidian plugin install (hidden indexing and the "
+        "newLinkFormat warning) smoke passed"
     )
     return 0
 

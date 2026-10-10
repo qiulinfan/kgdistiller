@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from kgdistiller.home import KnowledgeError, knowledge_root, resolve_base
+from kgdistiller.home import KnowledgeError, resolve_base
 
 
 def pretty_json(value: Any) -> str:
@@ -191,15 +191,16 @@ def parse_args() -> argparse.Namespace:
 
     obsidian_command = commands.add_parser("obsidian", help="manage kgdistiller's integration with an Obsidian vault")
     obsidian_commands = obsidian_command.add_subparsers(dest="obsidian_command", required=True)
-    obsidian_install = obsidian_commands.add_parser("install", help="install the bundled kgdistiller plugin into the base root")
+    obsidian_install = obsidian_commands.add_parser(
+        "install",
+        help=(
+            "install or update the bundled kgdistiller plugin in a registered base's vault, enable it "
+            "and its hidden-folder indexing, and warn about relative link formats"
+        ),
+    )
     obsidian_install.add_argument(
         "--base", metavar="NAME",
         help="registered base to use; defaults to the base whose root contains the working directory",
-    )
-    obsidian_install.add_argument("--replace", action="store_true", help="atomically update an existing kgdistiller plugin bundle")
-    obsidian_install.add_argument(
-        "--no-enable", action="store_false", dest="enable",
-        help="install the plugin files without adding kgdistiller to community-plugins.json",
     )
 
     claude_command = commands.add_parser("claude", help="link or verify the Claude Code integration")
@@ -303,9 +304,8 @@ def _obsidian(args: argparse.Namespace) -> int:
     from .obsidian_plugin import ObsidianPluginError, install_obsidian_plugin
 
     base = resolve_base(args.base, Path.cwd())
-    knowledge_root(base.root)
     try:
-        result = install_obsidian_plugin(base.root, replace=args.replace, enable=args.enable)
+        result = install_obsidian_plugin(base)
     except ObsidianPluginError as error:
         _error("kgdistiller-obsidian-plugin-error", "obsidian-plugin-install-failed", str(error))
         return 1

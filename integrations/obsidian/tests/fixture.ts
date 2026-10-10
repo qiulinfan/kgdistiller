@@ -54,6 +54,15 @@ export function recordFixture(): FrontmatterRecord[] {
       label: "Null set implies measure zero", kind: "implies", ...SOURCE,
       premise: ["[[null-set]]"], conclusion: ["[[measure]]"],
     }),
+    // a second source prefix; a pending term sharing a name key with "measurable space"; understanding absent
+    entry("sigma-finite", {
+      label: "Sigma-finite measure", kind: "definition", source: "papers/a.md", lines: "2-4", requires: ["Measurable-Space"],
+    }),
+    // a binary relation that is understood, from the second source
+    entry("sigma-finite-generalizes-measure", {
+      label: "Sigma-finite generalizes measure", kind: "generalizes", source: "papers/a.md", lines: "5", understanding: "understood",
+      general: ["[[sigma-finite]]"], specific: ["[[measure]]"],
+    }),
     // not records: other knowledge folders and ordinary notes are ignored
     { path: ".knowledge/sheets/notes/chapter.tex.md", frontmatter: {} },
     { path: "notes/chapter.md", frontmatter: { label: "Chapter", kind: "definition" } },

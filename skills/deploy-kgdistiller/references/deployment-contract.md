@@ -195,10 +195,16 @@ Record the installed kgdistiller version and full product commit when
 discoverable. kgdistiller has no publishing surface; websites, course
 registries and HTML rendering belong to the repositories that own the notes.
 
-`kgd obsidian install --base NAME [--replace]` installs the bundled plugin; the
-owner then enables **Index hidden knowledge folder** in its settings so
-Obsidian indexes `.knowledge/`. The plugin reads record frontmatter live from
-Obsidian's metadata cache; there is nothing to export.
+`kgd obsidian install --base NAME` installs or updates the bundled plugin in a
+registered base's vault, after the owner has opened the root as a vault once.
+It copies `main.js`, `manifest.json` and `styles.css` into
+`<root>/.obsidian/plugins/kgdistiller/`, enables the plugin in
+`.obsidian/community-plugins.json` and sets `hiddenKnowledgeEnabled` to `true`
+in the plugin's `data.json`, keeping its other keys, so Obsidian indexes
+`.knowledge/`. It warns when `.obsidian/app.json` sets `newLinkFormat` to
+`relative`; report the warning and never edit `app.json` unasked. It refuses a
+root that is not a registered base. The plugin is desktop only and reads record
+frontmatter live from Obsidian's metadata cache.
 
 `kgdistiller codex link` and `kgdistiller claude link` treat installed copies
 as product-owned: `doctor` reports a copy that differs from the product source,

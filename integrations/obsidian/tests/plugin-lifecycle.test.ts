@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const controls = vi.hoisted(() => ({
-  headings: [] as string[], mobile: false, stored: null as Record<string, unknown> | null,
+  headings: [] as string[], stored: null as Record<string, unknown> | null,
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
   viewRefresh: vi.fn(), viewApply: vi.fn(),
   commands: [] as Array<{ id: string; callback: () => void }>,
   settings: [] as Array<{
-    name: string; description?: string; disabled?: boolean;
-    textChange?: (value: string) => void | Promise<void>;
+    name: string; description?: string;
     toggleChange?: (value: boolean) => void | Promise<void>;
     buttonClick?: () => void | Promise<void>;
   }>,
@@ -30,19 +29,9 @@ vi.mock("obsidian", () => {
     setName(name: string): this { this.record.name = name; return this; }
     setHeading(): this { controls.headings.push(this.record.name); return this; }
     setDesc(description: string): this { this.record.description = description; return this; }
-    addText(callback: (text: unknown) => void): this {
-      const control = {
-        setPlaceholder: () => control, setValue: () => control,
-        setDisabled: (value: boolean) => { this.record.disabled = value; return control; },
-        onChange: (fn: (value: string) => void | Promise<void>) => { this.record.textChange = fn; return control; },
-      };
-      callback(control); return this;
-    }
-    addTextArea(callback: (text: unknown) => void): this { return this.addText(callback); }
     addToggle(callback: (toggle: unknown) => void): this {
       const control = {
         setValue: () => control,
-        setDisabled: (value: boolean) => { this.record.disabled = value; return control; },
         onChange: (fn: (value: boolean) => void | Promise<void>) => { this.record.toggleChange = fn; return control; },
       };
       callback(control); return this;
@@ -50,7 +39,6 @@ vi.mock("obsidian", () => {
     addButton(callback: (button: unknown) => void): this {
       const control = {
         setButtonText: () => control,
-        setDisabled: (value: boolean) => { this.record.disabled = value; return control; },
         onClick: (fn: () => void | Promise<void>) => { this.record.buttonClick = fn; return control; },
       };
       callback(control); return this;
@@ -60,11 +48,10 @@ vi.mock("obsidian", () => {
   class TFile { path = ""; }
   const debounce = (callback: () => void) => Object.assign(() => callback(), { cancel: () => undefined, run: () => undefined });
   return { Plugin, PluginSettingTab, Setting, ItemView, TFile, debounce, setIcon: () => undefined,
-    Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path,
-    Platform: { get isMobile() { return controls.mobile; } } };
+    Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path };
 });
-vi.mock("../src/hidden-knowledge", () => ({ DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS: [], HiddenKnowledgeIndexer: class {
-  configure(enabled: boolean, exclusions: string[]): unknown { return controls.configure(enabled, exclusions); }
+vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
+  configure(enabled: boolean): unknown { return controls.configure(enabled); }
   rescan(): unknown { return controls.rescan(); }
   dispose(): void { controls.dispose(); }
 } }));
@@ -73,9 +60,11 @@ vi.mock("../src/view", () => ({ KGDISTILLER_ICON: "network", VIEW_TYPE_KGDISTILL
 
 import { TFile } from "obsidian";
 
+import { defaultFilters, graphElements, graphModel, type GraphElementData, type GraphFilters } from "../src/graph-model";
 import KgdistillerPlugin from "../src/main";
 import { DEFAULT_SETTINGS, KgdistillerSettingTab } from "../src/settings";
 import { KgdistillerGraphView } from "../src/view";
+import { recordFixture } from "./fixture";
 
 const fileAt = (path: string): TFile => Object.assign(new TFile(), { path });
 type Handler = (...args: unknown[]) => void;
@@ -117,7 +106,7 @@ function showSettings(plugin: KgdistillerPlugin): KgdistillerSettingTab {
 }
 beforeEach(() => {
   controls.headings.length = 0; controls.commands.length = 0; controls.settings.length = 0;
-  controls.mobile = false; controls.stored = null;
+  controls.stored = null;
   vi.clearAllMocks();
   controls.configure.mockImplementation(async (enabled: boolean) => ({ state: enabled ? "enabled" : "disabled" }));
   controls.rescan.mockResolvedValue({ state: "enabled" });
@@ -139,7 +128,7 @@ describe("hidden knowledge lifecycle", () => {
   it("keeps existing installs disabled and ignores keys outside the defaults", async () => {
     controls.stored = { showDrafts: false, retiredSetting: "old/graph.json", unexpected: false };
     const plugin = pluginFixture(); await plugin.onload();
-    expect(controls.configure).toHaveBeenCalledWith(false, []);
+    expect(controls.configure).toHaveBeenCalledWith(false);
     expect(plugin.settings.showDrafts).toBe(false);
     for (const key of ["retiredSetting", "unexpected"]) expect(plugin.settings).not.toHaveProperty(key);
     expect(controls.notice).not.toHaveBeenCalled();
@@ -149,7 +138,7 @@ describe("hidden knowledge lifecycle", () => {
     let finish!: (status: unknown) => void;
     controls.configure.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     const plugin = pluginFixture(); const loading = plugin.onload();
-    await vi.waitFor(() => expect(controls.configure).toHaveBeenCalledWith(true, []));
+    await vi.waitFor(() => expect(controls.configure).toHaveBeenCalledWith(true));
     expect(controls.registerView).not.toHaveBeenCalled();
     finish({ state: "enabled" }); await loading;
     expect(plugin.hiddenKnowledgeStatus.state).toBe("enabled");
@@ -169,8 +158,8 @@ describe("hidden knowledge lifecycle", () => {
     const plugin = pluginFixture(); await plugin.onload(); controls.configure.mockClear();
     plugin.settings.showDrafts = false; await plugin.savePluginSettings();
     expect(controls.configure).not.toHaveBeenCalled(); expect(controls.rescan).not.toHaveBeenCalled();
-    plugin.settings.hiddenKnowledgeExclusions = ["archive"]; await plugin.savePluginSettings();
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true, ["archive"]);
+    plugin.settings.hiddenKnowledgeEnabled = false; await plugin.savePluginSettings();
+    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(false);
   });
   it("rescans an enabled indexer on explicit request", async () => {
     controls.stored = { hiddenKnowledgeEnabled: true };
@@ -185,18 +174,10 @@ describe("hidden knowledge lifecycle", () => {
     plugin.settings.hiddenKnowledgeEnabled = true;
     const firstSave = plugin.savePluginSettings();
     await vi.waitFor(() => expect(controls.configure).toHaveBeenCalledTimes(2));
-    plugin.settings.hiddenKnowledgeExclusions = ["archive"];
+    plugin.settings.hiddenKnowledgeEnabled = false;
     await plugin.savePluginSettings();
     finish({ state: "error", message: "stale failure" }); await firstSave;
-    expect(plugin.hiddenKnowledgeStatus).toEqual({ state: "enabled" });
-  });
-  it("leaves the graph available on mobile without enabling hidden indexing", async () => {
-    controls.mobile = true; controls.stored = { hiddenKnowledgeEnabled: true };
-    const plugin = pluginFixture(); await plugin.onload();
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(false, []);
-    expect(plugin.hiddenKnowledgeStatus).toMatchObject({ state: "unsupported", message: expect.stringContaining("desktop only") });
-    expect(controls.registerView).toHaveBeenCalledOnce(); showSettings(plugin);
-    expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.disabled).toBe(true);
+    expect(plugin.hiddenKnowledgeStatus).toEqual({ state: "disabled" });
   });
   it.each(["enabled", "loaded"])("rejects the external hidden-folder indexer when %s", async (state) => {
     controls.stored = { hiddenKnowledgeEnabled: true };
@@ -205,10 +186,10 @@ describe("hidden knowledge lifecycle", () => {
     if (state === "enabled") plugins.enabledPlugins.add("hidden-folders-access");
     else plugins.plugins["hidden-folders-access"] = {};
     await plugin.onload();
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(false, []);
+    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(false);
     expect(plugin.hiddenKnowledgeStatus).toMatchObject({ state: "unsupported", message: expect.stringContaining("Hidden Folders Access") });
     plugins.enabledPlugins.clear(); plugins.plugins = {}; await plugin.rescanHiddenKnowledge();
-    expect(controls.configure).toHaveBeenLastCalledWith(true, []);
+    expect(controls.configure).toHaveBeenLastCalledWith(true);
     expect(plugin.hiddenKnowledgeStatus.state).toBe("enabled");
   });
   it("reports a missing root and clears that status after a successful rescan", async () => {
@@ -229,65 +210,36 @@ describe("hidden knowledge lifecycle", () => {
 });
 
 describe("stored settings", () => {
-  it("defaults to drawing drafts and indexing the whole knowledge folder", () => {
-    expect(DEFAULT_SETTINGS).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: false, hiddenKnowledgeExclusions: [] });
+  it("defaults to drawing drafts with hidden indexing off until kgd obsidian install turns it on", () => {
+    expect(DEFAULT_SETTINGS).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: false });
   });
-  it("replaces wrongly typed stored values with defaults and reports them", async () => {
-    controls.stored = { hiddenKnowledgeExclusions: "archive", showDrafts: "no", hiddenKnowledgeEnabled: true, unknown: true };
+  it("replaces wrongly typed stored values with defaults and reports only those", async () => {
+    controls.stored = { showDrafts: "no", hiddenKnowledgeEnabled: true, unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
-    expect(plugin.settings.hiddenKnowledgeExclusions).toEqual([]);
-    expect(plugin.settings.showDrafts).toBe(true);
-    expect(plugin.settings.hiddenKnowledgeEnabled).toBe(true);
-    expect(plugin.settings).not.toHaveProperty("unknown");
-    expect(controls.notice).toHaveBeenCalledWith(expect.stringContaining("showDrafts, hiddenKnowledgeExclusions"));
+    expect(plugin.settings).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: true });
+    expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: showDrafts."));
+    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(() => showSettings(plugin)).not.toThrow();
-  });
-  it("rejects exclusion lists with non-string entries", async () => {
-    controls.stored = { hiddenKnowledgeEnabled: true, hiddenKnowledgeExclusions: ["archive", null] };
-    const plugin = pluginFixture(); await plugin.onload();
-    expect(controls.configure).toHaveBeenCalledWith(true, []);
-    expect(controls.notice).toHaveBeenCalledWith(expect.stringContaining("hiddenKnowledgeExclusions"));
   });
 });
 
 describe("hidden knowledge settings", () => {
-  it("excludes nothing by default and reconfigures the indexer when the exclusions change", async () => {
-    controls.stored = { hiddenKnowledgeEnabled: true };
-    const plugin = pluginFixture(); await plugin.onload();
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true, []);
-    controls.configure.mockClear(); showSettings(plugin);
-    const exclusions = controls.settings.find((setting) => setting.name === "Excluded folders");
-    expect(exclusions?.description).toContain("stay out of native indexing");
-    await exclusions?.textChange?.("archive, scratch\nreviews/old");
-    expect(controls.configure).not.toHaveBeenCalled();
-    await exclusions?.buttonClick?.();
-    expect(plugin.settings.hiddenKnowledgeExclusions).toEqual(["archive", "scratch", "reviews/old"]);
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true, ["archive", "scratch", "reviews/old"]);
-    controls.configure.mockClear();
-    plugin.settings.hiddenKnowledgeExclusions = []; await plugin.savePluginSettings();
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true, []);
-  });
   it("always indexes the product .knowledge folder and ignores a stored folder path", async () => {
     controls.stored = { hiddenKnowledgeEnabled: true, hiddenKnowledgeFolder: ".research" };
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true, []);
+    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
-    expect(controls.settings.map((setting) => setting.name)).not.toContain("Hidden folder path");
-  });
-  it("drops leading and trailing slashes from typed exclusions", async () => {
-    controls.stored = { hiddenKnowledgeEnabled: true };
-    const plugin = pluginFixture(); await plugin.onload(); controls.configure.mockClear(); showSettings(plugin);
-    const exclusions = controls.settings.find((setting) => setting.name === "Excluded folders");
-    await exclusions?.textChange?.("archive/, /scratch/\n//reviews/old/, /");
-    await exclusions?.buttonClick?.();
-    expect(plugin.settings.hiddenKnowledgeExclusions).toEqual(["archive", "scratch", "reviews/old"]);
-    expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true, ["archive", "scratch", "reviews/old"]);
+    expect(controls.settings.map((setting) => setting.name)).toEqual([
+      "Graph view", "Show drafts", "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
+    ]);
+    expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
+      .toContain("kgd obsidian install");
   });
   it("persists enable changes and exposes the rescan action", async () => {
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
-    expect(controls.saveData).toHaveBeenCalledWith(expect.objectContaining({ hiddenKnowledgeEnabled: true }));
-    expect(controls.configure).toHaveBeenLastCalledWith(true, []);
+    expect(controls.saveData).toHaveBeenCalledWith({ showDrafts: true, hiddenKnowledgeEnabled: true });
+    expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();
     expect(controls.rescan).toHaveBeenCalledOnce();
   });
@@ -381,13 +333,91 @@ describe("live record model", () => {
   });
 });
 
+describe("graph from the mocked metadata cache", () => {
+  const ALL: GraphFilters = defaultFilters(true);
+  const fixture = (): Record<string, Record<string, unknown>> =>
+    Object.fromEntries(recordFixture().map((item) => [item.path, { ...(item.frontmatter ?? {}) }]));
+  async function loaded() {
+    const state = harness();
+    await state.plugin.onload();
+    for (const [path, frontmatter] of Object.entries(fixture())) state.frontmatter.set(path, frontmatter);
+    state.emit("cache", "resolved");
+    const draw = (filters: GraphFilters = ALL): Map<string, GraphElementData> => new Map(
+      graphElements(graphModel(state.plugin.knowledgeRecords()), filters)
+        .map((element) => [String(element.data.id), { ...(element.data as GraphElementData), classes: element.classes }]),
+    );
+    return { ...state, draw };
+  }
+  const record = (id: string): string => `record:.knowledge/entries/${id}.md`;
+  const elementsOf = (all: Map<string, GraphElementData>, element: string): GraphElementData[] =>
+    [...all.values()].filter((item) => item.element === element);
+
+  it("reads only entries and drafts from the cache", async () => {
+    const { plugin } = await loaded();
+    expect(plugin.knowledgeRecords()).toHaveLength(13);
+  });
+
+  it("draws binary, n-ary, self, relation-as-participant, draft, foreign and pending cases", async () => {
+    const { draw } = await loaded();
+    const all = draw();
+    // binary: one directed typed edge
+    expect(all.get(record("sigma-finite-generalizes-measure"))).toMatchObject({
+      element: "relation-edge", source: record("sigma-finite"), target: record("measure"),
+    });
+    // n-ary: a diamond with one role edge per value
+    expect(all.get(record("measure-space-triple"))).toMatchObject({ element: "relation" });
+    expect(elementsOf(all, "role").filter((item) => item.source === record("measure-space-triple"))).toHaveLength(3);
+    // self: a loop
+    expect(all.get(record("measure-equals-itself"))).toMatchObject({ source: record("measure"), target: record("measure") });
+    // relation as participant: the targeted relations are diamonds
+    expect(all.get(record("sigma-algebra-prerequisite-for-measure"))).toMatchObject({ element: "relation" });
+    expect(all.get(record("triple-contrasts-prerequisite"))).toMatchObject({
+      element: "relation-edge", source: record("measure-space-triple"), target: record("sigma-algebra-prerequisite-for-measure"),
+    });
+    // draft: classed and hidden by the toggle
+    const draftNode = all.get("record:.knowledge/drafts/null-set.md");
+    expect(String((draftNode as { classes?: string }).classes)).toContain("kgd-draft");
+    expect([...draw({ ...ALL, showDrafts: false }).values()].some((item) => item.draft)).toBe(false);
+    // foreign: a grey stub
+    expect(all.get("stub:notes:kl-divergence")).toMatchObject({ element: "stub", uid: "notes:kl-divergence" });
+    // pending: no ghost by default, one per name key when shown
+    expect(elementsOf(all, "pending")).toEqual([]);
+    expect(elementsOf(draw({ ...ALL, showPending: true }), "pending").map((item) => item.id).sort())
+      .toEqual(["pending:finite sets", "pending:measurable space"]);
+  });
+
+  it("updates the drawn graph on cache changes, deletions and renames", async () => {
+    const { frontmatter, emit, draw } = await loaded();
+    expect(draw().has("dangling:missing-record")).toBe(true);
+    emit("cache", "changed", fileAt(".knowledge/entries/missing-premise.md"), "", {
+      frontmatter: { ...frontmatter.get(".knowledge/entries/missing-premise.md"), premise: ["[[sigma-algebra]]"] },
+    });
+    expect(draw().has("dangling:missing-record")).toBe(false);
+    expect(draw().get(record("missing-premise"))).toMatchObject({ source: record("sigma-algebra"), target: record("measure-space") });
+
+    emit("cache", "deleted", fileAt(".knowledge/entries/kl-divergence-example.md"), null);
+    expect(draw().has("stub:notes:kl-divergence")).toBe(false);
+
+    frontmatter.set(".knowledge/entries/null-set.md", frontmatter.get(".knowledge/drafts/null-set.md")!);
+    emit("vault", "rename", fileAt(".knowledge/entries/null-set.md"), ".knowledge/drafts/null-set.md");
+    const renamed = draw();
+    expect(renamed.has("record:.knowledge/drafts/null-set.md")).toBe(false);
+    expect(renamed.get(record("null-set"))).toMatchObject({ element: "node", draft: false });
+    expect(renamed.get("record:.knowledge/drafts/null-set-implies-measure-zero.md"))
+      .toMatchObject({ source: record("null-set"), target: record("measure") });
+  });
+});
+
 describe("graph view", () => {
   async function view(records: Array<{ path: string; frontmatter: Record<string, unknown> }>, kind = "") {
     const { KgdistillerGraphView: View } = await vi.importActual<typeof import("../src/view")>("../src/view");
-    const instance = Object.create(View.prototype) as Record<string, unknown> & { refresh(): void };
+    const instance = Object.create(View.prototype) as Record<string, unknown> & {
+      refresh(): void; statusText(showing?: { shown: number; total: number }): string;
+    };
     Object.assign(instance, {
       host: { settings: { ...DEFAULT_SETTINGS }, knowledgeRecords: () => records },
-      filters: { kind, showDrafts: true }, model: null, toolbarEl: {}, graphEl: {},
+      filters: { ...defaultFilters(true), kind }, mode: "full", depth: 1, activePath: undefined,
+      model: null, toolbarEl: {}, graphEl: {},
       renderToolbar: vi.fn(), renderGraph: vi.fn(), setStatus: vi.fn(),
     });
     instance.refresh();
@@ -401,7 +431,8 @@ describe("graph view", () => {
       { path: ".knowledge/drafts/null-set.md", frontmatter: { label: "Null set", kind: "definition" } },
     ]);
     expect(instance.renderGraph).toHaveBeenCalledOnce();
-    expect(instance.setStatus).toHaveBeenCalledWith("1 nodes · 1 relations · 1 drafts");
+    expect(instance.statusText()).toBe("1 nodes · 1 relations · 1 drafts");
+    expect(instance.statusText({ shown: 2, total: 3 })).toBe("1 nodes · 1 relations · 1 drafts · showing 2 of 3");
   });
 
   it("clears a kind filter that no longer matches any record", async () => {

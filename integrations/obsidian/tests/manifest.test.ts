@@ -12,7 +12,7 @@ describe("Obsidian plugin metadata", () => {
     expect(manifest.id).toBe("kgdistiller");
     expect(packageJson.version).toBe(manifest.version);
     expect(versions[manifest.version as string]).toBe(manifest.minAppVersion);
-    expect(manifest.isDesktopOnly).toBe(false);
+    expect(manifest.isDesktopOnly).toBe(true);
     expect(manifest.minAppVersion).toBe("1.13.7");
     expect(await readJson("../../manifest.json")).toEqual(manifest);
     expect(await readJson("../../versions.json")).toEqual(versions);

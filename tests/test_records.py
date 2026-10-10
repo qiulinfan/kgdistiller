@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from kgdistiller.records import (
 from tests.knowledge_fixture import render_record
 
 GRAMMAR = Path(__file__).parent / "fixtures" / "link-grammar.json"
+CASE_FOLDS = Path(__file__).parents[1] / "integrations" / "obsidian" / "src" / "case-folding.json"
 FRONTMATTER = "label: Measure space\nkind: definition\nsource: notes/a.txt\nlines: 3-4"
 
 
@@ -138,6 +140,18 @@ class ValueGrammarTest(unittest.TestCase):
                 else:
                     got = {"uid": value.uid} if value.uid is not None else {"term": value.term}
                 self.assertEqual(case["expect"], got)
+
+    def test_plugin_case_folding_table_is_python_casefold(self) -> None:
+        # The plugin folds with this table where casefold and lowercase differ, and
+        # lowercases every other character on its own, which is exactly `fold`.
+        table = json.loads(CASE_FOLDS.read_text(encoding="utf-8"))
+        expected = {}
+        for point in range(0x110000):
+            char = chr(point)
+            if unicodedata.category(char) not in {"Cn", "Cs"} and char.casefold() != char.lower():
+                expected[char] = char.casefold()
+        assigned = {char: folded for char, folded in table.items() if unicodedata.category(char) != "Cn"}
+        self.assertEqual(expected, assigned)
 
     def test_record_values_are_parsed_with_the_record_base(self) -> None:
         with self.assertRaises(RecordError) as caught:

@@ -32,6 +32,8 @@ DELETED_COMMAND_RE = re.compile(
     r"|kg_(?:status|resolve_concepts|get_node|expand|ppr|build_context|compiled_knowledge)\b"
     r"|kgd[_]inventory|submit[_]selection|omp[_]compiled[_]tools|compiled[_]retrieval"
     r"|Compiled[L]ibrary|compiled[-]retrieval[.]md|omp[-]compiled[-]tools"
+    r"|obsidian[ ]install[^|\n]*--replace|--no[-]enable"
+    r"|Planned[ ]for the plugin"
 )
 
 
@@ -40,11 +42,18 @@ def _frontmatter(text: str) -> list[str]:
 
 
 def _product_texts() -> dict[Path, str]:
+    """Every text that describes the current product: Skills, presets, docs and agent guidance.
+
+    The changelog and the release notes record removals; README files are owner-owned.
+    None of them are scanned.
+    """
     paths = [
         *(ROOT / "skills").rglob("*"),
         *(ROOT / ".claude" / "agents").glob("*"),
         *(ROOT / ".codex" / "agents").glob("*"),
-        ROOT / "docs" / "product-workflows.md",
+        *(ROOT / "docs").glob("*.md"),
+        ROOT / "AGENTS.md",
+        ROOT / "CLAUDE.md",
     ]
     return {path: path.read_text(encoding="utf-8") for path in paths if path.is_file()}
 

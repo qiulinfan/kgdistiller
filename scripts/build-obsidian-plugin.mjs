@@ -47,6 +47,9 @@ if (!verifyOnly) {
   assert.ok(bundle.includes("Copyright (c) 2016-2026, The Cytoscape Consortium."));
   assert.ok(bundle.includes("Permission is hereby granted"));
   assert.ok(bundle.includes("The above copyright notice and this permission notice"));
+  assert.ok(bundle.includes("Copyright (c) 2018 - present, iVis-at-Bilkent."), "Plugin bundle must retain the cytoscape-fcose license");
+  assert.ok(bundle.includes("Copyright (c) 2019 - present, iVis@Bilkent."), "Plugin bundle must retain the cose-base license");
+  assert.ok(bundle.includes("Copyright (c) 2019 iVis@Bilkent"), "Plugin bundle must retain the layout-base license");
   for (const name of ["main.js", "styles.css"]) await copyFile(join(integration, name), join(root, name));
 }
 console.log(`kgdistiller Obsidian ${manifest.version}: root metadata verified${verifyOnly ? "" : "; installable root assets built"}`);

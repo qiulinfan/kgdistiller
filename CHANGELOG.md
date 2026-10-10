@@ -185,21 +185,39 @@ All notable changes are documented here.
   `doctor` reports a differing copy, and relinking replaces it or removes a
   retired one, discarding local edits to installed files.
 
-### Obsidian plugin
+### Obsidian plugin 0.1.5 (unreleased)
 
-- Release Obsidian plugin 0.1.5, versioned independently of the Python core
-  (release notes in `.github/obsidian-release-notes.md`). The typed graph is
-  built live from Obsidian's metadata cache of `.knowledge/entries/` and
-  `.knowledge/drafts/`, with link resolution identical to `kgd` and no feed,
-  polling or database: node records as nodes, `requires` as dashed arrows,
-  relations with two link values as typed edges or loops, every other relation
-  as a diamond with role-labelled edges, drafts dashed behind a toggle, foreign
-  links as stubs and missing targets marked dangling. Hidden-folder indexing is
-  fixed to `.knowledge` with an exclusion list that is empty by default. The
-  feed contract, the graph path and the source and definition layers are gone.
-- Package that plugin in the Python distribution with cross-platform
-  `kgdistiller obsidian install [--base B]`, with atomic replacement and
-  settings preservation.
+- Version 0.1.5 of the Obsidian plugin, versioned independently of the Python
+  core (release notes in `.github/obsidian-release-notes.md`), is desktop only
+  (`isDesktopOnly`).
+- Build the typed graph live from Obsidian's metadata cache of
+  `.knowledge/entries/` and `.knowledge/drafts/`, with link resolution and
+  name keys matching `kgd` (casefolding through a table that the Python suite
+  checks against `unicodedata`) and no feed, polling or database. Node records
+  are nodes filled by kind from a fixed palette over the model's sorted kinds;
+  borders show understanding (dashed grey unknown, amber not yet understood,
+  green understood); `requires` links are dashed arrows; relations with two
+  link values are typed edges or loops; every other relation is a diamond with
+  role-labelled edges; drafts have a dashed outline, a translucent fill and a
+  `draft` badge; foreign links are grey stubs and missing targets red.
+  Pending terms are optional ghost nodes, off by default, one per name key.
+- Show the neighbourhood of the active record, source or sheet by default, at
+  depth 1 or 2, with a full-graph toggle; filter by kind, class,
+  understanding, source prefix and drafts. Lay the graph out with
+  cytoscape-fcose.
+- Add a details pane with the record's fields, its body and Evidence rendered
+  through `MarkdownRenderer`, and buttons that open the record, open the source
+  at its first line and open the source's sheet when it exists.
+- Remove the feed contract, the graph path, the source and definition layers,
+  the focus and leaf re-checks, the mobile code paths, the reference-edge
+  layer and the configurable hidden folder path (the whole `.knowledge` folder
+  is indexed).
+- Package the plugin in the Python distribution with cross-platform
+  `kgd obsidian install [--base B]`. It installs into a registered base's vault
+  only, replaces an older bundle atomically, enables the plugin and its hidden
+  indexing (`hiddenKnowledgeEnabled` in `data.json`) while keeping every other
+  setting, and warns when the vault's `newLinkFormat` is `relative`. The
+  `--replace` and `--no-enable` flags are removed.
 
 ### Project
 
@@ -207,6 +225,11 @@ All notable changes are documented here.
 - Pin ruff 0.16.10 in the `dev` dependency group and run
   `ruff check src tests scripts` in CI.
 - Add `numpy>=2` to the `retrieval` extra and to the `dev` dependency group.
+- Add cytoscape-fcose 2.2.0 (with cose-base and layout-base) as a runtime
+  dependency of the Obsidian plugin bundle, with their full MIT notices in
+  `THIRD_PARTY_NOTICES.md` and the bundle.
+- Run the plugin's notice-asserting build and its vitest suite in CI on Linux,
+  macOS and Windows.
 - Rewrite the documentation around `docs/model.md`, `docs/retrieval.md`,
   `docs/obsidian.md`, `docs/deployment.md`, `docs/product-workflows.md` and
   `docs/release.md` and remove the superseded design documents; Git history is

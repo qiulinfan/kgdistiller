@@ -32,7 +32,6 @@ export interface HiddenKnowledgeStatus {
 }
 
 interface Session {
-  exclusions: string[];
   adapter: InternalAdapter;
   originalList: ListChild;
   originalReconcile: Reconcile;
@@ -46,22 +45,14 @@ interface Session {
 
 const root = KNOWLEDGE_DIRECTORY;
 
-/** Folders under the hidden root that stay out of native indexing; nothing by default. */
-export const DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS: readonly string[] = [];
-
 const under = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
-const excluded = (session: Session, path: string): boolean =>
-  session.exclusions.some((prefix) => under(path, `${root}/${prefix}`));
-const sameList = (left: readonly string[], right: readonly string[]): boolean =>
-  left.length === right.length && left.every((value, index) => value === right[index]);
 const missing = (error: unknown): boolean => typeof error === "object" && error !== null &&
   "code" in error && error.code === "ENOENT";
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /** The product's hidden knowledge tree joins the native Vault and metadata cache; no files are converted. */
 export class HiddenKnowledgeIndexer {
-  private desired: { enabled: boolean; exclusions: unknown } =
-    { enabled: false, exclusions: [...DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS] };
+  private enabled = false;
   private revision = 0;
   private disposed = false;
   private queue: Promise<void> = Promise.resolve();
@@ -74,11 +65,10 @@ export class HiddenKnowledgeIndexer {
     private readonly loadFilesystem: () => Filesystem = () => require("node:fs/promises") as Filesystem,
   ) {}
 
-  /** Exclusions are folder paths relative to the hidden root; each covers its whole subtree. */
-  configure(enabled: boolean, exclusions: unknown): Promise<HiddenKnowledgeStatus> {
+  /** Index the whole `.knowledge` tree when enabled; nothing under it needs excluding. */
+  configure(enabled: boolean): Promise<HiddenKnowledgeStatus> {
     if (this.disposed) return Promise.resolve({ state: "disposed" });
-    // Copy arrays only; any other stored value reaches validation unchanged.
-    this.desired = { enabled, exclusions: Array.isArray(exclusions) ? [...exclusions] : exclusions };
+    this.enabled = enabled;
     return this.schedule(false);
   }
 
@@ -132,17 +122,7 @@ export class HiddenKnowledgeIndexer {
   }
 
   private active(session: Session): boolean {
-    return !this.disposed && this.session === session && this.desired.enabled;
-  }
-
-  private validateExclusions(exclusions: unknown): string | undefined {
-    const valid = (entry: unknown): boolean => typeof entry === "string" && entry.trim() === entry &&
-      entry.split("/").every((part) => part !== "" && part !== "." && part !== ".." &&
-        !/[\\:\x00-\x1f]/.test(part));
-    if (!Array.isArray(exclusions) || !exclusions.every(valid)) {
-      return "Excluded folders must be relative folder paths under the hidden folder, without empty, \".\" or \"..\" segments.";
-    }
-    return undefined;
+    return !this.disposed && this.session === session && this.enabled;
   }
 
   private adapter(): InternalAdapter | undefined {
@@ -157,15 +137,12 @@ export class HiddenKnowledgeIndexer {
   }
 
   private async apply(revision: number, rescan: boolean): Promise<HiddenKnowledgeStatus> {
-    const { enabled } = this.desired;
-    const invalid = this.validateExclusions(this.desired.exclusions);
-    if (this.session && (!enabled || invalid)) {
+    const enabled = this.enabled;
+    if (this.session && !enabled) {
       await this.removeSession(true);
     }
     if (!this.current(revision)) return this.status;
     if (!enabled) return this.status = { state: "disabled" };
-    if (invalid) return this.status = { state: "invalid", message: invalid };
-    const exclusions = this.desired.exclusions as string[];
     const adapter = this.adapter();
     if (!adapter) return this.status = { state: "unsupported",
       message: "Hidden knowledge needs the supported desktop FileSystemAdapter internals." };
@@ -186,12 +163,8 @@ export class HiddenKnowledgeIndexer {
     }
     if (!this.current(revision)) return this.status;
     const existing = this.session;
-    const exclusionsChanged = existing !== undefined && !sameList(existing.exclusions, exclusions);
-    if (existing && !rescan && !exclusionsChanged) return this.status = { state: "enabled" };
-    // A changed exclusion list takes the rescan path: the absent sweep evicts newly
-    // excluded cache entries and the traversal admits newly included files.
-    if (existing) existing.exclusions = [...exclusions];
-    const session = existing ?? this.installHooks(adapter, exclusions);
+    if (existing && !rescan) return this.status = { state: "enabled" };
+    const session = existing ?? this.installHooks(adapter);
     try {
       // Both arguments are logical vault paths, not absolute filesystem paths.
       session.scanned = new Set<string>();
@@ -214,15 +187,15 @@ export class HiddenKnowledgeIndexer {
       }
     }
     if (!this.current(revision)) {
-      if (!this.disposed) await this.removeSession(!this.desired.enabled);
+      if (!this.disposed) await this.removeSession(!this.enabled);
       return this.status;
     }
     return this.status = { state: "enabled" };
   }
 
-  private installHooks(adapter: InternalAdapter, exclusions: readonly string[]): Session {
+  private installHooks(adapter: InternalAdapter): Session {
     const session: Session = {
-      exclusions: [...exclusions], adapter, originalList: adapter.listRecursiveChild, originalReconcile: adapter.reconcileFile,
+      adapter, originalList: adapter.listRecursiveChild, originalReconcile: adapter.reconcileFile,
       previousWatchers: new Map(Object.entries(adapter.watchers)), ownedWatchers: new Map(), reconciling: 0,
       listWrapper: async () => undefined, reconcileWrapper: async () => undefined,
     };
@@ -230,7 +203,6 @@ export class HiddenKnowledgeIndexer {
       const path = parent ? `${parent}/${name}` : name;
       if (this.disposed && session.reconciling && under(path, root)) return;
       if (!this.active(session) || !under(path, root)) return session.originalList.call(adapter, parent, name);
-      if (excluded(session, path)) return;
       await this.reconcile(session, path, normalizePath(path), true);
     };
     session.reconcileWrapper = async (path, normalized, silent) => {
@@ -238,8 +210,6 @@ export class HiddenKnowledgeIndexer {
       if (!this.active(session) || !under(normalized, root)) {
         return session.originalReconcile.call(adapter, path, normalized, silent);
       }
-      // Watcher events below an excluded folder are dropped, never handed to the native filter.
-      if (excluded(session, normalized) || excluded(session, path)) return;
       if (!under(path, root) || normalized !== normalizePath(path) ||
           !await this.safePhysicalPath(adapter, path) || !this.active(session)) return;
       const parent = path.slice(0, path.lastIndexOf("/"));
@@ -290,7 +260,7 @@ export class HiddenKnowledgeIndexer {
   }
 
   private async reconcile(session: Session, path: string, normalized: string, silent: boolean): Promise<void> {
-    if (!under(path, root) || excluded(session, path)) return;
+    if (!under(path, root)) return;
     const safe = await this.safePhysicalPath(session.adapter, path);
     if (!this.active(session)) return;
     if (!safe) {

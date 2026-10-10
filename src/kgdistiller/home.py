@@ -47,13 +47,6 @@ class LockConflict(KnowledgeError):
     """Raised when another kgdistiller writer holds the home lock."""
 
 
-def knowledge_root(root: Path) -> Path:
-    knowledge = root / KNOWLEDGE_DIRECTORY
-    if knowledge.is_symlink():
-        raise ValueError("knowledge tree must not be a symlink")
-    return knowledge
-
-
 def atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o644

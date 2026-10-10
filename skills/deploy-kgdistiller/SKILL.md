@@ -108,14 +108,25 @@ then shows each base's `records`, `drafts`, `indexed` count and `lag`.
 
 ## 6. Obsidian
 
+The owner opens the base root as a vault in Obsidian once, so that its
+`.obsidian` directory exists. Then:
+
 ```sh
-kgd obsidian install --base NAME --replace
+kgd obsidian install --base NAME
 ```
 
-Open the base root as the vault, reload Obsidian, then enable **Index hidden
-knowledge folder** in the kgdistiller plugin settings; until then the graph view
-is empty. The plugin reads record frontmatter live; there is nothing to export.
-Keep Obsidian's new-link format unset (shortest) or `absolute`.
+The command refuses a root that is not a registered base; run `kgd base add`
+first. It copies `main.js`, `manifest.json` and `styles.css` into
+`<root>/.obsidian/plugins/kgdistiller/` (updating an older bundle), enables the
+plugin in `.obsidian/community-plugins.json`, and sets `hiddenKnowledgeEnabled`
+to `true` in the plugin's `data.json` while keeping its other keys, so Obsidian
+indexes `.knowledge/`. The plugin is desktop only and reads record frontmatter
+live. Ask the owner to reload Obsidian.
+
+The result's `warnings` list reports `newLinkFormat` set to `relative` in
+`.obsidian/app.json`, which writes `../` links that the record link grammar
+rejects. Report the warning to the owner; never edit `app.json` unasked. Unset
+(shortest) and `absolute` are both fine.
 
 ## 7. Agent runtimes
 
@@ -149,7 +160,7 @@ and `remote confirmed` only after a successful push.
 Return the home path, each base's name, root, `records`, `drafts`, `indexed`
 and `lag` from `base list`, the `check` result, the `embedding` model id, the
 `index` report summary with `reused`, `embedded`, `unembedded` and `truncated`
-and the wall time of a restore, the plugin path when installed, both doctors'
-status, the installed version and commit when known, and Git state only as
+and the wall time of a restore, the plugin path, version and `hidden_indexing`
+result when installed with any `newLinkFormat` warning, both doctors' status, the installed version and commit when known, and Git state only as
 actually confirmed. Never include full source or record content, credentials or
 unbounded excerpts.

@@ -17,10 +17,11 @@ jobs:
         run: uv lock --check --no-sources
 
   obsidian-plugin:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: integrations/obsidian
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -28,12 +29,20 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: integrations/obsidian/package-lock.json
-      - run: node ../../scripts/build-obsidian-plugin.mjs --verify-only
-      - run: npm ci
-      - run: npm run check
+      - name: Verify root plugin metadata
+        run: node scripts/build-obsidian-plugin.mjs --verify-only
+      - name: Build the plugin and assert its license notices
+        run: npm run build
+      - name: Run the plugin test suite
+        run: npm test
       - name: Validate installable plugin files
-        run: test -s main.js && test -s manifest.json && test -s styles.css
+        shell: bash
+        run: |
+          test -s integrations/obsidian/main.js
+          test -s integrations/obsidian/manifest.json
+          test -s integrations/obsidian/styles.css
       - name: Upload plugin bundle
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: kgdistiller-obsidian

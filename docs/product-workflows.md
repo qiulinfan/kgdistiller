@@ -63,7 +63,7 @@ copies, discarding local edits to installed files.
 | `compile-knowledge-sheets` | `compile-knowledge-sheets` | author | Set the bounded scope; `kgd sheet FILE --json`; `resolve`/`search` for identity; drafts for new records; `kgd check --base B` with every draft passing; `kgd sheet FILE`; stop and report proposed changes to accepted records. |
 | `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; `kgd index`; report refused rows. |
 | `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search` (lexical, dense and name lanes), `resolve`, `get [--source-lines N]`, `neighbors` (closures), `browse` (bases, source trees, kind listings), `pack` (budgeted packets with gaps) or the MCP tools; deliver `source:lines` and quotes; on lag (`changed_files`, `unembedded` or `embedding_changed`) run `kgd index` and repeat; `--no-dense` / `no_dense` when the retrieval extra is missing. |
-| `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` and hidden indexing; `kgd claude link`/`kgd codex link` and both doctors. |
+| `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
 
 Step modes mean:
 

@@ -26,8 +26,20 @@ cache. Record text is encoded locally and never leaves the machine. Sources are
 registered UTF-8 text documents of any format; kgdistiller reads them as lines
 and never parses, executes or converts them. Records under each base's
 `.knowledge/` are the only knowledge; consistency with sources is checked by
-comparing text, not by stored content hashes. The Obsidian plugin reads record
-frontmatter from the vault's metadata cache and writes no knowledge.
+comparing text, not by stored content hashes.
+
+The Obsidian plugin is desktop only. It reads record frontmatter from the
+vault's metadata cache and, for the details pane, the selected record's file
+through the vault API; it opens sources and sheets in Obsidian and writes no
+knowledge. Its hidden-folder indexing exposes `.knowledge/` to Obsidian search
+and to the vault's other plugins. `kgd obsidian install` writes only
+`<root>/.obsidian/plugins/kgdistiller/{main.js,manifest.json,styles.css,data.json}`
+and `<root>/.obsidian/community-plugins.json` of a registered base (creating
+`.obsidian/plugins/` when missing), writing each file through a temporary
+sibling in the same directory that it removes again. It
+refuses unregistered roots, a symlinked `.knowledge` tree and symlinked
+destinations, and reads
+`.obsidian/app.json` only to warn about its link format.
 
 `$KGDISTILLER_HOME` (default `~/.knowledge`) is private owner data.
 `config.json` and `types/` hold local base paths, source globs and user-defined

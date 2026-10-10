@@ -130,7 +130,8 @@ class CommandSurfaceTest(unittest.TestCase):
             for arguments in (("agent", "status"), ("scan", "--file", "a.txt"), ("ingest", "plan", "r.json"),
                               ("capture", "prepare", "c.json"), ("export", "obsidian"), ("mcp", "--base", "kb"),
                               ("mcp", "--embedding"), ("search", "q", "--embedding"), ("search", "q", "--rerank"),
-                              ("harvest", "prepare", "x"),
+                              ("harvest", "prepare", "x"), ("obsidian", "install", "--replace"),
+                              ("obsidian", "install", "--no-enable"),
                               ("base", "list", "--base", "kb"), ("--base", "kb", "check")):
                 with self.subTest(arguments=arguments):
                     result = kgdistiller(*arguments, cwd=root)

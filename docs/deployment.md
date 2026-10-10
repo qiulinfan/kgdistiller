@@ -282,20 +282,29 @@ above the largest `pack` budget a run uses so packets reach the model whole.
 
 ## Obsidian plugin
 
+First open the base root as a vault in Obsidian once, so that its `.obsidian`
+directory exists. Then install the plugin and reload Obsidian:
+
 ```sh
 kgd obsidian install --base research
-kgd obsidian install --base research --replace
 ```
 
-The installer copies `main.js`, `manifest.json` and `styles.css` into
-`<root>/.obsidian/plugins/kgdistiller/`, preserves `data.json`, and enables the
-plugin unless `--no-enable` is given; use `--replace` for an upgrade. Open the
-base root as the vault and reload Obsidian. Then turn on **Index hidden
-knowledge folder** in the plugin settings (desktop only): the plugin builds its
-graph live from the metadata cache of `.knowledge/entries/` and
-`.knowledge/drafts/`, so until hidden indexing is on the view is empty. There
-is no export step. Keep Obsidian's new-link format unset (shortest) or
-`absolute`.
+Without `--base`, the command uses the base whose root contains the working
+directory. It refuses a root that is not a registered base; run `kgd base add`
+first. The same command installs, updates and re-checks the plugin:
+
+- it copies `main.js`, `manifest.json` and `styles.css` into
+  `<root>/.obsidian/plugins/kgdistiller/`, replacing an older bundle;
+- it adds `kgdistiller` to `.obsidian/community-plugins.json`, which enables
+  the plugin;
+- it sets `hiddenKnowledgeEnabled` to `true` in the plugin's `data.json` and
+  keeps every other key there, so Obsidian indexes `.knowledge/`;
+- it warns when `.obsidian/app.json` sets `newLinkFormat` to `relative`. That
+  format writes `../` links, which the record link grammar rejects; keep the
+  setting unset (shortest) or `absolute`.
+
+The plugin is desktop only. It builds its graph live from the metadata cache of
+`.knowledge/entries/` and `.knowledge/drafts/`.
 
 ## Agent runtime integration
 
@@ -313,6 +322,7 @@ Record the home path, each base's name, root and `base list` counts and lag,
 the installed kgdistiller version and exact product commit when known, the
 `check` result, the `embedding` model id, the `index` report summary with its
 `reused`, `embedded`, `unembedded` and `truncated` counts and the wall time of
-a full embed, the plugin path when installed, both doctors' status, and Git
+a full embed, the plugin path, version and `hidden_indexing` result when
+installed together with any `newLinkFormat` warning, both doctors' status, and Git
 commit or remote state only when actually confirmed. Never include full source
 or record content, credentials or unbounded excerpts.

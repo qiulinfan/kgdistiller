@@ -28,6 +28,7 @@ uv run --locked ruff check src tests scripts
 npm run build
 uv build --out-dir build/release/0.4.0
 uv run --locked python scripts/check_distribution.py --dist-root build/release/0.4.0
+npm test
 cd integrations/obsidian && npm ci && npm run check
 ```
 
@@ -56,8 +57,11 @@ Then verify that:
   `search --no-dense` run only the lexical lane and the name lane, without
   NumPy or a model, rank the expected node first and find a CJK query;
   `resolve` and `get --source-lines` answer; `neighbors`, `browse` (bases, a
-  base, a source file and `--kind`) and `pack` (records and gaps) answer; the
-  plugin installs into the vault;
+  base, a source file and `--kind`) and `pack` (records and gaps) answer;
+  `obsidian install --base` installs the three plugin files, enables the plugin
+  and sets `hiddenKnowledgeEnabled` in `data.json`; a rerun from the base root
+  keeps the other `data.json` keys and warns once about a `relative`
+  `newLinkFormat`; and an install from outside every base is refused;
 - installed `kgdistiller`/`kgdistiller.exe` and `kgd` work on Linux, Windows and
   macOS;
 - every test and the smoke script use a temporary `KGDISTILLER_HOME` and never
@@ -96,9 +100,13 @@ Then verify that:
   syntax or converts a source;
 - `check` reports every error and every moved or stale record and exits 1 for
   any of them; staleness never hides a record from retrieval;
-- the Obsidian plugin (version 0.1.5) passes its vitest suites, including the
-  link-grammar parity fixture shared with the Python tests, type checking and
-  a production bundle build;
+- the Obsidian plugin (version 0.1.5, `isDesktopOnly: true`) passes its
+  vitest suites, including the mocked-metadata-cache cases (binary, n-ary,
+  self, relation-as-participant, draft, foreign and pending) and the
+  `link-grammar.json` and `name-key.json` parity fixtures shared with the
+  Python tests (which also check the plugin's `case-folding.json` against
+  `unicodedata`), type checking and a production bundle build; CI runs root
+  `npm run build` and `npm test` on Linux, macOS and Windows;
 - every materially updated Skill passes the active `skill-creator` validator,
   both product doctors, and an isolated Agent evaluation;
 - POSIX and Windows copy/link doctor tests preserve unrelated Codex and Claude
@@ -130,15 +138,20 @@ npm test
 node scripts/build-obsidian-plugin.mjs --verify-only --tag 0.1.5
 ```
 
-The root build delegates installation and build to the integration, checks the
-embedded Cytoscape notice, and copies ignored root `main.js` and `styles.css`
-for directory tooling. Python wheels and sdists and the `kgd obsidian install`
+The root build delegates installation and build to the integration, checks
+that the bundle embeds the complete license and third-party notices, including
+the Cytoscape.js, cytoscape-fcose, cose-base and layout-base copyright lines,
+and copies ignored root `main.js` and `styles.css` for directory tooling. Python wheels and sdists and the `kgd obsidian install`
 command consume `integrations/obsidian/{main.js,manifest.json,styles.css}`.
 The version-checked release workflow builds from the tagged checkout, tests
 metadata and the plugin, and publishes the three assets as a GitHub release. Do
 not replace a published version's tag or assets; increment the plugin version
 in both manifests, packages and compatibility maps before a new release.
 
-Original project code uses MIT. The embedded Cytoscape.js MIT license and other
-upstream notices must remain present in the actual bundle. Obsidian review and
-listing are a separate step after GitHub publication.
+Version 0.1.5 sets `isDesktopOnly`. Once it is released, Obsidian on mobile
+offers no update to installs of 0.1.4, which stay on that version.
+
+Original project code uses MIT. The embedded MIT licenses of Cytoscape.js,
+cytoscape-fcose, cose-base and layout-base, and the other upstream notices, must
+remain present in the actual bundle. Obsidian review and listing are a separate
+step after GitHub publication.

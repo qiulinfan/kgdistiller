@@ -1,4 +1,4 @@
-"""Install the bundled read-only Obsidian plugin into a selected vault."""
+"""Install the bundled Obsidian plugin into a registered base's vault and enable hidden indexing."""
 
 from __future__ import annotations
 
@@ -11,9 +11,11 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from .home import KNOWLEDGE_DIRECTORY, Base
+
 PLUGIN_ID = "kgdistiller"
 PLUGIN_FILES = ("main.js", "manifest.json", "styles.css")
-INSTALL_SCHEMA = "kgdistiller-obsidian-plugin-install-v1"
+HIDDEN_INDEXING_KEY = "hiddenKnowledgeEnabled"
 
 
 class ObsidianPluginError(RuntimeError):
@@ -144,20 +146,59 @@ def _same_bundle(target: Path, assets: dict[str, bytes]) -> bool:
     )
 
 
-def install_obsidian_plugin(
-    vault: Path,
-    *,
-    replace: bool = False,
-    enable: bool = True,
-) -> dict[str, Any]:
-    """Install the packaged plugin bundle without touching vault knowledge data."""
-
+def _load_settings(target: Path, content: bytes | None) -> dict[str, Any] | None:
+    if content is None:
+        return None
     try:
-        vault_root = vault.expanduser().resolve(strict=True)
-    except OSError as error:
-        raise ObsidianPluginError(f"vault does not exist: {vault}") from error
+        value = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ObsidianPluginError(
+            f"plugin settings data.json must be a JSON object: {target / 'data.json'}"
+        ) from error
+    if not isinstance(value, dict):
+        raise ObsidianPluginError(
+            f"plugin settings data.json must be a JSON object: {target / 'data.json'}"
+        )
+    return value
+
+
+def _link_format_warnings(obsidian_root: Path) -> list[str]:
+    path = obsidian_root / "app.json"
+    if path.is_symlink() or not path.is_file():
+        return []
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        value = None
+    if not isinstance(value, dict):
+        return ["cannot read .obsidian/app.json to check newLinkFormat"]
+    if value.get("newLinkFormat") == "relative":
+        return [
+            (
+                ".obsidian/app.json sets newLinkFormat to relative, which writes '../' "
+                "paths that the record link grammar rejects; set it to shortest or absolute"
+            )
+        ]
+    return []
+
+
+def _restore_settings(target: Path, content: bytes | None) -> None:
+    settings = target / "data.json"
+    if content is None:
+        settings.unlink(missing_ok=True)
+    else:
+        settings.write_bytes(content)
+
+
+def install_obsidian_plugin(base: Base) -> dict[str, Any]:
+    """Install or update the packaged plugin bundle, enable it and turn on its hidden indexing."""
+
+    vault_root = base.root
     if not vault_root.is_dir():
         raise ObsidianPluginError(f"vault is not a directory: {vault_root}")
+    knowledge = vault_root / KNOWLEDGE_DIRECTORY
+    if knowledge.is_symlink():
+        raise ObsidianPluginError(f"knowledge tree must not be a symlink: {knowledge}")
     obsidian_root = vault_root / ".obsidian"
     if (
         obsidian_root.is_symlink()
@@ -181,21 +222,22 @@ def install_obsidian_plugin(
         raise ObsidianPluginError(
             f"Obsidian plugins directory must not redirect outside its vault path: {plugins_root}"
         )
-    plugins_root.mkdir(parents=False, exist_ok=True)
 
     assets, manifest = _bundled_plugin()
     target = plugins_root / PLUGIN_ID
     settings = _validate_existing_target(target)
-    current = target.is_dir() and _same_bundle(target, assets)
-    if target.exists() and not current and not replace:
-        raise ObsidianPluginError(
-            f"plugin files already exist and differ at {target}; use --replace to update"
-        )
+    existing = _load_settings(target, settings)
+    merged = {**(existing or {}), HIDDEN_INDEXING_KEY: True}
+    write_settings = existing is None or existing.get(HIDDEN_INDEXING_KEY) is not True
+    warnings = _link_format_warnings(obsidian_root)
+    plugins_root.mkdir(parents=False, exist_ok=True)
 
+    current = target.is_dir() and _same_bundle(target, assets)
     status = "current" if current else ("updated" if target.exists() else "installed")
     stage: Path | None = None
     backup: Path | None = None
     installed_new_bundle = False
+    settings_written = False
     try:
         if not current:
             stage = Path(
@@ -212,10 +254,16 @@ def install_obsidian_plugin(
             stage = None
             installed_new_bundle = True
 
-        enabled_changed = _configure_enabled(obsidian_root) if enable else False
+        if write_settings:
+            settings_written = True
+            _atomic_write_json(target / "data.json", merged)
+
+        enabled_changed = _configure_enabled(obsidian_root)
     except BaseException as error:
         if installed_new_bundle and target.is_dir() and not target.is_symlink():
             shutil.rmtree(target)
+        elif settings_written:
+            _restore_settings(target, settings)
         if backup is not None and backup.exists():
             os.replace(backup, target)
             backup = None
@@ -230,11 +278,13 @@ def install_obsidian_plugin(
     if backup is not None:
         shutil.rmtree(backup, ignore_errors=True)
 
+    hidden_indexing = "enabled" if write_settings else "current"
+    community_plugins = "updated" if enabled_changed else "current"
     return {
-        "schema": INSTALL_SCHEMA,
         "status": status,
         "plugin_id": PLUGIN_ID,
         "plugin_version": manifest["version"],
+        "base": base.name,
         "vault": str(vault_root),
         "plugin_root": str(target),
         "files": [
@@ -244,12 +294,12 @@ def install_obsidian_plugin(
             }
             for name in PLUGIN_FILES
         ],
-        "enabled_configuration": (
-            "updated"
-            if enable and enabled_changed
-            else "current"
-            if enable
-            else "unchanged"
+        "hidden_indexing": hidden_indexing,
+        "community_plugins": community_plugins,
+        "warnings": warnings,
+        "reload_required": (
+            status != "current"
+            or hidden_indexing == "enabled"
+            or community_plugins == "updated"
         ),
-        "reload_required": True,
     }

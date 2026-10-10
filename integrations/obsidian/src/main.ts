@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, TFile, debounce, type TAbstractFile } from "obsidian";
+import { Notice, Plugin, TFile, debounce, type TAbstractFile } from "obsidian";
 
 import type { FrontmatterRecord } from "./graph-model";
 
@@ -22,7 +22,7 @@ export default class KgdistillerPlugin extends Plugin {
   hiddenKnowledgeStatus: HiddenKnowledgeStatus = { state: "disabled" };
   private hiddenKnowledgeIndexer?: HiddenKnowledgeIndexer;
   private settingsTab?: KgdistillerSettingTab;
-  private lastHiddenKnowledgeConfiguration?: string;
+  private lastHiddenKnowledgeEnabled?: boolean;
   private hiddenKnowledgeRequest = 0;
   private unloaded = false;
   /** Frontmatter of every file under .knowledge/entries and .knowledge/drafts, by vault path. */
@@ -151,25 +151,17 @@ export default class KgdistillerPlugin extends Plugin {
     const indexer = this.hiddenKnowledgeIndexer;
     if (!indexer || this.unloaded) return;
     const enabled = this.settings.hiddenKnowledgeEnabled;
-    const exclusions = this.settings.hiddenKnowledgeExclusions;
-    const configuration = JSON.stringify([enabled, exclusions]);
-    const changed = configuration !== this.lastHiddenKnowledgeConfiguration;
+    const changed = enabled !== this.lastHiddenKnowledgeEnabled;
     if (!changed && !rescan) return;
-    this.lastHiddenKnowledgeConfiguration = configuration;
+    this.lastHiddenKnowledgeEnabled = enabled;
     const request = ++this.hiddenKnowledgeRequest;
     const updateStatus = (status: HiddenKnowledgeStatus): void => {
       if (request === this.hiddenKnowledgeRequest) this.setHiddenKnowledgeStatus(status);
     };
 
     try {
-      if (Platform.isMobile) {
-        await indexer.configure(false, exclusions);
-        updateStatus({
-          state: "unsupported",
-          message: "Hidden folder indexing is available on desktop only. The graph view remains available.",
-        });
-      } else if (enabled && this.hasExternalHiddenFolderIndexer()) {
-        await indexer.configure(false, exclusions);
+      if (enabled && this.hasExternalHiddenFolderIndexer()) {
+        await indexer.configure(false);
         updateStatus({
           state: "unsupported",
           message: "Hidden Folders Access is enabled. Disable it, then rescan here to avoid running two hidden-folder indexers.",
@@ -178,7 +170,7 @@ export default class KgdistillerPlugin extends Plugin {
         const wasEnabled = this.hiddenKnowledgeStatus.state === "enabled";
         const status = !changed && rescan && enabled && wasEnabled
           ? await indexer.rescan()
-          : await indexer.configure(enabled, exclusions);
+          : await indexer.configure(enabled);
         updateStatus(status);
       }
     } catch (error) {

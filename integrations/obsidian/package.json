@@ -18,7 +18,8 @@
   "author": "Qiulin Fan",
   "license": "MIT",
   "dependencies": {
-    "cytoscape": "3.34.1"
+    "cytoscape": "3.34.1",
+    "cytoscape-fcose": "2.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

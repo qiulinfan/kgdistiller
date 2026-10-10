@@ -1,8 +1,6 @@
 import type { App } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS, HiddenKnowledgeIndexer } from "../src/hidden-knowledge";
-const DEFAULT = [...DEFAULT_HIDDEN_KNOWLEDGE_EXCLUSIONS];
-const SCRATCH = ["scratch"];
+import { HiddenKnowledgeIndexer } from "../src/hidden-knowledge";
 const filesystem = vi.hoisted(() => ({ lstat: vi.fn(), readdir: vi.fn() }));
 const loadFilesystem = () => filesystem as unknown as Pick<typeof import("node:fs/promises"), "lstat" | "readdir">;
 vi.mock("obsidian", () => ({ normalizePath: (path: string) => path.normalize("NFC") }));
@@ -83,7 +81,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("native hidden knowledge indexing", () => {
   it("indexes .knowledge through native reconciliation, preserving other hidden boundaries", async () => {
     const { indexer, loaded, adapter } = fixture();
-    expect(await indexer.configure(true, DEFAULT)).toEqual({ state: "enabled" });
+    expect(await indexer.configure(true)).toEqual({ state: "enabled" });
     expect([...loaded.keys()].sort()).toEqual([".knowledge", ".knowledge/entries", ".knowledge/entries/definition.md", ".knowledge/figure.png", "ordinary.md"]);
     await adapter.listRecursiveChild(".knowledge-copy", "other.md");
     await adapter.listRecursiveChild(".git", "config");
@@ -96,7 +94,7 @@ describe("native hidden knowledge indexing", () => {
     const { indexer, disk, adapter } = fixture();
     disk.delete(".knowledge");
     const original = adapter.listRecursiveChild;
-    expect((await indexer.configure(true, DEFAULT)).state).toBe("missing");
+    expect((await indexer.configure(true)).state).toBe("missing");
     expect(adapter.listRecursiveChild).toBe(original);
     expect(adapter.reconcileFolderCreation).not.toHaveBeenCalled();
     disk.set(".knowledge", "folder");
@@ -108,7 +106,7 @@ describe("native hidden knowledge indexing", () => {
     (adapter as unknown as Record<string, unknown>).watchHiddenRecursive = undefined;
     const load = vi.fn(loadFilesystem);
     const indexer = new HiddenKnowledgeIndexer(app as unknown as App, load);
-    expect((await indexer.configure(true, DEFAULT)).state).toBe("unsupported");
+    expect((await indexer.configure(true)).state).toBe("unsupported");
     expect(load).not.toHaveBeenCalled();
     expect(adapter.reconcileFile).toBe(original);
     expect(filesystem.lstat).not.toHaveBeenCalled();
@@ -116,7 +114,7 @@ describe("native hidden knowledge indexing", () => {
   it("rejects symbolic root and skips symlinks and traversal in descendants", async () => {
     const { disk, indexer, adapter, loaded } = fixture();
     disk.set(".knowledge", "symlink");
-    expect((await indexer.configure(true, DEFAULT)).state).toBe("invalid");
+    expect((await indexer.configure(true)).state).toBe("invalid");
     disk.set(".knowledge", "folder");
     await indexer.rescan();
     await adapter.reconcileFile(".knowledge/link/escape.md", ".knowledge/link/escape.md");
@@ -128,7 +126,7 @@ describe("native hidden knowledge indexing", () => {
   });
   it("routes create, modify and deletion watcher events into the native cache", async () => {
     const { indexer, disk, adapter, loaded, events } = fixture();
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     const path = ".knowledge/new.md";
     disk.set(path, "file");
     await adapter.reconcileFile(path, path);
@@ -147,8 +145,8 @@ describe("native hidden knowledge indexing", () => {
     const list = adapter.listRecursiveChild;
     const reconcile = adapter.reconcileFile;
     const originalDisk = [...disk];
-    await indexer.configure(true, DEFAULT);
-    await indexer.configure(false, DEFAULT);
+    await indexer.configure(true);
+    await indexer.configure(false);
     expect([...loaded.keys()]).toEqual(["ordinary.md"]);
     expect([...disk]).toEqual(originalDisk);
     expect(watchers[".knowledge/borrowed"]).toBe(preexisting);
@@ -159,21 +157,21 @@ describe("native hidden knowledge indexing", () => {
   it("unload preserves cached files and leaves while stopping hooks and owned watchers", async () => {
     const { indexer, adapter, loaded, watchers } = fixture();
     const list = adapter.listRecursiveChild;
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     const before = [...loaded.keys()];
     indexer.dispose(); indexer.dispose();
     expect([...loaded.keys()]).toEqual(before);
     expect(adapter.listRecursiveChild).toBe(list);
     expect(Object.keys(watchers)).toEqual(["ordinary"]);
     expect(adapter.reconcileDeletion).not.toHaveBeenCalled();
-    expect((await indexer.configure(true, DEFAULT)).state).toBe("disposed");
+    expect((await indexer.configure(true)).state).toBe("disposed");
   });
   it("a fresh instance enables retained native cache after reload", async () => {
     const { indexer, adapter, app, loaded } = fixture();
     const original = adapter.reconcileFile;
-    await indexer.configure(true, DEFAULT); indexer.dispose();
+    await indexer.configure(true); indexer.dispose();
     const next = new HiddenKnowledgeIndexer(app as unknown as App, loadFilesystem);
-    expect((await next.configure(true, DEFAULT)).state).toBe("enabled");
+    expect((await next.configure(true)).state).toBe("enabled");
     expect(loaded.has(".knowledge/entries/definition.md")).toBe(true);
     expect(adapter.listRecursive).toHaveBeenCalledWith(".knowledge/entries");
     next.dispose();
@@ -181,7 +179,7 @@ describe("native hidden knowledge indexing", () => {
   });
   it("does not overwrite later plugin wrappers or stop replaced watchers", async () => {
     const { indexer, adapter, watchers } = fixture();
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     const ours = adapter.reconcileFile;
     const later = vi.fn((...args: Parameters<typeof ours>) => ours.apply(adapter, args));
     adapter.reconcileFile = later;
@@ -197,7 +195,7 @@ describe("native hidden knowledge indexing", () => {
     adapter.watchHiddenRecursive.mockImplementationOnce(async (root) => {
       watchers[root] = {}; throw new Error("watcher unavailable");
     });
-    expect(await indexer.configure(true, DEFAULT)).toEqual({ state: "error", message: "watcher unavailable" });
+    expect(await indexer.configure(true)).toEqual({ state: "error", message: "watcher unavailable" });
     expect(adapter.listRecursiveChild).toBe(original);
     expect([...loaded.keys()]).toEqual(["ordinary.md"]);
     expect(Object.keys(watchers)).toEqual(["ordinary"]);
@@ -209,7 +207,7 @@ describe("native hidden knowledge indexing", () => {
     adapter.list.mockImplementationOnce(async () => {
       entered.resolve(); await waiting.promise; return { files: [], folders: [".knowledge"] };
     });
-    const enabling = indexer.configure(true, DEFAULT);
+    const enabling = indexer.configure(true);
     await entered.promise; indexer.dispose(); waiting.resolve();
     expect((await enabling).state).toBe("disposed");
     expect(adapter.listRecursiveChild).toBe(original);
@@ -222,7 +220,7 @@ describe("native hidden knowledge indexing", () => {
     adapter.watchHiddenRecursive.mockImplementationOnce(async (root) => {
       entered.resolve(); await waiting.promise; watchers[root] = {};
     });
-    const enabling = indexer.configure(true, DEFAULT);
+    const enabling = indexer.configure(true);
     await entered.promise; indexer.dispose();
     expect(adapter.listRecursiveChild).toBe(original);
     waiting.resolve();
@@ -237,9 +235,9 @@ describe("native hidden knowledge indexing", () => {
     adapter.watchHiddenRecursive.mockImplementationOnce(async (root) => {
       entered.resolve(); await waiting.promise; watchers[root] = {};
     });
-    const enabling = indexer.configure(true, DEFAULT);
+    const enabling = indexer.configure(true);
     await entered.promise;
-    const disabling = indexer.configure(false, DEFAULT);
+    const disabling = indexer.configure(false);
     waiting.resolve(); await enabling;
     expect((await disabling).state).toBe("disabled");
     expect(adapter.reconcileFile).toBe(original);
@@ -248,7 +246,7 @@ describe("native hidden knowledge indexing", () => {
   });
   it("rescan repairs nested additions and missed deletions without deleting retained notes", async () => {
     const { indexer, disk, loaded, adapter } = fixture();
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     disk.set(".knowledge/entries/new.md", "file");
     disk.delete(".knowledge/figure.png");
     adapter.reconcileDeletion.mockClear();
@@ -261,7 +259,7 @@ describe("native hidden knowledge indexing", () => {
     const { indexer, adapter, loaded } = fixture();
     const waiting = deferred(), entered = deferred();
     adapter.watchHiddenRecursive.mockImplementationOnce(async () => { entered.resolve(); await waiting.promise; });
-    const first = indexer.configure(true, DEFAULT);
+    const first = indexer.configure(true);
     await entered.promise;
     const second = indexer.rescan();
     waiting.resolve(); await first;
@@ -275,14 +273,14 @@ describe("native hidden knowledge indexing", () => {
     const raw = ".knowledge/cafe\u0301.md";
     const normalized = raw.normalize("NFC");
     disk.set(raw, "file");
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     expect(adapter.reconcileFileInternal).toHaveBeenCalledWith(raw, normalized);
     expect(loaded.has(normalized)).toBe(true);
     expect(loaded.has(raw)).toBe(false);
   });
   it("unload during native traversal cannot run the restored hidden filter against open files", async () => {
     const { indexer, adapter, loaded } = fixture();
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     const before = [...loaded.keys()];
     const entered = deferred(), waiting = deferred();
     const nativeList = adapter.listRecursive.getMockImplementation()!;
@@ -302,7 +300,7 @@ describe("native hidden knowledge indexing", () => {
 
   it("creates missing parents before a child-first external watcher event", async () => {
     const { indexer, disk, adapter, loaded } = fixture();
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     disk.set(".knowledge/new", "folder");
     disk.set(".knowledge/new/deep", "folder");
     disk.set(".knowledge/new/deep/entry.md", "file");
@@ -316,7 +314,7 @@ describe("native hidden knowledge indexing", () => {
     adapter.insensitive = true;
     const old = ".knowledge/Alpha.md", next = ".knowledge/alpha.md";
     disk.set(old, "file");
-    await indexer.configure(true, DEFAULT);
+    await indexer.configure(true);
     disk.delete(old); disk.set(next, "file");
     const originalStat = filesystem.lstat.getMockImplementation()!;
     filesystem.lstat.mockImplementation((full: string) => originalStat(full.replace("Alpha.md", "alpha.md")));
@@ -328,85 +326,10 @@ describe("native hidden knowledge indexing", () => {
 
   it("indexes the whole knowledge folder by default", async () => {
     const { indexer, disk, loaded } = fixture();
-    expect(DEFAULT).toEqual([]);
     disk.set(".knowledge/sheets", "folder");
     disk.set(".knowledge/sheets/chapter.tex.md", "file");
-    expect((await indexer.configure(true, DEFAULT)).state).toBe("enabled");
+    expect((await indexer.configure(true)).state).toBe("enabled");
     expect(loaded.has(".knowledge/sheets/chapter.tex.md")).toBe(true);
     expect(loaded.has(".knowledge/entries/definition.md")).toBe(true);
-  });
-  it("excludes a listed folder on the initial scan, nested listings and watcher events", async () => {
-    const { indexer, disk, loaded, adapter, events } = fixture();
-    disk.set(".knowledge/scratch", "folder");
-    disk.set(".knowledge/scratch/notes", "folder");
-    disk.set(".knowledge/scratch/notes/chapter.tex.md", "file");
-    disk.set(".knowledge/scratchy.md", "file");
-    const nativeList = adapter.listRecursiveChild;
-    const nativeReconcile = adapter.reconcileFile;
-    expect((await indexer.configure(true, SCRATCH)).state).toBe("enabled");
-    expect([...loaded.keys()].filter((path) => path.includes("scratch")).sort()).toEqual([".knowledge/scratchy.md"]);
-    await adapter.listRecursiveChild(".knowledge/scratch", "notes");
-    await adapter.listRecursiveChild(".knowledge", "scratch");
-    const sheet = ".knowledge/scratch/notes/chapter.tex.md";
-    await adapter.reconcileFile(sheet, sheet);
-    await adapter.reconcileFile(".knowledge/scratch", ".knowledge/scratch", false);
-    expect([...loaded.keys()].some((path) => path.startsWith(".knowledge/scratch/") || path === ".knowledge/scratch")).toBe(false);
-    expect(events.some((event) => event.includes(".knowledge/scratch/") || event.endsWith(".knowledge/scratch"))).toBe(false);
-    expect(nativeList).not.toHaveBeenCalledWith(".knowledge/scratch", "notes");
-    expect(nativeReconcile).not.toHaveBeenCalledWith(sheet, sheet);
-    expect(adapter.reconcileDeletion).not.toHaveBeenCalled();
-  });
-  it("indexes scratch/ when the exclusion list is empty", async () => {
-    const { indexer, disk, loaded } = fixture();
-    disk.set(".knowledge/scratch", "folder");
-    disk.set(".knowledge/scratch/review.md", "file");
-    expect((await indexer.configure(true, [])).state).toBe("enabled");
-    expect(loaded.has(".knowledge/scratch")).toBe(true);
-    expect(loaded.has(".knowledge/scratch/review.md")).toBe(true);
-  });
-  it("changing exclusions evicts and admits cache entries without touching disk", async () => {
-    const { indexer, disk, loaded, adapter } = fixture();
-    disk.set(".knowledge/scratch", "folder");
-    disk.set(".knowledge/scratch/review.md", "file");
-    await indexer.configure(true, SCRATCH);
-    const original = [...disk];
-    const hooks = adapter.reconcileFile;
-    adapter.reconcileDeletion.mockClear();
-    expect((await indexer.configure(true, ["entries"])).state).toBe("enabled");
-    expect(adapter.reconcileFile).toBe(hooks);
-    expect(loaded.has(".knowledge/scratch/review.md")).toBe(true);
-    expect(loaded.has(".knowledge/entries")).toBe(false);
-    expect(loaded.has(".knowledge/entries/definition.md")).toBe(false);
-    expect(adapter.reconcileDeletion.mock.calls.map(([path]) => path))
-      .toEqual([".knowledge/entries/definition.md", ".knowledge/entries"]);
-    expect([...disk]).toEqual(original);
-    const entry = ".knowledge/entries/definition.md";
-    await adapter.reconcileFile(entry, entry);
-    expect(loaded.has(entry)).toBe(false);
-    await indexer.configure(true, SCRATCH);
-    expect(loaded.has(entry)).toBe(true);
-    expect(loaded.has(".knowledge/scratch/review.md")).toBe(false);
-    expect([...disk]).toEqual(original);
-  });
-  it.each(["", "/scratch", "../x", "a\\b", ".", "scratch/", "a//b", " scratch"])("rejects invalid exclusion %j without hooks", async (entry) => {
-    const { indexer, adapter } = fixture();
-    const original = adapter.listRecursiveChild;
-    expect((await indexer.configure(true, [entry])).state).toBe("invalid");
-    expect(adapter.listRecursiveChild).toBe(original);
-    expect(adapter.watchHiddenRecursive).not.toHaveBeenCalled();
-  });
-  it.each([["scratch"], "scratch", null, 7, { scratch: true }])("rejects a non-array or non-string exclusion setting %j", async (value) => {
-    const { indexer, adapter } = fixture();
-    const original = adapter.listRecursiveChild;
-    const exclusions = Array.isArray(value) ? [value] : value;
-    expect((await indexer.configure(true, exclusions)).state).toBe("invalid");
-    expect(adapter.listRecursiveChild).toBe(original);
-    expect(adapter.watchHiddenRecursive).not.toHaveBeenCalled();
-  });
-  it("an invalid exclusion change removes the indexed cache", async () => {
-    const { indexer, loaded } = fixture();
-    await indexer.configure(true, DEFAULT);
-    expect((await indexer.configure(true, ["../x"])).state).toBe("invalid");
-    expect([...loaded.keys()]).toEqual(["ordinary.md"]);
   });
 });

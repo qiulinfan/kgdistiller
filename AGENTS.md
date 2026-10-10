@@ -8,8 +8,13 @@
 - The knowledge model, record format, drafts, sheets, `check` and the write
   path follow [docs/model.md](docs/model.md); the derived database, `kgd index`,
   lag, `search`/`resolve`/`get`/`neighbors`/`browse`/`pack` and the MCP tools
-  follow [docs/retrieval.md](docs/retrieval.md); the Obsidian plugin follows
-  [docs/obsidian.md](docs/obsidian.md). Change the code and these documents
+  follow [docs/retrieval.md](docs/retrieval.md); the Obsidian plugin and
+  `kgd obsidian install` follow [docs/obsidian.md](docs/obsidian.md);
+  installation, the home, base registration and index restore follow
+  [docs/deployment.md](docs/deployment.md), which the `deploy-kgdistiller`
+  Skill follows; the Skills, presets and workflow step modes follow
+  [docs/product-workflows.md](docs/product-workflows.md); release gates follow
+  [docs/release.md](docs/release.md). Change the code and these documents
   together.
 - `.knowledge/` is a base's only knowledge root; never create a second tree
   during reads or writes. A base is found only through the roots registered in
@@ -77,8 +82,9 @@
   (`uv run --locked python -m unittest discover -s tests`),
   `uv run --locked ruff check src tests scripts`, `uv build` with
   `scripts/check_distribution.py`, the installed-wheel
-  `scripts/smoke_installed_runtime.py`, and `npm run check` in
-  `integrations/obsidian` when the plugin changes. Every test and
+  `scripts/smoke_installed_runtime.py`, and, when the plugin changes,
+  `npm run check` in `integrations/obsidian` plus root `npm run build` (which
+  asserts the bundled license notices) and root `npm test`. Every test and
   `scripts/smoke_installed_runtime.py` use a temporary `KGDISTILLER_HOME` and
   never read or write the real home. Unit tests use a fake encoder. The
   real-model smoke test is opt-in and never runs in CI:
@@ -99,21 +105,28 @@
   bundled installer still consumes the original integration paths.
   Plugin tags have no `v` prefix and match manifest.version exactly; the Python
   core's version is independent. Keep the release workflow's tag guard and
-  the full Cytoscape MIT notice in the actual bundle. Original project code is
-  MIT; upstream licenses remain unchanged.
+  the full Cytoscape.js, cytoscape-fcose, cose-base and layout-base MIT
+  notices in the actual bundle. Original project code is MIT; upstream
+  licenses remain unchanged.
 - Plugin unload leaves workspace layout restoration to Obsidian; never detach graph
   leaves in `onunload`. Settings headings use `Setting.setHeading` and omit the
   plugin name. The root clean
   builder explicitly installs integration devDependencies, including when the
   caller sets `NODE_ENV=production`; this is required to reproduce release assets.
-- Optional native indexing of the `.knowledge` folder follows
-  [docs/obsidian.md](docs/obsidian.md). Keep it disabled by default,
-  desktop-capability guarded and scoped to that subtree (the folder is the
-  product constant, not a setting), minus the user-editable exclusion list
-  (default empty); do not enable competing hidden-folder indexers. The
-  plugin's graph is built live from the metadata cache of `entries/` and
-  `drafts/`, with link resolution identical to `kgd`; it reads no feed and no
-  database. Preserve the complete upstream MIT notice and pinned source
+- Native indexing of the `.knowledge` folder follows
+  [docs/obsidian.md](docs/obsidian.md). The plugin setting defaults to off;
+  `kgd obsidian install` turns it on in the plugin's `data.json`. The plugin is
+  desktop only (`isDesktopOnly`), desktop-capability guarded and scoped to the
+  whole `.knowledge` subtree (the folder is the product constant, not a
+  setting) with no exclusion list; do not enable competing hidden-folder
+  indexers. The plugin's model is built live from the metadata-cache
+  frontmatter of `entries/` and `drafts/`; the details pane reads the selected
+  record's file through the vault only on demand. Its link grammar and name
+  key follow `kgd`: casefolding uses `integrations/obsidian/src/case-folding.json`,
+  which `tests/test_records.py` checks against `unicodedata` (regenerate it when
+  that test fails after a Python Unicode upgrade), and both test suites assert
+  `tests/fixtures/link-grammar.json` and `tests/fixtures/name-key.json`. It
+  reads no feed and no database. Preserve the complete upstream MIT notice and pinned source
   revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by

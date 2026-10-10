@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kgdistiller.home import KNOWLEDGE_DIRECTORY, knowledge_root
+from kgdistiller.home import KNOWLEDGE_DIRECTORY
 from tests.knowledge_fixture import make_record_home, use_temporary_home
 
 
@@ -23,27 +23,13 @@ def run_cli(cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 class KnowledgeRootTest(unittest.TestCase):
-    def test_knowledge_root_is_the_hidden_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            self.assertEqual(KNOWLEDGE_DIRECTORY, ".knowledge")
-            self.assertEqual(knowledge_root(root), root / ".knowledge")
-
-    @unittest.skipIf(os.name == "nt", "directory symlinks need extra privileges on Windows")
-    def test_symlinked_knowledge_root_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            (root / "elsewhere").mkdir()
-            (root / ".knowledge").symlink_to(root / "elsewhere", target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, "symlink"):
-                knowledge_root(root)
-
     def test_base_add_creates_only_the_hidden_entries_tree(self) -> None:
         home = use_temporary_home(self)
         root = home.parent / "kb"
         root.mkdir()
         result = run_cli(home.parent, "base", "add", str(root))
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(KNOWLEDGE_DIRECTORY, ".knowledge")
         self.assertEqual([path.name for path in root.iterdir()], [".knowledge"])
         self.assertEqual([path.name for path in (root / ".knowledge").iterdir()], ["entries"])
         self.assertEqual(list((root / ".knowledge/entries").iterdir()), [])
@@ -79,6 +65,7 @@ class KnowledgeRootDefaultsTest(unittest.TestCase):
                 (("sheet", "notes/a.txt", "--json"), True),
                 (("accept", ".knowledge/drafts/measure.md"), False),
                 (("index",), True),
+                (("obsidian", "install"), True),
             ):
                 with self.subTest(arguments=arguments):
                     result = run_cli(self.root, *arguments)
