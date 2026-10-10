@@ -91,7 +91,7 @@
     },
     {
       "id": "query-knowledge",
-      "description": "Search, resolve and read records across every registered base read-only, deliver source:lines with evidence quotes, classify candidate identity, and refresh the derived index only when results report lag.",
+      "description": "Search, resolve, navigate, browse, pack and read records across every registered base read-only, deliver source:lines with evidence quotes, classify candidate identity, and refresh the derived index only when results report lag.",
       "steps": [
         {
           "id": "query",

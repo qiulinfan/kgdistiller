@@ -47,7 +47,6 @@ packages = ["src/kgdistiller"]
 "docs/retrieval.md" = "kgdistiller/product/docs/retrieval.md"
 "docs/obsidian.md" = "kgdistiller/product/docs/obsidian.md"
 "docs/deployment.md" = "kgdistiller/product/docs/deployment.md"
-"docs/omp-compiled-tools.md" = "kgdistiller/product/docs/omp-compiled-tools.md"
 "scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
 "scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
 "scripts/link-claude-product.sh" = "kgdistiller/product/scripts/link-claude-product.sh"
@@ -55,7 +54,6 @@ packages = ["src/kgdistiller"]
 "integrations/obsidian/main.js" = "kgdistiller/obsidian_plugin/main.js"
 "integrations/obsidian/manifest.json" = "kgdistiller/obsidian_plugin/manifest.json"
 "integrations/obsidian/styles.css" = "kgdistiller/obsidian_plugin/styles.css"
-"integrations/omp/compiled_tools.ts" = "kgdistiller/product/integrations/omp/compiled_tools.ts"
 
 [tool.hatch.build]
 include = [
@@ -69,7 +67,6 @@ include = [
   "docs/retrieval.md",
   "docs/obsidian.md",
   "docs/deployment.md",
-  "docs/omp-compiled-tools.md",
   "scripts/link-codex-product.sh",
   "scripts/link-codex-product.ps1",
   "scripts/link-claude-product.sh",
@@ -77,5 +74,4 @@ include = [
   "integrations/obsidian/main.js",
   "integrations/obsidian/manifest.json",
   "integrations/obsidian/styles.css",
-  "integrations/omp/compiled_tools.ts",
 ]

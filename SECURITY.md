@@ -36,10 +36,11 @@ document types, and may disclose directory names. The derived database
 every indexed record, including evidence quotes from private sources, and the
 vectors derived from that text: keep it in the private home, never copy it into
 a base or a repository, and delete it freely, since `kgd index` rebuilds it.
-`kgd index` is its only writer; search, resolve, get and the MCP server open it
-read-only. Keep `config.json` and `types/` in a private local Git repository
-whose `.gitignore` excludes `index.sqlite*` and `lock`; never commit them to a
-public repository or to this product repository. A base is found only through
+`kgd index` is its only writer; search, resolve, get, neighbors, browse, pack
+and the MCP server open it read-only. Keep `config.json` and `types/` in a
+private local Git repository whose `.gitignore` excludes `index.sqlite*` and
+`lock`; never commit them to a public repository or to this product
+repository. A base is found only through
 its registered root; there is no identity file inside the base.
 
 Bases may contain private data. Do not attach sources, records, drafts, sheets,

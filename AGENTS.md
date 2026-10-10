@@ -7,13 +7,10 @@
   in Agent skills or adapters.
 - The knowledge model, record format, drafts, sheets, `check` and the write
   path follow [docs/model.md](docs/model.md); the derived database, `kgd index`,
-  lag, `search`/`resolve`/`get` and the MCP tools follow
-  [docs/retrieval.md](docs/retrieval.md); the Obsidian plugin follows
+  lag, `search`/`resolve`/`get`/`neighbors`/`browse`/`pack` and the MCP tools
+  follow [docs/retrieval.md](docs/retrieval.md); the Obsidian plugin follows
   [docs/obsidian.md](docs/obsidian.md). Change the code and these documents
   together.
-- Read-only compiled definitions, sense navigation and complete-entry packing
-  follow [docs/compiled-retrieval.md](docs/compiled-retrieval.md). Keep all source
-  and retrieval content caller-supplied; do not hardcode papers or benchmark answers.
 - `.knowledge/` is a base's only knowledge root; never create a second tree
   during reads or writes. A base is found only through the roots registered in
   `$KGDISTILLER_HOME/config.json`: a path belongs to the registered root that
@@ -93,7 +90,8 @@
   `dev` group so the fake-encoder tests run in CI. The product ships no default
   embedding model and no revision pin.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
-  this repository.
+  this repository. Retrieval stays generic: never hardcode papers, benchmark
+  questions or answers.
 - The Community directory entry stays in this monorepo: root manifest/versions
   mirror the canonical `integrations/obsidian` metadata, guarded by
   `scripts/build-obsidian-plugin.mjs`. Root `npm run build` installs/builds that

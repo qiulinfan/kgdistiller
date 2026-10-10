@@ -30,6 +30,8 @@ DELETED_COMMAND_RE = re.compile(
     r"|capture[ ]prepare|harvest[ ]prepare|harvest[ ]apply|ingest[ ]plan|ingest[ ]apply"
     r"|edges[.]jsonl|[.]knowledge/build|pending[_]prerequisites|def[-]sheet[.]md|pending[-]sheet[.]md"
     r"|kg_(?:status|resolve_concepts|get_node|expand|ppr|build_context|compiled_knowledge)\b"
+    r"|kgd[_]inventory|submit[_]selection|omp[_]compiled[_]tools|compiled[_]retrieval"
+    r"|Compiled[L]ibrary|compiled[-]retrieval[.]md|omp[-]compiled[-]tools"
 )
 
 

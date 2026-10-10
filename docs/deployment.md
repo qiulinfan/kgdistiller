@@ -252,13 +252,33 @@ commit or remote synchronization happened.
 ## MCP server
 
 `kgd mcp` is a read-only stdio server over the whole home with the tools
-`kg_search`, `kg_resolve` and `kg_get`. It takes no arguments, opens a fresh
-read-only connection for every call and reports lag like the CLI. The
-embedding model loads lazily on the first dense search and stays resident
-until `meta.embedding` changes, so repeated searches avoid the cold load a CLI
-`kgd search` pays; `kg_search` takes `no_dense` to skip the dense lane.
-Register it in an agent runtime as the command `kgd` with the argument `mcp`,
+`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and
+`kg_pack` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)). It takes no
+arguments, opens a fresh read-only connection for every call and reports lag
+like the CLI. The embedding model loads lazily on the first dense search and
+stays resident until `meta.embedding` changes, so repeated searches avoid the
+cold load a CLI `kgd search` pays; `kg_search` takes `no_dense` to skip the
+dense lane, and the other tools load no model. Register it in an agent runtime as the command `kgd` with the argument `mcp`,
 with `HF_HUB_OFFLINE=1` in its environment once the model is cached.
+
+OMP loads MCP stdio servers natively; no separate OMP extension exists. It
+reads a project `.mcp.json` or `mcp.json`, a project `.omp/mcp.json`, or the
+user-level `~/.omp/agent/mcp.json`, and `/mcp add kgdistiller -- kgd mcp`
+writes such an entry:
+
+```json
+{"mcpServers": {"kgdistiller": {"command": "kgd", "args": ["mcp"],
+                                "env": {"HF_HUB_OFFLINE": "1"}}}}
+```
+
+Add `"KGDISTILLER_HOME"` to `env` to serve a scratch home instead of the
+default one. The tools then appear as `mcp__kgdistiller_kg_search`,
+`mcp__kgdistiller_kg_pack` and so on. OMP waits only 250 ms for MCP servers by
+default, so for print-mode runs (`omp -p`) set `OMP_MCP_REQUIRE_READY=1`, or
+`mcp.startupTimeoutMs: 0` in a run-local configuration, so that the first turn
+waits for the server. OMP saves tool output above `tools.artifactSpillThreshold`
+(in KB, default 50) as an artifact and keeps only its tail inline; raise it
+above the largest `pack` budget a run uses so packets reach the model whole.
 
 ## Obsidian plugin
 

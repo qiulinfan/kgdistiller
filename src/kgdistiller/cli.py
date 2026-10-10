@@ -63,6 +63,23 @@ def _positive(value: str) -> int:
     return number
 
 
+def _bounded(value: str, low: int) -> int:
+    from .retrieve import MAX_DEPTH
+
+    number = int(value)
+    if not low <= number <= MAX_DEPTH:
+        raise argparse.ArgumentTypeError(f"must be between {low} and {MAX_DEPTH}")
+    return number
+
+
+def _depth(value: str) -> int:
+    return _bounded(value, 0)
+
+
+def _hops(value: str) -> int:
+    return _bounded(value, 1)
+
+
 def _non_negative(value: str) -> int:
     number = int(value)
     if number < 0:
@@ -85,6 +102,8 @@ def _filter_parser() -> argparse.ArgumentParser:
 
 
 def parse_args() -> argparse.Namespace:
+    from .retrieve import DIRECTIONS, PACK_BUDGET
+
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     filters = _filter_parser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -137,6 +156,38 @@ def parse_args() -> argparse.Namespace:
     get = commands.add_parser("get", help="read complete records with their links")
     get.add_argument("uids", nargs="+", metavar="UID", help="base:id, or a bare id held by exactly one base")
     get.add_argument("--source-lines", type=_non_negative, metavar="N", help="add the live cited source range widened by N lines")
+
+    neighbors = commands.add_parser(
+        "neighbors", parents=[filters], help="follow links from records: dependency and claim closures"
+    )
+    neighbors.add_argument("uids", nargs="+", metavar="UID", help="base:id, or a bare id held by exactly one base")
+    neighbors.add_argument(
+        "--role", action="append", default=[], metavar="R", help="follow only this role (repeatable), at every hop"
+    )
+    neighbors.add_argument(
+        "--dir", dest="direction", choices=DIRECTIONS, default="out",
+        help="out follows a record's own links, in the links citing it, both either (default: out)",
+    )
+    neighbors.add_argument("--depth", type=_hops, default=1, metavar="N", help="hops to follow; cuts cycles (default: 1)")
+
+    browse = commands.add_parser(
+        "browse", parents=[filters],
+        help="list bases, source directories, a source's records by kind, or every record of a --kind",
+    )
+    browse.add_argument("handle", nargs="?", metavar="HANDLE", help="base, base:dir/ or base:path/file")
+
+    pack = commands.add_parser(
+        "pack", parents=[filters], help="pack whole records within a byte budget, with shared relations and typed gaps"
+    )
+    pack.add_argument("uids", nargs="+", metavar="UID", help="base:id, or a bare id held by exactly one base")
+    pack.add_argument(
+        "--budget", type=_positive, default=PACK_BUDGET, metavar="BYTES",
+        help=f"UTF-8 bytes of the compact JSON of the packed records (default: {PACK_BUDGET})",
+    )
+    pack.add_argument(
+        "--requires-depth", type=_depth, default=1, metavar="N",
+        help="layers of the requires closure to add (default: 1)",
+    )
 
     obsidian_command = commands.add_parser("obsidian", help="manage kgdistiller's integration with an Obsidian vault")
     obsidian_commands = obsidian_command.add_subparsers(dest="obsidian_command", required=True)
@@ -304,6 +355,22 @@ def _command(args: argparse.Namespace) -> int:
         from .retrieve import get
 
         return _print(get(args.uids, source_lines=args.source_lines))
+    if args.command == "neighbors":
+        from .retrieve import neighbors
+
+        return _print(neighbors(
+            args.uids, roles=tuple(args.role), direction=args.direction, depth=args.depth, filters=_filters(args),
+        ))
+    if args.command == "browse":
+        from .retrieve import browse
+
+        return _print(browse(args.handle, filters=_filters(args)))
+    if args.command == "pack":
+        from .retrieve import pack
+
+        return _print(pack(
+            args.uids, budget=args.budget, requires_depth=args.requires_depth, filters=_filters(args),
+        ))
     from .mcp import serve_stdio
 
     serve_stdio()

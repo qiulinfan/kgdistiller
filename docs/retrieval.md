@@ -1,8 +1,8 @@
 # Index and retrieval
 
 Every read goes through one derived database, `$KGDISTILLER_HOME/index.sqlite`.
-`kgd index` is its only writer; `search`, `resolve`, `get` and the MCP server
-read it. The database is a pure function of `config.json`, the
+`kgd index` is its only writer; `search`, `resolve`, `get`, `neighbors`,
+`browse`, `pack` and the MCP server read it. The database is a pure function of `config.json`, the
 `entries/*.md` files of the registered, available bases ([model.md](model.md))
 and the embedding model named by `config.json`: it may lag behind the files,
 and every read reports that lag, but it never differs from what a rebuild would
@@ -221,8 +221,8 @@ model; a no-op `kgd index` took 0.07 s.
 
 ## Reads and lag
 
-`search`, `resolve`, `get` and the MCP server open the database read-only
-(`file:…?mode=ro`); they never create, migrate or write it. Each call reads
+`search`, `resolve`, `get`, `neighbors`, `browse`, `pack` and the MCP server
+open the database read-only (`file:…?mode=ro`); they never create, migrate or write it. Each call reads
 inside one read transaction, so everything it returns, `meta.embedding` and the
 vectors included, comes from one commit even while `kgd index` writes. A
 missing database is an error that says to run `kgd index`. Every result
@@ -246,11 +246,15 @@ When `changed_files` is above 0, `unembedded` is above 0 or
 
 ## Filters
 
-`search` and `resolve` take the same repeatable filters: `--base B`,
-`--kind K`, `--class node|relation`, `--source PREFIX` (a base-relative source
-path prefix) and `--understanding U`. Values are ORed within a filter and ANDed
-across filters, applied in SQL in every lane. `get` addresses records by uid
-and takes no filters.
+`search`, `resolve`, `neighbors`, `browse` and `pack` take the same repeatable
+filters: `--base B`, `--kind K`, `--class node|relation`, `--source PREFIX` (a
+base-relative source path prefix) and `--understanding U`. Values are ORed
+within a filter and ANDed across filters, applied in SQL. `search` applies
+them in every lane. `neighbors` prunes the traversal with them at every hop:
+the start uids are always included, and pending terms and missing targets are
+always reported as leaves. `pack` applies them only to the records it adds
+itself (the `requires` closure and shared relations), never to the uids the
+caller names. `get` addresses records by uid and takes no filters.
 
 ## `kgd search QUERY [--limit 40] [--no-dense] [filters]`
 
@@ -346,16 +350,167 @@ resolves inside the base root (so a hand-written `../` path, an absolute path
 or a symlink leaving the root is never read). This is the only read of source
 text; no passages are stored.
 
+## `kgd neighbors UID... [--role R]... [--dir out|in|both] [--depth 1] [filters]`
+
+`neighbors` walks the links from the given records with one recursive CTE over
+`link`. It infers nothing: every edge it returns is a stored link.
+
+- The walk starts from the given uids at depth 0. `--dir out` follows a link
+  from its `src` to its `dst`, `--dir in` from its `dst` to its `src`, and
+  `--dir both` either way. `--role R` (repeatable) restricts the roles that
+  may be followed, at every hop; `requires` is a role name like any other.
+- `--depth N` (default 1) bounds the walk. The CTE deduplicates `(uid, depth)`
+  pairs, so a cycle ends at the depth limit, and each reached uid keeps its
+  minimum depth. A target uid with no record is reached but never followed
+  further.
+- A link is reported once, as `{from, role, to, depth}` or, for a pending
+  term, `{from, role, term, depth}`. `from` is always the link's `src` and `to`
+  its `dst`, whatever the walk direction. A link is reported when the endpoint
+  it is followed from was reached at a depth `d` below the limit and its other
+  endpoint was reached too; its `depth` is `d + 1`, the minimum over the
+  endpoints it can be followed from. Pending terms are leaves of the `out`
+  direction, so they appear with `--dir out` and `--dir both` only.
+- Edges are ordered by depth, then `from`, then roles before `requires`, then
+  role name and position. `records` maps every reached uid, the starts
+  included, to `{label, kind, class, exists}` (JSON output sorts its keys); a
+  missing target has `exists: false` and `null` label, kind and class.
+- A start that names no record goes to `missing`, as in `get`; a bare id held
+  by several bases is an error. `--dir` must be `out`, `in` or `both`, and
+  `--depth` at least 1.
+
+```json
+{"edges": [{"from": "notes:hahn-decomposition-theorem-prerequisite-for-jordan-decomposition-theorem",
+            "role": "prerequisite", "to": "notes:hahn-decomposition-theorem", "depth": 1},
+           {"from": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
+            "role": "prerequisite", "to": "notes:hahn-decomposition-theorem", "depth": 1},
+           {"from": "notes:signed-measure-prerequisite-for-hahn-decomposition-theorem",
+            "role": "dependent", "to": "notes:hahn-decomposition-theorem", "depth": 1}],
+ "records": {"notes:hahn-decomposition-theorem": {"label": "Hahn Decomposition Theorem", "kind": "theorem",
+                                                  "class": "node", "exists": true},
+             "notes:hahn-decomposition-theorem-prerequisite-for-jordan-decomposition-theorem": {"…": "…"}},
+ "missing": [],
+ "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
+```
+
+That is `kgd neighbors notes:hahn-decomposition-theorem --dir in`, shortened.
+The usual walks:
+
+- **Dependency closure:** `--role requires --dir out --depth n` lists what a
+  record requires, n levels deep, with pending terms as leaves.
+- **Claim closure:** `--dir in` from a node lists the relations that cite it,
+  with the role it plays in each; `--dir both --depth 2` adds their other
+  participants, including relation-to-relation hops such as a relation that
+  is the witness of another.
+- **Applications:** `--dir in --kind example` lists the example records that
+  use a node. The kind filter prunes the walk, so only examples are entered.
+
+## `kgd browse [HANDLE] [filters]`
+
+`browse` lists what is indexed, from the bases down to one source. The handle
+splits on its first `:` into a base name and a base-relative path; a path
+ending in `/` names a directory, any other path a source file.
+
+| Handle | Returns |
+|---|---|
+| none | `bases`: every registered base, sorted by name, as `{name, available, records, relations, pending}` |
+| `base` | `{base, dir: "", entries}`: the top-level directories and source files of the base |
+| `base:dir/` | `{base, dir, entries}`: the children of that directory |
+| `base:path/file` | `{base, source, kinds, pending}`: that source's records grouped by kind, and its pending terms |
+| any scope with `--kind K` | `records`: every record of those kinds in scope, with all its links |
+
+- Counts are of the records that pass the filters. `relations` counts
+  relation records, and `pending` counts distinct pending terms by name key.
+  `available` says whether the base root exists.
+- An entry is `{path, type, records, relations, pending}`, with `type` `dir`
+  or `source`. `path` is the full base-relative path, a directory's ending in
+  `/`, so `base:` plus the path is the entry's own handle. A directory's
+  counts cover its whole subtree. Entries are sorted by path.
+- A source's `kinds` are `[{kind, records}]`, sorted alphabetically (the
+  document types are never read), each record
+  `{uid, label, class, lines, understanding, gloss, links}` in line order.
+  `pending` is `[{term, owners: [{uid, role}]}]`, grouped by name key, sorted
+  by key, with the first spelling as `term` and each owner listed once per
+  role. This is the database twin of the source's sheet.
+- A non-empty `--kind` switches any scope (no handle, a base, a directory or a
+  source) to a listing of `{uid, label, kind, class, base, source, lines,
+  understanding, epistemic, gloss, links}`, ordered by base, source, line and
+  uid. It is uncapped; narrow it with the handle or other filters.
+- `links` maps each role to its values in link order, `requires` included as
+  one role: `{uid, label}` for a link (`label` is `null` for a missing
+  target) and `{term}` for a pending term. It is never capped.
+- Only sources with indexed records appear. A path with no matching records
+  returns empty lists; an unregistered base is the error `unknown base 'x'`.
+  Every result carries `lag`.
+
+## `kgd pack UID... [--budget 60000] [--requires-depth 1] [filters]`
+
+`pack` returns whole records for a set of uids within a byte budget, together
+with the relations they share and every link it could not follow.
+
+1. **Order.** The given uids, deduplicated in caller order; an unknown one
+   becomes an `unknown-uid` gap and a bare id held by several bases is an
+   error. Then their `requires` closure, breadth first, up to
+   `--requires-depth` layers (default 1; 0 adds none): within a layer, parents
+   in order and their `requires` links in position order, keeping targets
+   that have a record, pass the filters and are not yet listed.
+2. **Records.** Each uid in that order is serialized like `get`, without `in`,
+   `search_terms` and `source_text`, and added while the size stays within
+   `--budget` (default 60000). The size, reported as `bytes`, is the UTF-8
+   byte length of the compact JSON of the `records` list (sorted keys, no
+   spaces, non-ASCII kept; `[]` is 2 bytes). A record that does not fit
+   becomes an `over-budget` gap and is never truncated; later, smaller
+   records may still fit.
+3. **Shared relations.** One pass over the links into the packed records
+   finds every relation not yet listed that passes the filters and has at
+   least two distinct packed targets under roles other than `requires`. They
+   are appended in order of packed participants, most first, then uid, under
+   the same budget rule.
+4. **Gaps.** Every out-link of a packed record that the packet cannot follow,
+   in pack order and link order: `pending` for a term, `missing-target` for a
+   uid with no record, `not-packed` for a record outside the packet (an
+   over-budget record therefore also appears as `not-packed` from its
+   referrers).
+
+Gaps list `unknown-uid` first, then `over-budget` in the order met, then the
+link gaps. Their shapes are `{reason: "unknown-uid", uid}` (the argument as
+given), `{reason: "over-budget", uid}`, `{reason: "pending", from, role,
+term}`, `{reason: "missing-target", from, role, uid}` and `{reason:
+"not-packed", from, role, uid}`. Filters never remove a uid the caller named;
+a closure record they exclude shows up as `not-packed`. `--budget` must be at
+least 1 and `--requires-depth` at least 0.
+
+```json
+{"records": [{"uid": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
+              "class": "relation", "kind": "prerequisite-for", "…": "…",
+              "out": [{"role": "dependent", "pos": 0, "uid": "notes:radon-nikodym-theorem",
+                       "label": "Radon-Nikodym Theorem", "exists": true},
+                      {"role": "prerequisite", "pos": 0, "uid": "notes:hahn-decomposition-theorem",
+                       "label": "Hahn Decomposition Theorem", "exists": true}]}],
+ "bytes": 1372, "budget": 60000,
+ "gaps": [{"reason": "unknown-uid", "uid": "notes:nothing"},
+          {"reason": "not-packed", "from": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
+           "role": "dependent", "uid": "notes:radon-nikodym-theorem"},
+          {"reason": "not-packed", "from": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
+           "role": "prerequisite", "uid": "notes:hahn-decomposition-theorem"}],
+ "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
+```
+
+Packing `notes:radon-nikodym-theorem` and `notes:hahn-decomposition-theorem`
+instead packs both nodes and appends that relation as shared, with no gaps.
+
 ## MCP server: `kgd mcp`
 
 `kgd mcp` takes no arguments. It is a read-only stdio server over the whole
-home with three tools that mirror the CLI and return the same JSON:
+home with six tools that mirror the CLI and return the same JSON:
 
 | Tool | Arguments |
 |---|---|
 | `kg_search` | `query` (required), `limit` (1–500, default 40), `no_dense` (boolean, default false), filters `base`, `kind`, `class`, `source`, `understanding` (arrays) |
 | `kg_resolve` | `terms` (required array), the same filters |
 | `kg_get` | `uids` (required array), `source_lines` (0–200) |
+| `kg_neighbors` | `uids` (required, 1–128), `role` (array), `dir` (`out`, `in` or `both`, default `out`), `depth` (1–32, default 1), the filters |
+| `kg_browse` | `handle` (optional), the filters |
+| `kg_pack` | `uids` (required, 1–128), `budget` (1–4194304, default 60000), `requires_depth` (0–32, default 1), the filters |
 
 Inputs are bounded and unknown arguments are rejected. Each call opens a fresh
 read-only connection, so it sees every `kgd index` that committed since the
@@ -363,8 +518,11 @@ previous call. The embedding model loads lazily on the first dense search and
 stays resident; it is reloaded only when `meta.embedding` changes. On the
 535-record base the first `kg_search` took 6.2 s and the next one 0.03 s.
 `no_dense` skips the dense lane, as `--no-dense` does. A missing database is a
-tool error that says to run `kgd index`. Responses are capped at 8 MiB. There
-are no write tools; Skills write through the CLI.
+tool error that says to run `kgd index`. Responses are capped at 8 MiB; the
+`budget` maximum of 4 MiB keeps a packet and its gaps under that cap. Only
+`kg_search`'s dense lane loads the model; `kg_resolve`, `kg_get`,
+`kg_neighbors`, `kg_browse` and `kg_pack` load none and leave a resident model
+in place. There are no write tools; Skills write through the CLI.
 
 ## Evaluation
 
@@ -417,3 +575,34 @@ and neither `notes:measure` nor `notes:measure-space` is among its top 40
 results (the dense lane ranks `notes:measure-space` 48th). The paraphrase
 matches no name except `sigma-algebra`; the lexical and dense lanes supply the
 related measure-theory records.
+
+### Reproducing the compiled-library benchmark
+
+The 40-paper benchmark behind the measurements above (222 questions) ran
+against a compiled library and its own agent tools, which the product no
+longer ships. Each of their behaviours maps onto a read primitive:
+
+| Benchmark behaviour | Primitive |
+|---|---|
+| a 40-candidate search | `search --limit 40` |
+| the tree root and a paper's tree | `browse` and `browse base:path` |
+| the term inventory and its senses | `resolve` |
+| a paper's claims list | `browse --kind K` for a relation kind |
+| reading and packing entries | `get` and `pack` (shared relations and gaps included) |
+| needs, links and agent-side closure | a result's `requires`, `participants` and `in`, then `neighbors` and `pack --requires-depth` |
+| the paper cue | `--source PREFIX` |
+
+Reproducing its numbers takes three steps:
+
+1. Recompile the 40-paper library into records in a scratch base, registered
+   in a scratch `KGDISTILLER_HOME` inside the experiment repository, and
+   record a gold map from every old reference to its uid, in which claims
+   become relation uids.
+2. Point OMP at `kgd mcp` with that home (see
+   [deployment.md](deployment.md#mcp-server)) and confirm that the run's tool
+   list exposes the `mcp__kgdistiller_kg_*` tools before any benchmark run.
+3. Run OMP with DeepSeek Flash as before.
+
+The product ships no converter from the old library. Candidate selection,
+answer submission and any run guard belong to the experiment, not to the
+read-only server.

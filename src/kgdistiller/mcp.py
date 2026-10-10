@@ -1,10 +1,12 @@
-"""Read-only MCP JSON-RPC server over stdio: ``kg_search``, ``kg_resolve`` and ``kg_get``.
+"""Read-only MCP JSON-RPC server over stdio with six tools.
 
-The server is read-only and serves the whole home. Every tool call goes
-through ``retrieve``, which opens a fresh read-only connection to the derived
-database, so a call sees the latest ``kgd index`` and never writes anything.
-The embedding model loads lazily on the first dense search and stays resident
-until ``meta.embedding`` changes.
+The tools are ``kg_search``, ``kg_resolve``, ``kg_get``, ``kg_neighbors``,
+``kg_browse`` and ``kg_pack``. The server is read-only and serves the whole
+home. Every tool call goes through ``retrieve``, which opens a fresh read-only
+connection to the derived database, so a call sees the latest ``kgd index``
+and never writes anything. Only ``kg_search``'s dense lane loads the embedding
+model: it loads lazily on the first dense search and stays resident until
+``meta.embedding`` changes. The other tools load no model.
 """
 
 from __future__ import annotations
@@ -18,7 +20,20 @@ from typing import Any, TextIO
 from . import __version__
 from .home import KnowledgeError
 from .records import UNDERSTANDING
-from .retrieve import CLASSES, Filters, get, resolve, search
+from .retrieve import (
+    CLASSES,
+    DIRECTIONS,
+    MAX_DEPTH,
+    PACK_BUDGET,
+    Filters,
+    browse,
+    compact_json,
+    get,
+    neighbors,
+    pack,
+    resolve,
+    search,
+)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
@@ -32,16 +47,15 @@ INSTRUCTIONS = (
     "role-bound relations. Same name is not same concept; compare senses before assuming identity, and "
     "deliver source:lines with the evidence quotes. Every result reports lag; when lag.changed_files > 0, "
     "lag.unembedded > 0 or lag.embedding_changed, run `kgd index` and repeat the call. If kg_search reports "
-    "the retrieval extra missing, repeat it with no_dense."
+    "the retrieval extra missing, repeat it with no_dense. kg_neighbors follows links (dependency closure with "
+    "role requires, claims citing a record with dir in), kg_browse lists bases, source trees, a source's records "
+    "by kind or every record of a kind, and kg_pack returns whole records within a byte budget with shared "
+    "relations and typed gaps."
 )
 
 
 class ToolError(ValueError):
     """A tool call that cannot be answered; reported as a tool result with ``isError``."""
-
-
-def compact_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _strings(max_length: int, max_items: int, *, min_items: int = 0, enum: tuple[str, ...] = ()) -> dict[str, Any]:
@@ -94,6 +108,44 @@ TOOL_DEFINITIONS = [
         _object_schema({
             "uids": _strings(256, 128, min_items=1),
             "source_lines": {"type": "integer", "minimum": 0, "maximum": 200},
+        }, ["uids"]),
+    ),
+    _tool(
+        "kg_neighbors", "Follow Knowledge Links",
+        "Follow links from records (uid: base:id, or a bare id held by one base) and return the edges reached, "
+        "each once at its minimum depth and in the link's own direction, with the visited records. dir out "
+        "follows a record's own links, in the links citing it (claims and applications), both either. role "
+        "restricts the roles followed at every hop (role requires gives the dependency closure). depth limits "
+        "the hops and so cuts cycles. Filters restrict the records the walk may enter; start uids always count, "
+        "and pending terms and missing targets are reported as leaves.",
+        _object_schema({
+            "uids": _strings(256, 128, min_items=1),
+            "role": _strings(64, 32),
+            "dir": {"type": "string", "enum": list(DIRECTIONS), "default": "out", "minLength": 1, "maxLength": 8},
+            "depth": {"type": "integer", "minimum": 1, "maximum": MAX_DEPTH, "default": 1},
+            **FILTER_PROPERTIES,
+        }, ["uids"]),
+    ),
+    _tool(
+        "kg_browse", "Browse Knowledge",
+        "Without handle list every base with record, relation and pending-term counts. handle 'base' or "
+        "'base:dir/' lists that directory's subdirectories and sources with counts; 'base:path/file' lists the "
+        "source's records grouped by kind with its pending terms. Only sources with indexed records appear. A "
+        "kind filter switches any scope to a listing of every matching record with its links by role.",
+        _object_schema({"handle": {"type": "string", "minLength": 1, "maxLength": 4096}, **FILTER_PROPERTIES}, []),
+    ),
+    _tool(
+        "kg_pack", "Pack Knowledge Evidence",
+        "Pack whole records, never truncated, within budget bytes (the UTF-8 length of the compact JSON of the "
+        "records list): the given uids, then their requires closure breadth-first up to requires_depth, then "
+        "relations linking at least two packed records. A record that does not fit is an over-budget gap and "
+        "later smaller ones may still fit. Gaps also report unknown uids, pending terms, missing targets and "
+        "linked records not packed. Filters restrict only the records pack adds itself.",
+        _object_schema({
+            "uids": _strings(256, 128, min_items=1),
+            "budget": {"type": "integer", "minimum": 1, "maximum": 4194304, "default": PACK_BUDGET},
+            "requires_depth": {"type": "integer", "minimum": 0, "maximum": MAX_DEPTH, "default": 1},
+            **FILTER_PROPERTIES,
         }, ["uids"]),
     ),
 ]
@@ -205,6 +257,8 @@ def _validate_arguments(name: str, arguments: Any) -> dict[str, Any]:
             raise ToolError(f"tool argument {key} must be {expected}")
         if expected == "string" and not field["minLength"] <= len(value) <= field["maxLength"]:
             raise ToolError(f"tool argument {key} has an invalid length")
+        if expected == "string" and "enum" in field and value not in field["enum"]:
+            raise ToolError(f"tool argument {key} must be one of {', '.join(field['enum'])}")
         if expected == "integer" and not field["minimum"] <= value <= field["maximum"]:
             raise ToolError(f"tool argument {key} is outside its allowed range")
         if expected == "array":
@@ -242,6 +296,18 @@ def call_tool(name: str, raw_arguments: Any) -> dict[str, Any]:
         )
     if name == "kg_resolve":
         return resolve(arguments["terms"], filters=_filters(arguments))
+    if name == "kg_neighbors":
+        return neighbors(
+            arguments["uids"], roles=tuple(arguments.get("role", ())), direction=arguments.get("dir", "out"),
+            depth=arguments.get("depth", 1), filters=_filters(arguments),
+        )
+    if name == "kg_browse":
+        return browse(arguments.get("handle"), filters=_filters(arguments))
+    if name == "kg_pack":
+        return pack(
+            arguments["uids"], budget=arguments.get("budget", PACK_BUDGET),
+            requires_depth=arguments.get("requires_depth", 1), filters=_filters(arguments),
+        )
     return get(arguments["uids"], source_lines=arguments.get("source_lines"))
 
 

@@ -1,4 +1,4 @@
-"""Exercise the installed wheel end to end: base, records, drafts, check, index and retrieval."""
+"""Exercise the installed wheel end to end: base, records, drafts, check, index, retrieval and navigation."""
 
 from __future__ import annotations
 
@@ -141,6 +141,37 @@ def write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def navigate(runtime: Runtime, root: Path, outside: Path) -> None:
+    """neighbors, browse and pack over the indexed smoke base."""
+    relation = "smoke:measure-space-implies-countable-additivity"
+    cited = runtime.object("neighbors", "measure-space", "--dir", "in", cwd=outside)
+    require(cited["edges"] == [{"from": relation, "role": "premise", "to": "smoke:measure-space", "depth": 1}],
+            f"neighbors --dir in edges mismatch: {cited['edges']}")
+    require(cited["records"][relation]["exists"] and cited["missing"] == [], f"neighbors records mismatch: {cited}")
+    bases = runtime.object("browse", cwd=outside)["bases"]
+    require(bases == [{"name": "smoke", "available": True, "records": 3, "relations": 1, "pending": 1}],
+            f"browse bases mismatch: {bases}")
+    entries = runtime.object("browse", "smoke", cwd=outside)["entries"]
+    require(entries == [{"path": "notes/", "type": "dir", "records": 3, "relations": 1, "pending": 1}],
+            f"browse base entries mismatch: {entries}")
+    sheet = runtime.object("browse", "smoke:notes/measure.txt", cwd=root)
+    require([group["kind"] for group in sheet["kinds"]] == ["concept", "definition", "implies"],
+            f"browse source kinds mismatch: {sheet['kinds']}")
+    require([item["term"] for item in sheet["pending"]] == ["countable additivity"],
+            f"browse source pending terms mismatch: {sheet['pending']}")
+    listing = runtime.object("browse", "--kind", "implies", cwd=outside)["records"]
+    require([item["uid"] for item in listing] == [relation], f"browse --kind listing mismatch: {listing}")
+    require(sorted(listing[0]["links"]) == ["conclusion", "premise"],
+            f"browse --kind links mismatch: {listing[0]['links']}")
+    packet = runtime.object("pack", relation, cwd=outside)
+    require([item["uid"] for item in packet["records"]] == [relation], f"pack records mismatch: {packet['records']}")
+    require(packet["bytes"] <= packet["budget"], f"pack exceeded its budget: {packet['bytes']}")
+    require({"reason": "pending", "from": relation, "role": "conclusion", "term": "countable additivity"}
+            in packet["gaps"], f"pack pending gap missing: {packet['gaps']}")
+    require({"reason": "not-packed", "from": relation, "role": "premise", "uid": "smoke:measure-space"}
+            in packet["gaps"], f"pack not-packed gap missing: {packet['gaps']}")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="kgdistiller-wheel-runtime-") as raw:
         temporary = Path(raw).resolve()
@@ -206,6 +237,7 @@ def main() -> int:
         require(record["source_text"] is not None and record["source_text"].startswith("3\t"),
                 f"get --source-lines failed: {record.get('source_text')}")
         require([link["role"] for link in record["in"]] == ["premise"], "get in-links mismatch")
+        navigate(runtime, root, outside)
 
         plugin = runtime.object("obsidian", "install", "--base", "smoke", cwd=outside)
         require(plugin.get("status") == "installed", "Obsidian plugin install status mismatch")
@@ -220,7 +252,7 @@ def main() -> int:
 
     print(
         "installed command, base add, sheet and accept, check --fix-lines, index, search (including CJK), "
-        "resolve, get and Obsidian plugin smoke passed"
+        "resolve, get, neighbors, browse, pack and Obsidian plugin smoke passed"
     )
     return 0
 

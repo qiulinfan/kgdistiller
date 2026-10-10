@@ -131,6 +131,11 @@ replaces a copy that `doctor` reports as differing and removes retired Skills
 and presets, discarding local edits to installed files. Report such a copy
 before relinking, then run `doctor` again.
 
+Other MCP-capable runtimes, such as OMP, register `kgd mcp` (command `kgd`,
+argument `mcp`, `HF_HUB_OFFLINE=1` in its environment) in their own MCP
+configuration, as the product's deployment guide describes; the Skill-only
+linker still links the Skills.
+
 ## Git
 
 Run `git init`, commit, configure a remote or push only when the owner asks. A

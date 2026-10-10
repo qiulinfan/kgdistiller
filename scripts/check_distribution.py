@@ -73,8 +73,6 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         if path.is_file() and not _is_python_cache(path.relative_to(root))
     ]
     files.extend(_manifest_documents())
-    files.append(REPO_ROOT / "docs" / "omp-compiled-tools.md")
-    files.append(REPO_ROOT / "integrations" / "omp" / "compiled_tools.ts")
     files.extend(
         (
             REPO_ROOT / "scripts" / "link-codex-product.sh",

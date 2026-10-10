@@ -24,7 +24,7 @@ from kgdistiller.mcp import (
     call_tool,
     serve_stdio,
 )
-from kgdistiller.retrieve import search
+from kgdistiller.retrieve import browse, neighbors, pack, search
 from tests.knowledge_fixture import (
     FAKE_DIMENSION,
     FakeEncoder,
@@ -87,14 +87,18 @@ class MCPTest(unittest.TestCase):
                     found[str(path)] = (path.read_bytes(), path.stat().st_mtime_ns)
         return found
 
-    def test_tool_surface_is_exactly_search_resolve_get(self) -> None:
-        self.assertEqual(["kg_search", "kg_resolve", "kg_get"], [tool["name"] for tool in TOOL_DEFINITIONS])
+    def test_tool_surface_is_exactly_the_six_read_tools(self) -> None:
+        self.assertEqual(["kg_search", "kg_resolve", "kg_get", "kg_neighbors", "kg_browse", "kg_pack"],
+                         [tool["name"] for tool in TOOL_DEFINITIONS])
         filters = {"base", "kind", "class", "source", "understanding"}
         properties = {tool["name"]: set(tool["inputSchema"]["properties"]) for tool in TOOL_DEFINITIONS}
         self.assertEqual(properties, {
             "kg_search": {"query", "limit", "no_dense", *filters},
             "kg_resolve": {"terms", *filters},
             "kg_get": {"uids", "source_lines"},
+            "kg_neighbors": {"uids", "role", "dir", "depth", *filters},
+            "kg_browse": {"handle", *filters},
+            "kg_pack": {"uids", "budget", "requires_depth", *filters},
         })
         for tool in TOOL_DEFINITIONS:
             self.assertFalse(tool["inputSchema"]["additionalProperties"])
@@ -126,6 +130,15 @@ class MCPTest(unittest.TestCase):
             "uids has an invalid item count": ("kg_get", {"uids": ["kb:x"] * 129}),
             "source_lines is outside": ("kg_get", {"uids": ["kb:x"], "source_lines": -1}),
             "arguments must be an object": ("kg_get", ["kb:x"]),
+            "dir must be one of out, in, both": ("kg_neighbors", {"uids": ["kb:x"], "dir": "sideways"}),
+            "depth is outside": ("kg_neighbors", {"uids": ["kb:x"], "depth": 0}),
+            "depth is outside its allowed range": ("kg_neighbors", {"uids": ["kb:x"], "depth": 33}),
+            "role contains invalid items": ("kg_neighbors", {"uids": ["kb:x"], "role": [1]}),
+            "budget is outside": ("kg_pack", {"uids": ["kb:x"], "budget": 0}),
+            "budget is outside its allowed range": ("kg_pack", {"uids": ["kb:x"], "budget": 4194305}),
+            "requires_depth is outside": ("kg_pack", {"uids": ["kb:x"], "requires_depth": -1}),
+            "argument uids has an invalid item count": ("kg_pack", {"uids": []}),
+            "handle has an invalid length": ("kg_browse", {"handle": ""}),
             "unknown tool: kg_compiled_knowledge": ("kg_compiled_knowledge", {}),
         }
         server = self.server()
@@ -156,6 +169,18 @@ class MCPTest(unittest.TestCase):
         self.assertEqual(["kb:measure"], [sense["uid"] for sense in resolved["terms"][0]["senses"]])
         got = self.call(server, "kg_get", {"uids": ["measure-space"], "source_lines": 0})["structuredContent"]
         self.assertEqual("2\tA measure space is a triple.", got["records"][0]["source_text"])
+        linked = self.call(server, "kg_neighbors", {"uids": ["measure-space"], "dir": "out"})["structuredContent"]
+        self.assertEqual(neighbors(["measure-space"]), linked)
+        self.assertEqual(["kb:measure"], [edge["to"] for edge in linked["edges"]])
+        self.assertEqual(browse(), self.call(server, "kg_browse", {})["structuredContent"])
+        self.assertEqual(browse("kb:notes/a.txt"),
+                         self.call(server, "kg_browse", {"handle": "kb:notes/a.txt"})["structuredContent"])
+        packet = self.call(server, "kg_pack", {"uids": ["measure-space"]})["structuredContent"]
+        self.assertEqual(pack(["measure-space"]), packet)
+        self.assertEqual(["kb:measure-space", "kb:measure"], [record["uid"] for record in packet["records"]])
+        unknown = self.call(server, "kg_browse", {"handle": "nope"})
+        self.assertTrue(unknown["isError"])
+        self.assertIn("unknown base 'nope'", unknown["structuredContent"]["error"]["message"])
         self.assertEqual(before, self.snapshot())
 
     def embed(self, model: str = "fake/model") -> None:
@@ -197,6 +222,28 @@ class MCPTest(unittest.TestCase):
             found = self.call(server, "kg_search", {"query": "measure space"})
         self.assertIn("dense", found["structuredContent"]["lanes"])
         self.assertEqual(["fake/model", "other/model"], CountingModel.constructed)
+
+    def test_graph_tools_load_no_model_and_keep_the_resident_one(self) -> None:
+        self.real_encoder_without_a_resident_model()
+        CountingModel.constructed = []
+        self.embed()
+        server = self.server()
+        module = SimpleNamespace(SentenceTransformer=CountingModel)
+        with patch.dict(sys.modules, {"sentence_transformers": module}):
+            index()
+            found = self.call(server, "kg_search", {"query": "measure space"})
+            self.assertIn("dense", found["structuredContent"]["lanes"])
+            resident = adapter._resident
+            self.assertIsNotNone(resident)
+            for name, arguments in (("kg_neighbors", {"uids": ["kb:measure"], "dir": "both", "depth": 2}),
+                                    ("kg_browse", {"handle": "kb:notes/a.txt"}),
+                                    ("kg_pack", {"uids": ["kb:measure-space"]})):
+                with self.subTest(tool=name):
+                    self.assertFalse(self.call(server, name, arguments)["isError"])
+            self.assertIs(resident, adapter._resident)
+            again = self.call(server, "kg_search", {"query": "measure space"})
+            self.assertIn("dense", again["structuredContent"]["lanes"])
+        self.assertEqual(["fake/model"], CountingModel.constructed)
 
     def test_missing_retrieval_extra_is_a_tool_error(self) -> None:
         self.embed()

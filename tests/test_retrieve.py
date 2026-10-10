@@ -1,4 +1,4 @@
-"""Read primitives: ``search`` lanes and fusion, filters, ``resolve`` and ``get``."""
+"""Read primitives: ``search`` lanes and fusion, filters, ``resolve``, ``get``, ``neighbors``, ``browse`` and ``pack``."""
 
 from __future__ import annotations
 
@@ -14,7 +14,17 @@ from kgdistiller import retrieve
 from kgdistiller.adapters import sentence_transformers as adapter
 from kgdistiller.home import KnowledgeError
 from kgdistiller.index import index
-from kgdistiller.retrieve import Filters, get, name_candidates, resolve, search
+from kgdistiller.retrieve import (
+    Filters,
+    browse,
+    compact_json,
+    get,
+    name_candidates,
+    neighbors,
+    pack,
+    resolve,
+    search,
+)
 from tests.knowledge_fixture import (
     FAKE_DIMENSION,
     FakeEncoder,
@@ -418,6 +428,311 @@ class GetTest(RetrieveTestCase):
             get(["measure"])
         self.assertIn("kb:measure, notes:measure", str(caught.exception))
         self.assertEqual(["nothing"], get(["nothing"])["missing"])
+
+
+# ---------------------------------------------------------------- graph and navigation
+
+GRAPH_LINES = [
+    "Graph fixture",
+    "A is defined from B and a loose term.",
+    "B is defined from A.",
+    "C needs D.",
+    "D is basic.",
+    "X is a theorem.",
+    "Y is a theorem.",
+    "X implies Y.",
+    "X contrasts with Y, witnessed by the implication.",
+    "X and Y are equivalent.",
+    "An example uses X in Z.",
+    "Linear probing, the second sense.",
+    "Linear probing resolves collisions.",
+    "A linear probing hash table stores keys in one array.",
+    "A big record.",
+]
+SUB_LINES = ["Sub fixture", "H needs D."]
+NO_LAG = {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": False}
+
+
+class GraphTestCase(unittest.TestCase):
+    """A requires cycle, a requires chain, relations over x and y (one citing another), a missing target and homonyms."""
+
+    def setUp(self) -> None:
+        self.kb = make_record_home(self, bases=("kb", "notes"))
+        self.kb.write_source("notes/g.txt", "\n".join(GRAPH_LINES) + "\n")
+        self.kb.write_source("notes/sub/h.txt", "\n".join(SUB_LINES) + "\n")
+        self.kb.write_source("notes/g.txt", "Notes fixture\nX in notes.\n", base="notes")
+        records = [
+            ("a", "A", 2, "definition", 'requires: ["[[b]]", loose term]'),
+            ("b", "B", 3, "definition", 'requires: ["[[a]]"]'),
+            ("c", "C", 4, "definition", 'requires: ["[[d]]"]'),
+            ("d", "D", 5, "definition", ""),
+            ("x", "X", 6, "theorem", ""),
+            ("y", "Y", 7, "theorem", ""),
+            ("r1", "X implies Y", 8, "implies", 'premise: ["[[x]]"]\nconclusion: ["[[y]]"]'),
+            ("r2", "X contrasts with Y", 9, "contrasts", 'subject: ["[[x]]"]\ncontrast: ["[[y]]"]\nwitness: ["[[r1]]"]'),
+            ("r3", "X equivalent to Y", 10, "equivalent", 'side: ["[[x]]", "[[y]]"]'),
+            ("e1", "Example of X", 11, "example", 'uses: ["[[x]]"]\nsetting: ["[[z]]"]'),
+            ("linear-probing-2", "Linear probing", 12, "definition", ""),
+            ("linear-probing", "Linear probing", 13, "definition", ""),
+            ("linear-probing-hash-table", "Linear probing hash table", 14, "concept", ""),
+            ("big", "Big", 15, "concept", ""),
+        ]
+        for identifier, label, line, kind, extra in records:
+            body = "Long. " * 400 if identifier == "big" else f"{label}."
+            self.kb.write_record(identifier, node(label, str(line), source="notes/g.txt", kind=kind, extra=extra),
+                                 body, [GRAPH_LINES[line - 1]])
+        self.kb.write_record("h", node("H", "2", source="notes/sub/h.txt", extra='requires: ["[[d]]"]'), "H.", ["H needs D."])
+        self.kb.write_record("x", node("X", "2", source="notes/g.txt", kind="theorem"), "X in notes.", ["X in notes."], base="notes")
+        report = index()
+        self.assertEqual({}, {name: counts["unparseable"] for name, counts in report["bases"].items() if counts["unparseable"]})
+
+
+def edge(source: str, role: str, target: str, depth: int, *, term: bool = False) -> dict[str, object]:
+    return {"from": source, "role": role, ("term" if term else "to"): target, "depth": depth}
+
+
+class NeighborsTest(GraphTestCase):
+    def test_requires_closure_ends_a_cycle_at_the_depth_limit(self) -> None:
+        result = neighbors(["kb:a"], roles=("requires",), direction="out", depth=3)
+        self.assertEqual(["edges", "records", "missing", "lag"], list(result))
+        self.assertEqual(
+            [edge("kb:a", "requires", "kb:b", 1), edge("kb:a", "requires", "loose term", 1, term=True),
+             edge("kb:b", "requires", "kb:a", 2)],
+            result["edges"],
+        )
+        self.assertEqual(
+            {"kb:a": {"label": "A", "kind": "definition", "class": "node", "exists": True},
+             "kb:b": {"label": "B", "kind": "definition", "class": "node", "exists": True}},
+            result["records"],
+        )
+        self.assertEqual([], result["missing"])
+        self.assertEqual(NO_LAG, result["lag"])
+
+    def test_depth_one_cuts_the_closure(self) -> None:
+        result = neighbors(["kb:a"], roles=("requires",), depth=1)
+        self.assertEqual(
+            [edge("kb:a", "requires", "kb:b", 1), edge("kb:a", "requires", "loose term", 1, term=True)],
+            result["edges"],
+        )
+        self.assertEqual(["kb:a", "kb:b"], list(result["records"]))
+
+    def test_claim_closure_across_relation_to_relation_links(self) -> None:
+        citing = neighbors(["kb:x"], direction="in")
+        self.assertEqual(
+            [edge("kb:e1", "uses", "kb:x", 1), edge("kb:r1", "premise", "kb:x", 1),
+             edge("kb:r2", "subject", "kb:x", 1), edge("kb:r3", "side", "kb:x", 1)],
+            citing["edges"],
+        )
+        closure = neighbors(["kb:x"], direction="both", depth=2)
+        self.assertEqual(
+            citing["edges"] + [
+                edge("kb:e1", "setting", "kb:z", 2), edge("kb:r1", "conclusion", "kb:y", 2),
+                edge("kb:r2", "contrast", "kb:y", 2), edge("kb:r2", "witness", "kb:r1", 2),
+                edge("kb:r3", "side", "kb:y", 2),
+            ],
+            closure["edges"],
+        )
+        self.assertEqual({"label": None, "kind": None, "class": None, "exists": False}, closure["records"]["kb:z"])
+        self.assertEqual({"label": "Y", "kind": "theorem", "class": "node", "exists": True}, closure["records"]["kb:y"])
+        self.assertEqual({"kb:x", "kb:y", "kb:z", "kb:r1", "kb:r2", "kb:r3", "kb:e1"}, set(closure["records"]))
+
+    def test_applications_by_kind(self) -> None:
+        result = neighbors(["kb:x"], direction="in", filters=Filters(kind=("example",)))
+        self.assertEqual([edge("kb:e1", "uses", "kb:x", 1)], result["edges"])
+        self.assertEqual(["kb:x", "kb:e1"], list(result["records"]))
+
+    def test_the_role_restriction_holds_at_every_hop(self) -> None:
+        result = neighbors(["kb:x"], roles=("premise",), direction="both", depth=2)
+        self.assertEqual([edge("kb:r1", "premise", "kb:x", 1)], result["edges"])
+        self.assertEqual(["kb:x", "kb:r1"], list(result["records"]))
+
+    def test_unknown_and_ambiguous_starts(self) -> None:
+        result = neighbors(["kb:nothing", "kb:d", "kb:nothing"])
+        self.assertEqual(["kb:nothing"], result["missing"])
+        self.assertEqual([], result["edges"])
+        self.assertEqual(["kb:d"], list(result["records"]))
+        with self.assertRaises(KnowledgeError) as caught:
+            neighbors(["x"])
+        self.assertIn("kb:x, notes:x", str(caught.exception))
+
+    def test_bad_direction_or_depth(self) -> None:
+        for arguments in ({"direction": "sideways"}, {"depth": 0}):
+            with self.subTest(**arguments), self.assertRaises(KnowledgeError):
+                neighbors(["kb:a"], **arguments)
+
+
+class BrowseTest(GraphTestCase):
+    def test_bases_with_counts_and_availability(self) -> None:
+        result = browse()
+        self.assertEqual(["bases", "lag"], list(result))
+        self.assertEqual(
+            [{"name": "kb", "available": True, "records": 15, "relations": 4, "pending": 1},
+             {"name": "notes", "available": True, "records": 1, "relations": 0, "pending": 0}],
+            result["bases"],
+        )
+        self.kb.roots["notes"].rename(self.kb.roots["notes"].with_name("moved"))
+        moved = browse()
+        self.assertEqual([True, False], [base["available"] for base in moved["bases"]])
+        self.assertEqual(["notes"], moved["lag"]["unavailable_bases"])
+
+    def test_base_root_and_directory(self) -> None:
+        root = browse("kb")
+        self.assertEqual(["base", "dir", "entries", "lag"], list(root))
+        self.assertEqual(("kb", ""), (root["base"], root["dir"]))
+        self.assertEqual([{"path": "notes/", "type": "dir", "records": 15, "relations": 4, "pending": 1}], root["entries"])
+        directory = browse("kb:notes/")
+        self.assertEqual("notes/", directory["dir"])
+        self.assertEqual(
+            [{"path": "notes/g.txt", "type": "source", "records": 14, "relations": 4, "pending": 1},
+             {"path": "notes/sub/", "type": "dir", "records": 1, "relations": 0, "pending": 0}],
+            directory["entries"],
+        )
+        self.assertEqual([], browse("kb:elsewhere/")["entries"])
+
+    def test_source_file_by_kind_with_pending_terms(self) -> None:
+        result = browse("kb:notes/g.txt")
+        self.assertEqual(["base", "source", "kinds", "pending", "lag"], list(result))
+        self.assertEqual(
+            ["concept", "contrasts", "definition", "equivalent", "example", "implies", "theorem"],
+            [group["kind"] for group in result["kinds"]],
+        )
+        definitions = next(group["records"] for group in result["kinds"] if group["kind"] == "definition")
+        self.assertEqual(
+            ["kb:a", "kb:b", "kb:c", "kb:d", "kb:linear-probing-2", "kb:linear-probing"],
+            [record["uid"] for record in definitions],
+        )
+        self.assertEqual(
+            {"uid": "kb:a", "label": "A", "class": "node", "lines": "2-2", "understanding": "unknown", "gloss": "A.",
+             "links": {"requires": [{"uid": "kb:b", "label": "B"}, {"term": "loose term"}]}},
+            definitions[0],
+        )
+        example = next(group["records"][0] for group in result["kinds"] if group["kind"] == "example")
+        self.assertEqual(
+            {"setting": [{"uid": "kb:z", "label": None}], "uses": [{"uid": "kb:x", "label": "X"}]}, example["links"]
+        )
+        self.assertEqual([{"term": "loose term", "owners": [{"uid": "kb:a", "role": "requires"}]}], result["pending"])
+        self.assertEqual({"base": "kb", "source": "notes/none.txt", "kinds": [], "pending": [], "lag": NO_LAG},
+                         browse("kb:notes/none.txt"))
+
+    def test_a_kind_filter_lists_records_with_every_link(self) -> None:
+        result = browse(filters=Filters(kind=("contrasts",)))
+        self.assertEqual(["records", "lag"], list(result))
+        self.assertEqual(
+            [{"uid": "kb:r2", "label": "X contrasts with Y", "kind": "contrasts", "class": "relation", "base": "kb",
+              "source": "notes/g.txt", "lines": "9-9", "understanding": "unknown", "epistemic": None,
+              "gloss": "X contrasts with Y.",
+              "links": {"contrast": [{"uid": "kb:y", "label": "Y"}], "subject": [{"uid": "kb:x", "label": "X"}],
+                        "witness": [{"uid": "kb:r1", "label": "X implies Y"}]}}],
+            result["records"],
+        )
+        scoped = browse("kb:notes/sub/", filters=Filters(kind=("definition",)))
+        self.assertEqual(["kb:h"], [record["uid"] for record in scoped["records"]])
+        self.assertEqual(
+            ["kb:a", "kb:b", "kb:c", "kb:d", "kb:linear-probing-2", "kb:linear-probing", "kb:h"],
+            [record["uid"] for record in browse("kb", filters=Filters(kind=("definition",)))["records"]],
+        )
+        self.assertEqual(["kb:x", "kb:y"], [record["uid"] for record in browse("kb:notes/g.txt", filters=Filters(kind=("theorem",)))["records"]])
+
+    def test_unknown_base(self) -> None:
+        with self.assertRaises(KnowledgeError) as caught:
+            browse("nope")
+        self.assertIn("unknown base 'nope'", str(caught.exception))
+
+    def test_a_class_filter_changes_the_counts(self) -> None:
+        relations = Filters(class_=("relation",))
+        self.assertEqual(
+            [{"name": "kb", "available": True, "records": 4, "relations": 4, "pending": 0},
+             {"name": "notes", "available": True, "records": 0, "relations": 0, "pending": 0}],
+            browse(filters=relations)["bases"],
+        )
+        self.assertEqual(
+            [{"path": "notes/g.txt", "type": "source", "records": 4, "relations": 4, "pending": 0}],
+            browse("kb:notes/", filters=relations)["entries"],
+        )
+
+
+def packed(result: dict[str, object]) -> list[str]:
+    return [record["uid"] for record in result["records"]]  # type: ignore[index, union-attr]
+
+
+def packed_record(uid: str) -> dict[str, object]:
+    record = get([uid])["records"][0]
+    del record["in"], record["search_terms"]
+    return record
+
+
+class PackTest(GraphTestCase):
+    def test_budget_skips_a_record_that_does_not_fit(self) -> None:
+        sizes = {uid: len(compact_json(packed_record(uid)).encode("utf-8")) for uid in ("kb:c", "kb:big", "kb:d")}
+        budget = 2 + sizes["kb:c"] + 1 + sizes["kb:d"]
+        self.assertGreater(sizes["kb:big"], sizes["kb:d"])
+        result = pack(["kb:c", "kb:big", "kb:d"], budget=budget, requires_depth=0)
+        self.assertEqual(["records", "bytes", "budget", "gaps", "lag"], list(result))
+        self.assertEqual(["kb:c", "kb:d"], packed(result))
+        self.assertEqual([{"reason": "over-budget", "uid": "kb:big"}], result["gaps"])
+        self.assertEqual(len(compact_json(result["records"]).encode("utf-8")), result["bytes"])
+        self.assertEqual((budget, budget), (result["bytes"], result["budget"]))
+        self.assertEqual(NO_LAG, result["lag"])
+
+    def test_requires_closure_is_breadth_first(self) -> None:
+        self.assertEqual(["kb:c", "kb:a", "kb:d", "kb:b"], packed(pack(["kb:c", "kb:a"], requires_depth=1)))
+        shallow = pack(["kb:c", "kb:a", "c"], requires_depth=0)
+        self.assertEqual(["kb:c", "kb:a"], packed(shallow))
+        self.assertEqual(
+            [{"reason": "not-packed", "from": "kb:c", "role": "requires", "uid": "kb:d"},
+             {"reason": "not-packed", "from": "kb:a", "role": "requires", "uid": "kb:b"},
+             {"reason": "pending", "from": "kb:a", "role": "requires", "term": "loose term"}],
+            shallow["gaps"],
+        )
+
+    def test_shared_relations_by_packed_participants(self) -> None:
+        result = pack(["kb:x", "kb:y", "kb:r1"])
+        self.assertEqual(["kb:x", "kb:y", "kb:r1", "kb:r2", "kb:r3"], packed(result))
+        self.assertEqual([], result["gaps"])
+        self.assertEqual(["kb:x", "kb:r1", "kb:r2"], packed(pack(["kb:x", "kb:r1"])))
+        self.assertEqual(["kb:x"], packed(pack(["kb:x"])))
+
+    def test_gap_reasons_and_order(self) -> None:
+        result = pack(["kb:nothing", "kb:a", "kb:e1"], requires_depth=0)
+        self.assertEqual(["kb:a", "kb:e1"], packed(result))
+        self.assertEqual(
+            [{"reason": "unknown-uid", "uid": "kb:nothing"},
+             {"reason": "not-packed", "from": "kb:a", "role": "requires", "uid": "kb:b"},
+             {"reason": "pending", "from": "kb:a", "role": "requires", "term": "loose term"},
+             {"reason": "missing-target", "from": "kb:e1", "role": "setting", "uid": "kb:z"},
+             {"reason": "not-packed", "from": "kb:e1", "role": "uses", "uid": "kb:x"}],
+            result["gaps"],
+        )
+
+    def test_records_are_get_records_without_in_and_search_terms(self) -> None:
+        result = pack(["kb:r2", "kb:a"], requires_depth=0)
+        for record in result["records"]:
+            self.assertNotIn("in", record)
+            self.assertNotIn("search_terms", record)
+            self.assertEqual(packed_record(record["uid"]), record)
+
+    def test_filters_restrict_only_what_pack_adds(self) -> None:
+        self.assertEqual(["kb:h", "kb:d"], packed(pack(["kb:h"])))
+        restricted = pack(["kb:h", "kb:c"], filters=Filters(source=("notes/sub/",)))
+        self.assertEqual(["kb:h", "kb:c"], packed(restricted))
+        self.assertEqual(
+            [{"reason": "not-packed", "from": "kb:h", "role": "requires", "uid": "kb:d"},
+             {"reason": "not-packed", "from": "kb:c", "role": "requires", "uid": "kb:d"}],
+            restricted["gaps"],
+        )
+
+    def test_bad_budget_or_depth(self) -> None:
+        for arguments in ({"budget": 0}, {"requires_depth": -1}):
+            with self.subTest(**arguments), self.assertRaises(KnowledgeError):
+                pack(["kb:a"], **arguments)
+
+
+class HomonymTest(GraphTestCase):
+    def test_senses_in_line_order_and_longer_labels_as_mentions(self) -> None:
+        term = resolve(["Linear probing"])["terms"][0]
+        self.assertEqual(["kb:linear-probing-2", "kb:linear-probing"], [item["uid"] for item in term["senses"]])
+        self.assertEqual(["12-12", "13-13"], [item["lines"] for item in term["senses"]])
+        self.assertEqual(["kb:linear-probing-hash-table"], [item["uid"] for item in term["mentions"]])
 
 
 if __name__ == "__main__":

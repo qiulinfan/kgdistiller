@@ -16,7 +16,7 @@ from tests.knowledge_fixture import make_record_home, type_document, use_tempora
 
 COMMANDS = {
     "base", "check", "sheet", "accept", "harvest", "index", "search", "resolve", "get",
-    "obsidian", "claude", "codex", "mcp",
+    "neighbors", "browse", "pack", "obsidian", "claude", "codex", "mcp",
 }
 SOURCE = "Chapter one\nA measure space is a triple (X, F, mu).\nA measure is countably additive.\n测度论研究可测空间。\n"
 
@@ -82,6 +82,7 @@ class BaseAddTest(unittest.TestCase):
 
     def test_commands_refuse_without_a_home_and_create_nothing(self) -> None:
         for arguments in (("index",), ("search", "measure"), ("resolve", "measure"), ("get", "kb:x"),
+                          ("neighbors", "kb:x"), ("browse",), ("pack", "kb:x"),
                           ("sheet", "a.txt"), ("accept", "x.md"), ("harvest", "s.md"), ("base", "list")):
             with self.subTest(arguments=arguments):
                 result = kgdistiller(*arguments, cwd=self.tmp)
@@ -115,7 +116,7 @@ def _choices(help_text: str) -> set[str]:
 
 
 class CommandSurfaceTest(unittest.TestCase):
-    def test_exactly_the_s2_commands_are_offered(self) -> None:
+    def test_exactly_the_documented_commands_are_offered(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             help_text = kgdistiller("--help", cwd=root).stdout
@@ -149,12 +150,16 @@ class ExitCodeTest(unittest.TestCase):
         self.kb.write_record("broken", node("Broken", "3", kind="lemma"), "No such kind.", ["A measure"])
         self.assertEqual(kgdistiller("check", cwd=self.root).returncode, 1)
         for arguments in (("search",), ("search", "q", "--limit", "0"), ("get", "x", "--source-lines", "-1"),
-                          ("accept",), ("search", "q", "--class", "edge"), ("check", "--force"), ()):
+                          ("accept",), ("search", "q", "--class", "edge"), ("check", "--force"), (),
+                          ("neighbors", "x", "--dir", "sideways"), ("neighbors", "x", "--depth", "0"), ("neighbors",),
+                          ("pack", "x", "--budget", "0"), ("pack", "x", "--requires-depth", "-1"), ("pack",),
+                          ("browse", "a", "b")):
             with self.subTest(arguments=arguments):
                 self.assertEqual(kgdistiller(*arguments, cwd=self.root).returncode, 2)
 
     def test_reads_without_an_index_say_run_kgd_index(self) -> None:
-        for arguments in (("search", "measure"), ("resolve", "measure"), ("get", "measure")):
+        for arguments in (("search", "measure"), ("resolve", "measure"), ("get", "measure"),
+                          ("neighbors", "measure"), ("browse",), ("pack", "measure")):
             with self.subTest(arguments=arguments):
                 result = kgdistiller(*arguments, cwd=self.root)
                 self.assertEqual((result.returncode, result.stdout), (1, ""))
@@ -193,7 +198,7 @@ class CheckJsonTest(unittest.TestCase):
 
 
 class EndToEndTest(unittest.TestCase):
-    def test_check_accept_index_search_resolve_get(self) -> None:
+    def test_check_accept_index_and_every_read(self) -> None:
         kb = make_record_home(self)
         root = kb.root
         kb.write_source("notes/a.txt", SOURCE)
@@ -246,6 +251,30 @@ class EndToEndTest(unittest.TestCase):
                          [("conclusion", "kb:measure"), ("premise", "kb:measure-space")])
         self.assertEqual(record["source_text"].split("\n")[0], "1\tChapter one")
         self.assertEqual(len(record["source_text"].split("\n")), 4)
+
+        cited = output(kgdistiller("neighbors", "measure", "--dir", "in", cwd=root))
+        self.assertEqual(cited["edges"], [
+            {"from": "kb:measure-space", "role": "requires", "to": "kb:measure", "depth": 1},
+            {"from": "kb:space-implies-measure", "role": "conclusion", "to": "kb:measure", "depth": 1},
+        ])
+        self.assertEqual(cited["missing"], [])
+        bases = output(kgdistiller("browse", cwd=root.parent))["bases"]
+        self.assertEqual(bases, [{"name": "kb", "available": True, "records": 3, "relations": 1, "pending": 1}])
+        sheet = output(kgdistiller("browse", "kb:notes/a.txt", cwd=root))
+        self.assertEqual([group["kind"] for group in sheet["kinds"]], ["definition", "implies"])
+        self.assertEqual(sheet["pending"],
+                         [{"term": "sigma-algebra", "owners": [{"uid": "kb:measure-space", "role": "requires"}]}])
+        listing = output(kgdistiller("browse", "--kind", "implies", cwd=root))["records"]
+        self.assertEqual([item["uid"] for item in listing], ["kb:space-implies-measure"])
+        self.assertEqual({role: [link["uid"] for link in links] for role, links in listing[0]["links"].items()},
+                         {"conclusion": ["kb:measure"], "premise": ["kb:measure-space"]})
+        packet = output(kgdistiller("pack", "measure-space", cwd=root))
+        self.assertEqual([item["uid"] for item in packet["records"]],
+                         ["kb:measure-space", "kb:measure", "kb:space-implies-measure"])
+        self.assertIn({"reason": "pending", "from": "kb:measure-space", "role": "requires", "term": "sigma-algebra"},
+                      packet["gaps"])
+        self.assertEqual(packet["budget"], 60000)
+        self.assertLessEqual(packet["bytes"], 60000)
 
         kb.write_record("measure", node("Measure", "3", extra="aliases: [测度, mass]"), "Edited in place.",
                         ["A measure is countably additive."])

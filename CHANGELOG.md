@@ -68,11 +68,20 @@ All notable changes are documented here.
   skips it, and when stored vectors match the filters but the `retrieval`
   extra is missing or the model cannot be loaded, search fails with a
   `--no-dense` hint.
+- Add `kgd neighbors` (closures over links with one recursive CTE: the role
+  restriction applies at every hop, `--dir out|in|both`, cycles end at the
+  depth limit and records keep their minimum depth; dependency and claim
+  closure, applications by kind), `kgd browse` (bases with counts, source
+  directories, a source's records by kind with its pending terms, and kind
+  listings with all participants at any scope) and `kgd pack` (whole records
+  within a UTF-8 byte budget, a breadth-first `requires` closure, shared
+  relations and typed gaps). The filters apply to all of them.
 - Rewrite `kgd mcp` as a read-only server over the whole home with exactly
-  `kg_search`, `kg_resolve` and `kg_get`, inline input schemas and a fresh
-  read-only connection per call. It takes no arguments. The embedding model
-  loads lazily on the first dense search and stays resident until
-  `meta.embedding` changes; `kg_search` takes `no_dense`.
+  `kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and
+  `kg_pack`, inline input schemas and a fresh read-only connection per call.
+  It takes no arguments. The embedding model loads lazily on the first dense
+  search and stays resident until `meta.embedding` changes; `kg_search` takes
+  `no_dense`, and the other tools load no model.
 - Move the tokenizer into `kgdistiller.index` (`tokens`, with CJK unigrams and
   bigrams, and `name_key`).
 - Extend `kgd base list` with record and draft counts, the indexed row count
@@ -122,12 +131,12 @@ All notable changes are documented here.
   pairing and the rule that source markers define nodes. Markers survive only
   as a frontend convention of the repositories that publish notes.
 - Remove every SHA-256, digest and fingerprint mechanism from records,
-  storage, outputs, the plugin, the compiled library and OMP tools, the
-  installer link state and the release workflow. Ids are readable slugs, never
-  hash-derived; evidence freshness compares text, and the index compares file
-  stat and stored text. The sentence-transformers adapter is reduced to an
-  encoder that takes a model id only; its default model constants, revision
-  pins and the reranker are removed.
+  storage, outputs, the plugin, the installer link state and the release
+  workflow. Ids are readable slugs, never hash-derived; evidence freshness
+  compares text, and the index compares file stat and stored text. The
+  sentence-transformers adapter is reduced to an encoder that takes a model id
+  only; its default model constants, revision pins and the reranker are
+  removed.
 - Remove every publishing surface: `serve` and its static app, `publish`,
   `export site`, `export latex` and `export latex-registry`, the Typst
   knowledge registry and label rendering, the concept-note projection copies,
@@ -147,10 +156,10 @@ All notable changes are documented here.
 - Rewrite the Skills for the record model: `capture-kgdistiller` (one item as a
   draft plus `kgd accept`, or an in-place edit plus `kgd check`),
   `compile-knowledge-sheets` (bounded or whole-source drafts and the sheet;
-  it absorbs note curation), `query-kgdistiller` (search, resolve and get, or
-  the MCP tools) and `deploy-kgdistiller` (registration, check, index and
-  restore, plugin, runtime links). Every Skill that writes knowledge finishes
-  with `kgd index`. Capture and compile ship identical copies of
+  it absorbs note curation), `query-kgdistiller` (search, resolve, get,
+  neighbors, browse and pack, or the MCP tools) and `deploy-kgdistiller`
+  (registration, check, index and restore, plugin, runtime links). Every Skill
+  that writes knowledge finishes with `kgd index`. Capture and compile ship identical copies of
   `references/record-format.md`.
 - Rename `harvest-paper` to `harvest-kgdistiller`, a generic Skill with model
   invocation enabled in both runtimes that runs `kgd harvest` then
@@ -162,6 +171,9 @@ All notable changes are documented here.
   `read-only`, `author` and `write`. The manifests' `workflow_resources` are
   `docs/model.md`, `docs/retrieval.md`, `docs/obsidian.md` and
   `docs/deployment.md`.
+- Remove the compiled-library retrieval path, its OMP bridge and the manually
+  loaded OMP extension, with their tests and documents; OMP reads knowledge
+  through the `kgd mcp` server instead.
 - Port the full product integration to Claude Code: transactional
   `kgdistiller claude link` / `kgdistiller claude doctor` driven by
   `workflows/claude-manifest.json` install the Skills, the Claude Code agent

@@ -55,8 +55,9 @@ Then verify that:
   the home and nowhere in the base; with `embedding` null, `search` and
   `search --no-dense` run only the lexical lane and the name lane, without
   NumPy or a model, rank the expected node first and find a CJK query;
-  `resolve` and `get --source-lines` answer; the plugin installs into the
-  vault;
+  `resolve` and `get --source-lines` answer; `neighbors`, `browse` (bases, a
+  base, a source file and `--kind`) and `pack` (records and gaps) answer; the
+  plugin installs into the vault;
 - installed `kgdistiller`/`kgdistiller.exe` and `kgd` work on Linux, Windows and
   macOS;
 - every test and the smoke script use a temporary `KGDISTILLER_HOME` and never
@@ -76,6 +77,15 @@ Then verify that:
   query with `meta.embedding`, and, when stored vectors match the filters but
   the `retrieval` extra is missing, fails with an install hint unless
   `--no-dense` (MCP: `no_dense`) is given;
+- `neighbors` returns dependency closures whose cycles end at the depth limit
+  and whose records keep their minimum depth, claim closures across
+  relation-to-relation links and applications by kind; `browse` answers every
+  handle form and kind listing; `pack` keeps to its budget, reports
+  over-budget records while later ones still fit, orders shared relations by
+  packed participants, reports every gap reason, and its `bytes` equals the
+  UTF-8 length of the compact JSON of its records; `resolve` separates
+  homonyms within and across bases from mentions; and the MCP server exposes
+  exactly the six read-only tools;
 - the sentence-transformers adapter takes a model id only and has no reranker,
   default model or revision pin;
 - the home lock serializes `accept`, `harvest`, `check --fix-lines` and

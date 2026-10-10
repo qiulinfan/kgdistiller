@@ -185,8 +185,9 @@ kgd index
 This re-embeds every record, which is the only slow part of a restore (about
 two minutes per 500 records with `BAAI/bge-m3` on Apple silicon); report the
 wall time. A missing, unreadable or other-version database is also rebuilt
-automatically by `kgd index`. Readers (`search`, `resolve`, `get`, MCP) open it
-read-only and report `lag`; a missing database tells them to run `kgd index`.
+automatically by `kgd index`. Readers (`search`, `resolve`, `get`,
+`neighbors`, `browse`, `pack`, MCP) open it read-only and report `lag`; a
+missing database tells them to run `kgd index`.
 
 ## Product provenance and boundaries
 

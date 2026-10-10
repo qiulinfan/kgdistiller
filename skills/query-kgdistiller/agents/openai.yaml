@@ -1,4 +1,4 @@
 interface:
   display_name: "Query kgdistiller"
-  short_description: "Resolve and search an external-brain knowledge base"
-  default_prompt: "Use $query-kgdistiller to resolve and search these concepts in the external-brain knowledge base without modifying it."
+  short_description: "Search, navigate and pack an external-brain knowledge base"
+  default_prompt: "Use $query-kgdistiller to search, resolve and navigate these concepts in the external-brain knowledge base without modifying it."

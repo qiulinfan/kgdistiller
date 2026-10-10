@@ -21,7 +21,7 @@ Reference documents installed with this guide:
 - [model.md](model.md): records, grammar, drafts, sheets, `check`, `accept`,
   `harvest`, `sheet` and the lock;
 - [retrieval.md](retrieval.md): the database, `kgd index`, lag, `search`,
-  `resolve`, `get` and the MCP tools;
+  `resolve`, `get`, `neighbors`, `browse`, `pack` and the MCP tools;
 - [obsidian.md](obsidian.md): editing records in Obsidian and the plugin's
   live graph;
 - [deployment.md](deployment.md): installation, registration, restore and Git.
@@ -62,7 +62,7 @@ copies, discarding local edits to installed files.
 | `capture-knowledge` | `capture-kgdistiller` | write | `kgd sheet FILE --json`; `kgd resolve`/`kgd search` to compare senses; a new item as a draft plus `kgd accept`, or an existing record edited in place plus `kgd check --base B`; pending terms one level deep; understanding only from the owner's statement; `kgd index`; report uids and the receipt. |
 | `compile-knowledge-sheets` | `compile-knowledge-sheets` | author | Set the bounded scope; `kgd sheet FILE --json`; `resolve`/`search` for identity; drafts for new records; `kgd check --base B` with every draft passing; `kgd sheet FILE`; stop and report proposed changes to accepted records. |
 | `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; `kgd index`; report refused rows. |
-| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search` (lexical, dense and name lanes), `resolve`, `get [--source-lines N]` or the MCP tools; deliver `source:lines` and quotes; on lag (`changed_files`, `unembedded` or `embedding_changed`) run `kgd index` and repeat; `--no-dense` / `no_dense` when the retrieval extra is missing. |
+| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search` (lexical, dense and name lanes), `resolve`, `get [--source-lines N]`, `neighbors` (closures), `browse` (bases, source trees, kind listings), `pack` (budgeted packets with gaps) or the MCP tools; deliver `source:lines` and quotes; on lag (`changed_files`, `unembedded` or `embedding_changed`) run `kgd index` and repeat; `--no-dense` / `no_dense` when the retrieval extra is missing. |
 | `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` and hidden indexing; `kgd claude link`/`kgd codex link` and both doctors. |
 
 Step modes mean:
@@ -127,8 +127,11 @@ both runtimes.
 ## Query
 
 `$query-kgdistiller` and the `query-reviewer` preset read through
-`kgd search`, `kgd resolve` and `kgd get`, or the MCP tools `kg_search`,
-`kg_resolve` and `kg_get` of `kgd mcp`, across every registered base.
+`kgd search`, `kgd resolve`, `kgd get`, `kgd neighbors`, `kgd browse` and
+`kgd pack`, or the MCP tools `kg_search`, `kg_resolve`, `kg_get`,
+`kg_neighbors`, `kg_browse` and `kg_pack` of `kgd mcp`, across every
+registered base. `neighbors` gives prerequisite and claim closures, and `pack`
+a bounded evidence packet whose gaps are reported, never filled by guessing.
 `search` fuses a lexical, a dense and a name lane; when the retrieval extra is
 missing it fails unless the dense lane is skipped with `--no-dense` (MCP:
 `no_dense`). Answers cite `source:lines` with evidence quotes. When a result
