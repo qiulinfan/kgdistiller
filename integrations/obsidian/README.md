@@ -24,24 +24,27 @@ Requires Obsidian **1.13.7 or newer** on desktop. The manifest sets
 `isDesktopOnly`, so Obsidian does not load the plugin on a phone or tablet.
 
 This README describes plugin 0.1.5 or newer; earlier releases read an older
-export format and show none of these records. With the kgdistiller CLI,
-`kgd obsidian install` (below) installs the bundled plugin and turns on
-hidden-folder indexing in one step. Without it, install **kgdistiller** from
-Community plugins, or download `main.js`, `manifest.json` and `styles.css` from
+export format and show none of these records. Until 0.1.5 is released, the
+Community plugins listing and the GitHub releases may still serve 0.1.4. With
+the kgdistiller CLI, use `kgd obsidian install`
+([CLI installation](#cli-installation)): it installs the bundled 0.1.5 and
+turns on hidden-folder indexing in one step.
+
+Without the CLI, install **kgdistiller** from Community plugins, or download
+`main.js`, `manifest.json` and `styles.css` from
 https://github.com/qiulinfan/kgdistiller/releases into
-`<vault>/.obsidian/plugins/kgdistiller/`; if either still offers an earlier
-version, use `kgd obsidian install` instead. Reload Obsidian, enable the
-plugin, and switch on **Index hidden knowledge folder** in its settings.
+`<vault>/.obsidian/plugins/kgdistiller/`. Reload Obsidian, enable the plugin,
+and switch on **Index hidden knowledge folder** in its settings.
 
 Viewing records needs no Python and no server. The plugin makes no network
 requests, has no telemetry, needs no account and reads nothing outside the
 vault. It uses Node's `fs` only to check paths under the vault's `.knowledge`
 folder for hidden-folder indexing (symlink checks and, on case-insensitive file
 systems, the exact-case name in the parent directory), and the only file it
-writes is its own `data.json`. It
-neither runs the CLI nor installs or updates software. Checking, accepting and
-indexing records, and installing the plugin from the command line, use the
-separate kgdistiller CLI, which needs Python >=3.11.
+writes is its own `data.json`. It neither runs the CLI nor installs or updates
+software. Checking, accepting and indexing records, and installing the plugin
+from the command line, use the separate kgdistiller CLI, which needs Python
+3.11 or newer.
 
 Original code is MIT. The bundle embeds Cytoscape.js, cytoscape-fcose,
 cose-base and layout-base, all MIT, and the hidden-folder indexer is adapted
@@ -118,15 +121,16 @@ opens in the right sidebar.
 - Filters: **Kind**, **Class** (nodes or relations), **Understanding**
   (`unknown`, `not-yet-understood` or `understood`) and **Source** (a path
   prefix). **Show drafts** and **Show pending terms** add those elements, and
-  the **Fit** button fits the view. None of these are stored.
-- Nodes are circles colored by kind, with a border for understanding. A
-  relation whose roles hold exactly two link values, with no `requires` link
-  and nothing linking to it, is one edge labelled with its kind (a diamond
-  while pending terms are shown and it has one); any other relation is a
-  diamond with one edge per role value. `requires` links are dashed arrows,
-  drafts are dashed and translucent, links into other bases end at grey stubs
-  and links to missing records are red. The legend in the details pane lists
-  every style.
+  the icon button with the tooltip **Fit graph** zooms to fit the whole graph.
+  None of these are stored.
+- Nodes are circles coloured by kind, with a border for understanding. A
+  relation is drawn as one edge labelled with its kind when its roles hold
+  exactly two link values, it has no `requires` link and no record links to
+  it. While pending terms are shown, a relation that has a pending term is a
+  diamond instead. Every other relation is a diamond with one edge per role
+  value. `requires` links are dashed arrows, drafts are dashed and translucent,
+  links into other bases end at grey stubs and links to missing records are
+  red. The legend in the details pane lists every style.
 - Selecting an element shows its record: label, kind, class, epistemic label,
   understanding, source and lines, roles and `requires`, then the body and the
   `## Evidence` section rendered as Markdown. **Open record**, **Open source
@@ -162,6 +166,6 @@ vault.
   version-checked GitHub release assets. The canonical plugin sources and the
   bundle that `kgd obsidian install` copies remain in this directory.
 - [ ] Editing commands, and commands that run `kgd`.
-- [ ] Jump links from md/tex sources to records, and "new record from
+- [ ] Jump links from source documents to records, and "new record from
   selection".
 - [ ] A shipped `.base` file and a Bases view.

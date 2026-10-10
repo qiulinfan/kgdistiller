@@ -40,15 +40,16 @@ Obsidian **1.13.7 or newer** on desktop is required; the plugin does not load
 on mobile.
 
 This README describes plugin 0.1.5 or newer. Earlier releases read an older
-export format and show none of the records below. If the community listing or
-the release page still offers an earlier version, install with
-`kgd obsidian install` instead, which copies the bundled 0.1.5.
+export format and show none of the records below.
 
 Records live in the vault's hidden `.knowledge/` folder, which Obsidian skips
 by default. Turn on **Settings → kgdistiller → Index hidden knowledge folder**
 so that `.knowledge/` appears in the file explorer, search, Properties and
-Backlinks like any other folder. `kgd obsidian install` (below) installs the
-plugin from the Python package and turns this setting on for you.
+Backlinks like any other folder. With the CLI from [Install](#install),
+`kgd obsidian install` copies the bundled plugin 0.1.5 into the vault and turns
+this setting on in one step; use it if the community listing or the release
+page still offers an earlier version.
+[docs/obsidian.md](docs/obsidian.md#installation) lists what it changes.
 
 Run **kgdistiller: Open typed graph** to open the graph in the right sidebar.
 It draws nodes, role-bound relations, drafts and pending terms, either around
@@ -87,11 +88,13 @@ evidence and for `kgd get --source-lines`). They write only:
 
 The MCP server speaks stdio only and has no write tools.
 
-The only network access is sentence-transformers downloading the embedding
-model into the Hugging Face cache on first use (several GB for `BAAI/bge-m3`).
-No token is sent and no remote code runs. After that download, set
-`HF_HUB_OFFLINE=1` so every load stays local. Nothing is committed or pushed
-for you: keep each vault and the home in your own Git repositories.
+Network access happens only when sentence-transformers loads the embedding
+model. It downloads the model into the Hugging Face cache on first use (several
+GB for `BAAI/bge-m3`), and later loads may still contact the Hugging Face Hub
+unless `HF_HUB_OFFLINE=1` is set. Set it after the first download and every
+load stays local. No token is sent and no remote code runs. Nothing is
+committed or pushed for you: keep each vault and the home in your own Git
+repositories.
 
 ## License
 
@@ -163,7 +166,10 @@ and search uses only the lexical and name lanes.
 
 ## Quick start
 
-Register a base. The first `base add` creates the home:
+Register a base. The folder must already exist; `mkdir -p ~/research/notes`
+creates it. The commands below also need `notes/measure.md`, whose lines 3-4
+must contain the text quoted in the sigma-algebra example under
+[Record format](#record-format). The first `base add` creates the home:
 
 ```sh
 kgd base add ~/research --name research
@@ -183,7 +189,8 @@ relation_kinds:
 epistemic: [proved, stated]
 ---
 Extract each definition and each precisely stated result as a node. Record a
-relation only when the text states it. Unexplained terms become pending values.
+relation only when the text states it. Record an unexplained term as a pending
+term.
 ```
 
 Map the base's sources to that type and choose an embedding model in
@@ -204,9 +211,10 @@ Map the base's sources to that type and choose an embedding model in
 ```
 
 Then add records. Ask an agent with the Skills installed to capture a
-definition or compile a whole note, or write a draft by hand in
-`~/research/.knowledge/drafts/` (see [Record format](#record-format)) and
-accept it:
+definition or compile a whole note. To add one by hand, print the source's type
+profile with `kgd sheet --json`, write a draft in
+`~/research/.knowledge/drafts/` (see [Record format](#record-format)), then
+check, accept and index it:
 
 ```sh
 cd ~/research
@@ -278,8 +286,8 @@ A measure space is defined over a sigma-algebra.
 - Every other key is a role. A record with at least one non-empty role list is
   a relation; otherwise it is a node. A relation may have any number of roles.
 - A list value is a link (`"[[id]]"`, `"[[base:id]]"` or
-  `"[[.knowledge/entries/id]]"`) or a plain term. A plain term is a pending
-  gap: the source uses it without explaining it. `set` above is one.
+  `"[[.knowledge/entries/id]]"`) or a pending term (a plain-text value): a
+  term the source uses without explaining it. `set` above is one.
 - The body is prose, an optional `## Search terms` section, then a final
   `## Evidence` section of verbatim quotes from the cited lines.
 - Examples and applications are relations of a kind you register, such as
@@ -302,7 +310,7 @@ rules.
 | `kgd harvest [--dry-run] SHEET` | Accept the ticked drafts of a sheet and regenerate it. |
 | `kgd index [--rebuild] [--no-embed]` | Bring the database up to date with the record files. |
 | `kgd search QUERY [--limit N] [--no-dense]` | Rank records by the lexical, dense and name lanes. |
-| `kgd resolve TERM...` | List the senses, mentions and pending uses of terms. |
+| `kgd resolve TERM...` | List the senses and mentions of terms, and the records that use each as a pending term. |
 | `kgd get UID... [--source-lines N]` | Read complete records with their links and, optionally, the live cited source lines. |
 | `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | Follow links from records: dependency and claim closures. |
 | `kgd browse [HANDLE]` | List bases, a base's source directories, a source's records by kind, or every record of a `--kind`. |

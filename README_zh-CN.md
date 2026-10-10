@@ -26,19 +26,26 @@
 
 打开 [kgdistiller 社区页面](https://community.obsidian.md/plugins/kgdistiller)，点 **Add to Obsidian**，然后启用 **kgdistiller**。手动安装时，从 [plugin release](https://github.com/qiulinfan/kgdistiller/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放进 `<vault>/.obsidian/plugins/kgdistiller/`，重载 Obsidian 后启用。需要桌面版 Obsidian **1.13.7 或更新**，移动端不加载此插件。
 
-本 README 描述的是 0.1.5 及更新版本的插件。更早的版本读取旧的导出格式，看不到下文所说的任何记录。如果社区页面或 release 页面提供的仍是更早的版本，请改用 `kgd obsidian install` 安装，它会复制随包附带的 0.1.5。
+本 README 描述的是 0.1.5 及更新版本的插件。更早的版本读取旧的导出格式，看不到下文所说的任何记录。
 
-记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。后文的 `kgd obsidian install` 会从 Python 包安装插件，并顺带打开这个设置。
+记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。按[安装](#安装)装好 CLI 后，`kgd obsidian install` 会把随包附带的 0.1.5 插件复制进 vault，并一起打开这个设置。如果社区页面或 release 页面提供的仍是更早的版本，就用这条命令安装。它具体改动哪些文件，见 [docs/obsidian.md](docs/obsidian.md#installation)。
 
-运行 **kgdistiller: Open typed graph**，图谱会在右侧栏打开。它画出 node、按 role 绑定的 relation、draft 和 pending term；可以只看当前 record、source 或 sheet 周围一到两层，也可以看全图，并按 kind、class、understanding 和 source 路径筛选。详情面板显示记录的 role、正文和 evidence，还有按钮打开记录本身、跳到 source 中被引用的那一行，或打开该 source 的 sheet。在 Obsidian 里改记录时视图会跟着更新。改记录用 Properties 面板，改完运行 `kgd check` 和 `kgd index`；插件本身从不写任何知识文件。完整说明见 [docs/obsidian.md](docs/obsidian.md)。
+运行 **kgdistiller: Open typed graph**，图谱会在右侧栏打开。它画出 node、按 role 绑定的 relation、草稿和 pending term；可以只看当前记录、source 或 sheet 周围一到两层，也可以看全图，并按 kind、class、understanding 和 source 路径筛选。详情面板显示记录的 role、正文和 evidence，还有按钮打开记录本身、跳到 source 中被引用的那一行，或打开该 source 的 sheet。在 Obsidian 里改记录时视图会跟着更新。改记录用 Properties 面板，改完运行 `kgd check` 和 `kgd index`；插件本身从不写任何知识文件。完整说明见 [docs/obsidian.md](docs/obsidian.md)。
 
 ## 隐私与数据边界
 
 插件从 Obsidian 的 metadata cache 读取 `.knowledge/entries/` 和 `.knowledge/drafts/` 的 frontmatter，选中某条记录时才读取该文件。它不发网络请求，不收集遥测，不需要账号，不读 vault 以外的文件，也不安装或更新任何东西。它唯一写的文件是自己的 `data.json`。为了索引隐藏目录，插件 patch 了 Obsidian 内部未公开的 file-adapter 方法，并用 Node 的文件系统 API 检查 vault 中 `.knowledge/` 下的路径，所以只支持桌面端。这样做也会让 `.knowledge/` 对 Obsidian 搜索和同一 vault 的其他插件可见。如果启用了 Hidden Folders Access 插件，kgdistiller 会报告冲突，并关闭自己的隐藏目录索引。
 
-CLI 和 MCP server 都在本地运行。它们读取 home 中的 `config.json` 和 `types/`、各 base 的记录和 draft，以及已注册的 source 文件（用于核对 evidence 和 `kgd get --source-lines`）。写入范围只有：home（`kgd base add`/`rm` 改 `config.json`，第一次 `kgd base add` 创建的 `types/` 目录和 `.gitignore`，以及 `index.sqlite*`、`lock`）；base 的 `.knowledge/` 下的 `entries/`、`drafts/`、`sheets/`；`kgd obsidian install` 写 vault `.obsidian/` 中的插件目录、`community-plugins.json` 和插件的 `data.json`；`kgd claude link` 和 `kgd codex link` 写对应 agent runtime 的 home。MCP server 只走 stdio，没有写工具。
+CLI 和 MCP server 都在本地运行。它们读取 home 中的 `config.json` 和 `types/`、各 base 的记录和草稿，以及已注册的 source 文件（用于核对 evidence 和 `kgd get --source-lines`）。它们只写这些位置：
 
-唯一的联网行为是 sentence-transformers 首次使用时把 embedding 模型下载到 Hugging Face 缓存（`BAAI/bge-m3` 有好几 GB）。不发送 token，也不运行远程代码。下载完成后设置 `HF_HUB_OFFLINE=1`，之后每次加载都只用本地文件。kgdistiller 不会替你 commit 或 push，每个 vault 和 home 请放在你自己的 Git 仓库里管理。
+- home：`kgd base add`/`rm` 修改的 `config.json`，第一次 `kgd base add` 创建的 `types/` 目录和 `.gitignore`，以及 `index.sqlite*` 和 `lock`；
+- base 的 `.knowledge/` 下的 `entries/`、`drafts/` 和 `sheets/` 目录；
+- vault `.obsidian/` 中的插件目录、`community-plugins.json` 和插件的 `data.json`，由 `kgd obsidian install` 写入；
+- 各 agent runtime 的 home，由 `kgd claude link` 和 `kgd codex link` 写入。
+
+MCP server 只走 stdio，没有写工具。
+
+只有 sentence-transformers 加载 embedding 模型时才会联网。首次使用时它把模型下载到 Hugging Face 缓存（`BAAI/bge-m3` 有好几 GB）；之后如果没有设置 `HF_HUB_OFFLINE=1`，加载时仍可能访问 Hugging Face Hub。下载完成后设置这个变量，以后每次加载就都只用本地文件。不发送 token，也不运行远程代码。kgdistiller 不会替你 commit 或 push，每个 vault 和 home 请放在你自己的 Git 仓库里管理。
 
 ## 开源许可
 
@@ -46,7 +53,7 @@ kgdistiller 原创代码采用 [MIT](LICENSE)，版权 2026 Qiulin Fan，允许�
 
 ## 核心概念
 
-kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：正式记录在 `.knowledge/entries/`，提议中的记录在 `.knowledge/drafts/`，生成的审阅页在 `.knowledge/sheets/`。记录分两类：node（一个概念，或一条表述精确的结论），以及 relation（用 role 键绑定其他记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
+kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，草稿在 `.knowledge/drafts/`，生成的审阅页在 `.knowledge/sheets/`。记录分两类：node（一个概念，或一条表述精确的结论），以及 relation（用 role 键绑定其他记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
 
 全局 home 是 `$KGDISTILLER_HOME`（默认 `~/.knowledge`），负责注册 base、把 source glob 映射到你定义的 document type，并保存派生数据库 `index.sqlite`：
 
@@ -62,7 +69,7 @@ kgdistiller 面向学术研究：读的论文、写的论文、自己的研究�
 ├── notes/                         # sources：任意 UTF-8 文本
 └── .knowledge/
     ├── entries/<id>.md            # 已接受的记录
-    ├── drafts/<id>.md             # 提议中的记录，格式相同
+    ├── drafts/<id>.md             # 草稿，格式与记录相同
     └── sheets/<source path>.md    # 生成的 def/pending sheet
 ```
 
@@ -84,7 +91,7 @@ uv tool update-shell
 
 ## 快速开始
 
-注册一个 base。第一次 `base add` 会创建 home：
+注册一个 base。目录必须已经存在，可以用 `mkdir -p ~/research/notes` 创建。后面的命令还需要 `notes/measure.md`，它的第 3 到 4 行必须包含[记录格式](#记录格式)里 sigma-algebra 例子引用的原文。第一次 `base add` 会创建 home：
 
 ```sh
 kgd base add ~/research --name research
@@ -101,7 +108,8 @@ relation_kinds:
 epistemic: [proved, stated]
 ---
 Extract each definition and each precisely stated result as a node. Record a
-relation only when the text states it. Unexplained terms become pending values.
+relation only when the text states it. Record an unexplained term as a pending
+term.
 ```
 
 在 `~/.knowledge/config.json` 里把 base 的 source 映射到这个 type，并选择 embedding 模型（不要 dense 检索就写 `null`）：
@@ -120,7 +128,7 @@ relation only when the text states it. Unexplained terms become pending values.
 }
 ```
 
-然后添加记录。可以让装好 Skills 的 agent 记录一个定义、编译一整篇笔记；也可以在 `~/research/.knowledge/drafts/` 里手写 draft（格式见[记录格式](#记录格式)），再接受它：
+然后添加记录。可以让装好 Skills 的 agent 记录一个定义，或编译一整篇笔记。手动添加时，先用 `kgd sheet --json` 打印 source 的 type profile，再在 `~/research/.knowledge/drafts/` 里写一份草稿（格式见[记录格式](#记录格式)），然后检查、接受并建索引：
 
 ```sh
 cd ~/research
@@ -131,7 +139,7 @@ kgd index
 kgd search "sigma algebra"
 ```
 
-`kgd sheet --json` 打印该 source 的 type profile 和已有记录。`kgd check` 校验 home、记录和 draft，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把 draft 移进 `entries/`，要么全部成功，要么什么都不改。`kgd index` 更新数据库；第一次 dense 运行会下载模型，之后请设置 `HF_HUB_OFFLINE=1`。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
+`kgd sheet --json` 打印该 source 的 type profile 和已有记录。`kgd check` 校验 home、记录和草稿，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把草稿移进 `entries/`，要么全部成功，要么什么都不改。`kgd index` 更新数据库；第一次 dense 运行会下载模型，之后请设置 `HF_HUB_OFFLINE=1`。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
 
 ## 记录格式
 
@@ -179,24 +187,24 @@ A measure space is defined over a sigma-algebra.
 
 - 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。可选：`aliases`、`understanding`（`unknown`、`not-yet-understood` 或 `understood`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
 - 其余键都是 role。至少有一个非空 role 列表的记录是 relation，否则是 node。一条 relation 的 role 数量不限。
-- 列表里的值要么是链接（`"[[id]]"`、`"[[base:id]]"` 或 `"[[.knowledge/entries/id]]"`），要么是纯文本 term。纯文本 term 就是 pending gap，表示 source 用到了这个词却没有解释，上面的 `set` 就是一例。
+- 列表里的值要么是链接（`"[[id]]"`、`"[[base:id]]"` 或 `"[[.knowledge/entries/id]]"`），要么是 pending term（纯文本值），表示 source 用到了这个词却没有解释。上面的 `set` 就是一例。
 - 正文依次是说明文字、可选的 `## Search terms` 小节，最后是 `## Evidence` 小节，内容是从被引用行逐字摘出的引文。
 - 例子和应用也是 relation，kind 由你注册，比如 `example: [uses, setting]`。
 
-已接受的记录直接原地修改，改完运行 `kgd check` 和 `kgd index`。如果 source 被编辑导致引用行号偏移，`kgd check --fix-lines` 会对引文在 source 别处恰好只出现一次的记录重写 `lines:`。完整语法和校验规则见 [docs/model.md](docs/model.md)。
+已接受的记录直接原地修改，改完运行 `kgd check` 和 `kgd index`。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `kgd base add PATH [--name N]`、`base rm NAME`、`base list` | 注册、注销和列出 base，附带记录数、draft 数和索引数。 |
-| `kgd check [--base B] [--fix-lines]` | 校验 home、记录和 draft，报告移动或过期的 evidence。 |
-| `kgd sheet SOURCE [--json]` | 写出某个 source 的 sheet（记录、pending term、draft），或打印它的 profile。 |
-| `kgd accept [--dry-run] DRAFT...` | 把 draft 转为正式记录，全部成功或全部不改。 |
-| `kgd harvest [--dry-run] SHEET` | 接受 sheet 中勾选的 draft，并重新生成 sheet。 |
+| `kgd base add PATH [--name N]`、`base rm NAME`、`base list` | 注册、注销和列出 base，附带记录数、草稿数和索引数。 |
+| `kgd check [--base B] [--fix-lines]` | 校验 home、记录和草稿，报告移动或过期的 evidence。 |
+| `kgd sheet SOURCE [--json]` | 写出某个 source 的 sheet（记录、pending term、草稿），或打印它的 profile。 |
+| `kgd accept [--dry-run] DRAFT...` | 把草稿转为已接受的记录，全部成功或全部不改。 |
+| `kgd harvest [--dry-run] SHEET` | 接受 sheet 中勾选的草稿，并重新生成 sheet。 |
 | `kgd index [--rebuild] [--no-embed]` | 让数据库与记录文件同步。 |
 | `kgd search QUERY [--limit N] [--no-dense]` | 按 lexical、dense、名称三路给记录排序。 |
-| `kgd resolve TERM...` | 列出 term 的各个义项、提及和 pending 用法。 |
+| `kgd resolve TERM...` | 列出 term 的各个义项和提及，以及把它当作 pending term 使用的记录。 |
 | `kgd get UID... [--source-lines N]` | 读取完整记录及其链接，可附带 source 中当前的被引用行。 |
 | `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | 沿链接展开：依赖闭包和论断闭包。 |
 | `kgd browse [HANDLE]` | 列出 base、某个 base 的 source 目录、某个 source 按 kind 分组的记录，或用 `--kind` 列出某类全部记录。 |
@@ -209,21 +217,21 @@ A measure space is defined over a sigma-algebra.
 
 ## Sheet 与 harvest
 
-sheet 是单个 source 的审阅页。`kgd sheet notes/measure.md` 会写出 `.knowledge/sheets/notes/measure.md.md`，按 kind 列出该 source 的已接受记录、尚未解决的 pending term，以及以复选框形式列出的 draft：
+sheet 是单个 source 的审阅页。`kgd sheet notes/measure.md` 会写出 `.knowledge/sheets/notes/measure.md.md`，按 kind 列出该 source 已接受的记录、尚未解决的 pending term，以及带复选框的草稿：
 
 ```markdown
 ## Drafts
 - [ ] [[.knowledge/drafts/measure-space|Measure space]] · definition · L6-7 — A measure space is a triple …
 ```
 
-在 Obsidian 里打开 sheet，审阅或修改 draft，勾选要接受的那些。勾选只表示“接受这条 draft”，和你是否理解它无关。然后：
+在 Obsidian 里打开 sheet，审阅或修改草稿，勾选要接受的那些。勾选只表示“接受这条草稿”，和你是否理解它无关。然后：
 
 ```sh
 kgd harvest .knowledge/sheets/notes/measure.md.md
 kgd index
 ```
 
-harvest 一次性接受所有勾选的 draft，并重新生成 sheet。如果某条勾选的 relation 链接到一条没勾选的 draft，harvest 会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的 draft，直接删掉文件即可。
+harvest 一次性接受所有勾选的草稿，并重新生成 sheet。如果某条勾选的 relation 链接到一条没勾选的草稿，harvest 会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的草稿，直接删掉文件即可。
 
 ## Agent 集成
 
@@ -232,8 +240,8 @@ harvest 一次性接受所有勾选的 draft，并重新生成 sheet。如果某
 | Skill | 作用 |
 |---|---|
 | `capture-kgdistiller` | 边读边保存或更新一条记录（node、relation 或例子），带上引文和 pending term。 |
-| `compile-knowledge-sheets` | 按 document type 从已注册 source 的一部分或全部抽取 draft，并写出 sheet。不会改动已接受的记录。 |
-| `harvest-kgdistiller` | 对你勾选的 draft 运行 `kgd harvest`，再运行 `kgd index`。 |
+| `compile-knowledge-sheets` | 按 document type 从已注册 source 的一部分或全部抽取草稿，并写出 sheet。不会改动已接受的记录。 |
+| `harvest-kgdistiller` | 对你勾选的草稿运行 `kgd harvest`，再运行 `kgd index`。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |
 | `deploy-kgdistiller` | 安装 kgdistiller，注册 base、source、document type 和模型，然后检查、建索引、安装插件、链接 runtime。 |
 

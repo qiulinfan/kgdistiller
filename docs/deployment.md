@@ -128,9 +128,9 @@ search for a `.knowledge` directory.
 
 sentence-transformers downloads the model weights into the Hugging Face cache
 (`~/.cache/huggingface`, or `$HF_HOME`) on first use, several GB for
-`BAAI/bge-m3`. That first load is the only network access; afterwards set
-`HF_HUB_OFFLINE=1` in the environment of `kgd` and the MCP server so every load
-stays local. No token is sent and no remote code runs. Offline loading by
+`BAAI/bge-m3`. Later loads may still contact the Hugging Face Hub unless
+`HF_HUB_OFFLINE=1` is set; after the first download, set it in the environment
+of `kgd` and the MCP server so every load stays local. No token is sent and no remote code runs. Offline loading by
 model id needs a complete cache entry: the snapshot and the
 `refs/main` pointer that an online load writes. A cache copied without
 `refs/` fails offline with "couldn't find them in the cached files"; one online
