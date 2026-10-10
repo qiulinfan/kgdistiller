@@ -103,7 +103,7 @@
     },
     {
       "id": "deploy-kgdistiller",
-      "description": "Register bases, source globs and document types in the home, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes.",
+      "description": "Install with the retrieval extra, register bases, source globs, document types and the embedding model in the home, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes.",
       "steps": [
         {
           "id": "deploy",

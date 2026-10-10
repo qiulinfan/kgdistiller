@@ -39,24 +39,40 @@ All notable changes are documented here.
   whitespace-normalized quote search. `--fix-lines` rewrites only the `lines:`
   line of moved records under the home lock and reports `fixed` and `skipped`.
 - Add the derived database `$KGDISTILLER_HOME/index.sqlite` (SQLite with FTS5,
-  tables `meta`, `record`, `link`, `name`, `fts`) and its only writer
-  `kgd index [--rebuild] [--no-embed]`: one transaction, stat-based change
-  detection, upserts that keep rowids, unparseable files keeping no row,
-  recomputed unified text so label changes cascade, and an incremental run that
-  equals a rebuild and a build from a deleted database. A missing, damaged or
+  tables `meta`, `record`, `link`, `name`, `fts`, and little-endian float32
+  L2-normalized vectors as BLOBs) and its only writer
+  `kgd index [--rebuild] [--no-embed]`. The lexical phase is one transaction
+  with stat-based change detection, upserts that keep rowids, unparseable
+  files keeping no row and recomputed unified text so label changes cascade. A
+  changed `embedding` model id resets every vector; vectors of deleted and
+  changed rows go into a pool keyed by text, so a row whose new text is in the
+  pool (an id rename) keeps its vector. The embedding phase then loads the
+  model only when some vector is NULL, encodes those rows in batches of 64 and
+  writes each vector with an UPDATE guarded by the row's text and the model, so
+  a concurrent change makes the write a no-op; texts over the model's input
+  limit are reported under `truncated`. `--rebuild` re-derives every row in
+  place, re-using vectors by text, and never swaps the database file;
+  `--no-embed` skips the embedding phase. An incremental run equals a rebuild
+  and a build from a deleted database, vectors included. A missing, damaged or
   other-version database is recreated, so restore is one command. Every read
-  reports `lag`.
-- Add `kgd search` (a lexical FTS5 lane and a name lane over labels and
-  aliases, fused by reciprocal rank fusion, with `--base`, `--kind`, `--class`,
-  `--source` and `--understanding` filters), `kgd resolve` (senses, mentions
-  and pending uses of terms) and `kgd get [--source-lines N]` (complete records
-  with out- and in-links and live cited source text). All are read-only and
-  global across bases. The dense embedding lane and the embedding phase of
-  `kgd index` are not part of this release; `embedding` stays `null` and
-  `--no-embed` has no effect until they arrive.
+  reports `lag`, including unembedded rows and a changed model.
+- Add `kgd search` (a lexical FTS5 lane, a dense lane and a name lane over
+  labels and aliases, fused by reciprocal rank fusion, with `--base`, `--kind`,
+  `--class`, `--source` and `--understanding` filters), `kgd resolve` (senses,
+  mentions and pending uses of terms) and `kgd get [--source-lines N]`
+  (complete records with out- and in-links and live cited source text). All
+  are read-only and global across bases. The dense lane encodes the query with
+  `meta.embedding`, the model that built the stored vectors, and scans the
+  filtered vectors with an exact NumPy dot product; it runs when
+  `meta.embedding` is set (an embedding model built the index), `--no-dense`
+  skips it, and when stored vectors match the filters but the `retrieval`
+  extra is missing or the model cannot be loaded, search fails with a
+  `--no-dense` hint.
 - Rewrite `kgd mcp` as a read-only server over the whole home with exactly
   `kg_search`, `kg_resolve` and `kg_get`, inline input schemas and a fresh
-  read-only connection per call. It takes no arguments.
+  read-only connection per call. It takes no arguments. The embedding model
+  loads lazily on the first dense search and stays resident until
+  `meta.embedding` changes; `kg_search` takes `no_dense`.
 - Move the tokenizer into `kgdistiller.index` (`tokens`, with CJK unigrams and
   bigrams, and `name_key`).
 - Extend `kgd base list` with record and draft counts, the indexed row count
@@ -109,9 +125,9 @@ All notable changes are documented here.
   storage, outputs, the plugin, the compiled library and OMP tools, the
   installer link state and the release workflow. Ids are readable slugs, never
   hash-derived; evidence freshness compares text, and the index compares file
-  stat. The one remaining commit-id pin is the Hugging Face model revision
-  validated by the sentence-transformers adapter, which nothing calls yet; it
-  goes when the dense lane arrives with a model id only.
+  stat and stored text. The sentence-transformers adapter is reduced to an
+  encoder that takes a model id only; its default model constants, revision
+  pins and the reranker are removed.
 - Remove every publishing surface: `serve` and its static app, `publish`,
   `export site`, `export latex` and `export latex-registry`, the Typst
   knowledge registry and label rendering, the concept-note projection copies,
@@ -178,9 +194,11 @@ All notable changes are documented here.
 - Require Python 3.11 or newer.
 - Pin ruff 0.16.10 in the `dev` dependency group and run
   `ruff check src tests scripts` in CI.
-- Replace the documentation set with `docs/model.md`, `docs/retrieval.md`,
+- Add `numpy>=2` to the `retrieval` extra and to the `dev` dependency group.
+- Rewrite the documentation around `docs/model.md`, `docs/retrieval.md`,
   `docs/obsidian.md`, `docs/deployment.md`, `docs/product-workflows.md` and
-  `docs/release.md`; Git history is the archive of the superseded designs.
+  `docs/release.md` and remove the superseded design documents; Git history is
+  their archive.
 
 ## 0.3.0
 

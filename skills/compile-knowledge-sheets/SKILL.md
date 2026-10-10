@@ -7,8 +7,8 @@ description: Extract source-backed knowledge records from a bounded part or the 
 
 Turn a bounded scope of one registered source into draft records the owner
 reviews, and generate the source's sheet so the owner can tick drafts for
-acceptance. Accepted records are never written by this Skill; changes to them
-are proposed in the report.
+acceptance. This Skill never writes accepted records; it proposes changes to
+them in its report.
 
 Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 
@@ -55,7 +55,8 @@ kgd get UID
 Compare definitions and conditions yourself. The same name is not the same
 concept: a homonym gets its own record, and an existing record with the same
 meaning is reused by linking it, not duplicated. Leave ambiguous candidates out
-and list them. If `lag.changed_files` is above 0, run `kgd index` first.
+and list them. If `lag.changed_files` is above 0, `lag.unembedded` is above 0
+or `lag.embedding_changed` is true, run `kgd index` first.
 
 ## 4. Write drafts
 
@@ -99,8 +100,11 @@ Stop here. The owner reviews the drafts in Obsidian, ticks the rows to accept
 and runs `$harvest-kgdistiller` (or `kgd accept` on chosen drafts).
 
 Report the scope and actual coverage, the drafts written, reused records,
-ambiguous candidates left out, and the sheet path. List separately every change
-you would make to accepted records — edits, deletions, node-to-relation
-conversions — with the reason and source lines. Apply such a change only when
-the owner asks: edit the record in place with a stale-read-safe tool, run
-`kgd check --base B`, then `kgd index`.
+ambiguous candidates left out, and the sheet path. List separately every
+proposed change to accepted records — edits, deletions, node-to-relation
+conversions — with its reason and source lines.
+
+Applying a proposed change is not part of this Skill. It is a separate
+owner-requested in-place edit in `write` mode: edit the record with a
+stale-read-safe tool, run `kgd check --base B`, then `kgd index`;
+`$capture-kgdistiller` handles updating one record.

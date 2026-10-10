@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import sqlite3
+import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from kgdistiller.index import (
     open_read_only,
     tokens,
 )
-from tests.knowledge_fixture import make_record_home
+from tests.knowledge_fixture import FakeEncoder, fake_encoder, make_record_home
 
 SOURCE = "notes/a.txt"
 LINES = [
@@ -42,7 +43,7 @@ def node(label: str, lines: str, *, kind: str = "definition", extra: str = "") -
 
 
 def dump() -> dict[str, Any]:
-    """Every derived row compared by the §7.6 invariant, keyed by uid instead of rowid."""
+    """Every derived row compared by invariant 1 of docs/retrieval.md, keyed by uid instead of rowid."""
     connection = open_read_only()
     try:
         columns = [
@@ -199,6 +200,30 @@ class InvariantTest(IndexTestCase):
         self.assertEqual(["kb:new-record", "kb:subspace", "kb:sum-closed", "notes:measure"], uids)
         self.assertEqual(len(uids), first["fts_rows"])
 
+    def test_incremental_equals_rebuild_equals_fresh_with_vectors(self) -> None:
+        self.kb.embedding = "fake/model"
+        self.kb.write_config()
+        with fake_encoder():
+            index()
+            self.edit(self.subspace, "label: Subspace", "label: Linear space part")
+            self.edit(self.measure, "测度论研究可测空间。", "测度论研究可测空间。Measure text.")
+            self.kb.write_record("new-record", node("New record", "1"), "New.", ["Title line"])
+            self.kb.path("sum-is-subspace").rename(self.kb.path("sum-closed"))
+            self.kb.write_record("broken", "label: Broken", "Text.", ["Title line"])
+            index()
+            first = dump()
+            index(rebuild=True)
+            second = dump()
+            for suffix in ("", "-wal", "-shm"):
+                Path(f"{database_path()}{suffix}").unlink(missing_ok=True)
+            self.assertTrue(index()["created"])
+            third = dump()
+        self.assertEqual(first, second)
+        self.assertEqual(first, third)
+        self.assertEqual([("embedding", "fake/model")], first["meta"])
+        for row in first["record"]:
+            self.assertEqual(FakeEncoder.vector(row[15]), row[16], row[0])
+
     def rowids(self) -> dict[str, int]:
         connection = open_read_only()
         try:
@@ -303,6 +328,11 @@ class InvariantTest(IndexTestCase):
         offenders = [str(path) for path in SRC.rglob("*.py") if pattern.search(path.read_text(encoding="utf-8"))]
         self.assertEqual([], offenders)
 
+    def test_no_pinned_commit_ids_or_revisions(self) -> None:
+        pattern = re.compile(r"\b[0-9a-f]{40}\b|\brevision", re.IGNORECASE)
+        offenders = [str(path) for path in SRC.rglob("*.py") if pattern.search(path.read_text(encoding="utf-8"))]
+        self.assertEqual([], offenders)
+
 
 class OpeningTest(IndexTestCase):
     def test_read_only_open_requires_an_index(self) -> None:
@@ -371,13 +401,16 @@ class LagTest(IndexTestCase):
     def test_unavailable_and_embedding_configured(self) -> None:
         self.kb.embedding = "example/model"
         self.kb.write_config()
-        report = index()
+        report = index(embed=False)
         self.assertEqual(3, report["unembedded"])
+        self.assertEqual({"changed_files": 0, "unavailable_bases": [], "unembedded": 3, "embedding_changed": False},
+                         self.lag())
+        self.assertEqual([("embedding", "example/model")], dump()["meta"])
         shutil.move(self.kb.roots["notes"], self.kb.home.parent / "away")
         current = self.lag()
         self.assertEqual(["notes"], current["unavailable_bases"])
-        self.assertTrue(current["embedding_changed"])
-        self.assertEqual(0, current["unembedded"])
+        self.assertFalse(current["embedding_changed"])
+        self.assertEqual(3, current["unembedded"])
 
     def test_base_status_tolerates_a_missing_database(self) -> None:
         home = load_home(self.kb.home)
@@ -391,6 +424,138 @@ class LagTest(IndexTestCase):
         self.assertEqual((2, 0), (status["kb"]["indexed"], status["kb"]["lag"]["changed_files"]))
         self.assertEqual({"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": False},
                          status["notes"]["lag"])
+
+
+class EmbeddingTest(IndexTestCase):
+    MODEL = "fake/model"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.kb.embedding = self.MODEL
+        self.kb.write_config()
+
+    def rows(self) -> dict[str, tuple[str, bytes | None]]:
+        connection = open_read_only()
+        try:
+            return {uid: (text, vec) for uid, text, vec in connection.execute("SELECT uid, text, vec FROM record")}
+        finally:
+            connection.close()
+
+    def assert_all_encoded(self) -> None:
+        for uid, (text, vec) in self.rows().items():
+            self.assertEqual(FakeEncoder.vector(text), vec, uid)
+
+    def lag(self) -> dict[str, Any]:
+        connection = open_read_only()
+        try:
+            return lag(connection, load_home(self.kb.home))
+        finally:
+            connection.close()
+
+    def test_first_embed_then_nothing_to_do(self) -> None:
+        with fake_encoder() as fake:
+            report = index()
+            self.assertEqual((0, 3, 0, []), (report["reused"], report["embedded"], report["unembedded"], report["truncated"]))
+            self.assert_all_encoded()
+            self.assertEqual([("embedding", self.MODEL)], dump()["meta"])
+            self.assertEqual([self.MODEL], fake.loads)
+            again = index()
+            self.assertEqual([self.MODEL], fake.loads)
+            self.assertEqual((0, 0, 0), (again["reused"], again["embedded"], again["unembedded"]))
+        self.assertEqual({"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": False},
+                         self.lag())
+
+    def test_text_change_without_embedding_leaves_that_row_null(self) -> None:
+        with fake_encoder():
+            index()
+            self.edit(self.measure, "测度论研究可测空间。", "Another body.")
+            report = index(embed=False)
+        self.assertEqual((0, 0, 1), (report["reused"], report["embedded"], report["unembedded"]))
+        nulls = [uid for uid, (_, vec) in self.rows().items() if vec is None]
+        self.assertEqual(["notes:measure"], nulls)
+        self.assertEqual(1, self.lag()["unembedded"])
+
+    def test_id_rename_reuses_its_vector(self) -> None:
+        with fake_encoder():
+            index()
+            before = self.rows()["kb:sum-is-subspace"]
+            self.kb.path("sum-is-subspace").rename(self.kb.path("sum-closed"))
+            report = index()
+        self.assertEqual((1, 0, 0), (report["reused"], report["embedded"], report["unembedded"]))
+        self.assertEqual(before, self.rows()["kb:sum-closed"])
+
+    def test_model_change_re_embeds_everything(self) -> None:
+        with fake_encoder() as fake:
+            index()
+            self.kb.embedding = "other/model"
+            self.kb.write_config()
+            self.assertTrue(self.lag()["embedding_changed"])
+            report = index()
+            self.assertEqual((0, 3, 0), (report["reused"], report["embedded"], report["unembedded"]))
+            self.assertEqual([self.MODEL, "other/model"], fake.loads)
+        self.assertEqual([("embedding", "other/model")], dump()["meta"])
+        self.assert_all_encoded()
+
+    def test_stale_write_is_a_no_op(self) -> None:
+        tampered: list[str] = []
+
+        def change_text(texts: list[str]) -> None:
+            if tampered:
+                return
+            tampered.append("kb:subspace")
+            other = sqlite3.connect(database_path())
+            try:
+                other.execute("UPDATE record SET text = 'changed meanwhile' WHERE uid = 'kb:subspace'")
+                other.commit()
+            finally:
+                other.close()
+
+        with fake_encoder(on_encode=change_text):
+            report = index()
+            self.assertEqual((2, 1), (report["embedded"], report["unembedded"]))
+            self.assertEqual(("changed meanwhile", None), self.rows()["kb:subspace"])
+            again = index()
+        self.assertEqual((1, 0), (again["embedded"], again["unembedded"]))
+        self.assertTrue(self.rows()["kb:subspace"][0].startswith("Subspace\n"))
+        self.assert_all_encoded()
+
+    def test_rebuild_reuses_every_vector(self) -> None:
+        with fake_encoder() as fake:
+            index()
+            before = dump()
+            report = index(rebuild=True)
+            self.assertEqual([self.MODEL], fake.loads)
+        self.assertEqual((3, 0, 0), (report["reused"], report["embedded"], report["unembedded"]))
+        self.assertEqual(before, dump())
+
+    def test_batches_of_64_by_rowid(self) -> None:
+        for number in range(70):
+            self.kb.write_record(f"extra-{number:02d}", node(f"Extra {number}", "1"), f"Body {number}.", ["Title line"])
+        with fake_encoder() as fake:
+            report = index()
+            self.assertEqual([64, 9], fake.encoders[self.MODEL].calls)
+        self.assertEqual(73, report["embedded"])
+        self.assert_all_encoded()
+
+    def test_over_limit_texts_are_reported_and_still_embedded(self) -> None:
+        index(embed=False)
+        lengths = sorted((len(text), uid) for uid, (text, _) in self.rows().items())
+        with fake_encoder(max_chars=lengths[-2][0]):
+            report = index()
+        self.assertEqual([lengths[-1][1]], report["truncated"])
+        self.assertEqual(3, report["embedded"])
+        self.assert_all_encoded()
+
+    def test_missing_retrieval_extra_keeps_the_lexical_commit(self) -> None:
+        resident = patch("kgdistiller.adapters.sentence_transformers._resident", None)
+        resident.start()
+        self.addCleanup(resident.stop)
+        with patch.dict(sys.modules, {"sentence_transformers": None}), self.assertRaises(KnowledgeError) as caught:
+            index()
+        self.assertIn("install kgdistiller[retrieval] or set embedding to null", str(caught.exception))
+        self.assertIn(self.MODEL, str(caught.exception))
+        self.assertEqual({"kb:subspace", "kb:sum-is-subspace", "notes:measure"}, set(self.rows()))
+        self.assertEqual(3, self.lag()["unembedded"])
 
 
 if __name__ == "__main__":

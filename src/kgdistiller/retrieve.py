@@ -1,10 +1,17 @@
 """Read primitives over the derived database: ``search``, ``resolve`` and ``get``.
 
-Every primitive opens the database read-only, is global across bases unless
-filtered, and reports ``lag``. ``search`` fuses a lexical lane (FTS5 over the
-unified text) and a name lane (label and alias keys) with reciprocal rank
-fusion; there are no boosts, intent rules or thresholds. Only ``get
---source-lines`` reads live source text.
+Every primitive opens the database read-only, reads it in one snapshot, is
+global across bases unless filtered, and reports ``lag``. ``search`` fuses three lanes with reciprocal
+rank fusion:
+
+- lexical: FTS5 over the unified text;
+- dense: an exact dot product over the stored vectors, the query encoded with
+  ``meta.embedding``; it runs when ``meta.embedding`` is set (an embedding
+  model built the index) and the caller does not disable it;
+- name: label and alias keys.
+
+There are no boosts, intent rules or thresholds. Only ``get --source-lines``
+reads live source text.
 """
 
 from __future__ import annotations
@@ -17,8 +24,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import records
+from .adapters import sentence_transformers as embedding_adapter
 from .home import Home, KnowledgeError, home_directory, load_home
-from .index import is_cjk, lag, name_key, open_read_only, tokens
+from .index import is_cjk, lag, meta_embedding, name_key, open_read_only, tokens
 from .records import UNDERSTANDING, fold, gloss
 
 LANE_LIMIT = 200
@@ -26,7 +34,6 @@ RRF_K = 60
 LINK_CAP = 12
 NAME_RUN_LIMIT = 12
 CLASSES = ("node", "relation")
-LANES = ("lexical", "name")
 _CHUNK = 500
 
 
@@ -72,6 +79,9 @@ def _session() -> tuple[sqlite3.Connection, Home]:
     home = load_home(home_directory(), types=False)
     connection = open_read_only()
     connection.row_factory = sqlite3.Row
+    # One read transaction per call, so meta.embedding and the vectors come
+    # from the same commit even while `kgd index` writes.
+    connection.execute("BEGIN")
     return connection, home
 
 
@@ -156,6 +166,37 @@ def _name(connection: sqlite3.Connection, query: str, filters: Filters) -> list[
     return list(dict.fromkeys(uid for _, uid, _ in hits))[:LANE_LIMIT]
 
 
+NO_DENSE_HINT = "pass --no-dense (MCP: no_dense) to search without the dense lane"
+
+
+def _dense(connection: sqlite3.Connection, query: str, filters: Filters, model: str) -> list[str]:
+    """Uids by the exact dot product of their stored vector with the query encoded by ``model``."""
+    clause, parameters = filters.sql()
+    rows = connection.execute(
+        f"SELECT r.uid, r.vec FROM record r WHERE r.vec IS NOT NULL{clause} ORDER BY r.uid", parameters
+    ).fetchall()
+    if not rows:
+        return []
+    missing = KnowledgeError(
+        f"the index holds {model} vectors but the retrieval extra is missing: "
+        "install kgdistiller[retrieval] or pass --no-dense (MCP: no_dense)"
+    )
+    try:
+        import numpy
+    except ImportError:
+        raise missing from None
+    try:
+        query_vector = embedding_adapter.encoder(model).encode_query(query)
+    except embedding_adapter.RetrievalExtraMissing:
+        raise missing from None
+    except embedding_adapter.EmbeddingError as error:
+        raise KnowledgeError(f"{error}; {NO_DENSE_HINT}") from error
+    matrix = numpy.frombuffer(b"".join(row[1] for row in rows), dtype="<f4").reshape(len(rows), -1)
+    scores = matrix @ numpy.frombuffer(query_vector, dtype="<f4")
+    order = numpy.argsort(-scores, kind="stable")[:LANE_LIMIT]
+    return [rows[position][0] for position in order]
+
+
 def _capped(items: list[Any]) -> tuple[list[Any], int]:
     return items[:LINK_CAP], max(0, len(items) - LINK_CAP)
 
@@ -205,13 +246,21 @@ def _summary(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS) -> dict[str, Any]:
-    """Fuse the lexical and name lanes with RRF (k=60); ties break by uid."""
+def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bool = True) -> dict[str, Any]:
+    """Fuse the lexical, dense and name lanes with RRF (k=60); ties break by uid.
+
+    The dense lane runs when ``dense`` is true and ``meta.embedding`` is set
+    (an embedding model built the index); ``lanes`` lists the lanes that ran.
+    """
     if limit < 1:
         raise KnowledgeError("limit must be at least 1")
     connection, home = _session()
     try:
-        lanes = {"lexical": _lexical(connection, query, filters), "name": _name(connection, query, filters)}
+        lanes = {"lexical": _lexical(connection, query, filters)}
+        model = meta_embedding(connection)
+        if dense and model:
+            lanes["dense"] = _dense(connection, query, filters, model)
+        lanes["name"] = _name(connection, query, filters)
         ranks: dict[str, dict[str, int]] = defaultdict(dict)
         scores: dict[str, float] = defaultdict(float)
         for lane, ranked in lanes.items():
@@ -259,13 +308,13 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS) -> dict[s
                 "understanding": row["understanding"],
                 "epistemic": row["epistemic"],
                 "gloss": gloss(row["body"]),
-                "ranks": {lane: ranks[uid].get(lane) for lane in LANES},
+                "ranks": {lane: ranks[uid].get(lane) for lane in lanes},
                 "requires": requires,
                 "participants": participants,
                 "in": incoming,
                 "truncated": {"requires": requires_dropped, "participants": dropped, "in": incoming_dropped},
             })
-        return {"query": query, "lanes": list(LANES), "lag": lag(connection, home), "results": results}
+        return {"query": query, "lanes": list(lanes), "lag": lag(connection, home), "results": results}
     finally:
         connection.close()
 

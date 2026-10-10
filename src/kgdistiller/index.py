@@ -1,13 +1,27 @@
 """The derived database ``$KGDISTILLER_HOME/index.sqlite`` and its only writer, ``kgd index``.
 
 The database is a pure function of ``config.json`` and the ``entries/`` files of
-the registered, available bases. ``index`` re-parses changed files by stat,
-upserts rows so rowids stay stable, and recomputes every record's unified text
-so label changes cascade without special logic. An incremental run produces
-the same rows as ``--rebuild`` and as a build from a deleted database.
+the registered, available bases, plus the vectors of the configured embedding
+model. ``index`` runs in two phases:
 
-This slice has the lexical phase only: ``vec`` stays NULL and
-``meta.embedding`` stays ``''``.
+- The lexical phase is one ``BEGIN IMMEDIATE`` transaction. When
+  ``config.embedding`` differs from ``meta.embedding`` it first clears every
+  vector and records the new model. It re-parses changed files by stat, upserts
+  rows so rowids stay stable, and recomputes every record's unified text so
+  label changes cascade without special logic. Vectors of deleted rows and of
+  changed texts go into a pool keyed by text; a row whose new text is in the
+  pool takes that vector, so an id rename keeps its vector, and any other
+  changed row gets ``vec = NULL``. ``--rebuild`` re-derives every row in place
+  inside the same transaction, with every current vector in the pool; the
+  database file is never swapped.
+- The embedding phase, after that commit, encodes the rows whose ``vec`` is
+  NULL in batches ordered by rowid. The model loads only when such rows exist.
+  Each batch commits with an UPDATE guarded by the row's text and by
+  ``meta.embedding``, so a concurrent text or model change makes the write a
+  no-op and the row is picked up next run.
+
+An incremental run produces the same rows, vectors included, as ``--rebuild``
+and as a build from a deleted database.
 """
 
 from __future__ import annotations
@@ -23,6 +37,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+from .adapters import sentence_transformers as embedding_adapter
+from .adapters.sentence_transformers import EmbeddingError, RetrievalExtraMissing
 from .home import KNOWLEDGE_DIRECTORY, Home, KnowledgeError, home_directory, load_home
 from .records import (
     ENTRIES,
@@ -37,6 +53,7 @@ from .records import (
 DATABASE_FILENAME = "index.sqlite"
 SCHEMA_VERSION = 1
 BUSY_TIMEOUT_SECONDS = 30
+EMBED_BATCH = 64
 SCHEMA = """
 PRAGMA journal_mode = WAL;
 
@@ -228,7 +245,7 @@ def unified_text(
     values: list[tuple[str, str | None, str | None]],
     labels: dict[str, str],
 ) -> str:
-    """The one text per record used by FTS (and later embedding); §6.3."""
+    """The one text per record, used by FTS and as the embedding input (docs/retrieval.md, "Unified text")."""
     lines = [row["label"]]
     aliases = json.loads(row["aliases"])
     if aliases:
@@ -280,7 +297,11 @@ def _available(home: Home) -> tuple[list[str], list[str]]:
     return available, unavailable
 
 
-def _drop(connection: sqlite3.Connection, uid: str, rowid: int) -> None:
+def _drop(connection: sqlite3.Connection, uid: str, rowid: int, pool: dict[str, bytes]) -> None:
+    """Delete one record's rows; its vector stays in the pool for a row that takes over its text."""
+    text, vec = connection.execute("SELECT text, vec FROM record WHERE uid = ?", (uid,)).fetchone()
+    if vec is not None:
+        pool[text] = vec
     connection.execute("DELETE FROM record WHERE uid = ?", (uid,))
     connection.execute("DELETE FROM fts WHERE rowid = ?", (rowid,))
     connection.execute("DELETE FROM link WHERE src = ?", (uid,))
@@ -313,7 +334,13 @@ def _store(connection: sqlite3.Connection, record: Record, stat: os.stat_result)
     )
 
 
-def _refresh_texts(connection: sqlite3.Connection) -> None:
+def _refresh_texts(connection: sqlite3.Connection, pool: dict[str, bytes]) -> int:
+    """Recompute every unified text; a changed row takes its new text's pooled vector or NULL.
+
+    The first pass pools the old vectors of every changed row before the second
+    pass assigns any, so two rows that swap texts keep both vectors. Returns the
+    number of changed rows that re-used a vector.
+    """
     labels = dict(connection.execute("SELECT uid, label FROM record"))
     values: dict[str, list[tuple[str, str | None, str | None]]] = defaultdict(list)
     for source, role, destination, term in connection.execute(
@@ -323,20 +350,36 @@ def _refresh_texts(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         "SELECT rowid, uid, label, aliases, kind, epistemic, body, search_terms, evidence, source, text FROM record"
     ).fetchall()
+    changed: dict[int, str] = {}
     for row in rows:
         text = unified_text(row, values.get(row["uid"], []), labels)
-        if text == row["text"]:
-            continue
-        connection.execute("UPDATE record SET text = ?, vec = NULL WHERE rowid = ?", (text, row["rowid"]))
-        connection.execute("DELETE FROM fts WHERE rowid = ?", (row["rowid"],))
-        connection.execute("INSERT INTO fts(rowid, tokens) VALUES (?, ?)", (row["rowid"], " ".join(tokens(text))))
+        if text != row["text"]:
+            changed[row["rowid"]] = text
+    rowids = list(changed)
+    for start in range(0, len(rowids), 500):
+        chunk = rowids[start:start + 500]
+        for old_text, vec in connection.execute(
+            f"SELECT text, vec FROM record WHERE vec IS NOT NULL AND rowid IN ({', '.join('?' for _ in chunk)})",
+            chunk,
+        ):
+            pool[old_text] = vec
+    reused = 0
+    for rowid, text in changed.items():
+        vec = pool.get(text)
+        reused += vec is not None
+        connection.execute("UPDATE record SET text = ?, vec = ? WHERE rowid = ?", (text, vec, rowid))
+        connection.execute("DELETE FROM fts WHERE rowid = ?", (rowid,))
+        connection.execute("INSERT INTO fts(rowid, tokens) VALUES (?, ?)", (rowid, " ".join(tokens(text))))
+    return reused
 
 
-def index(rebuild: bool = False) -> dict[str, Any]:
-    """Bring the database up to date with the files in one ``BEGIN IMMEDIATE`` transaction.
+def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
+    """Bring the database up to date: the lexical phase, then (unless ``embed`` is False) the embedding phase.
 
-    The report has the §7.4 shape. A run is clean when no file was unparseable
-    and every base was available.
+    The report has the shape documented in docs/retrieval.md under ``kgd index``.
+    A run is clean when no file was unparseable and every base was available.
+    An embedding failure raises KnowledgeError after the lexical phase has
+    committed.
     """
     home = load_home(home_directory(), types=False)
     available, unavailable = _available(home)
@@ -355,7 +398,13 @@ def index(rebuild: bool = False) -> dict[str, Any]:
     }
     try:
         connection.execute("BEGIN IMMEDIATE")
+        model = home.embedding or ""
+        if model != meta_embedding(connection):
+            connection.execute("UPDATE record SET vec = NULL")
+            connection.execute("UPDATE meta SET value = ? WHERE key = 'embedding'", (model,))
+        pool: dict[str, bytes] = {}
         if rebuild:
+            pool.update(connection.execute("SELECT text, vec FROM record WHERE vec IS NOT NULL"))
             for table in ("record", "link", "name", "fts"):
                 connection.execute(f"DELETE FROM {table}")
         known = {
@@ -364,7 +413,7 @@ def index(rebuild: bool = False) -> dict[str, Any]:
         }
         for uid, row in list(known.items()):
             if row["base"] not in home.bases:
-                _drop(connection, uid, row["rowid"])
+                _drop(connection, uid, row["rowid"], pool)
                 del known[uid]
         for name in available:
             counts: dict[str, Any] = {"parsed": 0, "deleted": 0, "unparseable": []}
@@ -386,7 +435,7 @@ def index(rebuild: bool = False) -> dict[str, Any]:
                     message = error.message if isinstance(error, RecordError) else str(error)
                     counts["unparseable"].append({"path": str(path), "message": message})
                     if old is not None:
-                        _drop(connection, uid, old["rowid"])
+                        _drop(connection, uid, old["rowid"], pool)
                         del known[uid]
                     continue
                 if old is not None and old["understanding"] != record.understanding:
@@ -397,13 +446,14 @@ def index(rebuild: bool = False) -> dict[str, Any]:
                 counts["parsed"] += 1
             for uid, row in list(known.items()):
                 if row["base"] == name and uid.split(":", 1)[1] not in files:
-                    _drop(connection, uid, row["rowid"])
+                    _drop(connection, uid, row["rowid"], pool)
                     del known[uid]
                     counts["deleted"] += 1
-        _refresh_texts(connection)
-        if home.embedding is not None:
-            report["unembedded"] = connection.execute("SELECT count(*) FROM record").fetchone()[0]
+        report["reused"] = _refresh_texts(connection, pool)
         connection.execute("COMMIT")
+        if embed and model:
+            _embed(connection, model, report)
+        report["unembedded"] = _unembedded(connection)
     except BaseException:
         if connection.in_transaction:
             connection.execute("ROLLBACK")
@@ -411,6 +461,44 @@ def index(rebuild: bool = False) -> dict[str, Any]:
     finally:
         connection.close()
     return report
+
+
+def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any]) -> None:
+    """Encode the rows whose ``vec`` is NULL; each batch write is guarded by text and model."""
+    rows = connection.execute("SELECT uid, text FROM record WHERE vec IS NULL ORDER BY rowid").fetchall()
+    if not rows:
+        return
+    try:
+        encoder = embedding_adapter.encoder(model)
+    except RetrievalExtraMissing as error:
+        raise KnowledgeError(
+            f"embedding is set to {model} but the retrieval extra is missing: "
+            "install kgdistiller[retrieval] or set embedding to null"
+        ) from error
+    except EmbeddingError as error:
+        raise _embedding_failed(error, report) from error
+    for start in range(0, len(rows), EMBED_BATCH):
+        batch = rows[start:start + EMBED_BATCH]
+        texts = [row["text"] for row in batch]
+        try:
+            report["truncated"].extend(batch[position]["uid"] for position in encoder.over_limit(texts))
+            vectors = encoder.encode_documents(texts)
+        except EmbeddingError as error:
+            raise _embedding_failed(error, report) from error
+        connection.execute("BEGIN IMMEDIATE")
+        for row, vector in zip(batch, vectors, strict=True):
+            report["embedded"] += connection.execute(
+                "UPDATE record SET vec = ? WHERE uid = ? AND text = ? "
+                "AND (SELECT value FROM meta WHERE key = 'embedding') = ?",
+                (vector, row["uid"], row["text"], model),
+            ).rowcount
+        connection.execute("COMMIT")
+
+
+def _embedding_failed(error: EmbeddingError, report: dict[str, Any]) -> KnowledgeError:
+    return KnowledgeError(
+        f"{error}; the lexical index is committed and {report['embedded']} rows were embedded; rerun `kgd index`"
+    )
 
 
 def index_clean(report: dict[str, Any]) -> bool:
@@ -436,14 +524,14 @@ def _changed(files: dict[str, os.stat_result], rows: dict[str, tuple[int, int]])
     return changed
 
 
-def _meta_embedding(connection: sqlite3.Connection | None) -> str:
+def meta_embedding(connection: sqlite3.Connection | None) -> str:
     if connection is None:
         return ""
     return connection.execute("SELECT value FROM meta WHERE key = 'embedding'").fetchone()[0]
 
 
 def _unembedded(connection: sqlite3.Connection | None, base: str | None = None) -> int:
-    if connection is None or not _meta_embedding(connection):
+    if connection is None or not meta_embedding(connection):
         return 0
     if base is None:
         return connection.execute("SELECT count(*) FROM record WHERE vec IS NULL").fetchone()[0]
@@ -465,7 +553,7 @@ def lag(connection: sqlite3.Connection, home: Home) -> dict[str, Any]:
         "changed_files": changed,
         "unavailable_bases": unavailable,
         "unembedded": _unembedded(connection),
-        "embedding_changed": (home.embedding or "") != _meta_embedding(connection),
+        "embedding_changed": (home.embedding or "") != meta_embedding(connection),
     }
 
 
@@ -474,7 +562,7 @@ def base_status(home: Home) -> dict[str, dict[str, Any]]:
     connection = open_read_only() if database_path().is_file() else None
     try:
         stored = _stored_stats(connection)
-        meta = _meta_embedding(connection)
+        meta = meta_embedding(connection)
         status: dict[str, dict[str, Any]] = {}
         for name in sorted(home.bases):
             root = home.bases[name].root

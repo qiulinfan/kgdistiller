@@ -126,9 +126,10 @@ def parse_args() -> argparse.Namespace:
     index.add_argument("--rebuild", action="store_true", help="re-derive every row in place")
     index.add_argument("--no-embed", action="store_true", help="skip the embedding phase")
 
-    search = commands.add_parser("search", parents=[filters], help="rank records by the lexical and name lanes")
+    search = commands.add_parser("search", parents=[filters], help="rank records by the lexical, dense and name lanes")
     search.add_argument("query")
     search.add_argument("--limit", type=_positive, default=40)
+    search.add_argument("--no-dense", action="store_true", help="skip the dense lane (no model load)")
 
     resolve = commands.add_parser("resolve", parents=[filters], help="list the senses, mentions and pending uses of terms")
     resolve.add_argument("terms", nargs="+", metavar="TERM")
@@ -289,12 +290,12 @@ def _command(args: argparse.Namespace) -> int:
     if args.command == "index":
         from .index import index, index_clean
 
-        report = index(rebuild=args.rebuild)
+        report = index(rebuild=args.rebuild, embed=not args.no_embed)
         return _print(report, failed=not index_clean(report))
     if args.command == "search":
         from .retrieve import search
 
-        return _print(search(args.query, limit=args.limit, filters=_filters(args)))
+        return _print(search(args.query, limit=args.limit, filters=_filters(args), dense=not args.no_dense))
     if args.command == "resolve":
         from .retrieve import resolve
 

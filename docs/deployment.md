@@ -36,20 +36,25 @@ BASE_ROOT/
 writes only these three folders in it. `entries/` is the knowledge. `drafts/`
 holds proposals awaiting `kgd accept` or `kgd harvest`, and `sheets/` the
 generated views whose draft checkboxes carry the owner's selection. The
-database is derived from `config.json` and the `entries/` files; deleting it
-loses nothing but the time to rebuild.
+database is derived from `config.json`, the `entries/` files and the embedding
+model; deleting it loses nothing but the time to rebuild and re-embed.
 
 ## Install and register a base
 
-Install the package as a user-level tool on Windows, macOS or Linux, then
-register each knowledge directory once:
+Install the package as a user-level tool on Windows, macOS or Linux, with the
+`retrieval` extra for the dense search lane, then register each knowledge
+directory once:
 
 ```sh
-uv tool install git+https://github.com/qiulinfan/kgdistiller.git
+uv tool install 'kgdistiller[retrieval] @ git+https://github.com/qiulinfan/kgdistiller.git'
 uv tool update-shell
 kgd base add BASE_ROOT --name research
 kgd base list
 ```
+
+From a checkout, install it with
+`uv tool install --editable '<checkout>[retrieval]'`. The extra brings NumPy
+and sentence-transformers; without it, keep `embedding` `null`.
 
 `kgd base add PATH [--name N]` creates the home on first use (`config.json` as
 `{"bases": {}, "embedding": null}`, an empty `types/` and the `.gitignore`),
@@ -92,13 +97,16 @@ search for a `.knowledge` directory.
       }
     }
   },
-  "embedding": null
+  "embedding": "BAAI/bge-m3"
 }
 ```
 
 - The top level has exactly `bases` and `embedding`; each base has exactly
-  `path` and `sources`. Keep `embedding` `null`: search runs the lexical and
-  name lanes, and the dense lane is a later release.
+  `path` and `sources`.
+- `embedding` is a sentence-transformers model id or `null`. The recommended
+  value is `"BAAI/bge-m3"`: a model id only, with no revision pin, and the
+  device chosen automatically. `null` means search runs only the lexical and
+  name lanes. Changing the id re-embeds every record on the next `kgd index`.
 - `path` is stored as `~/…` (forward slashes) when the root lies under the
   user's home, otherwise as an absolute path.
 - No base root may be equal to, an ancestor of or a descendant of another, and
@@ -110,6 +118,20 @@ search for a `.knowledge` directory.
   relative, use `/`, and contain no `..` or hidden segment.
 - Each value names a type in `types/`. Globs naming two different types for one
   file are an error, so every source has exactly one type.
+
+### Model cache
+
+sentence-transformers downloads the model weights into the Hugging Face cache
+(`~/.cache/huggingface`, or `$HF_HOME`) on first use, several GB for
+`BAAI/bge-m3`. That first load is the only network access; afterwards set
+`HF_HUB_OFFLINE=1` in the environment of `kgd` and the MCP server so every load
+stays local. No token is sent and no remote code runs. Offline loading by
+model id needs a complete cache entry: the snapshot and the
+`refs/main` pointer that an online load writes. A cache copied without
+`refs/` fails offline with "couldn't find them in the cached files"; one online
+load (or restoring `refs/main` with the snapshot's directory name) fixes it.
+
+### Document types
 
 A type file `types/<name>.md` has a slug stem, YAML frontmatter read with
 PyYAML's `BaseLoader` and a non-empty body, the extraction guidance:
@@ -171,10 +193,20 @@ kgd index --rebuild
 `entries/` files of every registered, available base and prints a report with,
 per base, `parsed`, `deleted` and `unparseable` files, plus `unavailable` bases
 and `understanding_changed`. It exits 1 when a file is unparseable or a base is
-unavailable. `--rebuild` re-derives every row in place in one transaction.
-`--no-embed` is accepted and changes nothing until the dense lane exists.
-Every Skill that writes knowledge ends with `kgd index`; edits made in
-Obsidian lag until the next run, and every read reports that lag.
+unavailable. With `embedding` set, an embedding phase follows: the rows whose
+vector is NULL (new or changed text, or every row after a model change) are
+encoded in batches of 64. The model loads only when such a row exists, so an
+up-to-date index runs in well under a second. The report adds `reused`
+(vectors kept by text, such as an id rename), `embedded`, `unembedded` and
+`truncated` (texts longer than the model's input limit, embedded from their
+leading part and listed rather than cut silently). `--no-embed` skips the
+embedding phase and leaves changed rows unembedded until the next run.
+`--rebuild` re-derives every row in place in one transaction and re-uses the
+existing vectors by text, so it loads no model. If `embedding` is set but the
+`retrieval` extra is missing, `kgd index` commits the lexical phase and exits 1
+with `install kgdistiller[retrieval] or set embedding to null`. Every Skill
+that writes knowledge ends with `kgd index`; edits made in Obsidian lag until
+the next run, and every read reports that lag.
 
 Restore after a lost or damaged database with one command:
 
@@ -184,7 +216,11 @@ kgd index
 ```
 
 A missing, unreadable or other-version database is deleted with its `-wal` and
-`-shm` files and rebuilt from the record files and `config.json`.
+`-shm` files and rebuilt from the record files and `config.json`, and every
+record is re-embedded. Measured with `BAAI/bge-m3` on Apple silicon (MPS),
+offline, the restore of a 535-record notes base took 115 s and reproduced the
+same rows and vectors, while `kgd index --rebuild` on the embedded database
+took 0.26 s.
 
 ## Git synchronization
 
@@ -217,8 +253,12 @@ commit or remote synchronization happened.
 
 `kgd mcp` is a read-only stdio server over the whole home with the tools
 `kg_search`, `kg_resolve` and `kg_get`. It takes no arguments, opens a fresh
-read-only connection for every call and reports lag like the CLI. Register it
-in an agent runtime as the command `kgd` with the argument `mcp`.
+read-only connection for every call and reports lag like the CLI. The
+embedding model loads lazily on the first dense search and stays resident
+until `meta.embedding` changes, so repeated searches avoid the cold load a CLI
+`kgd search` pays; `kg_search` takes `no_dense` to skip the dense lane.
+Register it in an agent runtime as the command `kgd` with the argument `mcp`,
+with `HF_HUB_OFFLINE=1` in its environment once the model is cached.
 
 ## Obsidian plugin
 
@@ -251,7 +291,8 @@ Skill walks an agent through this whole document.
 
 Record the home path, each base's name, root and `base list` counts and lag,
 the installed kgdistiller version and exact product commit when known, the
-`check` result, the `index` report summary, the plugin path when installed,
-both doctors' status, and Git commit or remote state only when actually
-confirmed. Never include full source or record content, credentials or
-unbounded excerpts.
+`check` result, the `embedding` model id, the `index` report summary with its
+`reused`, `embedded`, `unembedded` and `truncated` counts and the wall time of
+a full embed, the plugin path when installed, both doctors' status, and Git
+commit or remote state only when actually confirmed. Never include full source
+or record content, credentials or unbounded excerpts.

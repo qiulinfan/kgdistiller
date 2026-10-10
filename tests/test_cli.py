@@ -128,7 +128,8 @@ class CommandSurfaceTest(unittest.TestCase):
             root = Path(folder)
             for arguments in (("agent", "status"), ("scan", "--file", "a.txt"), ("ingest", "plan", "r.json"),
                               ("capture", "prepare", "c.json"), ("export", "obsidian"), ("mcp", "--base", "kb"),
-                              ("mcp", "--embedding"), ("search", "q", "--embedding"), ("harvest", "prepare", "x"),
+                              ("mcp", "--embedding"), ("search", "q", "--embedding"), ("search", "q", "--rerank"),
+                              ("harvest", "prepare", "x"),
                               ("base", "list", "--base", "kb"), ("--base", "kb", "check")):
                 with self.subTest(arguments=arguments):
                     result = kgdistiller(*arguments, cwd=root)
@@ -227,6 +228,8 @@ class EndToEndTest(unittest.TestCase):
         found = output(kgdistiller("search", "measure space", cwd=root.parent))
         self.assertEqual((found["lanes"], found["results"][0]["uid"]), (["lexical", "name"], "kb:measure-space"))
         self.assertEqual(found["lag"]["changed_files"], 0)
+        sparse = output(kgdistiller("search", "measure space", "--no-dense", cwd=root))
+        self.assertEqual((sparse["lanes"], sparse["results"][0]["uid"]), (["lexical", "name"], "kb:measure-space"))
         relations = output(kgdistiller("search", "measure", "--class", "relation", "--limit", "5", cwd=root))
         self.assertEqual([item["uid"] for item in relations["results"]], ["kb:space-implies-measure"])
         self.assertTrue(output(kgdistiller("search", "测度", cwd=root))["results"])

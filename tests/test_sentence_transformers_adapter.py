@@ -1,128 +1,131 @@
-"""Adapter boundaries are tested without importing or downloading model runtimes."""
+"""The encoder adapter, tested against a fake ``sentence_transformers`` module; no model runtime is imported."""
+
+from __future__ import annotations
+
+import sys
 import unittest
 from types import SimpleNamespace
+from typing import Any, ClassVar
 from unittest.mock import patch
 
-from kgdistiller.adapters.sentence_transformers import (
-    EmbeddingError,
-    SentenceTransformersAdapter,
-)
+import numpy
 
+from kgdistiller.adapters import sentence_transformers as adapter
+from kgdistiller.home import KnowledgeError
 
-class Array:
-    def __init__(self, value): self.value = value
-    def tolist(self): return self.value
+DIMENSION = 3
 
 
 class Tokenizer:
-    model_max_length = 8192
-    def __call__(self, first, second=None, **kwargs):
-        assert kwargs.get("truncation") is False
-        assert kwargs.get("add_special_tokens") is True
-        return {"input_ids": [0] * (len(first.split()) + (len(second.split()) if second else 0) + 2)}
+    def __call__(self, text: str, **kwargs: Any) -> dict[str, list[int]]:
+        assert kwargs == {"truncation": False, "add_special_tokens": True}, kwargs
+        return {"input_ids": [0] * (len(text.split()) + 2)}
 
 
-class Embedder:
-    def __init__(self, *args, **kwargs):
-        self.max_seq_length = 8192
-        self.prompts = {}
+class FakeModel:
+    constructed: ClassVar[list[tuple[tuple[Any, ...], dict[str, Any]]]] = []
+    fail_load = False
+    fail_encode = False
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        if FakeModel.fail_load:
+            raise OSError("no such model in the cache")
+        FakeModel.constructed.append((args, kwargs))
+        self.prompts: dict[str, str] = {}
+        self.default_prompt_name = None
+        self.max_seq_length = 8
         self.tokenizer = Tokenizer()
-        self.calls = []
-        self.settings = kwargs
-    def encode_document(self, texts, **kwargs):
-        self.calls.append(("documents", texts, kwargs))
-        return Array([[1., 0.] for _ in texts])
-    def encode_query(self, texts, **kwargs):
-        self.calls.append(("queries", texts, kwargs))
-        return Array([[0., 1.] for _ in texts])
+        self.calls: list[tuple[str, list[str], dict[str, Any]]] = []
+
+    def _rows(self, kind: str, texts: list[str], kwargs: dict[str, Any]) -> numpy.ndarray:
+        if FakeModel.fail_encode:
+            raise RuntimeError("device lost")
+        self.calls.append((kind, texts, kwargs))
+        rows = [[float(len(text)), 1.0, 0.5] for text in texts]
+        return numpy.asarray(rows, dtype=numpy.float32)
+
+    def encode_document(self, texts: list[str], **kwargs: Any) -> numpy.ndarray:
+        return self._rows("document", texts, kwargs)
+
+    def encode_query(self, texts: list[str], **kwargs: Any) -> numpy.ndarray:
+        return self._rows("query", texts, kwargs)
 
 
-class Reranker:
-    def __init__(self, *args, **kwargs):
-        self.settings = kwargs
-        self.tokenizer = Tokenizer()
-        self.model = SimpleNamespace(config=SimpleNamespace(max_position_embeddings=8192))
-        self.calls = []
-    def predict(self, pairs, **kwargs):
-        self.calls.append((pairs, kwargs))
-        return Array([-3. if i == 0 else 4. for i in range(len(pairs))])
+class EncoderTest(unittest.TestCase):
+    def setUp(self) -> None:
+        adapter._resident = None
+        FakeModel.constructed = []
+        FakeModel.fail_load = False
+        FakeModel.fail_encode = False
+        modules = patch.dict(sys.modules, {"sentence_transformers": SimpleNamespace(SentenceTransformer=FakeModel)})
+        modules.start()
+        self.addCleanup(modules.stop)
+
+    def tearDown(self) -> None:
+        adapter._resident = None
+
+    def test_load_takes_the_model_id_only(self) -> None:
+        encoder = adapter.encoder("some/model")
+        self.assertEqual([(("some/model",), {"trust_remote_code": False, "token": False})], FakeModel.constructed)
+        self.assertEqual(("some/model", 8), (encoder.model, encoder.max_tokens))
+
+    def test_documents_and_queries_become_little_endian_float32_bytes(self) -> None:
+        encoder = adapter.encoder("some/model")
+        vectors = encoder.encode_documents(["one", "three words here"])
+        self.assertEqual(2, len(vectors))
+        for vector in vectors:
+            self.assertIsInstance(vector, bytes)
+            self.assertEqual(4 * DIMENSION, len(vector))
+        self.assertEqual([16.0, 1.0, 0.5], numpy.frombuffer(vectors[1], dtype="<f4").tolist())
+        query = encoder.encode_query("a question")
+        self.assertEqual([10.0, 1.0, 0.5], numpy.frombuffer(query, dtype="<f4").tolist())
+        loaded = encoder._loaded
+        self.assertEqual(["document", "query"], [call[0] for call in loaded.calls])
+        for _, _, kwargs in loaded.calls:
+            self.assertEqual({"normalize_embeddings": True, "convert_to_numpy": True, "show_progress_bar": False}, kwargs)
+
+    def test_over_limit_reports_positions_without_raising(self) -> None:
+        encoder = adapter.encoder("some/model")
+        texts = ["short text", "one two three four five six seven", "a b c d e f"]
+        self.assertEqual([1], encoder.over_limit(texts))
+        encoder._loaded.prompts = {"query": "ignored ignored ignored ", "passage": "p1 p2 "}
+        self.assertEqual([1, 2], encoder.over_limit(texts))
+
+    def test_encoder_is_resident_per_model_id(self) -> None:
+        first = adapter.encoder("some/model")
+        self.assertIs(first, adapter.encoder("some/model"))
+        self.assertEqual(1, len(FakeModel.constructed))
+        second = adapter.encoder("other/model")
+        self.assertIsNot(first, second)
+        self.assertEqual(2, len(FakeModel.constructed))
+        self.assertIs(second, adapter._resident)
+        self.assertIs(second, adapter.encoder("other/model"))
+        self.assertEqual(2, len(FakeModel.constructed))
+
+    def test_missing_extra(self) -> None:
+        with (patch.dict(sys.modules, {"sentence_transformers": None}),
+              self.assertRaises(adapter.RetrievalExtraMissing) as caught):
+            adapter.encoder("some/model")
+        self.assertIsInstance(caught.exception, KnowledgeError)
+        self.assertIn("install kgdistiller[retrieval]", str(caught.exception))
+        self.assertIsNone(adapter._resident)
+
+    def test_load_failure_is_an_embedding_error(self) -> None:
+        FakeModel.fail_load = True
+        with self.assertRaises(adapter.EmbeddingError) as caught:
+            adapter.encoder("some/model")
+        self.assertNotIsInstance(caught.exception, adapter.RetrievalExtraMissing)
+        self.assertIn("cannot load embedding model some/model", str(caught.exception))
+        self.assertIsNone(adapter._resident)
+
+    def test_inference_failure_is_an_embedding_error(self) -> None:
+        encoder = adapter.encoder("some/model")
+        FakeModel.fail_encode = True
+        for call in (lambda: encoder.encode_documents(["text"]), lambda: encoder.encode_query("text")):
+            with self.subTest(call=call), self.assertRaises(adapter.EmbeddingError) as caught:
+                call()
+            self.assertIn("embedding with some/model failed: device lost", str(caught.exception))
 
 
-class AdapterTest(unittest.TestCase):
-    def setUp(self):
-        torch = SimpleNamespace(float32="float32", __version__="test",
-                                backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
-                                cuda=SimpleNamespace(is_available=lambda: False),
-                                nn=SimpleNamespace(Identity=lambda: "identity"))
-        self.modules = patch.dict("sys.modules", {"torch": torch,
-                                    "sentence_transformers": SimpleNamespace(SentenceTransformer=Embedder,
-                                                                             CrossEncoder=Reranker)})
-        self.versions = patch("kgdistiller.adapters.sentence_transformers.version", return_value="test")
-        self.modules.start(); self.versions.start()
-        self.addCleanup(self.modules.stop); self.addCleanup(self.versions.stop)
-
-    def test_load_is_explicit_lazy_and_revisions_are_bound(self):
-        adapter = SentenceTransformersAdapter(batch_size=1, local_files_only=True)
-        self.assertIsNone(adapter._embedder)
-        self.assertIsNone(adapter._reranker)
-        before = adapter.metadata("embedding")
-        adapter.encode_documents(["one document"])
-        adapter.encode_queries(["a question"])
-        self.assertEqual(before, adapter.metadata("embedding"))
-        settings = adapter._embedder.settings
-        self.assertFalse(settings["trust_remote_code"])
-        self.assertFalse(settings["token"])
-        self.assertTrue(settings["local_files_only"])
-        self.assertEqual(before["revision"], settings["revision"])
-        self.assertEqual(["documents", "queries"], [c[0] for c in adapter._embedder.calls])
-
-    def test_late_document_content_is_not_silently_truncated(self):
-        adapter = SentenceTransformersAdapter(max_length=5)
-        with self.assertRaisesRegex(EmbeddingError, "model-input-too-long"):
-            adapter.encode_documents(["one two three four late-condition"])
-        self.assertEqual([], adapter._embedder.calls)
-
-    def test_reranker_bounds_joint_query_document_input_and_keeps_logits(self):
-        adapter = SentenceTransformersAdapter(max_length=7)
-        scores = adapter.score_pairs("query", ["first doc", "second doc"])
-        self.assertEqual([-3., 4.], scores)
-        self.assertEqual("raw-logit", adapter.metadata("reranker")["inference"]["activation"])
-        self.assertEqual("identity", adapter._reranker.calls[0][1]["activation_fn"])
-        with self.assertRaisesRegex(EmbeddingError, "model-input-too-long"):
-            adapter.score_pairs("one two three", ["four five six seven"])
-        self.assertEqual(1, len(adapter._reranker.calls))
-
-    def test_device_error_never_silently_switches_to_cpu(self):
-        with self.assertRaisesRegex(EmbeddingError, "model-device-unavailable"):
-            SentenceTransformersAdapter(device="mps")
-
-    def test_revision_configured_passage_prompt_counts_toward_input_limit(self):
-        adapter = SentenceTransformersAdapter(max_length=6)
-        model = adapter._load_embedding()
-        model.prompts = {"passage": "one two three "}
-        with self.assertRaisesRegex(EmbeddingError, "model-input-too-long"):
-            adapter.encode_documents(["four five"])
-        self.assertEqual([], model.calls)
-
-    def test_implicit_reranker_template_cannot_bypass_pair_length_check(self):
-        adapter = SentenceTransformersAdapter()
-        model = adapter._load_reranker()
-        model.default_prompt_name = "unaccounted-template"
-        with self.assertRaisesRegex(EmbeddingError, "model-input-configuration"):
-            adapter.score_pairs("question", ["document"])
-        self.assertEqual([], model.calls)
-
-    def test_bad_settings_and_blank_inputs_fail_explicitly(self):
-        for kwargs in [{"batch_size": True}, {"max_length": 0}, {"revision": ""}, {"revision": "main"},
-                       {"reranker_revision": "latest"},
-                       {"reranker_revision": ""}, {"device": "auto"}]:
-            with self.subTest(kwargs=kwargs), self.assertRaises(EmbeddingError):
-                SentenceTransformersAdapter(**kwargs)
-        adapter = SentenceTransformersAdapter()
-        with self.assertRaisesRegex(EmbeddingError, "invalid-model-input"):
-            adapter.encode_queries([""])
-        with self.assertRaisesRegex(EmbeddingError, "invalid-model-input"):
-            adapter.score_pairs("", ["doc"])
-
-
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

@@ -37,8 +37,8 @@
   nothing else under `.knowledge/`. Do not reintroduce edge files, graph
   manifests, identity or alignment registries, receipts, plan files, snapshots
   or stores. The database `$KGDISTILLER_HOME/index.sqlite` is derived from
-  `config.json` and the `entries/` files; `kgd index` is its only writer and
-  readers open it read-only.
+  `config.json`, the `entries/` files and the embedding model; `kgd index` is
+  its only writer and readers open it read-only.
 - Writes go through drafts plus `kgd accept`/`kgd harvest` (create-only,
   `os.link` then `os.unlink`, never overwriting), or through in-place edits of
   accepted records with a stale-read-safe editing tool followed by
@@ -70,7 +70,10 @@
   with its cited lines by text and reports moved or stale records;
   `check --fix-lines` rewrites only moved line ranges. The index detects
   changes by file stat. Staleness is reported, never used to hide knowledge
-  from retrieval, MCP or the Obsidian graph.
+  from retrieval, MCP or the Obsidian graph. Vector writes are guarded by the
+  row's text and `meta.embedding`, never by hashing; queries are encoded with
+  `meta.embedding`; `--rebuild` re-derives in place and never swaps the
+  database file.
 - Publishing (websites, course registries, marker registries, HTML conversion)
   belongs to consuming repositories; kgdistiller has no publishing surface.
 - Implementation changes pass these gates: the complete unit test suite
@@ -80,8 +83,15 @@
   `scripts/smoke_installed_runtime.py`, and `npm run check` in
   `integrations/obsidian` when the plugin changes. Every test and
   `scripts/smoke_installed_runtime.py` use a temporary `KGDISTILLER_HOME` and
-  never read or write the real home.
-- PyYAML>=6 is the single runtime dependency; anything else stays optional.
+  never read or write the real home. Unit tests use a fake encoder. The
+  real-model smoke test is opt-in and never runs in CI:
+  `HF_HUB_OFFLINE=1 KGD_TEST_EMBEDDING_MODEL=<model id> <python with the retrieval extra> -m unittest discover -s tests -p test_real_model.py`.
+  Its switch is test-only; `KGDISTILLER_HOME` stays the only product
+  environment variable.
+- PyYAML>=6 is the single runtime dependency. NumPy and sentence-transformers
+  come only with the `retrieval` extra (the dense lane); NumPy is also in the
+  `dev` group so the fake-encoder tests run in CI. The product ships no default
+  embedding model and no revision pin.
 - Do not add user knowledge data, credentials, generated graphs, or model keys to
   this repository.
 - The Community directory entry stays in this monorepo: root manifest/versions

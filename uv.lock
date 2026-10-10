@@ -283,23 +283,31 @@ dependencies = [
 
 [package.optional-dependencies]
 retrieval = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sentence-transformers" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", marker = "extra == 'retrieval'", specifier = ">=2" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "sentence-transformers", marker = "extra == 'retrieval'", specifier = "==6.1.0" },
 ]
 provides-extras = ["retrieval"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "ruff", specifier = "==0.16.10" }]
+dev = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "ruff", specifier = "==0.16.10" },
+]
 
 [[package]]
 name = "markdown-it-py"

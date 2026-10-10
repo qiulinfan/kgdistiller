@@ -90,7 +90,7 @@ built-in `cose` layout.
 - **Commands.** **Reload typed graph** re-reads every record from the metadata
   cache; **Rescan hidden knowledge folder** re-runs hidden indexing.
 
-Deferred to a later slice (S5): neighbourhood mode around the active file,
+Planned for the plugin: neighbourhood mode around the active file,
 filters by class, source prefix and understanding, a deterministic node fill
 per kind, pending terms as optional ghost nodes, rendering record bodies and
 evidence in the details pane, buttons that open the source at its first line

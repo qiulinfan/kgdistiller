@@ -21,8 +21,9 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    text values where a link would go.
 3. **No hashes, no content-derived ids, no compatibility code.** Change
    detection uses file stat; evidence freshness is checked by finding the quote
-   text in the source; concurrency uses one lock file, create-only moves and
-   edit tools that refuse stale reads.
+   text in the source; re-embedding is decided by comparing stored text;
+   concurrency uses one lock file, create-only moves and edit tools that refuse
+   stale reads.
 4. **Format-agnostic sources.** A source is any registered UTF-8 text file,
    addressed by path, a 1-based inclusive line range and verbatim quotes. The
    product never parses source syntax.
@@ -30,14 +31,16 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    record's fixed keys, the understanding enum, the section names
    `Search terms` and `Evidence`, the folder names `entries`, `drafts` and
    `sheets`, and the link grammar. Node kinds, relation kinds, roles and
-   epistemic labels are user data; the product ships no types.
+   epistemic labels are user data; the product ships no types and no default
+   embedding model.
 6. **Files decide validity; the database serves retrieval.** Validation and
    writes read files only. Retrieval reads the database only, except
    `get --source-lines`, which reads live source text on request.
 7. **The database may lag, never differ.** It is a pure function of
-   `config.json` and the `entries/` files of the registered, available bases.
-   An incremental index produces the same rows as a rebuild, and losing the
-   database costs one command.
+   `config.json`, the `entries/` files of the registered, available bases and
+   the embedding model. An incremental index produces the same rows as a
+   rebuild, and losing the database costs one command plus the time to
+   re-embed.
 
 ## Data model
 
@@ -94,8 +97,9 @@ relative to the base root, expanded with Python's
 `glob.glob(pattern, root_dir=root, recursive=True)`: `*` stays in one path
 segment, `**` spans directories, and hidden files and directories never match.
 A file matched by globs naming two different types is an error. `embedding` is
-`null` or a sentence-transformers model id; with `null` the index is lexical
-and name only.
+`null` or a sentence-transformers model id, with no revision pin; with `null`
+the index is lexical and name only. Changing it re-embeds every record on the
+next `kgd index`.
 
 A type file's stem matches `^[a-z0-9][a-z0-9-]*$`. Its frontmatter, read with
 PyYAML `BaseLoader`, has only `node_kinds` (required, non-empty, unique slugs),
@@ -417,7 +421,7 @@ lines.
   dangling, local and foreign. Run `kgd index`.
 - **Rename.** Rename the file in Obsidian, which rewrites local links;
   `kgd check` reports the foreign `[[base:old]]` links that remain. A record's
-  indexed text does not contain its own id.
+  indexed text does not contain its own id, so indexing re-uses its vector.
 
 ### Base registration
 

@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import os
+import sqlite3
+import struct
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from kgdistiller import retrieve
+from kgdistiller.adapters import sentence_transformers as adapter
 from kgdistiller.home import KnowledgeError
 from kgdistiller.index import index
 from kgdistiller.retrieve import Filters, get, name_candidates, resolve, search
-from tests.knowledge_fixture import make_record_home
+from tests.knowledge_fixture import (
+    FAKE_DIMENSION,
+    FakeEncoder,
+    fake_encoder,
+    make_record_home,
+)
+
+REAL_ENCODER = adapter.encoder
 
 LINES = [
     "Title line",
@@ -173,6 +184,148 @@ class SearchTest(RetrieveTestCase):
         with self.assertRaises(KnowledgeError) as caught:
             search("measure")
         self.assertIn("run `kgd index`", str(caught.exception))
+
+
+class DenseLaneTest(RetrieveTestCase):
+    MODEL = "fake/model"
+    QUERY = "a countably additive measure space"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.kb.embedding = self.MODEL
+        self.kb.write_config()
+        context = fake_encoder()
+        self.encoders = context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+        self.assertEqual(7, index()["embedded"])
+        self.encoders.loads.clear()
+
+    def dense(self, query: str = QUERY, filters: Filters = retrieve.NO_FILTERS) -> list[str]:
+        connection = retrieve.open_read_only()
+        self.addCleanup(connection.close)
+        return retrieve._dense(connection, query, filters, self.MODEL)
+
+    def expected_order(self, query: str) -> list[str]:
+        """A pure-Python dot-product ranking of the fake vectors of every embedded row; ties by uid."""
+        connection = retrieve.open_read_only()
+        self.addCleanup(connection.close)
+        unpack = struct.Struct(f"<{FAKE_DIMENSION}f").unpack
+        wanted = unpack(FakeEncoder.vector(query))
+        scores = {
+            uid: sum(a * b for a, b in zip(unpack(FakeEncoder.vector(text)), wanted, strict=True))
+            for uid, text in connection.execute("SELECT uid, text FROM record WHERE vec IS NOT NULL")
+        }
+        return sorted(scores, key=lambda uid: (-scores[uid], uid))
+
+    def test_three_lanes_and_rank_keys(self) -> None:
+        result = search("measure space")
+        self.assertEqual(["lexical", "dense", "name"], result["lanes"])
+        self.assertTrue(result["results"])
+        for item in result["results"]:
+            self.assertEqual(["lexical", "dense", "name"], list(item["ranks"]))
+        self.assertEqual([self.MODEL], self.encoders.loads)
+
+    def test_dense_order_is_the_exact_dot_product(self) -> None:
+        expected = self.expected_order(self.QUERY)
+        self.assertEqual(7, len(expected))
+        self.assertEqual(expected, self.dense())
+        ranks = {item["uid"]: item["ranks"]["dense"] for item in search(self.QUERY)["results"]}
+        self.assertEqual({uid: position for position, uid in enumerate(expected, 1)}, ranks)
+
+    def test_query_is_encoded_with_the_indexed_model(self) -> None:
+        self.kb.embedding = "other/model"
+        self.kb.write_config()
+        result = search("measure space")
+        self.assertIn("dense", result["lanes"])
+        self.assertTrue(result["lag"]["embedding_changed"])
+        self.assertEqual([self.MODEL], self.encoders.loads)
+
+    def test_filters_restrict_the_dense_lane(self) -> None:
+        cases = {
+            "base": (Filters(base=("notes",)), {"notes:measure"}),
+            "kind": (Filters(kind=("concept",)), {"kb:measurement"}),
+            "class": (Filters(class_=("relation",)), {"kb:space-implies-probability"}),
+            "source": (Filters(source=("notes/b",)), {"kb:sigma-algebra"}),
+        }
+        for name, (filters, expected) in cases.items():
+            with self.subTest(filter=name):
+                self.assertEqual(expected, set(self.dense(filters=filters)))
+                dense = {item["uid"] for item in search(self.QUERY, filters=filters)["results"] if item["ranks"]["dense"]}
+                self.assertEqual(expected, dense)
+
+    def test_unembedded_rows_are_absent(self) -> None:
+        path = self.kb.path("measure")
+        path.write_text(path.read_text(encoding="utf-8").replace("A countably additive", "An additive"), encoding="utf-8")
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+        self.assertEqual(1, index(embed=False)["unembedded"])
+        self.assertNotIn("kb:measure", self.dense())
+        self.assertEqual(6, len(self.dense()))
+        result = search("measure")
+        self.assertEqual(1, result["lag"]["unembedded"])
+        self.assertIsNone(next(item for item in result["results"] if item["uid"] == "kb:measure")["ranks"]["dense"])
+
+    def test_dense_false_skips_the_lane_and_the_model(self) -> None:
+        result = search("measure space", dense=False)
+        self.assertEqual(["lexical", "name"], result["lanes"])
+        self.assertEqual(["lexical", "name"], list(result["results"][0]["ranks"]))
+        self.assertEqual([], self.encoders.loads)
+
+    def test_missing_retrieval_extra(self) -> None:
+        for name, value in (("encoder", REAL_ENCODER), ("_resident", None)):
+            patcher = patch.object(adapter, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        with patch.dict(sys.modules, {"sentence_transformers": None}):
+            with self.assertRaises(KnowledgeError) as caught:
+                search("measure space")
+            self.assertEqual(["lexical", "name"], search("measure space", dense=False)["lanes"])
+        message = str(caught.exception)
+        self.assertIn("--no-dense", message)
+        self.assertIn("install kgdistiller[retrieval]", message)
+        self.assertIn(self.MODEL, message)
+
+    def test_missing_numpy(self) -> None:
+        with patch.dict(sys.modules, {"numpy": None}), self.assertRaises(KnowledgeError) as caught:
+            search("measure space")
+        self.assertIn("install kgdistiller[retrieval] or pass --no-dense", str(caught.exception))
+        self.assertEqual([], self.encoders.loads)
+
+    def test_model_load_failure_names_no_dense(self) -> None:
+        def offline(model: str) -> adapter.Encoder:
+            raise adapter.EmbeddingError(f"cannot load embedding model {model}: not in the cached files")
+
+        with patch.object(adapter, "encoder", offline), self.assertRaises(KnowledgeError) as caught:
+            search("measure space")
+        message = str(caught.exception)
+        self.assertIn("cannot load embedding model fake/model", message)
+        self.assertIn("--no-dense (MCP: no_dense)", message)
+
+    def test_an_index_without_vectors_needs_neither_numpy_nor_the_model(self) -> None:
+        self.kb.embedding = "other/model"
+        self.kb.write_config()
+        self.assertEqual(7, index(embed=False)["unembedded"])
+        with patch.dict(sys.modules, {"numpy": None}):
+            result = search("measure space")
+        self.assertEqual(["lexical", "dense", "name"], result["lanes"])
+        self.assertTrue(all(item["ranks"]["dense"] is None for item in result["results"]))
+        self.assertEqual([], self.encoders.loads)
+
+    def test_one_read_snapshot_per_call(self) -> None:
+        """A commit between reading meta.embedding and the vectors is invisible to the call."""
+        real = retrieve.meta_embedding
+
+        def then_index_clears_vectors(connection: object) -> str:
+            model = real(connection)
+            writer = sqlite3.connect(self.kb.home / "index.sqlite", isolation_level=None)
+            writer.execute("UPDATE record SET vec = NULL")
+            writer.close()
+            return model
+
+        with patch.object(retrieve, "meta_embedding", then_index_clears_vectors):
+            result = search(self.QUERY)
+        self.assertEqual(7, sum(item["ranks"]["dense"] is not None for item in result["results"]))
+        self.assertEqual([], self.dense())
 
 
 class ResolveTest(RetrieveTestCase):

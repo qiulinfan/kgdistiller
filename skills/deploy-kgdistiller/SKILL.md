@@ -1,6 +1,6 @@
 ---
 name: deploy-kgdistiller
-description: Set up, register and verify kgdistiller bases in the ~/.knowledge home — register source globs and user-defined document types, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes. Use when setting up kgdistiller on a machine, registering a base, its sources or document types, checking a base after a clone or source edit, restoring the index, or installing the Obsidian plugin.
+description: Set up, register and verify kgdistiller bases in the ~/.knowledge home — install with the retrieval extra, register source globs, user-defined document types and the embedding model, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes. Use when setting up kgdistiller on a machine, registering a base, its sources or document types, checking a base after a clone or source edit, restoring the index, or installing the Obsidian plugin.
 ---
 
 # Deploy kgdistiller
@@ -20,7 +20,19 @@ completely before changing a home or base. Never place personal sources,
 records, the home's `config.json` or types, or the database in the kgdistiller
 product repository.
 
-## 1. Register a base
+## 1. Install
+
+```sh
+uv tool install 'kgdistiller[retrieval] @ git+https://github.com/qiulinfan/kgdistiller.git'
+uv tool update-shell
+kgd --help
+```
+
+From a checkout, use `uv tool install --editable '<checkout>[retrieval]'`.
+The `retrieval` extra brings NumPy and sentence-transformers for the dense
+lane; without it `embedding` must stay `null`.
+
+## 2. Register a base
 
 ```sh
 kgd base add BASE_ROOT --name NAME
@@ -33,14 +45,20 @@ Base roots never nest, and the home never lies inside a base root.
 `kgd base rm NAME` removes only the registration and lists the links other
 bases still hold into it.
 
-## 2. Register sources and types
+## 3. Register sources, types and the embedding model
 
 Edit `$KGDISTILLER_HOME/config.json` by hand:
 
 - `bases.NAME.sources`: each key is a glob relative to the base root, each
   value a type name. Every matched file has exactly one type.
-- `embedding`: keep `null`. Search runs the lexical and name lanes; the dense
-  lane is a later release.
+- `embedding`: recommend `"BAAI/bge-m3"`, a sentence-transformers model id
+  only, with no revision pin. The first `kgd index` downloads the weights into
+  the Hugging Face cache (`~/.cache/huggingface`, several GB for this model)
+  and embeds every record; afterwards set `HF_HUB_OFFLINE=1` so every load
+  stays local. If an offline load reports that the files are not in the
+  cached files, the cache entry is incomplete (often a missing `refs/main`);
+  report it rather than going online unasked. `null` means lexical and name
+  search only. Changing the id re-embeds every record on the next `kgd index`.
 
 Write each `$KGDISTILLER_HOME/types/<type>.md` from the owner's vocabulary:
 `node_kinds`, optional `relation_kinds` (each kind with its ordered roles, for
@@ -51,7 +69,7 @@ catalog or infer types from file formats. Preview a source with
 and `.gitignore` in a private local Git repository; initialize it only when the
 owner asks.
 
-## 3. Check
+## 4. Check
 
 ```sh
 kgd check
@@ -65,7 +83,7 @@ never force a line range. Errors after a clone mean the checkout differs from
 what was committed: restore a known-good revision or repair the source on its
 owning machine.
 
-## 4. Index
+## 5. Index
 
 ```sh
 kgd index
@@ -73,13 +91,22 @@ kgd index --rebuild
 ```
 
 `kgd index` updates `index.sqlite` from the record files of every available
-base and prints a report; it exits 1 when a file is unparseable or a base is
-unavailable. `--rebuild` re-derives every row in place; `--no-embed` changes
-nothing until the dense lane exists. To restore a lost or damaged database,
-delete `index.sqlite*` in the home and run `kgd index`. `kgd base list` then
-shows each base's `records`, `drafts`, `indexed` count and `lag`.
+base, then embeds the rows that have no vector, and prints a report with
+`reused`, `embedded`, `unembedded` and `truncated`; it exits 1 when a file is
+unparseable or a base is unavailable. The model loads only when some row needs
+a vector. `--no-embed` skips embedding and leaves those rows unembedded.
+`--rebuild` re-derives every row in place and re-uses vectors by text, so it
+loads no model. If `embedding` is set but the retrieval extra is missing,
+`kgd index` exits 1 with `install kgdistiller[retrieval] or set embedding to
+null`; the lexical index is committed, so report the message and install the
+extra rather than editing the model id away unasked.
 
-## 5. Obsidian
+To restore a lost or damaged database, delete `index.sqlite*` in the home and
+run `kgd index`; it re-embeds every record (about two minutes per 500 records
+with `BAAI/bge-m3` on Apple silicon), so report the wall time. `kgd base list`
+then shows each base's `records`, `drafts`, `indexed` count and `lag`.
+
+## 6. Obsidian
 
 ```sh
 kgd obsidian install --base NAME --replace
@@ -90,7 +117,7 @@ knowledge folder** in the kgdistiller plugin settings; until then the graph view
 is empty. The plugin reads record frontmatter live; there is nothing to export.
 Keep Obsidian's new-link format unset (shortest) or `absolute`.
 
-## 6. Agent runtimes
+## 7. Agent runtimes
 
 ```sh
 kgd claude doctor
@@ -115,7 +142,9 @@ and `remote confirmed` only after a successful push.
 ## Deployment receipt
 
 Return the home path, each base's name, root, `records`, `drafts`, `indexed`
-and `lag` from `base list`, the `check` result, the `index` report summary,
-the plugin path when installed, both doctors' status, the installed version and
-commit when known, and Git state only as actually confirmed. Never include full
-source or record content, credentials or unbounded excerpts.
+and `lag` from `base list`, the `check` result, the `embedding` model id, the
+`index` report summary with `reused`, `embedded`, `unembedded` and `truncated`
+and the wall time of a restore, the plugin path when installed, both doctors'
+status, the installed version and commit when known, and Git state only as
+actually confirmed. Never include full source or record content, credentials or
+unbounded excerpts.

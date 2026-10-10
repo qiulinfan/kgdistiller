@@ -62,8 +62,8 @@ copies, discarding local edits to installed files.
 | `capture-knowledge` | `capture-kgdistiller` | write | `kgd sheet FILE --json`; `kgd resolve`/`kgd search` to compare senses; a new item as a draft plus `kgd accept`, or an existing record edited in place plus `kgd check --base B`; pending terms one level deep; understanding only from the owner's statement; `kgd index`; report uids and the receipt. |
 | `compile-knowledge-sheets` | `compile-knowledge-sheets` | author | Set the bounded scope; `kgd sheet FILE --json`; `resolve`/`search` for identity; drafts for new records; `kgd check --base B` with every draft passing; `kgd sheet FILE`; stop and report proposed changes to accepted records. |
 | `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; `kgd index`; report refused rows. |
-| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get [--source-lines N]` or the MCP tools; deliver `source:lines` and quotes; on lag run `kgd index` and repeat. |
-| `deploy-kgdistiller` | `deploy-kgdistiller` | write | `kgd base add`; sources and types in the home; `kgd check`; `kgd index`; `kgd obsidian install` and hidden indexing; `kgd claude link`/`kgd codex link` and both doctors. |
+| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search` (lexical, dense and name lanes), `resolve`, `get [--source-lines N]` or the MCP tools; deliver `source:lines` and quotes; on lag (`changed_files`, `unembedded` or `embedding_changed`) run `kgd index` and repeat; `--no-dense` / `no_dense` when the retrieval extra is missing. |
+| `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` and hidden indexing; `kgd claude link`/`kgd codex link` and both doctors. |
 
 Step modes mean:
 
@@ -71,7 +71,8 @@ Step modes mean:
   (`kgd index` when a result reports lag);
 - `author`: writes drafts and generated sheets, never accepted records;
 - `write`: changes accepted knowledge or the home through `kgd` commands or
-  in-place record edits.
+  in-place record edits. An owner-requested edit of an accepted record that a
+  compile report proposed runs as a separate `write` step.
 
 `agent: null` means the step runs in the current agent; a named agent refers
 to an installed preset. Manifests describe assets, not automatic triggers or a
@@ -100,12 +101,16 @@ establish any record's understanding.
 
 `$compile-knowledge-sheets` extracts a bounded scope of one registered source,
 up to the whole file when the owner asks for full distillation, typically for
-the owner's own notes or familiar material. It writes drafts only, checks that
-they pass `kgd check`, generates the sheet with `kgd sheet FILE` and stops.
-Changes it would make to accepted records (edits, deletions, node-to-relation
-conversions) are listed in its report and applied in place only when the owner
-asks, followed by `kgd check` and `kgd index`. It also serves requests to file
-or ingest a document into the knowledge base.
+the owner's own notes or familiar material. It writes drafts and the sheet
+only: it checks that the drafts pass `kgd check`, generates the sheet with
+`kgd sheet FILE` and stops. Changes it would make to accepted records (edits,
+deletions, node-to-relation conversions) are listed in its report with their
+reasons and source lines. Applying one is not part of a compile run: it is a
+separate owner-requested in-place edit in `write` mode (a stale-read-safe
+edit, `kgd check --base B`, then `kgd index`), the same path as capture's
+existing-record branch and [model.md](model.md) "Updates, deletes and renames
+of accepted records". It also serves requests to file or ingest a document
+into the knowledge base.
 
 ## Review and harvest
 
@@ -123,9 +128,12 @@ both runtimes.
 
 `$query-kgdistiller` and the `query-reviewer` preset read through
 `kgd search`, `kgd resolve` and `kgd get`, or the MCP tools `kg_search`,
-`kg_resolve` and `kg_get` of `kgd mcp`, across every registered base. Answers
-cite `source:lines` with evidence quotes. When a result reports
-`lag.changed_files > 0`, the reader runs `kgd index` and repeats the query;
+`kg_resolve` and `kg_get` of `kgd mcp`, across every registered base.
+`search` fuses a lexical, a dense and a name lane; when the retrieval extra is
+missing it fails unless the dense lane is skipped with `--no-dense` (MCP:
+`no_dense`). Answers cite `source:lines` with evidence quotes. When a result
+reports `lag.changed_files > 0`, `lag.unembedded > 0` or
+`lag.embedding_changed`, the reader runs `kgd index` and repeats the query;
 that derived refresh is its only write. Lookup during reading happens at the
 actual use sites; a record not found is not proof the owner lacks the concept,
 and only the owner's stated understanding allows treating a record as
@@ -134,12 +142,13 @@ mastered. Identity classification for authoring returns `matched`,
 
 ## Set up, check and restore
 
-`$deploy-kgdistiller` registers bases (`kgd base add`), writes source globs and
-document types into the home, runs `kgd check` (`--fix-lines` after a source
-edit moves cited lines), builds the index (`kgd index`; delete `index.sqlite*`
-and rerun it to restore), installs the Obsidian plugin and links the agent
-runtimes. Git initialization, commits, remotes and pushes remain separate
-explicit actions.
+`$deploy-kgdistiller` installs the package with the `retrieval` extra,
+registers bases (`kgd base add`), writes source globs, document types and the
+`embedding` model id into the home, runs `kgd check` (`--fix-lines` after a
+source edit moves cited lines), builds the index (`kgd index`; delete
+`index.sqlite*` and rerun it to restore, which re-embeds every record),
+installs the Obsidian plugin and links the agent runtimes. Git initialization,
+commits, remotes and pushes remain separate explicit actions.
 
 ## Reading papers
 

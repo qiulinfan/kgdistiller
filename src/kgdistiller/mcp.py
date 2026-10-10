@@ -1,8 +1,10 @@
 """Read-only MCP JSON-RPC server over stdio: ``kg_search``, ``kg_resolve`` and ``kg_get``.
 
-The server serves the whole home. Every tool call goes through ``retrieve``,
-which opens a fresh read-only connection to the derived database, so a call
-sees the latest ``kgd index`` and never writes anything.
+The server is read-only and serves the whole home. Every tool call goes
+through ``retrieve``, which opens a fresh read-only connection to the derived
+database, so a call sees the latest ``kgd index`` and never writes anything.
+The embedding model loads lazily on the first dense search and stays resident
+until ``meta.embedding`` changes.
 """
 
 from __future__ import annotations
@@ -29,7 +31,8 @@ INSTRUCTIONS = (
     "Read-only access to every base registered in the kgdistiller home: source-backed records and "
     "role-bound relations. Same name is not same concept; compare senses before assuming identity, and "
     "deliver source:lines with the evidence quotes. Every result reports lag; when lag.changed_files > 0, "
-    "run `kgd index` and repeat the call."
+    "lag.unembedded > 0 or lag.embedding_changed, run `kgd index` and repeat the call. If kg_search reports "
+    "the retrieval extra missing, repeat it with no_dense."
 )
 
 
@@ -68,11 +71,13 @@ def _tool(name: str, title: str, description: str, schema: dict[str, Any]) -> di
 TOOL_DEFINITIONS = [
     _tool(
         "kg_search", "Search Knowledge",
-        "Rank records and relations across every base by fusing a lexical lane and a name lane. Filters "
-        "repeat: OR within one filter, AND across filters.",
+        "Rank records and relations across every base by fusing a lexical lane, a dense lane (when "
+        "meta.embedding is set: an embedding model built the index) and a name lane; no_dense skips the "
+        "dense lane. Filters repeat: OR within one filter, AND across filters.",
         _object_schema({
             "query": {"type": "string", "minLength": 1, "maxLength": 4096},
             "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 40},
+            "no_dense": {"type": "boolean", "default": False},
             **FILTER_PROPERTIES,
         }, ["query"]),
     ),
@@ -231,7 +236,10 @@ def call_tool(name: str, raw_arguments: Any) -> dict[str, Any]:
         raise ToolError(f"unknown tool: {name}")
     arguments = _validate_arguments(name, raw_arguments)
     if name == "kg_search":
-        return search(arguments["query"], limit=arguments.get("limit", 40), filters=_filters(arguments))
+        return search(
+            arguments["query"], limit=arguments.get("limit", 40), filters=_filters(arguments),
+            dense=not arguments.get("no_dense", False),
+        )
     if name == "kg_resolve":
         return resolve(arguments["terms"], filters=_filters(arguments))
     return get(arguments["uids"], source_lines=arguments.get("source_lines"))

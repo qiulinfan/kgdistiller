@@ -548,7 +548,7 @@ def _dangling(files: Files, value: Value) -> str:
 def record_problems(
     files: Files, record: Record, *, draft: bool, linkable_drafts: Iterable[str] = ()
 ) -> tuple[list[tuple[str, str]], tuple[str, tuple[int, int] | None] | None]:
-    """§4.1 rules 5-8 for one parsed record, plus its evidence freshness when readable.
+    """The source, kind and link rules of `kgd check` for one parsed record, plus its evidence freshness.
 
     ``linkable_drafts`` are the folded ids of same-base drafts this record may
     link: none for an accepted record, every draft in ``check``, and the

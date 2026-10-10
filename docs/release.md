@@ -18,7 +18,9 @@ rebuilt by `kgd index`, never migrated.
 
 ## Release gates
 
-Run from a clean engine worktree:
+Run from a clean engine worktree. The unit environment needs NumPy, which the
+`dev` dependency group provides; the model itself is replaced by a fake
+encoder.
 
 ```sh
 uv run --locked python -m unittest discover -s tests -v
@@ -27,6 +29,14 @@ npm run build
 uv build --out-dir build/release/0.4.0
 uv run --locked python scripts/check_distribution.py --dist-root build/release/0.4.0
 cd integrations/obsidian && npm ci && npm run check
+```
+
+The opt-in real-model smoke test is never run in CI. Run it with an
+interpreter that has the `retrieval` extra and a model already in the Hugging
+Face cache:
+
+```sh
+HF_HUB_OFFLINE=1 KGD_TEST_EMBEDDING_MODEL=BAAI/bge-m3 python -m unittest discover -s tests -p test_real_model.py
 ```
 
 Then verify that:
@@ -42,18 +52,32 @@ Then verify that:
   registered; `sheet --json`, `sheet` and `accept` work on written records and
   a draft; `check` is clean, reports a shifted quote as moved, and
   `check --fix-lines` restores it; `index --no-embed` builds the database in
-  the home and nowhere in the base; `search` ranks the expected node first and
-  finds a CJK query; `resolve` and `get --source-lines` answer; the plugin
-  installs into the vault;
+  the home and nowhere in the base; with `embedding` null, `search` and
+  `search --no-dense` run only the lexical lane and the name lane, without
+  NumPy or a model, rank the expected node first and find a CJK query;
+  `resolve` and `get --source-lines` answer; the plugin installs into the
+  vault;
 - installed `kgdistiller`/`kgdistiller.exe` and `kgd` work on Linux, Windows and
   macOS;
 - every test and the smoke script use a temporary `KGDISTILLER_HOME` and never
   read or write the real home;
 - the index invariants hold: an incremental `kgd index` equals `--rebuild` and
   a build from a deleted database after edits, label cascades and an
-  unparseable file; read commands never create or write the database; a
-  wrong `user_version` or a damaged file is recreated; no module imports
-  `hashlib`;
+  unparseable file, vectors included; read commands never create or write the
+  database; a wrong `user_version` or a damaged file is recreated; no module
+  imports `hashlib`;
+- the embedding phase passes its fake-encoder tests: a text change sets `vec`
+  to NULL, an id rename re-uses the vector, a model change invalidates every
+  vector, a stale batch write is a no-op, `--rebuild` re-uses vectors by text
+  without loading the model, batches hold 64 rows, over-length texts are
+  listed under `truncated`, and every non-NULL `vec` encodes its row's text
+  under `meta.embedding`; `index --no-embed` leaves changed rows unembedded;
+- `search` runs the dense lane only when `meta.embedding` is set, encodes the
+  query with `meta.embedding`, and, when stored vectors match the filters but
+  the `retrieval` extra is missing, fails with an install hint unless
+  `--no-dense` (MCP: `no_dense`) is given;
+- the sentence-transformers adapter takes a model id only and has no reranker,
+  default model or revision pin;
 - the home lock serializes `accept`, `harvest`, `check --fix-lines` and
   `base add|rm`: a held lock makes each fail without writing, `accept` never
   overwrites a record and refuses without writing anything, and

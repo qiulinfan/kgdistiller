@@ -99,7 +99,7 @@ With placeholder values, `config.json`:
       }
     }
   },
-  "embedding": null
+  "embedding": "BAAI/bge-m3"
 }
 ```
 
@@ -117,8 +117,13 @@ The owner's rules for nodes, relations, examples and pending terms.
 ```
 
 - The top level holds exactly `bases` and `embedding`; each base holds exactly
-  `path` and `sources`. Keep `embedding` `null`: the index is lexical plus name
-  until the dense lane arrives.
+  `path` and `sources`. `embedding` is a sentence-transformers model id with no
+  revision pin (`BAAI/bge-m3` is the recommended one; the device is chosen
+  automatically) or `null` for lexical and name search only. It needs the
+  package installed with the `retrieval` extra. The first `kgd index` downloads
+  the weights into the Hugging Face cache (`~/.cache/huggingface`, or
+  `$HF_HOME`); afterwards `HF_HUB_OFFLINE=1` keeps every load local. Changing
+  the id re-embeds every record on the next `kgd index`.
 - Each `sources` key is a glob relative to the base root with Python glob
   semantics: `*` stays within one path segment, `**` spans directories, and
   hidden files and directories (`.knowledge/`, `.obsidian/`, `.git/`) never
@@ -159,10 +164,16 @@ hides a record from retrieval.
 
 `kgd index [--rebuild] [--no-embed]` brings `index.sqlite` up to date with the
 `entries/` files of every registered, available base, re-parsing files whose
-stat changed. Its JSON report lists per base `parsed`, `deleted` and
-`unparseable`, plus `unavailable` bases and `understanding_changed`; it exits 1
-when a file is unparseable or a base is unavailable. `--rebuild` re-derives
-every row in place. `--no-embed` has no effect until the dense lane exists.
+stat changed, then embeds every row whose vector is NULL with the `embedding`
+model. The model loads only when such a row exists. Its JSON report lists per
+base `parsed`, `deleted` and `unparseable`, plus `unavailable` bases,
+`understanding_changed`, `reused`, `embedded`, `unembedded` and `truncated`
+(texts longer than the model's input limit); it exits 1 when a file is
+unparseable or a base is unavailable. `--rebuild` re-derives every row in
+place and re-uses vectors by text. `--no-embed` skips the embedding phase and
+leaves changed rows unembedded. With `embedding` set and the `retrieval` extra
+missing, it exits 1 with `install kgdistiller[retrieval] or set embedding to
+null` after committing the lexical index.
 
 Restore after a lost or damaged database in one step:
 
@@ -171,9 +182,11 @@ rm -f "$KGDISTILLER_HOME/index.sqlite" "$KGDISTILLER_HOME/index.sqlite-wal" "$KG
 kgd index
 ```
 
-A missing, unreadable or other-version database is also rebuilt automatically
-by `kgd index`. Readers (`search`, `resolve`, `get`, MCP) open it read-only and
-report `lag`; a missing database tells them to run `kgd index`.
+This re-embeds every record, which is the only slow part of a restore (about
+two minutes per 500 records with `BAAI/bge-m3` on Apple silicon); report the
+wall time. A missing, unreadable or other-version database is also rebuilt
+automatically by `kgd index`. Readers (`search`, `resolve`, `get`, MCP) open it
+read-only and report `lag`; a missing database tells them to run `kgd index`.
 
 ## Product provenance and boundaries
 

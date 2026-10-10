@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import io
 import json
+import struct
+import sys
 import unittest
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, ClassVar
 from unittest.mock import patch
 
+import numpy
+
+from kgdistiller.adapters import sentence_transformers as adapter
 from kgdistiller.index import index
 from kgdistiller.mcp import (
     MAX_TOOL_RESPONSE_BYTES,
@@ -19,13 +25,37 @@ from kgdistiller.mcp import (
     serve_stdio,
 )
 from kgdistiller.retrieve import search
-from tests.knowledge_fixture import make_record_home
+from tests.knowledge_fixture import (
+    FAKE_DIMENSION,
+    FakeEncoder,
+    fake_encoder,
+    make_record_home,
+)
 
 SOURCE = "Title\nA measure space is a triple.\nA measure is countably additive.\n测度论研究可测空间。\n"
 
 
 def node(label: str, lines: str, extra: str = "") -> str:
     return f"label: {label}\nkind: definition\nsource: notes/a.txt\nlines: {lines}\n{extra}".rstrip("\n")
+
+
+class CountingModel:
+    """A stand-in ``SentenceTransformer`` that counts constructions and returns the fake encoder's vectors."""
+
+    constructed: ClassVar[list[str]] = []
+
+    def __init__(self, model: str, **kwargs: Any) -> None:
+        CountingModel.constructed.append(model)
+        self.prompts: dict[str, str] = {}
+        self.default_prompt_name = None
+        self.max_seq_length = 512
+        self.tokenizer = lambda text, **options: {"input_ids": text.split()}
+
+    def encode_document(self, texts: list[str], **kwargs: Any) -> numpy.ndarray:
+        rows = [struct.unpack(f"<{FAKE_DIMENSION}f", FakeEncoder.vector(text)) for text in texts]
+        return numpy.asarray(rows, dtype=numpy.float32)
+
+    encode_query = encode_document
 
 
 class MCPTest(unittest.TestCase):
@@ -62,7 +92,7 @@ class MCPTest(unittest.TestCase):
         filters = {"base", "kind", "class", "source", "understanding"}
         properties = {tool["name"]: set(tool["inputSchema"]["properties"]) for tool in TOOL_DEFINITIONS}
         self.assertEqual(properties, {
-            "kg_search": {"query", "limit", *filters},
+            "kg_search": {"query", "limit", "no_dense", *filters},
             "kg_resolve": {"terms", *filters},
             "kg_get": {"uids", "source_lines"},
         })
@@ -88,6 +118,7 @@ class MCPTest(unittest.TestCase):
             "query has an invalid length": ("kg_search", {"query": "x" * 4097}),
             "limit is outside": ("kg_search", {"query": "q", "limit": 0}),
             "limit must be integer": ("kg_search", {"query": "q", "limit": True}),
+            "no_dense must be boolean": ("kg_search", {"query": "q", "no_dense": "yes"}),
             "class contains unsupported items": ("kg_search", {"query": "q", "class": ["edge"]}),
             "base contains invalid items": ("kg_search", {"query": "q", "base": [1]}),
             "terms has an invalid item count": ("kg_resolve", {"terms": []}),
@@ -126,6 +157,59 @@ class MCPTest(unittest.TestCase):
         got = self.call(server, "kg_get", {"uids": ["measure-space"], "source_lines": 0})["structuredContent"]
         self.assertEqual("2\tA measure space is a triple.", got["records"][0]["source_text"])
         self.assertEqual(before, self.snapshot())
+
+    def embed(self, model: str = "fake/model") -> None:
+        self.kb.embedding = model
+        self.kb.write_config()
+
+    def real_encoder_without_a_resident_model(self) -> None:
+        for name, value in (("encoder", adapter.encoder), ("_resident", None)):
+            patcher = patch.object(adapter, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_kg_search_runs_the_dense_lane_unless_no_dense(self) -> None:
+        self.embed()
+        server = self.server()
+        with fake_encoder() as encoders:
+            index()
+            dense = self.call(server, "kg_search", {"query": "measure space"})
+            sparse = self.call(server, "kg_search", {"query": "measure space", "no_dense": True})
+        self.assertFalse(dense["isError"])
+        self.assertEqual(["lexical", "dense", "name"], dense["structuredContent"]["lanes"])
+        self.assertEqual(["lexical", "name"], sparse["structuredContent"]["lanes"])
+        self.assertEqual(["fake/model", "fake/model"], encoders.loads)
+
+    def test_the_model_stays_resident_until_meta_embedding_changes(self) -> None:
+        self.real_encoder_without_a_resident_model()
+        CountingModel.constructed = []
+        self.embed()
+        server = self.server()
+        module = SimpleNamespace(SentenceTransformer=CountingModel)
+        with patch.dict(sys.modules, {"sentence_transformers": module}):
+            index()
+            for _ in range(2):
+                found = self.call(server, "kg_search", {"query": "measure space"})
+                self.assertIn("dense", found["structuredContent"]["lanes"])
+            self.assertEqual(["fake/model"], CountingModel.constructed)
+            self.embed("other/model")
+            index()
+            found = self.call(server, "kg_search", {"query": "measure space"})
+        self.assertIn("dense", found["structuredContent"]["lanes"])
+        self.assertEqual(["fake/model", "other/model"], CountingModel.constructed)
+
+    def test_missing_retrieval_extra_is_a_tool_error(self) -> None:
+        self.embed()
+        with fake_encoder():
+            index()
+        self.real_encoder_without_a_resident_model()
+        server = self.server()
+        with patch.dict(sys.modules, {"sentence_transformers": None}):
+            result = self.call(server, "kg_search", {"query": "measure space"})
+            sparse = self.call(server, "kg_search", {"query": "measure space", "no_dense": True})
+        self.assertTrue(result["isError"])
+        self.assertIn("install kgdistiller[retrieval]", result["structuredContent"]["error"]["message"])
+        self.assertFalse(sparse["isError"])
 
     def test_kg_get_reads_no_file_outside_the_registered_sources(self) -> None:
         outside = self.kb.home.parent / "private.txt"

@@ -30,7 +30,10 @@ into `entries/` without overwriting anything, regenerates the sheet (accepted
 rows move into their kind sections, unticked drafts stay unticked) and prints
 the receipt `{"created": [uid], "understanding_set": [{"uid", "value"}]}`. Then
 `kgd index` makes the new records searchable; every knowledge write ends with
-it.
+it. Its report includes `embedded`, `unembedded` and `truncated`. If it exits 1
+with `install kgdistiller[retrieval] or set embedding to null`, the harvest and
+the lexical index are committed and only the vectors are missing: report that
+message to the owner and do not edit `config.json`.
 
 ## On refusal
 
@@ -54,4 +57,5 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
 ## Report
 
 Return the created uids, `understanding_set`, the regenerated sheet path and
-the `index` result, or the refused rows with their messages.
+the `index` result (`embedded`, `unembedded`, `truncated`, or its error), or
+the refused rows with their messages.

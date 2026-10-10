@@ -43,8 +43,9 @@ kgd get UID
 it), `mentions` and `pending` uses, across every base. Compare definitions and
 conditions yourself: the same name is not the same concept, and a homonym in
 another paper or base is a separate record. Decide whether the item is new or
-an existing record. If `lag.changed_files` is above 0, run `kgd index` first so
-the comparison sees current files.
+an existing record. If `lag.changed_files` is above 0, `lag.unembedded` is
+above 0 or `lag.embedding_changed` is true, run `kgd index` first so the
+comparison sees current files and vectors.
 
 ## 3. Write
 
@@ -94,11 +95,16 @@ unless the owner changes it.
 kgd index
 ```
 
-Every knowledge write ends with this, so search sees the change.
+Every knowledge write ends with this, so search sees the change. The report
+includes `embedded`, `unembedded` and `truncated`. If it exits 1 with
+`install kgdistiller[retrieval] or set embedding to null`, the lexical index is
+committed and only the vectors are missing: report that message to the owner
+and do not edit `config.json`.
 
 ## 7. Report
 
 Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
 `check` result for an in-place edit, the pending terms recorded, and the
-`index` result. Name any refusal and what was left unwritten. If the owner
-wants a sheet for this source, `kgd sheet SOURCE` regenerates it.
+`index` result (`embedded`, `unembedded`, `truncated`, or its error). Name any
+refusal and what was left unwritten. If the owner wants a sheet for this
+source, `kgd sheet SOURCE` regenerates it.

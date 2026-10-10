@@ -1,8 +1,8 @@
 """Run-local OMP bridge to compiled knowledge and immutable selection submission.
 
 The generic bridge originates in qiulinfan/kgdistiller-experiment at commit
-cf2960559f520cade5ce00cf1734705bf226dd01. Knowledge and questions are supplied by
-the caller; no prompts, benchmark answers or model settings are shipped here.
+cf29605. Knowledge and questions are supplied by the caller; no prompts,
+benchmark answers or model settings are shipped here.
 """
 from __future__ import annotations
 

@@ -1,11 +1,18 @@
-"""Build temporary knowledge bases: a home with source globs and types, plain text sources and record files."""
+"""Build temporary knowledge bases: a home with source globs and types, plain text sources and record files.
+
+Also a deterministic pure-Python fake encoder, so index and search tests never load a model.
+"""
 
 from __future__ import annotations
 
 import json
+import math
 import os
+import struct
 import tempfile
 import unittest
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -163,3 +170,68 @@ def make_record_home(
         types=RECORD_TYPES if types is None else types,
         embedding=embedding,
     )
+
+
+# ---------------------------------------------------------------- fake encoder
+
+FAKE_DIMENSION = 32
+
+
+class FakeEncoder:
+    """A deterministic encoder: a character histogram of the casefolded text, L2-normalized, as '<f4' bytes."""
+
+    def __init__(self, model: str, max_chars: int | None = None,
+                 on_encode: Callable[[list[str]], None] | None = None) -> None:
+        self.model = model
+        self.max_chars = max_chars
+        self.on_encode = on_encode
+        self.calls: list[int] = []
+
+    @staticmethod
+    def vector(text: str) -> bytes:
+        counts = [0.0] * FAKE_DIMENSION
+        for char in text.casefold():
+            counts[ord(char) % FAKE_DIMENSION] += 1.0
+        norm = math.sqrt(sum(value * value for value in counts))
+        if norm:
+            counts = [value / norm for value in counts]
+        return struct.pack(f"<{FAKE_DIMENSION}f", *counts)
+
+    def over_limit(self, texts: list[str]) -> list[int]:
+        if self.max_chars is None:
+            return []
+        return [position for position, text in enumerate(texts) if len(text) > self.max_chars]
+
+    def encode_documents(self, texts: list[str]) -> list[bytes]:
+        if self.on_encode is not None:
+            self.on_encode(texts)
+        self.calls.append(len(texts))
+        return [self.vector(text) for text in texts]
+
+    def encode_query(self, text: str) -> bytes:
+        return self.vector(text)
+
+
+class FakeEncoders:
+    """What ``fake_encoder`` yields: the models requested in order and one encoder per model id."""
+
+    def __init__(self, on_encode: Callable[[list[str]], None] | None, max_chars: int | None) -> None:
+        self.on_encode = on_encode
+        self.max_chars = max_chars
+        self.loads: list[str] = []
+        self.encoders: dict[str, FakeEncoder] = {}
+
+    def __call__(self, model: str) -> FakeEncoder:
+        self.loads.append(model)
+        if model not in self.encoders:
+            self.encoders[model] = FakeEncoder(model, self.max_chars, self.on_encode)
+        return self.encoders[model]
+
+
+@contextmanager
+def fake_encoder(on_encode: Callable[[list[str]], None] | None = None,
+                 max_chars: int | None = None) -> Iterator[FakeEncoders]:
+    """Patch the adapter's ``encoder`` seam with fake encoders; ``on_encode`` runs before each document batch."""
+    factory = FakeEncoders(on_encode, max_chars)
+    with patch("kgdistiller.adapters.sentence_transformers.encoder", factory):
+        yield factory

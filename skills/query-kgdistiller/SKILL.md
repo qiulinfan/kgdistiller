@@ -29,18 +29,20 @@ filtered, and reports `lag`.
   `kgd base add|rm`, and never write drafts.
 - The one write allowed is the derived refresh `kgd index` when results report
   lag (below).
-- Never promote lexical, name, translation, acronym or link similarity into
-  identity.
+- Never promote lexical, dense (embedding), name, translation, acronym or link
+  similarity into identity.
 
 ## Tools
 
 Use the MCP tools of `kgd mcp` when they are available: `kg_search`,
 `kg_resolve` and `kg_get`. The server is read-only, serves the whole home and
-opens a fresh connection per call. Otherwise use the CLI; both print the same
-JSON.
+opens a fresh connection per call. Prefer it for repeated queries: it keeps
+the embedding model resident after the first search, while every cold CLI
+`kgd search` loads the model again (several seconds with `BAAI/bge-m3` on
+Apple silicon). Otherwise use the CLI; both print the same JSON.
 
 ```sh
-kgd search "QUESTION OR TERMS" [--limit 40] [filters]
+kgd search "QUESTION OR TERMS" [--limit 40] [--no-dense] [filters]
 kgd resolve "TERM" ... [filters]
 kgd get UID ... [--source-lines N]
 ```
@@ -50,18 +52,28 @@ Filters, repeatable with OR within one filter and AND across filters:
 base-relative path prefix, such as one paper's folder) and
 `--understanding unknown|not-yet-understood|understood`.
 
-**search** ranks records by two lanes fused with reciprocal rank fusion:
+**search** ranks records by three lanes fused with reciprocal rank fusion:
 
 - lexical: FTS5 over each record's text (label, aliases, kind, body, search
   terms, participant and prerequisite labels, evidence and source path), with
   CJK text indexed as characters and adjacent pairs, so `测度` finds `测度论`;
+- dense: semantic and cross-language matches against each record's stored
+  vector; the query is encoded with the model that built the vectors. It runs
+  when `meta.embedding` is set (an embedding model built the index);
 - name: exact and contained label and alias keys of the query.
 
+`lanes` lists the lanes that ran. `--no-dense` (MCP: `no_dense`) skips the
+dense lane and loads no model. If search fails because the retrieval extra is
+missing or the model cannot be loaded (the error names `--no-dense`), rerun it
+with `--no-dense` and report the reduced `lanes` and the error.
+
 Each result carries `uid`, `class`, `kind`, `label`, `base`, `source`,
-`lines`, `understanding`, `epistemic`, `gloss`, `ranks` per lane, `requires`,
-`participants` (for relations, by role), `in` (records that cite or require
-it) and `truncated` counts for those lists. Put source-language forms in the
-query when the owner reads in another language.
+`lines`, `understanding`, `epistemic`, `gloss`, `ranks` for each lane that ran
+(`null` when that lane missed the record), `requires`, `participants` (for
+relations, by role), `in` (records that cite or require it) and `truncated`
+counts for those lists. Put source-language forms in the query when the owner
+reads in another language; the dense lane helps across languages but does not
+replace them.
 
 **resolve** returns, for each term, `senses` (label or alias equal to the term
 after normalization), `mentions` (containing it as a phrase, or as a substring
@@ -78,7 +90,12 @@ cited range ±N lines read live from the source with line numbers.
 
 Every result has `lag`: `changed_files`, `unavailable_bases`, `unembedded`,
 `embedding_changed`. When `lag.changed_files` is above 0, record files changed
-since the last index: run `kgd index` and repeat the query. Report
+since the last index: run `kgd index` (the one allowed write) and repeat the
+query. `lag.unembedded` above 0 means some records have no vector yet, so the
+dense lane misses them; `lag.embedding_changed` means the configured model
+differs from the one that built the vectors, and the dense lane keeps using
+the previous model until re-embedding. Do not start a re-embed from a query:
+report either condition and leave `kgd index` to the owner. Report
 `unavailable_bases` as missing coverage.
 
 ## Deliver evidence
