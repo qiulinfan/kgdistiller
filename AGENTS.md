@@ -49,8 +49,10 @@
   truncated. The product never re-serializes frontmatter; `--fix-lines`
   rewrites only the `lines:` line.
 - Every Skill that writes knowledge finishes with `kgd index`.
-- Ingestion stays lightweight; the owner's budget for capturing one item is
-  about 20 seconds. The writing Skills work in batches: one lookup turn (one
+- Ingestion stays lightweight; the owner's budget for waiting on one capture
+  is about 20 seconds. On 2026-10-11 the owner accepted about 24 seconds of
+  background processing per capture over making `kgd` call a model itself:
+  the core stays model-free, and model work stays in the Skills and presets. The writing Skills work in batches: one lookup turn (one
   `kgd resolve` of every name, `kgd search --limit 5` only where needed), one
   write turn, then one command that accepts or checks and indexes; nothing
   runs after admission except linking the pending uses the lookup found. A
