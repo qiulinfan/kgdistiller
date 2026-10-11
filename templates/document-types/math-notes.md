@@ -15,8 +15,9 @@ formulas and conclusions together in the record's prose. Use a theorem node
 for a reusable precise result. Any other statement that can be true or false,
 such as a proposition, remark or consequence, is a relation binding the
 records it connects, recorded when the source explicitly supplies that
-connection. A connection inferred by combining passages is a compiler
-judgment for the compiler guide, not a relation of these notes.
+connection. A connection inferred by combining passages is not a relation of
+these notes. A concept these notes use but define elsewhere is a pending term
+or a link to its defining record, never a second node.
 
 Use implies for a stated implication and requires-for for a stated proof or
 derivation dependency. Bind all jointly required premises to the same relation;

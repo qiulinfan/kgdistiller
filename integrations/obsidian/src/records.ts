@@ -54,15 +54,25 @@ export function sourceOfSheet(path: string): string | undefined {
   return source === "" ? undefined : source;
 }
 
-const LINES_RE = /^(\d+)(?:-(\d+))?$/;
+const RANGE_RE = /^(\d+)(?:-(\d+))?$/;
 
-/** The 1-based first line of a `lines` value `a` or `a-b` with 1 <= a <= b; otherwise undefined. */
+/**
+ * The 1-based first line of a `lines` value: ranges `a` or `a-b` with 1 <= a <= b,
+ * comma-separated, ascending and disjoint. Otherwise undefined.
+ */
 export function firstLine(lines: string | undefined): number | undefined {
-  const match = LINES_RE.exec((lines ?? "").trim());
-  if (!match) return undefined;
-  const start = Number(match[1]);
-  const end = match[2] === undefined ? start : Number(match[2]);
-  return start >= 1 && start <= end ? start : undefined;
+  let first: number | undefined;
+  let previous = 0;
+  for (const part of (lines ?? "").split(",")) {
+    const match = RANGE_RE.exec(part.trim());
+    if (!match) return undefined;
+    const start = Number(match[1]);
+    const end = match[2] === undefined ? start : Number(match[2]);
+    if (start < 1 || start > end || start <= previous) return undefined;
+    if (first === undefined) first = start;
+    previous = end;
+  }
+  return first;
 }
 
 const CASE_FOLDS: ReadonlyMap<string, string> = new Map(Object.entries(caseFolds as Record<string, string>));

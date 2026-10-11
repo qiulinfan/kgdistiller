@@ -74,11 +74,7 @@ alone. A colliding source or broad glob is reported; choose another visible
 overwrite an unrelated document or silently change extraction policy.
 
 The guide explicitly attributes classifications to the navigation compiler.
-Its topic and organization records cite and quote that guide. It is the
-compiler guide: other compiler judgments that its profile declares, such as
-cross-source mappings, may cite it too. Those records are neither topics nor
-scientific leaves; the helper reports them as `judgment`, never edits or
-retires them, and coverage never requires a route to them. Research papers
+Its topic and organization records cite and quote that guide. Research papers
 provide evidence for scientific records, not for freely generated directory
 membership. A guide is ordinary registered owner data outside `.knowledge/`;
 the helper appends explanatory decisions without parsing its syntax or

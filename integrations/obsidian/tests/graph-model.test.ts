@@ -346,7 +346,10 @@ describe("details", () => {
   it("parses the first line, sheet paths and their sources", () => {
     expect(firstLine("3-7")).toBe(3);
     expect(firstLine("9")).toBe(9);
-    for (const bad of ["0", "7-3", "a", "", "3-", undefined]) expect(firstLine(bad)).toBeUndefined();
+    expect(firstLine("225-227, 5025-5043")).toBe(225);
+    for (const bad of ["0", "7-3", "a", "", "3-", "3-7,", "5-7, 3-4", "3-5, 5-6", undefined]) {
+      expect(firstLine(bad)).toBeUndefined();
+    }
     expect(sheetPath("notes/chapter.tex")).toBe(".knowledge/sheets/notes/chapter.tex.md");
     expect(sourceOfSheet(".knowledge/sheets/notes/chapter.tex.md")).toBe("notes/chapter.tex");
     expect(sourceOfSheet(".knowledge/entries/measure.md")).toBeUndefined();

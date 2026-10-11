@@ -59,9 +59,9 @@ copies, discarding local edits to installed files.
 
 | Workflow | Skill | Mode | Steps |
 |---|---|---|---|
-| `capture-knowledge` | `capture-kgdistiller` | write | Read profile, compare senses, accept a scientific draft or check an in-place edit; pending terms and stated understanding; automatically invoke `organize-kgdistiller` for changed accepted UIDs; index and report admission/navigation separately. |
+| `capture-knowledge` | `capture-kgdistiller` | write | Read profile, compare senses, accept a scientific draft or check an in-place edit; pending terms and stated understanding; link the pending uses of created concepts in every base; automatically invoke `organize-kgdistiller` for changed accepted UIDs; index and report admission/navigation separately. |
 | `compile-knowledge-sheets` | `compile-knowledge-sheets` | author | Set the bounded scope; `kgd sheet FILE --json`; `resolve`/`search` for identity; drafts for new records; `kgd check --base B` with every draft passing; `kgd sheet FILE`; stop and report proposed changes to accepted records. |
-| `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; after admission automatically organize created accepted UIDs; index; report refused rows and navigation separately. |
+| `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; link the pending uses of created concepts in every base; after admission automatically organize created accepted UIDs; index; report refused rows and navigation separately. |
 | `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | CLI `navigate` entrances/summaries and declared-role descent; global lexical/dense/name `search`, `resolve`, scientific `neighbors`, `get`, `browse`, `pack`; bounded evidence or ordered scientific UIDs; refresh on lag. Existing MCP reads remain optional. |
 | `organize-knowledge` | `organize-kgdistiller` | write | Register an agent-authored guide; read current topics and changed scientific records; choose useful local/global split, merge, reparent or retirement; helper checks DAG/coverage and stale reads; new navigation drafts plus accept, guarded navigation edits; check and index. |
 | `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
@@ -92,8 +92,10 @@ node, a relation or an example. It reads the type profile with
 draft and runs `kgd accept` on it (the capture request is the consent) or edits
 the existing record in place with a stale-read-safe editing tool followed by
 `kgd check --base B`. Unexplained terms become plain pending values, one level
-deep. `understanding` is set only from the owner's explicit statement. It ends
-by automatically invoking `$organize-kgdistiller` for changed accepted UIDs,
+deep. `understanding` is set only from the owner's explicit statement. After
+acceptance it links the pending uses, in every base, that mean a created
+concept. It ends by automatically invoking `$organize-kgdistiller` for changed
+accepted UIDs,
 then `kgd index`, and reports the uids, receipt and `understanding_set` plus
 the separate navigation result.
 
@@ -111,9 +113,9 @@ deletions, node-to-relation conversions) are listed in its report with their
 reasons and source lines. Applying one is not part of a compile run: it is a
 separate owner-requested in-place edit in `write` mode (a stale-read-safe
 edit, `kgd check --base B`, then `kgd index`), the same path as capture's
-existing-record branch and [model.md](model.md) "Updates, deletes and renames
-of accepted records". It also serves requests to file or ingest a document
-into the knowledge base.
+existing-record branch and [model.md](model.md) "Updates, deletes and
+identity changes of accepted records". It also serves requests to file or
+ingest a document into the knowledge base.
 
 ## Review and harvest
 
@@ -122,11 +124,12 @@ The owner reviews the drafts in Obsidian (with the plugin's hidden indexing on,
 to accept in the source's sheet. A checkbox means "selected for acceptance",
 never "understood". `$harvest-kgdistiller` then runs `kgd harvest SHEET`,
 which accepts exactly the ticked drafts in one call, regenerates the sheet and
-prints the receipt, followed by automatic `$organize-kgdistiller` for created
-scientific UIDs and `kgd index`. A refusal changes nothing and
+prints the receipt. The Skill then links the pending uses, in every base,
+that mean a created concept, runs `$organize-kgdistiller` for the created
+scientific UIDs and finishes with `kgd index`. A refusal changes nothing and
 lists the rows to fix, usually `select [[x]] too`. Harvest never re-extracts.
-Deleting a draft rejects it. Model invocation is enabled for this Skill in
-both runtimes.
+Deleting a draft rejects it and leaves no trace. Model invocation is enabled
+for this Skill in both runtimes.
 
 ## Query
 
@@ -165,10 +168,7 @@ The optional finite navigation profile declares only kind/role conventions.
 The Skill initializes a registered agent-authored guide inside a base,
 outside `.knowledge/`, and ordinary topic/organization records quote this
 guide. Freely generated classification is explicitly a compiler judgment;
-research evidence remains with the scientific records. The same guide is the
-compiler guide for other judgments its profile declares, such as cross-source
-mappings; capture and compile report inferred connections as candidates
-instead of writing them as relations of a paper or note. There is no new home
+research evidence remains with the scientific records. There is no new home
 field, catalog, tree store, provider dependency or model call in `kgd index`.
 
 The agent proposes local adjustments first and broader reorganization when

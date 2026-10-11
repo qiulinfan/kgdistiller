@@ -31,7 +31,7 @@ lane. The exact scan is revisited when a home exceeds 50k records or a cold
 vector load takes more than 1 s; the next step would be a vector index over the
 same BLOBs, with no change to the record files.
 
-## Schema (`PRAGMA user_version = 1`)
+## Schema (`PRAGMA user_version = 2`)
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -49,8 +49,9 @@ CREATE TABLE record(
   label         TEXT NOT NULL,
   aliases       TEXT NOT NULL,                 -- JSON array
   source        TEXT NOT NULL,
-  line_start    INTEGER NOT NULL,
-  line_end      INTEGER NOT NULL,
+  line_start    INTEGER NOT NULL,              -- first line of the first cited range
+  line_end      INTEGER NOT NULL,              -- last line of the last cited range
+  lines         TEXT NOT NULL,                 -- every cited range, "a-b, c-d"
   understanding TEXT NOT NULL,                 -- unknown | not-yet-understood | understood
   epistemic     TEXT,
   body          TEXT NOT NULL,                 -- prose before "## Search terms" / "## Evidence"
@@ -135,7 +136,7 @@ Both live in `kgdistiller/index.py`.
 `index` always covers every registered base.
 
 **Opening.** If `index.sqlite` is missing, cannot be opened or has
-`user_version` ≠ 1, it is deleted together with `-wal` and `-shm`, created
+`user_version` ≠ 2, it is deleted together with `-wal` and `-shm`, created
 with `meta.embedding = ''` and fully built. This is the one-command restore; a
 derived file needs no compatibility path.
 
@@ -355,12 +356,12 @@ is a candidate, never an identity: compare definitions.
 
 A UID is `base:id`, or a bare id when exactly one base has it; a bare id held
 by several bases is an error listing them. `out` lists roles first, then
-`requires`. `--source-lines N` adds `source_text`: the cited range widened by
-N lines on each side, read live from the source with line numbers, or `null`
-when the source cannot be read or is not a registered source of its base that
-resolves inside the base root (so a hand-written `../` path, an absolute path
-or a symlink leaving the root is never read). This is the only read of source
-text; no passages are stored.
+`requires`. `--source-lines N` adds `source_text`: each cited range widened by
+N lines on each side, overlapping windows joined, read live from the source
+with line numbers, or `null` when the source cannot be read or is not a
+registered source of its base that resolves inside the base root (so a
+hand-written `../` path, an absolute path or a symlink leaving the root is
+never read). This is the only read of source text; no passages are stored.
 
 ## `kgd neighbors UID... [--role R]... [--dir out|in|both] [--depth 1] [filters]`
 
@@ -523,15 +524,12 @@ one read-only database snapshot. It reads no source text and changes nothing.
 Without UIDs, `records` lists roots. With UIDs it lists direct children of
 those topics, deduplicated by full UID, with topics first and UID order within
 each class. Each entry contains the usual summary (`uid`, `base`, `source`,
-`lines`, `label`, `kind`, `class`, `gloss`) plus `navigation` (`topic`,
-`leaf`, `judgment` or `organization`), `child_count` and `parent_count`. A
-`judgment` is any other record citing a compiler guide, such as a mapping
-between senses of different sources; it is never a scientific leaf. The
-`gloss` is the existing first-sentence projection, so the Skill places its
-routing decision first. Children can be subtopics or accepted scientific
-nodes/relations from another registered base. They preserve the same UID along
-every parent path. The semantic hop is a role projection, not unrestricted
-two-hop neighbors.
+`lines`, `label`, `kind`, `class`, `gloss`) plus `navigation` (`topic`, `leaf`
+or `organization`), `child_count` and `parent_count`. The `gloss` is the
+existing first-sentence projection, so the Skill places its routing decision
+first. Children can be subtopics or accepted scientific nodes/relations from
+another registered base. They preserve the same UID along every parent path.
+The semantic hop is a role projection, not unrestricted two-hop neighbors.
 
 `starts` summarizes requested UIDs, `missing` names unknown requests, and
 `outside_scope` lists known requests excluded by `--base`. A scoped view
@@ -543,8 +541,7 @@ and `truncated` counts their omitted items. An edge pointer alone is not a
 delivered scientific record. `profiles` discovers the per-source conventions.
 
 `diagnostics` gives totals and bounded examples for dangling participants,
-malformed roles, empty topics, uncovered scientific leaves (judgment records
-are counted separately in `judgment_count` and need no route) and cycle
+malformed roles, empty topics, uncovered scientific leaves and cycle
 residuals (members of cycles plus downstream topics that cannot be
 topologically removed). Traversal has no fixed topic-depth assumption and
 deduplicates shared children; scientific graph cycles are unaffected.
@@ -554,14 +551,13 @@ stale evidence is still returned. An incomplete guide does not hide records
 from global lexical/dense/name search.
 
 The CLI-first query Skill chooses useful root summaries, expands relevant
-branches, follows scientific links and supplements with global search. It does
-not reorganize the directory at query time. Exact names can start with
-resolve/search. Generated topics and every other record citing a compiler
-guide are compiler judgments, not scientific claim evidence. Benchmark results
-remain final scientific UID lists under the frozen gold protocol below;
-intermediate topic/edge hits do not replace leaf hits. The CLI has no resident
-encoder session: dense process-cold cost must not be presented as a warm query
-cost.
+branches, follows scientific links and supplements with global search. It
+does not reorganize the directory at query time. Exact names can start with
+resolve/search. Generated topics are navigation judgments, not scientific
+claim evidence. Benchmark results remain final scientific UID lists under
+the frozen gold protocol below; intermediate topic/edge hits do not replace
+leaf hits. The CLI has no resident encoder session: dense process-cold cost
+must not be presented as a warm query cost.
 
 ## MCP server: `kgd mcp`
 

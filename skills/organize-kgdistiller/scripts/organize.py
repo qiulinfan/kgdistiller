@@ -92,9 +92,8 @@ def initialize(name: str, source: str = SOURCE_NAME) -> dict[str, Any]:
                 raise KnowledgeError("types/navigation.md is owner data without navigation roles; choose an existing navigation source")
         config_path = home_path / CONFIG_FILENAME
         config = json.loads(_raw(config_path))
-        atomic_write_text(path, "This is an agent-authored compiler guide for accepted knowledge: topic navigation and\n"
-                          "other compiler judgments. Its entries are compiler judgments, not statements attributed\n"
-                          "to research sources.\n")
+        atomic_write_text(path, "This is an agent-authored navigation guide for accepted knowledge.\n"
+                          "Its classifications are compiler judgments, not statements attributed to research sources.\n")
         # A broad existing glob can claim a new file. Check before activating
         # another type; a refusal leaves the previous registry intact.
         claimed, _ = base.source_types()
@@ -194,11 +193,11 @@ def context(name: str, source: str = SOURCE_NAME, changed: list[str] | None = No
     for uid, record in owned.items():
         topic = uid in graph.topics
         spec = _spec(record, profile, topic=topic)
-        if (spec is None or record.lines[0] != record.lines[1]
-                or _render(name, source, profile, spec, record.lines[0], topic=topic) != texts[uid]
-                or evidence_state(record.evidence, source_lines, *record.lines) != ("fresh", None)):
+        if (spec is None or record.lines != ((record.first_line, record.first_line),)
+                or _render(name, source, profile, spec, record.first_line, topic=topic) != texts[uid]
+                or evidence_state(record.evidence, source_lines, record.lines) != ("fresh", None)):
             protected.append(uid)
-    scientific = graph.scientific(set(records))
+    scientific = set(records) - graph.topics - graph.organizations
     required = list(dict.fromkeys(changed)) if changed is not None else sorted(uid for uid in scientific if records[uid].base == name)
     if set(required) - scientific:
         raise KnowledgeError("changed UIDs must be existing scientific records: " + ", ".join(sorted(set(required) - scientific)))
@@ -207,7 +206,7 @@ def context(name: str, source: str = SOURCE_NAME, changed: list[str] | None = No
         "navigation": profile, "guidance": document_type.guidance,
         "records": [{"uid": uid, "label": record.label, "kind": record.kind,
                      "class": record.class_, "gloss": gloss(record.body),
-                     "navigation": graph.label(uid),
+                     "navigation": "topic" if uid in graph.topics else "organization" if uid in graph.organizations else "leaf",
                      "out": record_view(record)["out"]} for uid, record in sorted(records.items())],
         "protected": sorted(protected), "required_uids": required,
         "diagnostics": graph.diagnostics(set(records)),
@@ -286,11 +285,12 @@ def prepare(ctx: dict[str, Any], proposal: dict[str, Any]) -> dict[str, Any]:
                 raise KnowledgeError(f"cannot edit a scientific or foreign-source record: {uid}")
             if uid in records:
                 old_spec = _spec(records[uid], profile, topic=topic)
-                expected = (_render(base.name, ctx["source"], profile, old_spec, records[uid].lines[0], topic=topic)
-                            if old_spec is not None and records[uid].lines[0] == records[uid].lines[1] else None)
+                single = records[uid].lines == ((records[uid].first_line, records[uid].first_line),)
+                expected = (_render(base.name, ctx["source"], profile, old_spec, records[uid].first_line, topic=topic)
+                            if old_spec is not None and single else None)
                 if (expected != _raw(records[uid].path)
                         or evidence_state(records[uid].evidence, original_source_lines,
-                                          *records[uid].lines) != ("fresh", None)):
+                                          records[uid].lines) != ("fresh", None)):
                     raise KnowledgeError(f"preserve owner-edited navigation record {uid}; reorganize around it")
             if uid in ctx["protected"]:
                 raise KnowledgeError(f"preserve owner-edited navigation record {uid}; reorganize around it")
@@ -334,9 +334,9 @@ def prepare(ctx: dict[str, Any], proposal: dict[str, Any]) -> dict[str, Any]:
     before = project({uid: record_view(record) for uid, record in records.items()}, profiles)
     if graph.cyclic or graph.dangling or graph.malformed:
         raise KnowledgeError("invalid navigation projection: " + _literal(graph.diagnostics(set(after))))
-    required = set(ctx["required_uids"]) | before.scientific(before.reachable(set(records)))
+    required = set(ctx["required_uids"]) | (before.reachable(set(records)) - before.topics - before.organizations)
     if proposal["scope"] == "global":
-        required |= graph.scientific(set(after))
+        required |= set(after) - graph.topics - graph.organizations
     missing = required - graph.reachable(set(after))
     if missing:
         raise KnowledgeError("navigation must preserve coverage and route changed knowledge: " + ", ".join(sorted(missing)))

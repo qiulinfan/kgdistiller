@@ -51,7 +51,7 @@ from .records import (
 )
 
 DATABASE_FILENAME = "index.sqlite"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BUSY_TIMEOUT_SECONDS = 30
 EMBED_BATCH = 64
 SCHEMA = """
@@ -71,6 +71,7 @@ CREATE TABLE record(
   source        TEXT NOT NULL,
   line_start    INTEGER NOT NULL,
   line_end      INTEGER NOT NULL,
+  lines         TEXT NOT NULL,
   understanding TEXT NOT NULL,
   epistemic     TEXT,
   body          TEXT NOT NULL,
@@ -105,11 +106,11 @@ CREATE TABLE name(
 CREATE VIRTUAL TABLE fts USING fts5(tokens, tokenize = 'unicode61 remove_diacritics 0');
 
 INSERT INTO meta(key, value) VALUES ('embedding', '');
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 """
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 _RECORD_COLUMNS = (
-    "uid", "base", "id", "class", "kind", "label", "aliases", "source", "line_start", "line_end",
+    "uid", "base", "id", "class", "kind", "label", "aliases", "source", "line_start", "line_end", "lines",
     "understanding", "epistemic", "body", "search_terms", "evidence", "mtime_ns", "size",
 )
 _UPSERT = (
@@ -311,7 +312,8 @@ def _drop(connection: sqlite3.Connection, uid: str, rowid: int, pool: dict[str, 
 def _store(connection: sqlite3.Connection, record: Record, stat: os.stat_result) -> None:
     connection.execute(_UPSERT, (
         record.uid, record.base, record.id, record.class_, record.kind, record.label,
-        json.dumps(list(record.aliases), ensure_ascii=False), record.source, record.lines[0], record.lines[1],
+        json.dumps(list(record.aliases), ensure_ascii=False), record.source, record.first_line, record.last_line,
+        record.lines_text,
         record.understanding, record.epistemic, record.body, record.search_terms,
         json.dumps(list(record.evidence), ensure_ascii=False), stat.st_mtime_ns, stat.st_size,
     ))

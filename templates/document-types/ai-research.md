@@ -15,13 +15,13 @@ kinds, roles and guidance before registering sources with it.
 Nodes are the noun-like objects the source defines: concepts, algorithms,
 architectures, objective functions and quantities, plus theorems the source
 states precisely. Preserve mathematical definitions, input/output contracts,
-update rules and the scope in which they apply. A name, acronym, citation or
-mention alone does not define a new node, and background the source only
-restates, such as a standard metric or an earlier method, stays a pending term
-or a link to its existing record unless this source explains it in its own
-right. A paper rarely has more than about twenty concept nodes; when a pass
-proposes more, re-check each for a fact turned into a noun, a needless split
-or restated background.
+update rules and the scope in which they apply. Each concept has one record,
+owned by the paper that defines or originates it. A concept this source only
+uses, such as a standard metric or an earlier method, is never a node of this
+source, even when the paper explains it at length: it is a pending term, or a
+link once the defining paper's record exists. A paper rarely has more than
+about twenty concept nodes; when a pass proposes more, re-check each for a
+fact turned into a noun, a needless split or a borrowed concept.
 
 A statement that can be true or false is a relation, not a node: measured
 results, comparisons, ablation findings, limitations and explanatory
@@ -43,12 +43,13 @@ mechanisms, qualifications and evidence needed for the selected knowledge,
 wherever they occur; do not select by section name or file extension.
 
 Distinguish proved results, empirical observations, stated assertions and
-conjectures. Do not turn an observed association into a causal implication or
-a proposed explanation into an established result. Record a connection only
-when the cited text itself states it; shared names and nearby mentions
-establish no relation. A connection inferred by combining passages, or between
-this source and another one that it does not state, is a compiler judgment for
-the compiler guide, not a relation of this source.
+conjectures by the cited passage's own support: a result this source only
+reports from other work is stated. Do not turn an observed association into a
+causal implication or a proposed explanation into an established result.
+Record a connection only when the cited text itself states it; shared names
+and nearby mentions establish no relation. A connection inferred by combining
+passages, or between this source and another one that it does not state, is
+not a relation of this source.
 
 Use requires for direct understanding prerequisites. Unexplained terms remain
 plain pending values. Compare meanings and conditions before reusing a record,

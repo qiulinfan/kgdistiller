@@ -97,7 +97,7 @@ def _session() -> tuple[sqlite3.Connection, Home]:
 
 
 def _lines(row: sqlite3.Row) -> str:
-    return f"{row['line_start']}-{row['line_end']}"
+    return row["lines"]
 
 
 def _rows(connection: sqlite3.Connection, uids: Sequence[str]) -> dict[str, sqlite3.Row]:
@@ -409,7 +409,7 @@ def _resolve_uid(connection: sqlite3.Connection, argument: str) -> str | None:
 
 
 def _source_text(home: Home, row: sqlite3.Row, around: int) -> str | None:
-    """The cited range ±``around`` of a registered source inside its base root; null otherwise."""
+    """Each cited range ±``around``, overlapping windows joined, of a registered source inside its base root."""
     base = home.bases.get(row["base"])
     source = row["source"]
     if base is None or not records.valid_source_path(source) or not base.holds(source):
@@ -420,11 +420,11 @@ def _source_text(home: Home, row: sqlite3.Row, around: int) -> str | None:
         lines = records.source_lines(base.root / source)
     except (OSError, UnicodeDecodeError):
         return None
-    first = max(1, row["line_start"] - around)
-    last = min(len(lines), row["line_end"] + around)
-    if first > last:
+    spans = ((max(1, start - around), min(len(lines), end + around)) for start, end in records.parse_ranges(row["lines"]))
+    windows = records.merge_ranges(span for span in spans if span[0] <= span[1])
+    if not windows:
         return None
-    return "\n".join(f"{number}\t{lines[number - 1]}" for number in range(first, last + 1))
+    return "\n".join(f"{number}\t{lines[number - 1]}" for first, last in windows for number in range(first, last + 1))
 
 
 def _record(row: sqlite3.Row, out_links: Sequence[sqlite3.Row], labels: dict[str, str]) -> dict[str, Any]:

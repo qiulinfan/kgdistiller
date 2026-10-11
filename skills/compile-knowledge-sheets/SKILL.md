@@ -54,9 +54,9 @@ kgd get UID
 
 Compare definitions and conditions yourself. The same name is not the same
 concept: a homonym gets its own record, and an existing record with the same
-meaning is reused by linking it, not duplicated. Background this source only
-restates is not a new node here: link its existing record or keep a pending
-term. Leave ambiguous candidates out and list them. If `lag.changed_files` is
+meaning is reused by linking it, not duplicated. A concept this source did
+not define or originate is not a node here, even when the source explains it:
+link the record of its defining source or keep a global pending term. Leave ambiguous candidates out and list them. If `lag.changed_files` is
 above 0, `lag.unembedded` is above 0 or `lag.embedding_changed` is true, run
 `kgd index` first.
 
@@ -118,10 +118,9 @@ do not route unaccepted drafts or create a manual topic catalog here.
 Report the scope and actual coverage, the drafts written, reused records,
 ambiguous candidates left out, and the sheet path. When the drafts exceed a
 node threshold that the type's guidance sets, say which nodes you re-checked.
-List inferred connections separately as compiler-judgment candidates (for
-example the same concept in two sources, or two sources' claims on one
-question), with the UIDs and passages that ground them; they belong in the
-compiler guide, not in this source's records. List separately every
+List separately the connections you inferred but did not write, such as two
+sources' claims on one question, with the UIDs and passages that ground
+them. List separately every
 proposed change to accepted records — edits, deletions, node-to-relation
 conversions — with its reason and source lines.
 

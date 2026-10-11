@@ -36,6 +36,7 @@ from .records import (
     Record,
     RecordError,
     fold,
+    format_ranges,
     gloss,
     parse_record,
     parse_text,
@@ -146,7 +147,7 @@ def accept(paths: Iterable[Path | str], dry_run: bool = False) -> dict[str, Any]
             refused.extend({"path": str(path), "message": message} for _, message in problems)
             if freshness is not None and freshness[0] != "fresh":
                 state, proposed = freshness
-                where = f" (found at lines {proposed[0]}-{proposed[1]})" if proposed else ""
+                where = f" (found at lines {format_ranges(proposed)})" if proposed else ""
                 refused.append({"path": str(path), "message": f"evidence is {state}{where}; the quotes must occur in the cited lines"})
             plan.append((path, target, text, record))
         if refused:
@@ -204,7 +205,7 @@ def _records(base: Base, folder: str, relative: str) -> list[Record]:
             continue
         if record.source == relative:
             found.append(record)
-    return sorted(found, key=lambda record: (record.lines[0], record.id))
+    return sorted(found, key=lambda record: (record.first_line, record.id))
 
 
 def _display(files: Files, record: Record, uid: str) -> str:

@@ -59,24 +59,23 @@
   CLI-first query Skill also retains global lexical/dense/name retrieval.
   `kgd index` never invokes a semantic model or generates a directory.
 - A record asserts only what its cited text states: a relation citing a paper
-  or note quotes text stating that relation. Inferred connections (cross-source
-  mappings, claim comparisons, navigation) are compiler judgments citing the
-  registered compiler guide, whose type declares `navigation` conventions; they
-  are admitted fully automatically, with no review step or sheet, and the
-  navigation projection never counts them as scientific leaves. Agents never
-  write judgments into owner notes or sources, and never write a stand-in
-  definition for a concept whose defining source is not registered.
+  or note quotes text stating that relation, and a connection no source states
+  is reported, never written. Each concept has one record, owned by the source
+  that defines or originates it; a source that only uses a concept, even one
+  it explains, records a pending term, global across bases, until the defining
+  record exists, and then links it. No record stands in for a missing source,
+  and scientific records never link to navigation records.
 - Nodes are noun-like objects and precisely stated theorems; every other
   statement that can be true or false is a relation. Role values are knowledge
   references (links or pending concepts), never literals; kgd stores no
-  structured measurements. Pending gaps are global: a use stays pending only
-  while no registered base holds the defining record.
+  structured measurements. `lines` lists one or more ranges; the Evidence
+  quotes are the anchor.
 - Rejected drafts leave no trace; do not add a rejection list or any other
   memory of rejections.
 - Accepted ids and base names are permanent citation keys: never rename them
   or reuse them for another meaning. Ids come from meaning, never from section,
   figure, table, equation or theorem numbers; merges and splits rewrite the
-  inbound links once and are noted in the compiler guide.
+  inbound links once.
 - Format agnosticism: a knowledge source is any registered UTF-8 text document.
   Read it as numbered lines; never parse its syntax, scan for markers, pair
   sibling formats, or convert it. `.md`, `.typ`, `.tex`, `.txt` and every other

@@ -43,15 +43,21 @@ class FrontmatterTest(unittest.TestCase):
         parsed = record("label: on\nkind: definition\nsource: notes/a.txt\nlines: 40-46\naliases:\n  - yes\n  - 2")
         self.assertEqual("on", parsed.label)
         self.assertEqual(("yes", "2"), parsed.aliases)
-        self.assertEqual((40, 46), parsed.lines)
+        self.assertEqual(((40, 46),), parsed.lines)
         self.assertEqual("40-46", parsed.lines_text)
 
     def test_single_line_number_is_a_range_of_one(self) -> None:
-        self.assertEqual((7, 7), record(FRONTMATTER.replace("lines: 3-4", "lines: 7")).lines)
-        self.assertEqual((7, 7), record(FRONTMATTER.replace("lines: 3-4", 'lines: "7"')).lines)
+        self.assertEqual(((7, 7),), record(FRONTMATTER.replace("lines: 3-4", "lines: 7")).lines)
+        self.assertEqual(((7, 7),), record(FRONTMATTER.replace("lines: 3-4", 'lines: "7"')).lines)
+
+    def test_several_ascending_ranges_cite_distant_passages(self) -> None:
+        parsed = record(FRONTMATTER.replace("lines: 3-4", "lines: 3-4, 9, 12-15"))
+        self.assertEqual(((3, 4), (9, 9), (12, 15)), parsed.lines)
+        self.assertEqual("3-4, 9-9, 12-15", parsed.lines_text)
+        self.assertEqual((3, 15), (parsed.first_line, parsed.last_line))
 
     def test_invalid_line_ranges_are_frontmatter_errors(self) -> None:
-        for lines in ("0", "9-3", "a-b", "3-", "[3, 4]"):
+        for lines in ("0", "9-3", "a-b", "3-", "[3, 4]", "3-4,", "5-7, 3-4", "3-5, 5-6", "3-4;9"):
             with self.subTest(lines=lines), self.assertRaises(RecordError) as caught:
                 record(FRONTMATTER.replace("lines: 3-4", f"lines: {lines}"))
             self.assertEqual("frontmatter", caught.exception.rule)

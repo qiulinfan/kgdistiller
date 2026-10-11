@@ -34,10 +34,11 @@ and file extensions do not determine admission.
 
 Relations may bind multiple participants; preserve jointly required
 participants together. Record only connections the cited text states; a
-connection inferred by combining passages is a compiler judgment for the
-compiler guide. Keep direct understanding prerequisites in requires and
-unexplained terms as plain pending values. Compare definitions and conditions
-before reusing an existing record.
+connection inferred by combining passages is not a relation of these notes.
+Keep direct understanding prerequisites in requires and unexplained terms as
+plain pending values. A concept these notes use but define elsewhere is a
+pending term or a link to its defining record, never a second node; compare
+definitions and conditions before linking an existing record.
 
 Copy Evidence quotes verbatim from the cited lines. Use proved, stated and
 empirical according to the source's support, and set understanding only from

@@ -1,6 +1,6 @@
 ---
 name: harvest-kgdistiller
-description: Accept the draft records the owner ticked in a kgdistiller source sheet, with one kgd harvest call, then re-index. Use when the owner asks to harvest a sheet, accept the checked drafts, or import the items selected in Obsidian into their kgdistiller (kgd/kgdt) knowledge base.
+description: Accept the draft records the owner ticked in a kgdistiller source sheet, with one kgd harvest call, link the pending uses of the new concepts across bases, then re-index. Use when the owner asks to harvest a sheet, accept the checked drafts, or import the items selected in Obsidian into their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Harvest ticked drafts
@@ -36,6 +36,17 @@ set embedding to null`, the harvest and
 the lexical index are committed and only the vectors are missing: report that
 message to the owner and do not edit `config.json`.
 
+## Link pending uses
+
+For each created record, run `kgd resolve "LABEL" "ALIAS" ...` with its label
+and aliases. The `pending` entries are uses of those names in every base.
+Read each using record with `kgd get UID --source-lines 5` and keep only the
+uses that mean the created record's definition; a homonym stays pending. Edit
+each kept value in place into a link that keeps the source's wording,
+`"[[id|wording]]"` within the base or `"[[base:id|wording]]"` across bases,
+with an editing tool that refuses stale reads, then run `kgd check --base B`
+for every base you edited.
+
 ## Maintain topic navigation
 
 After a successful non-dry-run harvest with created UIDs, invoke
@@ -60,7 +71,8 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
 
 - Never re-extract the scientific source, regenerate scientific draft content
   or add scientific drafts; the reviewed drafts on disk are what gets accepted.
-  The following organization phase may create navigation drafts only.
+  Linking pending uses edits only the values it links, and the following
+  organization phase may create navigation drafts only.
 - A checkbox means "selected for acceptance", never "understood". Do not touch
   `understanding`; report `understanding_set` as returned.
 - A receipt with `aborted` names a target that appeared meanwhile; rerunning
@@ -69,6 +81,6 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
 
 ## Report
 
-Return the created uids, `understanding_set`, the regenerated sheet path and
-the `index` result (`embedded`, `unembedded`, `truncated`,
-`embedding_error`), or the refused rows with their messages.
+Return the created uids, `understanding_set`, the regenerated sheet path, the
+pending uses you linked and the `index` result (`embedded`, `unembedded`,
+`truncated`, `embedding_error`), or the refused rows with their messages.

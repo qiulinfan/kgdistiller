@@ -163,7 +163,7 @@ Selecting a node, diamond or typed edge shows its record:
 - **Open record**, which opens the record file;
 - **Open source at line N**, shown when the source file is in the vault. It
   opens the source with `openFile(file, {eState: {line}})` at the first line of
-  `lines`. Markdown views honour `eState.line`; the latex-live and tinymist
+  the first range in `lines`. Markdown views honour `eState.line`; the latex-live and tinymist
   source views are expected to honour it too, which is still to be confirmed
   in Obsidian (see the manual checks below);
 - **Open sheet**, shown only when `.knowledge/sheets/<source>.md` exists.

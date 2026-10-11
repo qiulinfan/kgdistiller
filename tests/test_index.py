@@ -47,7 +47,7 @@ def dump() -> dict[str, Any]:
     connection = open_read_only()
     try:
         columns = [
-            "uid", "base", "id", "class", "kind", "label", "aliases", "source", "line_start", "line_end",
+            "uid", "base", "id", "class", "kind", "label", "aliases", "source", "line_start", "line_end", "lines",
             "understanding", "epistemic", "body", "search_terms", "evidence", "text", "vec",
         ]
         return {
@@ -131,7 +131,7 @@ class SchemaTest(IndexTestCase):
         self.assertTrue(report["created"])
         connection = sqlite3.connect(database_path())
         try:
-            self.assertEqual(1, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(2, connection.execute("PRAGMA user_version").fetchone()[0])
             self.assertEqual("wal", connection.execute("PRAGMA journal_mode").fetchone()[0])
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'fts_%'")}
             self.assertEqual({"meta", "record", "link", "name", "fts"}, tables)
@@ -170,7 +170,8 @@ class SchemaTest(IndexTestCase):
                 "> The sum of two subspaces\nnotes/a.txt",
                 row["text"],
             )
-            self.assertEqual(("relation", "unknown", 4, 4), (row["class"], row["understanding"], row["line_start"], row["line_end"]))
+            self.assertEqual(("relation", "unknown", 4, 4, "4-4"),
+                             (row["class"], row["understanding"], row["line_start"], row["line_end"], row["lines"]))
             links = connection.execute("SELECT role, pos, dst, term, term_key FROM link WHERE src = 'kb:sum-is-subspace' ORDER BY role, pos").fetchall()
             self.assertEqual(
                 [("conclusion", 0, "notes:measure", None, None), ("conclusion", 1, None, "dimension", "dimension"),
@@ -231,7 +232,7 @@ class InvariantTest(IndexTestCase):
         self.assertEqual(first, third)
         self.assertEqual([("embedding", "fake/model")], first["meta"])
         for row in first["record"]:
-            self.assertEqual(FakeEncoder.vector(row[15]), row[16], row[0])
+            self.assertEqual(FakeEncoder.vector(row[16]), row[17], row[0])
 
     def rowids(self) -> dict[str, int]:
         connection = open_read_only()

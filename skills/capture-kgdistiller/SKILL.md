@@ -43,8 +43,9 @@ kgd get UID
 it), `mentions` and `pending` uses, across every base. Compare definitions and
 conditions yourself: the same name is not the same concept, and a homonym in
 another paper or base is a separate record. Decide whether the item is new or
-an existing record. Background the passage only restates is not a new record
-here: link its existing record or keep it as a pending term. If
+an existing record. A concept this source did not define or originate is not
+a record here, even when the passage explains it: link the record of its
+defining source or keep a global pending term. If
 `lag.changed_files` is above 0, `lag.unembedded` is above 0 or
 `lag.embedding_changed` is true, run `kgd index` first so the comparison sees
 current files and vectors.
@@ -53,7 +54,7 @@ Capture a node only for a noun-like object the source defines or a theorem it
 states precisely. Any other statement that can be true or false is a relation
 over the records it concerns, and its Evidence quote must itself state the
 relation. A connection you would infer by combining passages, or across
-sources, is a compiler judgment: report it instead of writing it.
+sources, is never written as a relation: report it.
 
 ## 3. Write
 
@@ -104,7 +105,18 @@ conversation (`unknown`, `not-yet-understood`, `understood`). Saving, reading
 or finding a definition never establishes it. Preserve an existing value
 unless the owner changes it.
 
-## 6. Index
+## 6. Link pending uses
+
+For each created record, run `kgd resolve "LABEL" "ALIAS" ...` with its label
+and aliases. The `pending` entries are uses of those names in every base.
+Read each using record with `kgd get UID --source-lines 5` and keep only the
+uses that mean the created record's definition; a homonym stays pending. Edit
+each kept value in place into a link that keeps the source's wording,
+`"[[id|wording]]"` within the base or `"[[base:id|wording]]"` across bases,
+with an editing tool that refuses stale reads, then run `kgd check --base B`
+for every base you edited.
+
+## 7. Index
 
 ```sh
 kgd index
@@ -117,7 +129,7 @@ includes `embedded`, `unembedded`, `truncated`, `embedding_error` and
 committed and only the vectors are missing: report that message to the owner
 and do not edit `config.json`.
 
-## 7. Maintain topic navigation
+## 8. Maintain topic navigation
 
 After successful acceptance or an accepted-record edit, invoke
 `$organize-kgdistiller` with the changed accepted UIDs. This authorized ingestion
@@ -129,11 +141,12 @@ agent-authored guide, verifies coverage and ends with `kgd index`. A refusal
 or navigation failure does not undo the captured scientific record; report
 both states and finish with `kgd index`.
 
-## 8. Report
+## 9. Report
 
 Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
 `check` result for an in-place edit, the pending terms recorded, and the
 `index` result (`embedded`, `unembedded`, `truncated`, `embedding_error`,
-`understanding_changed`). Name any refusal and what was left unwritten,
-including inferred connections reported as compiler-judgment candidates. If
-the owner wants a sheet for this source, `kgd sheet SOURCE` regenerates it.
+`understanding_changed`) and the pending uses you linked. Name any refusal
+and what was left unwritten, including connections you reported instead of
+writing. If the owner wants a sheet for this source, `kgd sheet SOURCE`
+regenerates it.

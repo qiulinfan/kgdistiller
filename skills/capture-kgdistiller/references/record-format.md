@@ -51,10 +51,10 @@ what makes a measurable space a measure space
 | `label` | yes | Non-empty single-line name in any language. Not unique. |
 | `kind` | yes | A node kind or relation kind of the source's document type. |
 | `source` | yes | POSIX path relative to the base root (no leading `/`, no `..`); a registered source of this base. |
-| `lines` | yes | `a` or `a-b`, 1-based and inclusive, within the source. |
+| `lines` | yes | One or more ranges `a` or `a-b`, 1-based and inclusive, comma-separated, ascending and disjoint, within the source, such as `126-140, 878-884`. |
 | `aliases` | no | List of other names and symbols, any language. Not unique. |
 | `understanding` | no | `unknown`, `not-yet-understood` or `understood`; absent means `unknown`. |
-| `epistemic` | no | One value from the type's `epistemic` list. |
+| `epistemic` | no | One value from the type's `epistemic` list: how the cited passage itself supports the record. A result the source only reports from other work is stated. |
 | `requires` | no | List of values: direct understanding prerequisites, one level. |
 | `tags`, `cssclasses` | no | Obsidian's own properties; accepted and ignored. |
 
@@ -67,6 +67,9 @@ Every other key must be a role that the type declares for `kind`
 values, in order. A record is a **relation** if and only if at least one role
 key holds a non-empty list; otherwise it is a **node**. `kgd check` requires a
 node kind to have no role keys and a relation kind to have at least one value.
+A kind whose meaning does not change when its participants swap has a single
+role listing them unordered, like `equivalent: [side]` below; a kind with
+several roles is directional, so write each fact in one form only.
 
 ```yaml
 # binary relation (2 roles)
@@ -83,10 +86,10 @@ kind: property
 subject: ["[[sum-of-subspaces]]"]
 uses: ["[[subspace]]", "[[subspace]]", dimension]
 
-# a relation about a relation: the witness is itself a relation record
+# a relation about a relation: the witness is itself a relation record;
+# the two contrasted records swap freely, so they share one role
 kind: contrasts
-subject: ["[[direct-sum]]"]
-contrast: ["[[sum-of-subspaces]]"]
+side: ["[[direct-sum]]", "[[sum-of-subspaces]]"]
 witness: ["[[subspace-sum-with-itself]]"]
 
 # application / example: setting binds a concept; the concrete
@@ -139,7 +142,8 @@ term    := non-empty single-line string without "[[" or "]]"
   consecutive `>` lines is one quote. At least one quote is required.
 - Each quote is copied verbatim from the cited lines of `source`. Freshness
   compares quote and source after collapsing whitespace: every quote must occur
-  in the cited lines.
+  inside one cited range. Cite distant passages, such as a definition and its
+  appendix details, as separate ranges rather than one range spanning both.
 - Search terms hold question forms and other non-name phrasings; names in any
   language go in `aliases`.
 - The gloss shown in sheets and results is the first sentence of the first
@@ -196,10 +200,11 @@ not `unknown`, so a set understanding is always visible.
 Follow the source's document type: its `node_kinds`, `relation_kinds`,
 `epistemic` list and guidance (`kgd sheet FILE --json`). In general:
 
-- **Nodes** are noun-like: the objects the source defines (concepts, methods,
-  architectures, objectives, quantities, datasets it explains) plus theorems it
-  states precisely. Background the source only restates is not a node here: it
-  stays a pending term or a link to its existing record.
+- **Nodes** are noun-like: the concepts, methods, architectures, objectives and
+  quantities the source defines, plus theorems it states precisely. Each
+  concept has one record, owned by the source that defines or originates it.
+  A concept this source only uses, even one it explains at length, is not a
+  node here: it is a pending term or a link to its defining source's record.
 - **Relations** are every other statement that can be true or false:
   propositions, remarks, measured results, comparisons, findings, limitations,
   derivations and explanatory hypotheses. Bind each participant to the role the
@@ -208,9 +213,8 @@ Follow the source's document type: its `node_kinds`, `relation_kinds`,
   repeat (self-relation) and may itself be a relation.
 - **Only stated connections.** A relation citing this source quotes text that
   states the relation. A connection you infer by combining passages, or
-  between this source and another one it does not mention, is a compiler
-  judgment: do not write it as a relation of this source; report it as a
-  candidate for the compiler guide.
+  between this source and another one it does not mention, is never written
+  as a relation of this source; report it instead.
 - **Applications and examples** are relations of the kind the type registers
   for them, for example `example: [uses, setting]`.
 - **Pending gaps** are terms the source uses without explaining. Record them
@@ -222,5 +226,5 @@ Follow the source's document type: its `node_kinds`, `relation_kinds`,
 - **Understanding** is set only from the owner's explicit statement. Reading,
   capturing or finding a definition never establishes it.
 - Same name is not same concept. Compare definitions with `kgd resolve` and
-  `kgd search`; two senses are two records, and equivalence, if wanted, is an
-  explicit relation.
+  `kgd search`: same-named records are different concepts with different
+  definitions, and a name collision needs nothing more.

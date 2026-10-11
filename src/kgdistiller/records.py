@@ -54,7 +54,7 @@ LIST_KEYS = frozenset({"aliases", "requires"})
 SCALAR_KEYS = FIXED_KEYS - LIST_KEYS - IGNORED_KEYS
 REQUIRED_KEYS = ("label", "kind", "source", "lines")
 ID_RE = re.compile(r"^[^\W_]+(?:-[^\W_]+)*$")
-LINES_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
+RANGE_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 LINK_RE = re.compile(r"\[\[([^\[\]]*)\]\]")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 SENTENCE_RE = re.compile(r".*?(?:[。！？]|[.!?](?=\s|$))", re.DOTALL)
@@ -86,6 +86,40 @@ def split_lines(text: str) -> list[str]:
     if lines[-1] == "":
         lines.pop()
     return lines
+
+
+Ranges = tuple[tuple[int, int], ...]
+
+
+def parse_ranges(text: str) -> Ranges:
+    """A ``lines`` value: ranges ``a`` or ``a-b``, comma-separated, ascending and disjoint."""
+    ranges: list[tuple[int, int]] = []
+    for part in text.split(","):
+        match = RANGE_RE.fullmatch(part.strip())
+        if match is None:
+            raise RecordError("frontmatter", f"lines must be ranges 'a' or 'a-b' separated by commas, not {text!r}")
+        start, end = int(match.group(1)), int(match.group(2) or match.group(1))
+        if not 1 <= start <= end:
+            raise RecordError("frontmatter", f"lines {text} must satisfy 1 <= a <= b in every range")
+        if ranges and start <= ranges[-1][1]:
+            raise RecordError("frontmatter", f"lines {text} must list ascending, non-overlapping ranges")
+        ranges.append((start, end))
+    return tuple(ranges)
+
+
+def format_ranges(ranges: Ranges) -> str:
+    return ", ".join(f"{start}-{end}" for start, end in ranges)
+
+
+def merge_ranges(spans: Iterable[tuple[int, int]]) -> Ranges:
+    """Sorted ranges with overlapping or adjacent spans joined."""
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return tuple(merged)
 
 
 def source_lines(path: Path | str) -> list[str]:
@@ -258,7 +292,7 @@ class Record:
     label: str
     kind: str
     source: str
-    lines: tuple[int, int]
+    lines: Ranges
     aliases: tuple[str, ...]
     understanding: str
     epistemic: str | None
@@ -275,7 +309,15 @@ class Record:
 
     @property
     def lines_text(self) -> str:
-        return f"{self.lines[0]}-{self.lines[1]}"
+        return format_ranges(self.lines)
+
+    @property
+    def first_line(self) -> int:
+        return self.lines[0][0]
+
+    @property
+    def last_line(self) -> int:
+        return self.lines[-1][1]
 
     def values(self) -> Iterator[tuple[str, int, Value]]:
         """Every value as (role, position, value): roles in frontmatter order, then requires."""
@@ -365,12 +407,7 @@ def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
     for key in REQUIRED_KEYS:
         if not scalars.get(key):
             raise RecordError("frontmatter", f"the frontmatter needs a non-empty {key}")
-    match = LINES_RE.fullmatch(scalars["lines"])
-    if match is None:
-        raise RecordError("frontmatter", f"lines must be 'a' or 'a-b', not {scalars['lines']!r}")
-    start, end = int(match.group(1)), int(match.group(2) or match.group(1))
-    if not 1 <= start <= end:
-        raise RecordError("frontmatter", f"lines {scalars['lines']} must satisfy 1 <= a <= b")
+    ranges = parse_ranges(scalars["lines"])
     understanding = scalars.get("understanding") or "unknown"
     if understanding not in UNDERSTANDING:
         raise RecordError("frontmatter", f"understanding must be one of {', '.join(UNDERSTANDING)}")
@@ -386,7 +423,7 @@ def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
         label=scalars["label"],
         kind=scalars["kind"],
         source=scalars["source"],
-        lines=(start, end),
+        lines=ranges,
         aliases=aliases,
         understanding=understanding,
         epistemic=scalars.get("epistemic") or None,
@@ -406,12 +443,16 @@ def parse_record(path: Path, base: str) -> Record:
 # ---------------------------------------------------------------- evidence
 
 
-def evidence_state(quotes: Iterable[str], lines: list[str], start: int, end: int) -> tuple[str, tuple[int, int] | None]:
-    """``("fresh", None)``, ``("moved", (a, b))`` or ``("stale", None)``."""
+def evidence_state(quotes: Iterable[str], lines: list[str], ranges: Ranges) -> tuple[str, Ranges | None]:
+    """``("fresh", None)``, ``("moved", ranges)`` or ``("stale", None)``.
+
+    Fresh means every quote lies inside one cited range. Moved proposes the
+    lines of each quote's single occurrence, adjacent or overlapping ones joined.
+    """
     normalized = [normalize_space(quote) for quote in quotes]
-    if 1 <= start <= end <= len(lines):
-        cited = normalize_space("\n".join(lines[start - 1 : end]))
-        if all(quote in cited for quote in normalized):
+    if all(1 <= start <= end <= len(lines) for start, end in ranges):
+        cited = [normalize_space("\n".join(lines[start - 1 : end])) for start, end in ranges]
+        if all(any(quote in text for text in cited) for quote in normalized):
             return "fresh", None
     parts: list[str] = []
     offsets: list[int] = []
@@ -436,7 +477,7 @@ def evidence_state(quotes: Iterable[str], lines: list[str], start: int, end: int
             return "stale", None
         last = first + len(quote) - 1
         spans.append((numbers[bisect_right(offsets, first) - 1], numbers[bisect_right(offsets, last) - 1]))
-    return "moved", (min(a for a, _ in spans), max(b for _, b in spans))
+    return "moved", merge_ranges(spans)
 
 
 # ---------------------------------------------------------------- file view
@@ -547,9 +588,18 @@ def _dangling(files: Files, value: Value) -> str:
     return message
 
 
+def _guide(files: Files, name: str, source: str) -> bool:
+    """Whether a source is a navigation guide: its document type declares navigation conventions."""
+    base = files.home.bases.get(name)
+    if base is None or not files.available(name):
+        return False
+    type_name = files.sources(base)[0].get(source)
+    return type_name is not None and files.home.types[type_name].navigation is not None
+
+
 def record_problems(
     files: Files, record: Record, *, draft: bool, linkable_drafts: Iterable[str] = ()
-) -> tuple[list[tuple[str, str]], tuple[str, tuple[int, int] | None] | None]:
+) -> tuple[list[tuple[str, str]], tuple[str, Ranges | None] | None]:
     """The source, kind and link rules of `kgd check` for one parsed record, plus its evidence freshness.
 
     ``linkable_drafts`` are the folded ids of same-base drafts this record may
@@ -557,7 +607,7 @@ def record_problems(
     selected drafts in ``accept``.
     """
     problems: list[tuple[str, str]] = []
-    freshness: tuple[str, tuple[int, int] | None] | None = None
+    freshness: tuple[str, Ranges | None] | None = None
     base = files.home.bases[record.base]
     mapping, conflicts = files.sources(base)
     source = record.source
@@ -581,9 +631,9 @@ def record_problems(
         except OSError as error:
             problems.append(("source", f"source {source} cannot be read: {error.strerror or error}"))
         else:
-            if record.lines[1] > len(lines):
+            if record.last_line > len(lines):
                 problems.append(("source", f"lines {record.lines_text} exceed the {len(lines)} lines of {source}"))
-            freshness = evidence_state(record.evidence, lines, *record.lines)
+            freshness = evidence_state(record.evidence, lines, record.lines)
         role_keys = [role for role, _ in record.roles]
         if record.kind in document_type.node_kinds:
             if role_keys:
@@ -604,6 +654,7 @@ def record_problems(
             allowed = ", ".join(document_type.epistemic) or "no epistemic values"
             problems.append(("kind", f"epistemic {record.epistemic!r} is not allowed by {document_type.name} ({allowed})"))
     linkable = set(linkable_drafts)
+    scientific = not _guide(files, record.base, record.source)
     for role, position, value in record.values():
         if value.uid is None:
             continue
@@ -617,7 +668,12 @@ def record_problems(
         elif not files.available(target_base):
             problems.append(("link", f"{where} links base {target_base}, which is unavailable"))
         elif target in files.ids(target_base, ENTRIES) or (target_base == record.base and target in linkable):
-            continue
+            found = files.record(target_base, ENTRIES, target) or files.record(target_base, DRAFTS, target)
+            if scientific and found is not None and _guide(files, target_base, found.source):
+                problems.append(("link", (
+                    f"{where} links [[{target}]], a navigation record; scientific records never link to "
+                    "topics or organization relations"
+                )))
         elif target in files.ids(target_base, DRAFTS):
             if target_base != record.base:
                 problems.append(("link", f"{where} links a draft of base {target_base}; foreign links must target accepted records"))
@@ -660,10 +716,10 @@ def _load_for_check(home_dir: Path, errors: list[dict[str, str]]) -> Home | None
         return None
 
 
-def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any], dict[Path, tuple[str, tuple[int, int]]]]:
+def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any], dict[Path, tuple[str, Ranges]]]:
     errors: list[dict[str, str]] = []
     report: dict[str, Any] = {"errors": errors, "stale": [], "moved": []}
-    moved_texts: dict[Path, tuple[str, tuple[int, int]]] = {}
+    moved_texts: dict[Path, tuple[str, Ranges]] = {}
     home = _load_for_check(home_dir, errors)
     if home is None:
         return report, moved_texts
@@ -735,7 +791,7 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
                 if state == "stale":
                     report["stale"].append(str(path))
                 elif state == "moved" and proposed is not None:
-                    report["moved"].append({"path": str(path), "lines": f"{proposed[0]}-{proposed[1]}"})
+                    report["moved"].append({"path": str(path), "lines": format_ranges(proposed)})
                     moved_texts[path] = (text, proposed)
     return report, moved_texts
 
@@ -768,7 +824,7 @@ def links_into(home: Home, name: str) -> list[dict[str, str]]:
     return found
 
 
-def _rewrite_lines(raw: str, proposed: tuple[int, int]) -> str | None:
+def _rewrite_lines(raw: str, proposed: Ranges) -> str | None:
     """Replace the frontmatter's one ``lines:`` line, keeping every other character."""
     pieces = re.split(r"(\r\n|\r|\n)", raw)
     texts, endings = pieces[0::2], pieces[1::2] + [""]
@@ -782,8 +838,7 @@ def _rewrite_lines(raw: str, proposed: tuple[int, int]) -> str | None:
     found = [number for number in range(1, close) if LINES_KEY_RE.match(texts[number])]
     if len(found) != 1:
         return None
-    a, b = proposed
-    texts[found[0]] = f"lines: {a}-{b}" if a != b else f"lines: {a}"
+    texts[found[0]] = "lines: " + ", ".join(f"{a}-{b}" if a != b else f"{a}" for a, b in proposed)
     return "".join(text + ending for text, ending in zip(texts, endings, strict=True))
 
 

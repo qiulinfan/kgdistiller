@@ -73,9 +73,6 @@ def record_view(record: Record) -> dict[str, Any]:
 class Projection:
     topics: set[str]
     organizations: set[str]
-    # Other records citing a navigation-profile guide: compiler judgments such
-    # as cross-source mappings. They are neither scientific leaves nor routes.
-    judgments: set[str]
     edges: list[tuple[str, str, str]]
     children: dict[str, set[str]]
     parents: dict[str, set[str]]
@@ -96,19 +93,8 @@ class Projection:
                     queue.append(child)
         return seen
 
-    def scientific(self, allowed: set[str]) -> set[str]:
-        """Accepted knowledge outside compiler guides; only these need routes."""
-        return allowed - self.topics - self.organizations - self.judgments
-
-    def label(self, uid: str) -> str:
-        if uid in self.topics:
-            return "topic"
-        if uid in self.organizations:
-            return "organization"
-        return "judgment" if uid in self.judgments else "leaf"
-
     def diagnostics(self, allowed: set[str], limit: int = 40) -> dict[str, Any]:
-        scientific = self.scientific(allowed)
+        scientific = allowed - self.topics - self.organizations
         unreachable = sorted(scientific - self.reachable(allowed))
         empty = sorted(uid for uid in self.topics & allowed if not self.children.get(uid))
         return {
@@ -120,7 +106,6 @@ class Projection:
             "knowledge_count": len(scientific), "covered_count": len(scientific) - len(unreachable),
             "topic_count": len(self.topics & allowed),
             "organization_count": len(self.organizations & allowed),
-            "judgment_count": len(self.judgments & allowed),
         }
 
 
@@ -128,7 +113,7 @@ def project(
     records: Mapping[str, Mapping[str, Any]],
     profiles: Mapping[tuple[str, str], Mapping[str, str]],
 ) -> Projection:
-    topics, organizations, judgments = set(), set(), set()
+    topics, organizations = set(), set()
     for uid, row in records.items():
         profile = profiles.get((row["base"], row["source"]))
         if profile is None:
@@ -137,8 +122,6 @@ def project(
             topics.add(uid)
         elif row["class"] == "relation" and row["kind"] == profile["relation_kind"]:
             organizations.add(uid)
-        else:
-            judgments.add(uid)
     edges, malformed, dangling = [], [], []
     children: dict[str, set[str]] = defaultdict(set)
     parents: dict[str, set[str]] = defaultdict(set)
@@ -176,7 +159,7 @@ def project(
             indegree[child] -= 1
             if indegree[child] == 0:
                 queue.append(child)
-    return Projection(topics, organizations, judgments, edges, dict(children), dict(parents), malformed, dangling,
+    return Projection(topics, organizations, edges, dict(children), dict(parents), malformed, dangling,
                       sorted(uid for uid, degree in indegree.items() if degree))
 
 
@@ -223,7 +206,7 @@ def navigate(
         summary_rows = _rows(connection, list(dict.fromkeys([*page, *relation_uids[:limit], *sorted(visible)])))
 
         def summary(uid: str) -> dict[str, Any]:
-            return {**_summary(summary_rows[uid]), "navigation": graph.label(uid),
+            return {**_summary(summary_rows[uid]), "navigation": "topic" if uid in graph.topics else "organization" if uid in graph.organizations else "leaf",
                     "child_count": len(graph.children.get(uid, set()) & allowed),
                     "parent_count": len(graph.parents.get(uid, set()) & allowed)}
 

@@ -407,6 +407,18 @@ class GetTest(RetrieveTestCase):
         (self.kb.root / "notes/a.txt").unlink()
         self.assertIsNone(get(["kb:measure"], source_lines=0)["records"][0]["source_text"])
 
+    def test_source_lines_read_each_cited_range(self) -> None:
+        self.kb.write_record("apart", node("Apart", "1, 5"), "Two distant passages.",
+                             ["Title line", "A probability space has total mass one."])
+        index()
+        apart = get(["kb:apart"], source_lines=0)["records"][0]
+        self.assertEqual("1-1, 5-5", apart["lines"])
+        self.assertEqual("1\tTitle line\n5\tA probability space has total mass one.", apart["source_text"])
+        windows = get(["kb:apart"], source_lines=1)["records"][0]["source_text"]
+        self.assertEqual(["1", "2", "4", "5"], [line.split("\t")[0] for line in windows.split("\n")])
+        joined = get(["kb:apart"], source_lines=2)["records"][0]["source_text"]
+        self.assertEqual(["1", "2", "3", "4", "5"], [line.split("\t")[0] for line in joined.split("\n")])
+
     def test_source_lines_never_leave_the_registered_sources(self) -> None:
         outside = self.kb.home.parent / "private.txt"
         outside.write_text("secret line\nsecond secret\n", encoding="utf-8")

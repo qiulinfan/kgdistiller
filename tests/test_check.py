@@ -246,6 +246,17 @@ class FreshnessTest(CheckTestCase):
         )
         self.assertEqual([{"path": str(path), "lines": "4-5"}], self.run_check()["moved"])
 
+    def test_several_ranges_are_fresh_and_distant_quotes_move_to_separate_ranges(self) -> None:
+        self.kb.write_record("apart", node("Apart", "2, 6"), "Text.",
+                             ["A measure space is a triple", "Unique sentence about dimension."])
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        path = self.kb.write_record("distant", node("Distant", "1"), "Text.",
+                                    ["A measure space is a triple", "Unique sentence about dimension."])
+        self.assertEqual([{"path": str(path), "lines": "2-2, 6-6"}], self.run_check()["moved"])
+        straddling = self.kb.write_record("straddling", node("Straddling", "2, 6"), "Text.",
+                                          ["It extends a measurable space."])
+        self.assertEqual([{"path": str(straddling), "lines": "3-3"}], self.run_check()["moved"][1:])
+
     def test_stale_when_missing_or_ambiguous(self) -> None:
         missing = self.kb.write_record("missing", node("Missing", "1"), "Text.", ["Nowhere at all."])
         ambiguous = self.kb.write_record("ambiguous", node("Ambiguous", "6"), "Text.", ["is a"])
@@ -278,6 +289,13 @@ class FixLinesTest(CheckTestCase):
         path = self.kb.write_record("span", node("Span", "1"), "Text.", ["closed under addition. The sum"])
         fix_lines()
         self.assertIn("lines: 4-5\n", path.read_text(encoding="utf-8"))
+
+    def test_writes_several_ranges_for_distant_quotes(self) -> None:
+        path = self.kb.write_record("distant", node("Distant", "1"), "Text.",
+                                    ["A measure space is a triple", "Unique sentence about dimension."])
+        fix_lines()
+        self.assertIn("lines: 2, 6\n", path.read_text(encoding="utf-8"))
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
 
     def test_a_file_changed_since_the_check_is_skipped(self) -> None:
         path = self.kb.write_record("moved", node("Moved", "1"), "Text.", ["The sum of two subspaces"])

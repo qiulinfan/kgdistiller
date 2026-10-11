@@ -25,7 +25,7 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    concurrency uses one lock file, create-only moves and edit tools that refuse
    stale reads.
 4. **Format-agnostic sources.** A source is any registered UTF-8 text file,
-   addressed by path, a 1-based inclusive line range and verbatim quotes. The
+   addressed by path, 1-based inclusive line ranges and verbatim quotes. The
    product never parses source syntax.
 5. **No owner vocabulary in product code.** The product fixes only the
    record's fixed keys, the understanding enum, the section names
@@ -47,9 +47,9 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    re-embed.
 8. **A record asserts only what its cited text states.** A relation that
    cites a research source or the owner's notes quotes text stating that
-   relation. A connection a compiler infers, by combining passages or across
-   sources, is a compiler judgment that cites a compiler guide (see
-   [Compiler judgments](#compiler-judgments-and-topic-navigation)).
+   relation. A connection no source states, assembled from separate passages
+   or across sources, is never written as a relation; capture and compile
+   report it.
 9. **Identity is permanent.** An accepted id and a base name are citation
    keys: they are never renamed for convenience and never reused for another
    meaning.
@@ -63,16 +63,23 @@ source's owner-defined document type. They preserve the conditions, formulas,
 limitations, counterexamples and experimental evidence that affect meaning;
 section names and source syntax never determine admission.
 
-Nodes are noun-like: the objects a source defines, such as concepts, methods,
-architectures, objectives and quantities, plus theorems the source states
-precisely. Every other statement that can be true or false is a relation that
-binds the records it concerns: measured results, comparisons, findings,
-limitations, propositions, remarks and explanatory hypotheses. A finding about
-one concept is a relation with that single participant. A name, citation or
-mention does not make a node, and background a source only restates stays a
-pending term, or a link to its existing record, unless the source explains it
-in its own right. A document type's guidance may set a review threshold for
-the number of nodes per source.
+Nodes are noun-like: the concepts, methods, architectures, objectives and
+quantities a source defines, plus theorems it states precisely. Every other
+statement that can be true or false is a relation that binds the records it
+concerns: measured results, comparisons, findings, limitations, propositions,
+remarks and explanatory hypotheses. A finding about one concept is a relation
+with that single participant. A document type's guidance may set a review
+threshold for the number of nodes per source.
+
+Each concept has exactly one record, owned by the source that defines or
+originates it. A source that only uses a concept, even one it explains at
+length, never gets a node for it: the use is a pending term, global across
+bases, which names the defining source the owner still has to read. Once a
+record from that source exists in any base, the use is a link to it; the Skill
+that admits such a record links the pending uses that mean it, in every base.
+Same-named concepts with different definitions are different records, a name
+collision needs nothing more, and no record stands in for a concept whose
+defining source is missing.
 
 Accepted records, including relations, are the units of lexical and dense
 retrieval. Their links and evidence locate the original passages. Source text
@@ -94,11 +101,10 @@ second paragraph store or source-format parser is needed for this connection.
 | Application / example | A relation of a kind the owner registers for it, such as `example: [uses, setting]`. |
 | Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`. |
 | Pending gap | A plain-text value in a role list or in `requires`: a concept the source uses without explaining it. One direct level only. It never binds by name; it is resolved by editing it into a link. Gaps are global: a use stays pending only while no registered base holds the record that defines the concept, and once any base does, the use links there, across bases when needed. Role values are always knowledge references, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role. |
-| Compiler judgment | A record whose source is a compiler guide: a registered source whose document type declares `navigation` conventions. Its topics and organization relations form the navigation; its other kinds, such as cross-source mappings, are further judgments. Never evidence for a scientific claim. |
 | `requires` | A list on every record holding direct understanding prerequisites. Proof or derivation dependencies are relations. |
-| Evidence | `source` + `lines` + one or more verbatim quotes in the body's final `## Evidence` section. |
+| Evidence | `source` + `lines` (one or more ranges) + one or more verbatim quotes in the body's final `## Evidence` section. The quotes are the anchor; each lies inside one cited range. |
 | Understanding | `unknown`, `not-yet-understood` or `understood`; absent means `unknown`. Independent of coverage and evidence. |
-| Epistemic | Optional; a value from the type's `epistemic` list. |
+| Epistemic | Optional; a value from the type's `epistemic` list stating how the cited passage itself supports the record, such as proved or measured there, or only stated. A result the source reports from other work is stated. It is never a verdict of the whole knowledge base. |
 | Draft | `.knowledge/drafts/<id>.md`: a proposed new record in exactly the record format. Not knowledge and not indexed. |
 | Sheet | `.knowledge/sheets/<source path>.md`: the generated def/pending view of one source. |
 
@@ -151,33 +157,7 @@ exactly the two distinct named roles. This finite convention carries no topic
 names, depth, branching or membership. No kind is both a node kind
 and a relation kind. The body, the guidance, is non-empty.
 
-## Compiler judgments and topic navigation
-
-A compiler judgment is a record that no research source or note states: the
-compiler's own decision about accepted knowledge. Judgments cite a compiler
-guide, a visible UTF-8 source that agents author and register under a document
-type with `navigation` conventions; that declaration marks the guide, and
-every record citing it is a judgment. A relation that cites a paper or the
-owner's notes quotes text stating that relation. An implication assembled from
-two separately quoted passages, a same-concept link between two papers or a
-comparison of claims across sources is a judgment instead. A compiler never
-writes a stand-in definition: a concept whose defining source is registered in
-no base stays a pending term. One file has one author: agents never write
-judgments into the owner's notes or into research sources.
-
-The guide states each judgment and names its grounds by UID, and the judgment
-record quotes that statement. Topics and organization relations form the
-navigation below. The profile's other kinds are further judgments, for example
-graded mappings between senses recorded from different sources; the starting
-profile declares `exact-match`, `close-match`, `broad-match`, `related-match`
-and `distinct-from`. A mapping relates records and never edits them: the
-mapped records keep their identities, evidence and understanding. Judgment
-records are retrievable like any record, are never evidence for a scientific
-claim, need no navigation route and do not count as scientific leaves. Like
-navigation, judgments are admitted automatically as part of ingestion, with no
-review step and no sheet.
-
-### Topic navigation
+## Agent-authored topic navigation
 
 The organization Skill compiles a semantic DAG over accepted knowledge:
 topic → subtopic → concept/method/result, with as many levels/branches as
@@ -220,10 +200,10 @@ multi-phase operation may leave prepared drafts and guide text; report the
 completed phase and resume through the normal write/check/index path, never
 overwrite a concurrent owner edit. There is no hidden atomic multi-file swap.
 
-`navigate` reports invalid projections and uncovered scientific leaves;
-judgment records are neither leaves nor routes. Retired navigation UIDs are
-never reused. Incomplete navigation never hides knowledge from global search.
-Scope and identity use full base-qualified UIDs, without name-based merging.
+`navigate` reports invalid projections and uncovered scientific leaves.
+Retired navigation UIDs are never reused. Incomplete navigation never hides
+knowledge from global search. Scope and identity use full base-qualified UIDs,
+without name-based merging.
 
 ## Record format
 
@@ -264,17 +244,20 @@ $U_1,U_2\subset V$ 均为 subspace。
 | `label` | yes | Non-empty single-line string in any language. Not unique. |
 | `kind` | yes | A node kind or relation kind of the source's type. |
 | `source` | yes | POSIX path relative to the base root, no leading `/`, no `..`; a registered source of this base. |
-| `lines` | yes | `a` or `a-b`, 1 ≤ a ≤ b ≤ the source's line count. |
+| `lines` | yes | One or more ranges `a` or `a-b`, comma-separated, ascending and disjoint, each with 1 ≤ a ≤ b ≤ the source's line count. |
 | `aliases` | no | List of single-line names in any language, symbols. Not unique. |
 | `understanding` | no | `unknown`, `not-yet-understood` or `understood`; empty or absent means `unknown`. |
-| `epistemic` | no | A slug from the type's `epistemic` list. |
+| `epistemic` | no | A slug from the type's `epistemic` list: how the cited passage itself supports the record. |
 | `requires` | no | List of values. |
 | `tags`, `cssclasses` | no | Obsidian's own properties; accepted and ignored. |
 
 **Role keys.** Every other key is a role declared for `kind`, holding a list of
 values in order. Roles are top-level list properties so that Obsidian's
 Properties panel edits them with link autocomplete and Backlinks groups
-incoming links by role.
+incoming links by role. A kind whose meaning does not change when its
+participants swap declares a single role and lists them unordered, as in
+`equivalent: [side]`; a kind with several roles is directional, each role with
+its own meaning, so one fact has one form.
 
 **Class rule.** A record is a relation if and only if at least one non-fixed
 key holds a non-empty list; otherwise it is a node. The Obsidian plugin applies
@@ -389,13 +372,14 @@ new record.
 - Accepted records are grouped under one `## <kind>` section per kind: node
   kinds, then relation kinds, each in the type's order, then `## other` for
   undeclared kinds. Rows sort by first line, then id.
-- Rows follow this grammar, where `<v>` is the target's label (its id, or uid
-  for another base, when missing) or the term itself, and `|`, `[` and `]` in
-  display text become spaces:
+- Rows follow this grammar, where `<lines>` lists every cited range as `a-b`,
+  comma-separated, `<v>` is the target's label (its id, or uid for another
+  base, when missing) or the term itself, and `|`, `[` and `]` in display text
+  become spaces:
 
   ```text
-  accepted: - [[.knowledge/entries/<id>|<label>]] · L<a>-<b>[ · <understanding≠unknown>][ · <role>: <v>, …]… — <gloss>
-  draft:    - [ ] [[.knowledge/drafts/<id>|<label>]] · <kind> · L<a>-<b>[ · <role>: <v>, …]… — <gloss>
+  accepted: - [[.knowledge/entries/<id>|<label>]] · L<lines>[ · <understanding≠unknown>][ · <role>: <v>, …]… — <gloss>
+  draft:    - [ ] [[.knowledge/drafts/<id>|<label>]] · <kind> · L<lines>[ · <role>: <v>, …]… — <gloss>
   ```
 
 - `## Pending` lists the term values of this source's accepted records, one
@@ -419,9 +403,9 @@ new record.
   Obsidian writes the path form `[[.knowledge/entries/y]]`, which the grammar
   accepts. kgd never falls back to aliases; a dangling link is reported with
   the records carrying that alias.
-- Labels and aliases are not unique. Two records with the same name are two
-  records; equivalence, if wanted, is an explicit relation: one a source
-  states, or a compiler mapping when no source states it.
+- Labels and aliases are not unique. Each concept has one record, owned by
+  the source that defines it, so two records with the same name are two
+  concepts with different definitions; a name collision needs nothing more.
 - Accepted ids are permanent (see **Ids** above).
 - A record lives in the base whose source supplies its evidence.
 - The base for a path is the registered root containing the path's realpath;
@@ -453,7 +437,7 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | `frontmatter` | The record file is a regular file, not a symlink; the frontmatter parses; required keys present with the right shapes; every non-fixed key is a role of `kind`; `understanding` in the enum. |
 | `source` | `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root; `lines` lies within it. |
 | `kind` | `kind` belongs to the source's type; a node kind has no role keys; a relation kind has a non-empty role value; `epistemic` is in the type's list. |
-| `link` | Every value matches the grammar; every link resolves to an accepted record (local or foreign, read from files); no self-link; a foreign link to an unregistered base names it. |
+| `link` | Every value matches the grammar; every link resolves to an accepted record (local or foreign, read from files); no self-link; a foreign link to an unregistered base names it; a record whose source is not a navigation guide never links to a topic or organization relation. |
 | `body` | The body obeys the body grammar. |
 
 Drafts follow the same rules with three changes: the id must not exist in
@@ -465,10 +449,10 @@ links a draft is told to accept it first.
 **Evidence freshness.** Quotes and source text are compared after
 `" ".join(s.split())`.
 
-- **fresh**: every quote occurs in the cited lines;
+- **fresh**: every quote occurs inside one cited range;
 - **moved**: not fresh, but every quote occurs exactly once in the whole file;
-  the report proposes the range from the first line of the earliest occurrence
-  to the last line of the latest;
+  the report proposes the lines of each occurrence as ranges, adjacent or
+  overlapping ones joined;
 - **stale**: anything else.
 
 Staleness never hides a record from the index or retrieval.
@@ -563,8 +547,7 @@ lines.
   link rewrite, never a rename. Merging true duplicates keeps one record;
   splitting a record that conflated two meanings creates new records for them.
   Repoint every inbound link by meaning, including body-prose wikilinks that
-  `kgd check` does not validate, then delete the superseded record, append a
-  compiler-guide passage naming each old and new uid, and run
+  `kgd check` does not validate, then delete the superseded record and run
   `kgd check --base B` and `kgd index`.
 
 ### Base registration
