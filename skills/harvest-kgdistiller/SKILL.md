@@ -12,13 +12,19 @@ consent for exactly those rows; do not repeat the selection in chat.
 
 Match the owner's language. Keep commands, ids and raw errors unchanged.
 
-## Look up before admitting
+Work in batches: one lookup turn for every ticked draft, one command that
+harvests and indexes, and a pending-use pass only when the lookup found uses
+to link.
+
+## Look up before admitting, in one turn
 
 Knowledge admitted after the compile run may already record a ticked draft or
-define one of its pending terms. For each ticked draft whose file exists, run
-`kgd resolve "LABEL" "ALIAS" ...` and `kgd search "LABEL OR DEFINING PHRASE"`,
-compare meanings and apply the knowledge model's conflict rules ("Conflicts,
-updates and relocation"):
+define one of its pending terms. Look up every ticked draft whose file exists
+together: one `kgd resolve "LABEL" "ALIAS" "PENDING TERM" ...` with the labels,
+aliases and pending terms of all of them, plus `kgd search "DEFINING PHRASE"
+--limit 5` (several in the same turn) for the drafts `resolve` found no sense
+for. Compare meanings and apply the knowledge model's conflict rules
+("Conflicts, updates and relocation"):
 
 - **unchanged**: a record now holds this knowledge point with the same
   meaning. Delete the draft; harvest skips its row.
@@ -30,22 +36,20 @@ updates and relocation"):
   included. Stop before harvesting, show the owner both definitions with their
   source lines and ask which stands.
 
-Also run `kgd resolve` on the ticked drafts' pending terms, and edit each one
-that a record now defines into a link that keeps its wording. Use an editing
-tool that refuses stale reads.
+Edit each of the ticked drafts' pending terms that a record now defines into
+a link that keeps its wording, with an editing tool that refuses stale reads.
 
-## Run
+## Harvest and index, in one command
 
 Paths may be absolute or relative to the working directory.
 
 ```sh
-kgd harvest SHEET --dry-run
-kgd harvest SHEET
-kgd index
+kgd harvest SHEET && kgd index
 ```
 
-`--dry-run` prints `{"would_create": [uid]}` and writes nothing; use it when
-the owner wants to see the selection first. `kgd harvest` collects the ticked
+`kgd harvest SHEET --dry-run` prints `{"would_create": [uid]}` and writes
+nothing; use it only when the owner wants to see the selection first.
+`kgd harvest` collects the ticked
 `## Drafts` rows, skips rows whose draft no longer exists, and runs one
 `kgd accept` on the rest under the home lock. On success it moves each draft
 into `entries/` without overwriting anything, regenerates the sheet (accepted
@@ -58,18 +62,17 @@ set embedding to null`, the harvest and
 the lexical index are committed and only the vectors are missing: report that
 message to the owner and do not edit `config.json`.
 
-## Link pending uses
+## Link pending uses, only when the lookup found them
 
-For each created record, run `kgd resolve "LABEL" "ALIAS" ...` with its label
-and aliases. The `pending` entries are uses of those names in every base.
-Read each using record with `kgd get UID --source-lines 5` and keep only the
-uses that mean the created record's definition; a homonym stays pending. Edit
-each kept value in place into a link that keeps the source's wording,
-`"[[id|wording]]"` within the base or `"[[base:id|wording]]"` across bases,
-with an editing tool that refuses stale reads, then run `kgd check --base B`
-for every base you edited. Regenerate with `kgd sheet SOURCE` the existing
-sheet of every other source whose records you edited here or before
-admitting.
+The lookup's `resolve` also listed the `pending` uses of the created records'
+labels and aliases in every base. When some of them mean a created record's
+definition (a homonym stays pending; `kgd get UID --source-lines 5` only when
+the gloss leaves it open), edit each kept value in place into a link that
+keeps the source's wording, `"[[id|wording]]"` within the base or
+`"[[base:id|wording]]"` across bases, with an editing tool that refuses stale
+reads, then run in one command `kgd check --base B && kgd index` for every
+base you edited, with `kgd sheet SOURCE` for every other source whose records
+you edited and that has a sheet. Otherwise skip this step.
 
 ## On refusal
 

@@ -13,6 +13,19 @@ All notable changes are documented here.
   bases hold topic or organization records and their guide, deletes them
   before upgrading. Copy-mode agent installations need `kgd claude link` or
   `kgd codex link` again, which removes the installed `organize-kgdistiller`.
+- Make the writing Skills lightweight. Capture runs as a short fixed pass: one
+  batched lookup turn, then one shell command that writes the draft and runs
+  `kgd accept … && kgd index --no-embed`, so no embedding model loads at
+  admission and the next full `kgd index` builds the vector; pending uses are
+  linked only when the lookup found them. Compile and harvest look up a whole
+  batch in one turn and finish with one command. A new `capture-writer` agent
+  preset runs captures on a small model at low reasoning effort (Claude Code
+  `model: haiku`, `effort: low`; Codex `model_reasoning_effort = "low"`),
+  because the model's reasoning volume, not `kgd`, dominated capture time. On
+  six benchmark captures with Claude Haiku 5.5 the mean fell from 445 s (the
+  old Skill with navigation, Claude Code subagent) to 34 s, median 31 s (this
+  Skill invoked at low reasoning in a lean harness), with the same
+  classifications. Relinking the agent runtimes installs the preset.
 
 ## 1.0.1 — 2026-10-11
 

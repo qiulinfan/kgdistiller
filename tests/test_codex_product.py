@@ -77,7 +77,7 @@ class CodexProductTests(unittest.TestCase):
             {p.parent.name for p in (REPO_ROOT / "skills").glob("*/SKILL.md")},
             {item["name"] for item in manifest["skills"]},
         )
-        self.assertEqual(1, len(manifest["agents"]))
+        self.assertEqual(2, len(manifest["agents"]))
         self.assertEqual(2, len(manifest["linkers"]))
         self.assertEqual(
             len({item["id"] for item in manifest["workflows"]}),
@@ -118,7 +118,7 @@ class CodexProductTests(unittest.TestCase):
             linked = link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             self.assertEqual("linked", linked["status"])
             self.assertEqual(self.expected_skills, linked["skills"])
-            self.assertEqual(1, linked["agents"])
+            self.assertEqual(2, linked["agents"])
             self.assertEqual(
                 "user guidance\n", agents_guidance.read_text(encoding="utf-8")
             )

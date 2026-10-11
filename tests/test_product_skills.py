@@ -112,7 +112,7 @@ class ProductSkillTests(unittest.TestCase):
 
     def test_manifests_declare_the_shipped_workflows(self) -> None:
         expected = {
-            "capture-knowledge": [("capture-kgdistiller", None, "write")],
+            "capture-knowledge": [("capture-kgdistiller", "capture-writer", "write")],
             "compile-knowledge-sheets": [("compile-knowledge-sheets", None, "write")],
             "harvest-kgdistiller": [("harvest-kgdistiller", None, "write")],
             "query-knowledge": [("query-kgdistiller", "query-reviewer", "read-only")],
@@ -121,7 +121,7 @@ class ProductSkillTests(unittest.TestCase):
         for name in ("manifest.json", "claude-manifest.json"):
             with self.subTest(manifest=name):
                 manifest = json.loads((ROOT / "workflows" / name).read_text(encoding="utf-8"))
-                self.assertEqual(["query-reviewer"], [item["name"] for item in manifest["agents"]])
+                self.assertEqual(["query-reviewer", "capture-writer"], [item["name"] for item in manifest["agents"]])
                 self.assertEqual(
                     expected,
                     {

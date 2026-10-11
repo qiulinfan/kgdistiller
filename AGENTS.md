@@ -49,7 +49,14 @@
   truncated. The product never re-serializes frontmatter; `--fix-lines`
   rewrites only the `lines:` line.
 - Every Skill that writes knowledge finishes with `kgd index`.
-- There is no topic navigation or other generated directory: the 2026-10-11
+- Ingestion stays lightweight; the owner's budget for capturing one item is
+  about 20 seconds. The writing Skills work in batches: one lookup turn (one
+  `kgd resolve` of every name, `kgd search --limit 5` only where needed), one
+  write turn, then one command that accepts or checks and indexes; nothing
+  runs after admission except linking the pending uses the lookup found. The
+  `capture-writer` presets run captures on a small model at low reasoning
+  effort, since model reasoning, not `kgd`, dominates capture time.
+  There is no topic navigation or other generated directory: the 2026-10-11
   ablation found it gave retrieval no measurable benefit. `kgd index` never
   invokes a semantic model.
 - A record asserts only what its cited text states: a relation citing a paper

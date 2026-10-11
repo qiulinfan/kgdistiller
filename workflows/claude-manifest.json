@@ -50,24 +50,29 @@
       "name": "query-reviewer",
       "path": ".claude/agents/query-reviewer.md",
       "install_as": "kgdistiller-query-reviewer.md"
+    },
+    {
+      "name": "capture-writer",
+      "path": ".claude/agents/capture-writer.md",
+      "install_as": "kgdistiller-capture-writer.md"
     }
   ],
   "workflows": [
     {
       "id": "capture-knowledge",
-      "description": "Capture one selected item while reading as a source-backed record: look the item and its terms up in every base, pending uses included, write a draft citing its lines verbatim and accept it, or ignore, overwrite or relocate a recorded one by the conflict rules, recording direct pending terms and only the owner's stated understanding, link the pending uses of the created concept, then index.",
+      "description": "Capture one selected item while reading as a source-backed record in a short fixed pass: one batched lookup of the item and its terms in every base, pending uses included; a decision by the conflict rules; a draft citing its lines verbatim, or an in-place edit of the recorded item; accept and index in one command; then link the pending uses it defines.",
       "steps": [
         {
           "id": "capture",
           "skill": "capture-kgdistiller",
-          "agent": null,
+          "agent": "capture-writer",
           "mode": "write"
         }
       ]
     },
     {
       "id": "compile-knowledge-sheets",
-      "description": "Extract draft records for the new knowledge of a bounded scope of one registered source guided by its document type, settle the knowledge already recorded by the conflict rules, check them and generate the source's def/pending sheet for owner review.",
+      "description": "Extract draft records for the new knowledge of a bounded scope of one registered source guided by its document type, with one batched lookup and one write pass, settle the knowledge already recorded by the conflict rules, then check, generate the source's def/pending sheet for owner review and index in one command.",
       "steps": [
         {
           "id": "compile",
@@ -79,7 +84,7 @@
     },
     {
       "id": "harvest-kgdistiller",
-      "description": "Look up the drafts ticked in a source sheet again under the conflict rules, accept exactly those rows with one kgd harvest call, link the pending uses of the new concepts, then index.",
+      "description": "Look up the drafts ticked in a source sheet again in one batch under the conflict rules, accept exactly those rows and index in one command, then link the pending uses of the new concepts.",
       "steps": [
         {
           "id": "harvest",

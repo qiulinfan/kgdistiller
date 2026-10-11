@@ -59,9 +59,9 @@ copies, discarding local edits to installed files.
 
 | Workflow | Skill | Mode | Steps |
 |---|---|---|---|
-| `capture-knowledge` | `capture-kgdistiller` | write | Read profile; look up the item and its terms in every base, pending included; accept a new scientific draft, or ignore, overwrite or relocate a recorded one by the conflict rules and ask the owner otherwise; pending terms and stated understanding; link the pending uses of created concepts in every base; index and report. |
-| `compile-knowledge-sheets` | `compile-knowledge-sheets` | write | Set the bounded scope; `kgd sheet FILE --json`; look up every knowledge point and term in every base, pending included; drafts for new records; ignore, overwrite, relocate or turn pending the recorded knowledge by the conflict rules and ask the owner otherwise; `kgd check --base B` with every draft passing; `kgd sheet FILE`; index and report. |
-| `harvest-kgdistiller` | `harvest-kgdistiller` | write | Look up the ticked drafts and their pending terms again; `kgd harvest SHEET [--dry-run]`; link the pending uses of created concepts in every base; index; report refused rows. |
+| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (profile, record format, cited passage, one `kgd resolve` of the item and its terms in every base, `kgd search --limit 5`); a decision by the conflict rules; one command that writes the draft citing its lines verbatim and runs `kgd accept … && kgd index`, or an in-place edit then `kgd check && kgd index`, with pending terms and stated understanding; link the pending uses of the created concept when the lookup found any; report. |
+| `compile-knowledge-sheets` | `compile-knowledge-sheets` | write | Set the bounded scope; `kgd sheet FILE --json`; one lookup turn for the whole candidate batch in every base, pending included; drafts for new records and in-place settlement of recorded knowledge by the conflict rules in one write turn, the owner asked otherwise; `kgd check --base B && kgd sheet FILE && kgd index` in one command with every draft passing; report. |
+| `harvest-kgdistiller` | `harvest-kgdistiller` | write | One lookup turn for every ticked draft and its pending terms; `kgd harvest SHEET && kgd index` in one command (`--dry-run` on request); link the pending uses of created concepts when the lookup found any; report refused rows. |
 | `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get`, `neighbors`, `browse`, `pack` across every base through the CLI or the MCP tools; bounded evidence with `source:lines`; identity classification; refresh on lag. |
 | `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
 
@@ -83,20 +83,26 @@ lag stays rare. Edits the owner makes in Obsidian lag until the next
 ## Capture while reading
 
 `$capture-kgdistiller` saves one item the owner selected while reading: a
-node, a relation or an example. It reads the type profile with
-`kgd sheet FILE --json`, compares existing senses with `kgd resolve` and
-`kgd search` in every base, pending uses included (the same name is not the
-same concept). A new item becomes a draft that it accepts with `kgd accept`
-(the capture request is the consent). An item already recorded follows the
+node, a relation or an example, in a short fixed pass. One lookup turn reads
+the type profile with `kgd sheet FILE --json` and compares existing senses
+with one `kgd resolve` of the item and its terms and one `kgd search` in every
+base, pending uses included (the same name is not the same concept). A new
+item becomes a draft that one shell command writes, accepts and indexes,
+ending in `kgd accept … && kgd index` (the capture request is the consent). An item already recorded follows the
 conflict rules of [model.md](model.md) "Conflicts, updates and relocation":
 it is ignored when its meaning is unchanged, overwritten and relocated when the
 new definition is more general or corrects the recorded one, and otherwise
 left to the owner's decision. In-place edits use a stale-read-safe editing
 tool followed by `kgd check --base B`. Unexplained terms become plain pending
-values, one level deep, unless a record anywhere defines them. `understanding` is set only from the owner's explicit statement. After
-acceptance it links the pending uses, in every base, that mean a created
-concept. It ends with `kgd index` and reports the uids, receipt and
-`understanding_set`.
+values, one level deep, unless a record anywhere defines them. `understanding` is set only from the owner's explicit statement. When the
+lookup listed pending uses, in any base, that mean the created concept, it
+links them after acceptance and indexes again. It reports the classification,
+the uid and the pending terms in one short answer.
+
+The `capture-writer` preset runs this Skill on a small model at low reasoning
+effort (Claude Code: `model: haiku`, `effort: low`; Codex:
+`model_reasoning_effort = "low"`), because the model's reasoning volume, not
+`kgd`, dominates a capture's time.
 
 This is the usual writing path for a new article. Familiarity does not
 establish any record's understanding.
@@ -106,15 +112,17 @@ establish any record's understanding.
 `$compile-knowledge-sheets` extracts a bounded scope of one registered source,
 up to the whole file when the owner asks for full distillation, typically for
 the owner's own notes or familiar material; re-admitting a rewritten note is
-the same request. It looks up every knowledge point in every base, pending
-uses included, and applies the conflict rules of [model.md](model.md)
+the same request. It works in batches: one lookup turn looks up the whole
+candidate batch in every base, pending uses included, and one write turn
+writes every draft and edit. It applies the conflict rules of [model.md](model.md)
 "Conflicts, updates and relocation". New knowledge becomes drafts that pass
 `kgd check`, listed in the sheet that `kgd sheet FILE` generates. Knowledge
 already recorded is ignored, re-cited, overwritten and relocated in place.
 Records whose knowledge the source no longer contains, or whose source file
 no longer exists, are deleted to pending. Other changed meanings wait for the
 owner's decision. These in-place edits follow "Updates, deletes and identity
-changes of accepted records"; the run finishes with `kgd index`. It also serves requests to file or ingest a
+changes of accepted records"; the run finishes with one command,
+`kgd check --base B && kgd sheet FILE && kgd index`. It also serves requests to file or ingest a
 document into the knowledge base.
 
 ## Review and harvest
@@ -123,11 +131,11 @@ The owner reviews the drafts in Obsidian (with the plugin's hidden indexing on,
 `.knowledge/` opens like any folder), edits them if needed and ticks the rows
 to accept in the source's sheet. A checkbox means "selected for acceptance",
 never "understood". `$harvest-kgdistiller` first looks the ticked drafts and
-their pending terms up again, since knowledge admitted after the compile run
-may now record them, then runs `kgd harvest SHEET`,
+their pending terms up again in one batch, since knowledge admitted after the
+compile run may now record them, then runs `kgd harvest SHEET && kgd index`,
 which accepts exactly the ticked drafts in one call, regenerates the sheet and
-prints the receipt. The Skill then links the pending uses, in every base,
-that mean a created concept, and finishes with `kgd index`. A refusal changes nothing and
+prints the receipt. When the lookup listed pending uses, in any base, that
+mean a created concept, the Skill links them and indexes again. A refusal changes nothing and
 lists the rows to fix, usually `select [[x]] too`. Harvest never re-extracts.
 Deleting a draft rejects it and leaves no trace. Model invocation is enabled
 for this Skill in both runtimes.

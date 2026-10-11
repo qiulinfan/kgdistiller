@@ -11,6 +11,11 @@ the knowledge that is already recorded by the knowledge model's conflict rules
 ("Conflicts, updates and relocation"). Re-admitting a rewritten, renamed,
 merged or split note is the same request.
 
+Work in batches, not item by item: one lookup turn for the whole candidate
+batch, one turn that writes every draft and edit, and one command that checks,
+regenerates the sheet and indexes. Look again only for a candidate whose
+lookup is genuinely ambiguous.
+
 Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 
 Read [references/record-format.md](references/record-format.md) before writing
@@ -44,23 +49,27 @@ instead of registering it.
 
 ## 3. Establish identity
 
-Build the candidate batch (labels, aliases, line ranges, kinds, participants)
-first, then resolve it:
+Build the candidate batch (labels, aliases, line ranges, kinds, participants
+and every term the drafts will name) first, then look it all up in one turn:
 
 ```sh
-kgd resolve "LABEL" "ALIAS" ...
-kgd search "LABEL OR DEFINING PHRASE" --base B
-kgd get UID
+kgd resolve "LABEL" "ALIAS" "TERM" ...
+kgd search "DEFINING PHRASE" --limit 5
+kgd check --base B
 ```
 
-Compare definitions and conditions yourself. The same name is not the same
+One `resolve` takes every name of the batch. Run a `search` (several in the
+same turn) only for the candidates `resolve` found no sense for, to catch the
+same knowledge point under another name or language; `kgd get UID` only when
+a returned gloss leaves the comparison open. Compare definitions and
+conditions yourself. The same name is not the same
 concept: a homonym gets its own record. A concept this source did not define
 or originate is not a node here, even when the source explains it: link the
 record of its defining source or keep a global pending term. Leave ambiguous
 candidates out and list them. If `lag.changed_files` is above 0,
 `lag.unembedded` is above 0 or `lag.embedding_changed` is true, run
-`kgd index` first. Run `kgd check --base B` too, so you know which recorded
-citations no longer verify.
+`kgd index` first and repeat the lookup once. `kgd check --base B` tells you
+which recorded citations no longer verify.
 
 Classify every candidate:
 
@@ -75,7 +84,7 @@ Classify every candidate:
   explicitly rules out, such as the error it corrected, is conflicting even
   when it is broader.
 - **conflicting**: any other changed meaning, a narrower definition
-  included. Write nothing for it and put it to the owner (step 9).
+  included. Write nothing for it and put it to the owner (step 7).
 
 Knowledge that disappeared is gone from its source:
 
@@ -99,7 +108,7 @@ Write one `<root>/.knowledge/drafts/<id>.md` per new record in scope:
   and applications are relations of the kind the type registers for them;
 - for each relation, an Evidence quote that itself states the relation; a
   connection you infer by combining passages, or with another source this one
-  does not state, is not written here (report it, see step 9);
+  does not state, is not written here (report it, see step 7);
 - role values only as links or pending concepts; settings, hyperparameters
   and measured values stay in the prose;
 - `requires` for direct understanding prerequisites; unexplained terms as
@@ -129,37 +138,29 @@ accepted records":
 - **gone**: delete the record and turn every link to it into a pending term
   that keeps its wording, by the delete procedure.
 
-## 6. Check
+Write every draft of step 4 and every edit of step 5 in the same turn.
+
+## 6. Check, generate the sheet and index, in one command
 
 ```sh
-kgd check --base B
+kgd check --base B && kgd sheet SOURCE && kgd index
 ```
 
-Every draft you wrote and every record you edited must pass: no `errors`
-entry may name it, and its evidence must be fresh. Fix and re-check. Check
-every other base you edited too. Pre-existing findings on other files are
-reported, not repaired.
+Every draft you wrote and every record you edited must pass `check`: no
+`errors` entry may name it, and its evidence must be fresh. Fix and run the
+command again. Add `kgd check --base B` for every other base you edited, and
+`kgd sheet SOURCE` for every other source that already has a sheet and whose
+records step 5 edited, deleted or relocated, so no sheet shows a superseded
+state. Pre-existing findings on other files are reported, not repaired.
+Delete the sheet of a source file that no longer exists; nothing can
+regenerate it.
 
-## 7. Generate the sheet
+`kgd sheet` writes `<root>/.knowledge/sheets/<source path>.md`, keeping the
+ticks of drafts that still exist. The owner then reviews the drafts in
+Obsidian, ticks the rows to accept and runs `$harvest-kgdistiller` (or
+`kgd accept` on chosen drafts).
 
-```sh
-kgd sheet SOURCE
-```
-
-It writes `<root>/.knowledge/sheets/<source path>.md`, keeping the ticks of
-drafts that still exist. Run `kgd sheet` the same way for every other source
-that already has a sheet and whose records step 5 edited, deleted or
-relocated, so no sheet shows a superseded state. Delete the sheet of a source
-file that no longer exists; nothing can regenerate it.
-
-## 8. Index
-
-Finish with `kgd index`.
-
-The owner then reviews the drafts in Obsidian, ticks the rows to accept and
-runs `$harvest-kgdistiller` (or `kgd accept` on chosen drafts).
-
-## 9. Report
+## 7. Report
 
 Report the following:
 
