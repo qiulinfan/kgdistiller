@@ -16,6 +16,15 @@ All notable changes are documented here.
   document type may declare finite `navigation` role conventions; `kgd navigate`
   discovers root topics and projects direct children read-only. Retrieval
   evaluation is specified as deterministic recall of frozen gold record uids.
+- Settle the knowledge model's node, assertion and identity rules. Nodes are
+  noun-like objects and precisely stated theorems; every other statement that
+  can be true or false is a relation. A relation citing a source quotes text
+  that states it, while inferred connections are compiler judgments citing the
+  compiler guide, admitted automatically and never counted as navigation
+  leaves. Role values are knowledge references only, pending gaps are global
+  across bases, and accepted ids and base names are permanent. The
+  `ai-research` starter replaces `result` with `theorem` and adds `property`;
+  the navigation starter adds graded cross-source mapping kinds.
 
 ## 1.0.0 — 2026-10-10
 

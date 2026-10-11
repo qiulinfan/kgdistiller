@@ -43,14 +43,25 @@ kgd get UID
 it), `mentions` and `pending` uses, across every base. Compare definitions and
 conditions yourself: the same name is not the same concept, and a homonym in
 another paper or base is a separate record. Decide whether the item is new or
-an existing record. If `lag.changed_files` is above 0, `lag.unembedded` is
-above 0 or `lag.embedding_changed` is true, run `kgd index` first so the
-comparison sees current files and vectors.
+an existing record. Background the passage only restates is not a new record
+here: link its existing record or keep it as a pending term. If
+`lag.changed_files` is above 0, `lag.unembedded` is above 0 or
+`lag.embedding_changed` is true, run `kgd index` first so the comparison sees
+current files and vectors.
+
+Capture a node only for a noun-like object the source defines or a theorem it
+states precisely. Any other statement that can be true or false is a relation
+over the records it concerns, and its Evidence quote must itself state the
+relation. A connection you would infer by combining passages, or across
+sources, is a compiler judgment: report it instead of writing it.
 
 ## 3. Write
 
 **New item.** Write `<root>/.knowledge/drafts/<id>.md` in the record format,
-with `id = slug(label)` (append `-2`, `-3`, … on a collision), then accept it:
+with `id = slug(label)` (append `-2`, `-3`, … on a collision); when the label
+carries a section, figure, table, equation or theorem number, write an id
+from the meaning instead. Role values are links or pending concepts; settings,
+hyperparameters and measured values go in the prose. Then accept it:
 
 ```sh
 kgd accept <root>/.knowledge/drafts/<id>.md
@@ -65,7 +76,9 @@ nothing: fix the draft and accept again.
 **Existing item.** Edit `<root>/.knowledge/entries/<id>.md` in place with an
 editing tool that refuses when the file changed since you read it (Claude Code
 `Edit`, Codex `apply_patch`); never rewrite a whole record from an earlier
-read. Then:
+read. Never rename an accepted id: a better name goes in `label` or
+`aliases`. Merging duplicates or splitting a record that conflated two
+meanings follows the knowledge model's identity-change procedure. Then:
 
 ```sh
 kgd check --base B
@@ -78,9 +91,11 @@ the quote re-copied from the source.
 ## 4. Pending terms, one level
 
 A term the passage uses without explaining becomes a plain value (not a link)
-in `requires` or in the role where it occurs. Do not invent its definition or
-a target, and do not resolve the next level now. When the owner later studies
-it, that capture records its own direct gaps.
+in `requires` or in the role where it occurs, unless a registered base already
+holds the record that defines it; `kgd resolve` checks every base, and a
+record in another base is linked as `[[base:id]]`. Do not invent its
+definition or a stand-in record, and do not resolve the next level now. When
+the owner later studies it, that capture records its own direct gaps.
 
 ## 5. Understanding
 
@@ -119,5 +134,6 @@ both states and finish with `kgd index`.
 Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
 `check` result for an in-place edit, the pending terms recorded, and the
 `index` result (`embedded`, `unembedded`, `truncated`, `embedding_error`,
-`understanding_changed`). Name any refusal and what was left unwritten. If the
-owner wants a sheet for this source, `kgd sheet SOURCE` regenerates it.
+`understanding_changed`). Name any refusal and what was left unwritten,
+including inferred connections reported as compiler-judgment candidates. If
+the owner wants a sheet for this source, `kgd sheet SOURCE` regenerates it.

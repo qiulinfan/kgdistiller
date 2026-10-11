@@ -74,7 +74,11 @@ alone. A colliding source or broad glob is reported; choose another visible
 overwrite an unrelated document or silently change extraction policy.
 
 The guide explicitly attributes classifications to the navigation compiler.
-Its topic and organization records cite and quote that guide. Research papers
+Its topic and organization records cite and quote that guide. It is the
+compiler guide: other compiler judgments that its profile declares, such as
+cross-source mappings, may cite it too. Those records are neither topics nor
+scientific leaves; the helper reports them as `judgment`, never edits or
+retires them, and coverage never requires a route to them. Research papers
 provide evidence for scientific records, not for freely generated directory
 membership. A guide is ordinary registered owner data outside `.knowledge/`;
 the helper appends explanatory decisions without parsing its syntax or
@@ -99,7 +103,8 @@ Use routing value and reading cost together:
   bisecting or enforcing fixed depth.
 - Merge redundant topics or compress a single-child chain whose labels and
   summaries add no new routing information. Preserve useful distinctions,
-  aliases and leaf coverage; retire obsolete navigation UIDs only.
+  aliases and leaf coverage; retire obsolete navigation UIDs only, and never
+  reuse a retired UID for another meaning.
 - Reparent misleading routes, or add a second parent when a concept has two
   natural uses. Point both routes to the same leaf UID.
 - Let new scientific links reveal shared entrances. Preserve those original

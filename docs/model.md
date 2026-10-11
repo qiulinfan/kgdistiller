@@ -45,6 +45,14 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    the embedding model. An incremental index produces the same rows as a
    rebuild, and losing the database costs one command plus the time to
    re-embed.
+8. **A record asserts only what its cited text states.** A relation that
+   cites a research source or the owner's notes quotes text stating that
+   relation. A connection a compiler infers, by combining passages or across
+   sources, is a compiler judgment that cites a compiler guide (see
+   [Compiler judgments](#compiler-judgments-and-topic-navigation)).
+9. **Identity is permanent.** An accepted id and a base name are citation
+   keys: they are never renamed for convenience and never reused for another
+   meaning.
 
 ## Research knowledge selection
 
@@ -54,6 +62,17 @@ paragraph of exposition or motivation. Capture and compilation follow the
 source's owner-defined document type. They preserve the conditions, formulas,
 limitations, counterexamples and experimental evidence that affect meaning;
 section names and source syntax never determine admission.
+
+Nodes are noun-like: the objects a source defines, such as concepts, methods,
+architectures, objectives and quantities, plus theorems the source states
+precisely. Every other statement that can be true or false is a relation that
+binds the records it concerns: measured results, comparisons, findings,
+limitations, propositions, remarks and explanatory hypotheses. A finding about
+one concept is a relation with that single participant. A name, citation or
+mention does not make a node, and background a source only restates stays a
+pending term, or a link to its existing record, unless the source explains it
+in its own right. A document type's guidance may set a review threshold for
+the number of nodes per source.
 
 Accepted records, including relations, are the units of lexical and dense
 retrieval. Their links and evidence locate the original passages. Source text
@@ -70,11 +89,12 @@ second paragraph store or source-format parser is needed for this connection.
 | Source | A file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines. It has exactly one document type. |
 | Document type | `types/<name>.md`: `node_kinds`, `relation_kinds` (each kind with ordered roles), optional `epistemic` and optional finite `navigation` role conventions; the body is guidance. |
 | Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. |
-| Node | A record with no non-empty role property: a noun-like concept or an important, precisely stated result. Its kind is a node kind. |
+| Node | A record with no non-empty role property: a noun-like concept or a precisely stated theorem. Its kind is a node kind. |
 | Relation | A record with at least one non-empty role property. Its kind is a relation kind and its role keys are that kind's roles. Arity is unbounded; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
 | Application / example | A relation of a kind the owner registers for it, such as `example: [uses, setting]`. |
 | Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`. |
-| Pending gap | A plain-text value in a role list or in `requires`: the source uses the term without explaining it. One direct level only. It never binds by name; it is resolved by editing it into a link. |
+| Pending gap | A plain-text value in a role list or in `requires`: a concept the source uses without explaining it. One direct level only. It never binds by name; it is resolved by editing it into a link. Gaps are global: a use stays pending only while no registered base holds the record that defines the concept, and once any base does, the use links there, across bases when needed. Role values are always knowledge references, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role. |
+| Compiler judgment | A record whose source is a compiler guide: a registered source whose document type declares `navigation` conventions. Its topics and organization relations form the navigation; its other kinds, such as cross-source mappings, are further judgments. Never evidence for a scientific claim. |
 | `requires` | A list on every record holding direct understanding prerequisites. Proof or derivation dependencies are relations. |
 | Evidence | `source` + `lines` + one or more verbatim quotes in the body's final `## Evidence` section. |
 | Understanding | `unknown`, `not-yet-understood` or `understood`; absent means `unknown`. Independent of coverage and evidence. |
@@ -131,7 +151,33 @@ exactly the two distinct named roles. This finite convention carries no topic
 names, depth, branching or membership. No kind is both a node kind
 and a relation kind. The body, the guidance, is non-empty.
 
-## Agent-authored topic navigation
+## Compiler judgments and topic navigation
+
+A compiler judgment is a record that no research source or note states: the
+compiler's own decision about accepted knowledge. Judgments cite a compiler
+guide, a visible UTF-8 source that agents author and register under a document
+type with `navigation` conventions; that declaration marks the guide, and
+every record citing it is a judgment. A relation that cites a paper or the
+owner's notes quotes text stating that relation. An implication assembled from
+two separately quoted passages, a same-concept link between two papers or a
+comparison of claims across sources is a judgment instead. A compiler never
+writes a stand-in definition: a concept whose defining source is registered in
+no base stays a pending term. One file has one author: agents never write
+judgments into the owner's notes or into research sources.
+
+The guide states each judgment and names its grounds by UID, and the judgment
+record quotes that statement. Topics and organization relations form the
+navigation below. The profile's other kinds are further judgments, for example
+graded mappings between senses recorded from different sources; the starting
+profile declares `exact-match`, `close-match`, `broad-match`, `related-match`
+and `distinct-from`. A mapping relates records and never edits them: the
+mapped records keep their identities, evidence and understanding. Judgment
+records are retrievable like any record, are never evidence for a scientific
+claim, need no navigation route and do not count as scientific leaves. Like
+navigation, judgments are admitted automatically as part of ingestion, with no
+review step and no sheet.
+
+### Topic navigation
 
 The organization Skill compiles a semantic DAG over accepted knowledge:
 topic → subtopic → concept/method/result, with as many levels/branches as
@@ -174,9 +220,10 @@ multi-phase operation may leave prepared drafts and guide text; report the
 completed phase and resume through the normal write/check/index path, never
 overwrite a concurrent owner edit. There is no hidden atomic multi-file swap.
 
-`navigate` reports invalid projections and uncovered scientific leaves.
-Incomplete navigation never hides knowledge from global search. Scope and
-identity use full base-qualified UIDs, without name-based merging.
+`navigate` reports invalid projections and uncovered scientific leaves;
+judgment records are neither leaves nor routes. Retired navigation UIDs are
+never reused. Incomplete navigation never hides knowledge from global search.
+Scope and identity use full base-qualified UIDs, without name-based merging.
 
 ## Record format
 
@@ -257,6 +304,13 @@ form, and a local link prefixed with the record's own base name are errors.
 Wikilinks inside body prose are free navigation and are neither validated nor
 indexed.
 
+Every value is a knowledge reference: a link, or a term naming a concept that
+is not yet recorded. A term is never a literal. Settings, hyperparameters,
+resolutions, splits, units and measured values belong in the prose and
+evidence. kgd records knowledge concepts, not measurements: comparing reported
+values means locating the records and reading their evidence or the source
+context (`get --source-lines`).
+
 **Body grammar**
 
 ```text
@@ -288,6 +342,14 @@ An empty slug means the writer chooses an id; collisions append `-2`, `-3`, … 
 Ids are unique case-insensitively across `entries/` and `drafts/` of a base and
 never derive from a hash.
 
+An id comes from the record's meaning. It carries no section, figure, table,
+equation or theorem number, source ordinal, path or kind, all of which change
+when a source is revised or reorganized; a label may quote the source's own
+numbering when that is the item's name, while the id still describes the
+meaning. Once accepted, an id is permanent: it is never renamed for
+convenience and never reused for another meaning, and a changed meaning is a
+new record.
+
 ## Drafts
 
 - A draft proposes a new record: its id must not exist in `entries/`. There are
@@ -296,7 +358,9 @@ never derive from a hash.
   same base; its foreign links must target accepted records. Accepted records
   never link to drafts.
 - The owner may edit a draft before accepting it; the bytes present at
-  acceptance are what is accepted. Deleting a draft rejects it.
+  acceptance are what is accepted. Deleting a draft rejects it, and nothing
+  remembers the rejection: there is no rejection list, so a later compile may
+  propose the same record again.
 - Drafts are validated by `kgd check` and never indexed.
 
 ## Sheets
@@ -346,7 +410,9 @@ never derive from a hash.
 - The uid `<base>:<id>` is unique by construction.
 - In a file, `[[id]]` is local and `[[base:id]]` is foreign; the foreign base
   must be registered and must not be the record's own base. Local links never
-  change when a base moves or is renamed in the config.
+  change when a base moves. A base name is a permanent citation key written
+  into every `[[base:id]]` that targets the base, so it is never renamed or
+  reused; renaming it in the config would leave those links dangling.
 - Obsidian resolves a link to the same-folder file first, and all records share
   `entries/`, so `[[y]]` in a record resolves to `entries/y.md` in Obsidian
   whenever kgd resolves it so. When a basename is not unique in the vault,
@@ -354,7 +420,9 @@ never derive from a hash.
   accepts. kgd never falls back to aliases; a dangling link is reported with
   the records carrying that alias.
 - Labels and aliases are not unique. Two records with the same name are two
-  records; equivalence, if wanted, is an explicit relation.
+  records; equivalence, if wanted, is an explicit relation: one a source
+  states, or a compiler mapping when no source states it.
+- Accepted ids are permanent (see **Ids** above).
 - A record lives in the base whose source supplies its evidence.
 - The base for a path is the registered root containing the path's realpath;
   there is no upward walk.
@@ -481,19 +549,23 @@ and prints the extraction profile and inventory agents use:
 Agents read the source text with their own tools; the inventory carries no
 lines.
 
-### Updates, deletes and renames of accepted records
+### Updates, deletes and identity changes of accepted records
 
 - **Update.** Edit `entries/<id>.md` in place with an editing tool that refuses
   when the file changed since it was read (Claude Code `Edit`, Codex
   `apply_patch`); never rewrite a whole record from an earlier read. Then run
   `kgd check --base B` and `kgd index`. The owner reviews agent edits with
   `git diff`. Accept only creates, and the editor guards the window between
-  read and write.
+  read and write. A better name goes into `label` or `aliases`; the id stays.
 - **Delete.** Remove the file. `kgd check` then lists every inbound link left
   dangling, local and foreign. Run `kgd index`.
-- **Rename.** Rename the file in Obsidian, which rewrites local links;
-  `kgd check` reports the foreign `[[base:old]]` links that remain. A record's
-  indexed text does not contain its own id, so indexing re-uses its vector.
+- **Identity change.** Ids are permanent, so a changed identity is a one-time
+  link rewrite, never a rename. Merging true duplicates keeps one record;
+  splitting a record that conflated two meanings creates new records for them.
+  Repoint every inbound link by meaning, including body-prose wikilinks that
+  `kgd check` does not validate, then delete the superseded record, append a
+  compiler-guide passage naming each old and new uid, and run
+  `kgd check --base B` and `kgd index`.
 
 ### Base registration
 
@@ -505,4 +577,6 @@ the registration only and adds `dangling`, the `[[NAME:…]]` values left in the
 other bases' entries and drafts as `{path, role, value}`. `kgd base list`
 prints each base's `name`, `path`, `root`, `available`, `records` and `drafts`
 (file counts, `null` when unavailable), `indexed` and `lag`. There is no
-`base rename`.
+`base rename`: a base name is a permanent citation key, and removing a base
+then adding the same directory under another name leaves every
+`[[old-name:…]]` link dangling.

@@ -89,10 +89,11 @@ subject: ["[[direct-sum]]"]
 contrast: ["[[sum-of-subspaces]]"]
 witness: ["[[subspace-sum-with-itself]]"]
 
-# application / example
+# application / example: setting binds a concept; the concrete
+# construction ("F^n with the standard basis") is written in the prose
 kind: example
 uses: ["[[direct-sum]]", span]
-setting: ["F^n with the standard basis"]
+setting: ["[[coordinate-space]]"]
 ```
 
 ## Value grammar
@@ -112,9 +113,12 @@ term    := non-empty single-line string without "[[" or "]]"
   registered base. Never prefix a local link with the record's own base name.
 - Targets match after NFKC normalization and casefolding. `#`, `^` and other
   path forms are errors.
-- A **term** is a pending gap: the source uses it without explaining it here.
-  It never binds by name, even when a record has that label. It is resolved
-  only by editing the value into a link.
+- A **term** is a pending gap: a concept the source uses without explaining
+  it here. It never binds by name, even when a record has that label. It is
+  resolved only by editing the value into a link.
+- Every value is a knowledge reference, never a literal. Settings,
+  hyperparameters, resolutions, splits, units and measured values belong in
+  the prose and the Evidence quotes.
 - Wikilinks in body prose are free navigation; they are neither checked nor
   indexed as links.
 
@@ -151,7 +155,14 @@ term    := non-empty single-line string without "[[" or "]]"
   the last `-` at or before 80 characters. On a collision append `-2`, `-3`, … .
   If the slug is empty, choose a readable id.
 - Ids are unique case-insensitively across `entries/` and `drafts/` of one base.
-  An id changes only by renaming the file.
+- Choose the id from the meaning. Leave out section, figure, table, equation
+  and theorem numbers, source ordinals, paths and kinds; they change when a
+  source is revised. A label may keep the source's numbering when that is the
+  item's name, but then write the id yourself.
+- An accepted id is permanent: never rename it for a better name (use `label`
+  or `aliases`) and never reuse it for another meaning. Merging duplicates or
+  splitting a conflated record rewrites the inbound links once (see the
+  knowledge model's identity changes).
 
 ## Drafts
 
@@ -161,7 +172,8 @@ term    := non-empty single-line string without "[[" or "]]"
   same base. Foreign links must target accepted records. Accepted records never
   link to drafts.
 - `kgd check` validates drafts like records. Drafts are never indexed.
-- Deleting a draft rejects it.
+- Deleting a draft rejects it. Nothing remembers the rejection, so a later
+  compile may propose the same record again.
 
 `kgd accept DRAFT... [--dry-run]` validates the selected drafts together, under
 the home lock, as if they were already accepted: links may resolve to accepted
@@ -184,17 +196,29 @@ not `unknown`, so a set understanding is always visible.
 Follow the source's document type: its `node_kinds`, `relation_kinds`,
 `epistemic` list and guidance (`kgd sheet FILE --json`). In general:
 
-- **Nodes** are noun-like concepts and important, precisely stated, named
-  results (definitions, axioms, named theorems, methods, datasets).
-- **Relations** are statements that connect existing records: propositions,
-  remarks, results, comparisons, derivations. Bind each participant to the role
-  the type declares; arity is unbounded and a binary relation is the 2-role
-  case. A participant may repeat (self-relation) and may itself be a relation.
+- **Nodes** are noun-like: the objects the source defines (concepts, methods,
+  architectures, objectives, quantities, datasets it explains) plus theorems it
+  states precisely. Background the source only restates is not a node here: it
+  stays a pending term or a link to its existing record.
+- **Relations** are every other statement that can be true or false:
+  propositions, remarks, measured results, comparisons, findings, limitations,
+  derivations and explanatory hypotheses. Bind each participant to the role the
+  type declares; arity is unbounded, a binary relation is the 2-role case, and
+  a finding about one concept has that single participant. A participant may
+  repeat (self-relation) and may itself be a relation.
+- **Only stated connections.** A relation citing this source quotes text that
+  states the relation. A connection you infer by combining passages, or
+  between this source and another one it does not mention, is a compiler
+  judgment: do not write it as a relation of this source; report it as a
+  candidate for the compiler guide.
 - **Applications and examples** are relations of the kind the type registers
   for them, for example `example: [uses, setting]`.
 - **Pending gaps** are terms the source uses without explaining. Record them
   one level deep, in `requires` or the role where they occur; never chase the
-  next level now.
+  next level now. Gaps are global: `kgd resolve` checks every base, and a term
+  stays pending only while no registered base holds the record that defines
+  it. When one does, link it there, as `[[base:id]]` across bases. Never write
+  a stand-in definition for a concept whose defining source is missing.
 - **Understanding** is set only from the owner's explicit statement. Reading,
   capturing or finding a definition never establishes it.
 - Same name is not same concept. Compare definitions with `kgd resolve` and

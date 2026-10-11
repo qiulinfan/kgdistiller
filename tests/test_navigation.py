@@ -270,6 +270,39 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual("entrance", root["kind"])
         self.assertEqual(4, len(navigate([root["uid"]])["records"]))
 
+    def test_compiler_judgments_in_the_guide_are_not_scientific_leaves(self) -> None:
+        # Any non-navigation kind of a navigation profile is a compiler judgment:
+        # it needs no route, is never owned by the helper and never counts as knowledge.
+        spec = {"node_kinds": ["topic"],
+                "relation_kinds": {"organizes": ["broader", "narrower"], "matches": ["side"]},
+                "navigation": {"topic_kind": "topic", "relation_kind": "organizes",
+                               "parent_role": "broader", "child_role": "narrower"}}
+        self.kb.home.joinpath("types/navigation.md").write_text(type_document(spec))
+        self.initial()
+        guide = self.kb.root / "kgdistiller-navigation.md"
+        statement = "Compiler judgment: kb:sigma and other:variance are distinct senses."
+        guide.write_text(guide.read_text() + statement + "\n")
+        line = len(guide.read_text().splitlines())
+        self.kb.write_record("sigma-variance-distinct",
+                             f'label: Distinct senses\nkind: matches\nsource: "kgdistiller-navigation.md"\nlines: {line}\n'
+                             'side: ["[[sigma]]", "[[other:variance]]"]',
+                             "The compiler keeps these senses apart.", [statement])
+        index()
+        judgment = "kb:sigma-variance-distinct"
+        ctx = self.context()
+        self.assertNotIn(judgment, ctx["required_uids"])
+        self.assertNotIn(judgment, ctx["protected"])
+        self.assertEqual("judgment", next(r for r in ctx["records"] if r["uid"] == judgment)["navigation"])
+        diagnostics = navigate()["diagnostics"]
+        self.assertEqual((4, 4, 1), (diagnostics["knowledge_count"], diagnostics["covered_count"],
+                                     diagnostics["judgment_count"]))
+        audited = HELPER["apply"](self.context(changed=[]), proposal([], [], scope="global"))
+        self.assertEqual(0, audited["metrics"]["uncovered_count"])
+        with self.assertRaisesRegex(KnowledgeError, "cannot edit"):
+            self.apply(proposal([topic("sigma-variance-distinct", "Overwrite the judgment")], []))
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, check())
+        self.assert_science_preserved()
+
     def test_source_collision_or_broad_extraction_glob_is_not_overwritten(self) -> None:
         path = self.kb.roots["other"] / "kgdistiller-navigation.md"
         path.write_text("Owner text must survive.")

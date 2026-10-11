@@ -54,22 +54,34 @@ kgd get UID
 
 Compare definitions and conditions yourself. The same name is not the same
 concept: a homonym gets its own record, and an existing record with the same
-meaning is reused by linking it, not duplicated. Leave ambiguous candidates out
-and list them. If `lag.changed_files` is above 0, `lag.unembedded` is above 0
-or `lag.embedding_changed` is true, run `kgd index` first.
+meaning is reused by linking it, not duplicated. Background this source only
+restates is not a new node here: link its existing record or keep a pending
+term. Leave ambiguous candidates out and list them. If `lag.changed_files` is
+above 0, `lag.unembedded` is above 0 or `lag.embedding_changed` is true, run
+`kgd index` first.
 
 ## 4. Write drafts
 
 Write one `<root>/.knowledge/drafts/<id>.md` per new record in scope:
 
-- nodes for the kinds the type lists as node kinds (typically definitions,
-  axioms and named, precisely stated results);
-- relations for statements connecting records, with every participant bound
-  to a declared role; self-relations and relations about relations are
-  allowed; examples and applications are relations of the kind the type
-  registers for them;
+- nodes only for the noun-like objects the source defines and the theorems
+  it states precisely, in the type's node kinds;
+- relations for every other statement that can be true or false, including
+  measured results, comparisons, findings and hypotheses, with every
+  participant bound to a declared role; a finding about one concept binds it
+  alone; self-relations and relations about relations are allowed; examples
+  and applications are relations of the kind the type registers for them;
+- for each relation, an Evidence quote that itself states the relation; a
+  connection you infer by combining passages, or with another source this one
+  does not state, is not written here (report it, see step 7);
+- role values only as links or pending concepts; settings, hyperparameters
+  and measured values stay in the prose;
 - `requires` for direct understanding prerequisites; unexplained terms as
-  plain pending values, one level deep;
+  plain pending values, one level deep, unless any registered base already
+  holds the defining record (link it, across bases if needed); never a
+  stand-in definition for a missing source;
+- ids from the meaning, without section, figure, table, equation or theorem
+  numbers;
 - Evidence quotes copied verbatim from the cited lines.
 
 Drafts may link accepted records and each other. Never set `understanding`
@@ -104,7 +116,12 @@ After admission, the harvest/capture workflow automatically runs
 do not route unaccepted drafts or create a manual topic catalog here.
 
 Report the scope and actual coverage, the drafts written, reused records,
-ambiguous candidates left out, and the sheet path. List separately every
+ambiguous candidates left out, and the sheet path. When the drafts exceed a
+node threshold that the type's guidance sets, say which nodes you re-checked.
+List inferred connections separately as compiler-judgment candidates (for
+example the same concept in two sources, or two sources' claims on one
+question), with the UIDs and passages that ground them; they belong in the
+compiler guide, not in this source's records. List separately every
 proposed change to accepted records — edits, deletions, node-to-relation
 conversions — with its reason and source lines.
 

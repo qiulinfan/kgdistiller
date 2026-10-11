@@ -92,8 +92,9 @@ def initialize(name: str, source: str = SOURCE_NAME) -> dict[str, Any]:
                 raise KnowledgeError("types/navigation.md is owner data without navigation roles; choose an existing navigation source")
         config_path = home_path / CONFIG_FILENAME
         config = json.loads(_raw(config_path))
-        atomic_write_text(path, "This is an agent-authored navigation guide for accepted knowledge.\n"
-                          "Its classifications are compiler judgments, not statements attributed to research sources.\n")
+        atomic_write_text(path, "This is an agent-authored compiler guide for accepted knowledge: topic navigation and\n"
+                          "other compiler judgments. Its entries are compiler judgments, not statements attributed\n"
+                          "to research sources.\n")
         # A broad existing glob can claim a new file. Check before activating
         # another type; a refusal leaves the previous registry intact.
         claimed, _ = base.source_types()
@@ -197,7 +198,7 @@ def context(name: str, source: str = SOURCE_NAME, changed: list[str] | None = No
                 or _render(name, source, profile, spec, record.lines[0], topic=topic) != texts[uid]
                 or evidence_state(record.evidence, source_lines, *record.lines) != ("fresh", None)):
             protected.append(uid)
-    scientific = set(records) - graph.topics - graph.organizations
+    scientific = graph.scientific(set(records))
     required = list(dict.fromkeys(changed)) if changed is not None else sorted(uid for uid in scientific if records[uid].base == name)
     if set(required) - scientific:
         raise KnowledgeError("changed UIDs must be existing scientific records: " + ", ".join(sorted(set(required) - scientific)))
@@ -206,7 +207,7 @@ def context(name: str, source: str = SOURCE_NAME, changed: list[str] | None = No
         "navigation": profile, "guidance": document_type.guidance,
         "records": [{"uid": uid, "label": record.label, "kind": record.kind,
                      "class": record.class_, "gloss": gloss(record.body),
-                     "navigation": "topic" if uid in graph.topics else "organization" if uid in graph.organizations else "leaf",
+                     "navigation": graph.label(uid),
                      "out": record_view(record)["out"]} for uid, record in sorted(records.items())],
         "protected": sorted(protected), "required_uids": required,
         "diagnostics": graph.diagnostics(set(records)),
@@ -333,9 +334,9 @@ def prepare(ctx: dict[str, Any], proposal: dict[str, Any]) -> dict[str, Any]:
     before = project({uid: record_view(record) for uid, record in records.items()}, profiles)
     if graph.cyclic or graph.dangling or graph.malformed:
         raise KnowledgeError("invalid navigation projection: " + _literal(graph.diagnostics(set(after))))
-    required = set(ctx["required_uids"]) | (before.reachable(set(records)) - before.topics - before.organizations)
+    required = set(ctx["required_uids"]) | before.scientific(before.reachable(set(records)))
     if proposal["scope"] == "global":
-        required |= set(after) - graph.topics - graph.organizations
+        required |= graph.scientific(set(after))
     missing = required - graph.reachable(set(after))
     if missing:
         raise KnowledgeError("navigation must preserve coverage and route changed knowledge: " + ", ".join(sorted(missing)))

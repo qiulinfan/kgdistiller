@@ -165,7 +165,10 @@ The optional finite navigation profile declares only kind/role conventions.
 The Skill initializes a registered agent-authored guide inside a base,
 outside `.knowledge/`, and ordinary topic/organization records quote this
 guide. Freely generated classification is explicitly a compiler judgment;
-research evidence remains with the scientific records. There is no new home
+research evidence remains with the scientific records. The same guide is the
+compiler guide for other judgments its profile declares, such as cross-source
+mappings; capture and compile report inferred connections as candidates
+instead of writing them as relations of a paper or note. There is no new home
 field, catalog, tree store, provider dependency or model call in `kgd index`.
 
 The agent proposes local adjustments first and broader reorganization when

@@ -523,12 +523,15 @@ one read-only database snapshot. It reads no source text and changes nothing.
 Without UIDs, `records` lists roots. With UIDs it lists direct children of
 those topics, deduplicated by full UID, with topics first and UID order within
 each class. Each entry contains the usual summary (`uid`, `base`, `source`,
-`lines`, `label`, `kind`, `class`, `gloss`) plus `navigation` (`topic`, `leaf`
-or `organization`), `child_count` and `parent_count`. The `gloss` is the
-existing first-sentence projection, so the Skill places its routing decision
-first. Children can be subtopics or accepted scientific nodes/relations from
-another registered base. They preserve the same UID along every parent path.
-The semantic hop is a role projection, not unrestricted two-hop neighbors.
+`lines`, `label`, `kind`, `class`, `gloss`) plus `navigation` (`topic`,
+`leaf`, `judgment` or `organization`), `child_count` and `parent_count`. A
+`judgment` is any other record citing a compiler guide, such as a mapping
+between senses of different sources; it is never a scientific leaf. The
+`gloss` is the existing first-sentence projection, so the Skill places its
+routing decision first. Children can be subtopics or accepted scientific
+nodes/relations from another registered base. They preserve the same UID along
+every parent path. The semantic hop is a role projection, not unrestricted
+two-hop neighbors.
 
 `starts` summarizes requested UIDs, `missing` names unknown requests, and
 `outside_scope` lists known requests excluded by `--base`. A scoped view
@@ -540,7 +543,8 @@ and `truncated` counts their omitted items. An edge pointer alone is not a
 delivered scientific record. `profiles` discovers the per-source conventions.
 
 `diagnostics` gives totals and bounded examples for dangling participants,
-malformed roles, empty topics, uncovered scientific leaves and cycle
+malformed roles, empty topics, uncovered scientific leaves (judgment records
+are counted separately in `judgment_count` and need no route) and cycle
 residuals (members of cycles plus downstream topics that cannot be
 topologically removed). Traversal has no fixed topic-depth assumption and
 deduplicates shared children; scientific graph cycles are unaffected.
@@ -550,13 +554,14 @@ stale evidence is still returned. An incomplete guide does not hide records
 from global lexical/dense/name search.
 
 The CLI-first query Skill chooses useful root summaries, expands relevant
-branches, follows scientific links and supplements with global search. It
-does not reorganize the directory at query time. Exact names can start with
-resolve/search. Generated topics are navigation judgments, not scientific
-claim evidence. Benchmark results remain final scientific UID lists under
-the frozen gold protocol below; intermediate topic/edge hits do not replace
-leaf hits. The CLI has no resident encoder session: dense process-cold cost
-must not be presented as a warm query cost.
+branches, follows scientific links and supplements with global search. It does
+not reorganize the directory at query time. Exact names can start with
+resolve/search. Generated topics and every other record citing a compiler
+guide are compiler judgments, not scientific claim evidence. Benchmark results
+remain final scientific UID lists under the frozen gold protocol below;
+intermediate topic/edge hits do not replace leaf hits. The CLI has no resident
+encoder session: dense process-cold cost must not be presented as a warm query
+cost.
 
 ## MCP server: `kgd mcp`
 

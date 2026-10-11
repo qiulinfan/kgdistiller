@@ -66,20 +66,24 @@ as one paper's folder) and
 `--understanding unknown|not-yet-understood|understood`.
 
 **navigate** with no UID discovers root topics across every registered base.
-`records` contains bounded summaries with `uid`, `navigation` (`topic` or
-`leaf`), `gloss`, `child_count` and `parent_count`. Choose useful summaries,
-then `navigate TOPIC_UID` returns direct subtopics/scientific leaves, projected
-only from the profile's declared organization parent/child roles. `profiles`
-discovers those conventions; no handwritten topic names or fixed levels are
-needed. `page.next_offset` continues a page. Multiple paths reach the same
-base-qualified leaf UID; deduplicate it without merging same-named senses.
-Cross-base children remain visible unless a `--base` filter excludes them.
-`relations` gives the actual organization records used, `edges` are pointers
-and `diagnostics` reports cycles, dangling links and uncovered knowledge.
+`records` contains bounded summaries with `uid`, `navigation` (`topic`, `leaf`
+or `judgment`), `gloss`, `child_count` and `parent_count`. Choose useful
+summaries, then `navigate TOPIC_UID` returns direct subtopics/scientific
+leaves, projected only from the profile's declared organization parent/child
+roles. `profiles` discovers those conventions; no handwritten topic names or
+fixed levels are needed. `page.next_offset` continues a page. Multiple paths
+reach the same base-qualified leaf UID; deduplicate it without merging
+same-named senses. Cross-base children remain visible unless a `--base` filter
+excludes them. `relations` gives the actual organization records used, `edges`
+are pointers and `diagnostics` reports cycles, dangling links and uncovered
+knowledge.
 
 Topics and organization summaries are explicitly agent-authored navigation
 judgments with a registered guide as their source. They help find scientific
 records; they do not establish research claims or replace a target leaf UID.
+Every other record citing that compiler guide, such as a mapping between two
+sources' senses, is also a compiler judgment: report it as the compiler's
+decision, never as a statement of the sources it connects.
 Use scientific relations for entailment and dependencies after locating the
 leaf. Do not treat unrestricted two-hop `neighbors` (including siblings and
 parents) as a hierarchy expansion. If navigation is absent, incomplete or
@@ -206,7 +210,8 @@ each:
 Names, translations and aliases are retrieval evidence only. Read the bounded
 definitions before calling a hit `matched`. Homonyms stay separate records:
 same-named mechanisms of two papers, or of two bases, are distinct unless an
-explicit relation says they are equivalent.
+explicit relation says they are equivalent, either one a source states or a
+compiler mapping.
 
 ## Handoff
 
