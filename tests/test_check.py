@@ -151,13 +151,17 @@ class RecordRulesTest(CheckTestCase):
         self.assert_error("unknown-role.md", "frontmatter", "witness is not a role of implies")
 
     def test_source_rules(self) -> None:
+        (self.kb.root / "other").mkdir()
+        (self.kb.root / "other/a.md").write_text("Title line\n", encoding="utf-8")
         self.kb.write_record("unregistered", node("U", "1").replace(SOURCE, "other/a.md"), "Text.", ["Title line"])
+        self.kb.write_record("renamed", node("R", "1").replace(SOURCE, "notes/renamed.txt"), "Text.", ["Title line"])
         self.kb.write_record("escape", node("E", "1").replace(SOURCE, "../a.txt"), "Text.", ["Title line"])
         self.kb.write_record("past-end", node("P", "6-9"), "Text.", ["Unique sentence about dimension."])
         binary = self.kb.root / "notes/binary.txt"
         binary.write_bytes(b"\xff\xfe broken\n")
         self.kb.write_record("binary", node("B", "1").replace(SOURCE, "notes/binary.txt"), "Text.", ["broken"])
         self.assert_error("unregistered.md", "source", "add a glob")
+        self.assert_error("renamed.md", "source", "source notes/renamed.txt does not exist in base kb")
         self.assert_error("escape.md", "source", "POSIX path relative to the base root")
         self.assert_error("past-end.md", "source", "exceed the 6 lines")
         self.assert_error("binary.md", "source", "not UTF-8")

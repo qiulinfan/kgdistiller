@@ -65,6 +65,22 @@
   it explains, records a pending term, global across bases, until the defining
   record exists, and then links it. No record stands in for a missing source,
   and scientific records never link to navigation records.
+- Conflicts follow the owner's verbatim statements in docs/model.md
+  "Conflicts, updates and relocation". Every admission first looks the
+  knowledge point up in every base, pending uses included, and a term is
+  looked up before it is written as pending. When the knowledge point is
+  already recorded:
+  - an unchanged meaning is ignored, and a broken citation moves to the
+    admitted passage;
+  - a changed meaning overwrites the record in place, keeping its id, only
+    when the new definition is more general or corrects the old one;
+    otherwise the admitting agent asks the owner.
+  Relocation is global, across bases. Knowledge that disappears from its
+  source becomes pending: the record is deleted, links to it become pending
+  terms, and its fate is the owner's.
+- 如无必要，勿增实体: delete whatever a decision makes unnecessary, outright and
+  in the same change, with no fallback or compatibility path (docs/model.md
+  principle 10).
 - Nodes are noun-like objects and precisely stated theorems; every other
   statement that can be true or false is a relation. Role values are knowledge
   references (links or pending concepts), never literals; kgd stores no
@@ -73,7 +89,7 @@
 - Rejected drafts leave no trace; do not add a rejection list or any other
   memory of rejections.
 - Accepted ids and base names are permanent citation keys: never rename them
-  or reuse them for another meaning. Ids come from meaning, never from section,
+  or reuse them for another concept. Ids come from meaning, never from section,
   figure, table, equation or theorem numbers; merges and splits rewrite the
   inbound links once.
 - Format agnosticism: a knowledge source is any registered UTF-8 text document.

@@ -92,7 +92,7 @@ class ProductSkillTests(unittest.TestCase):
         )
 
     def test_workflow_step_modes(self) -> None:
-        for mode in ("read-only", "author", "write"):
+        for mode in ("read-only", "write"):
             workflow = [{
                 "id": "harvest", "description": "Harvest a sheet",
                 "steps": [{"id": "harvest", "skill": "harvest-kgdistiller", "agent": None, "mode": mode}],
@@ -113,7 +113,7 @@ class ProductSkillTests(unittest.TestCase):
     def test_manifests_declare_the_shipped_workflows(self) -> None:
         expected = {
             "capture-knowledge": [("capture-kgdistiller", None, "write")],
-            "compile-knowledge-sheets": [("compile-knowledge-sheets", None, "author")],
+            "compile-knowledge-sheets": [("compile-knowledge-sheets", None, "write")],
             "harvest-kgdistiller": [("harvest-kgdistiller", None, "write")],
             "query-knowledge": [("query-kgdistiller", "query-reviewer", "read-only")],
             "organize-knowledge": [("organize-kgdistiller", None, "write")],
@@ -185,7 +185,7 @@ class ProductSkillTests(unittest.TestCase):
                     previous_manifest["workflows"].append({
                         "id": workflow_id, "description": "Removed workflow.",
                         "steps": [{"id": "old", "skill": skill,
-                                   "agent": "removed-agent", "mode": "author"}],
+                                   "agent": "removed-agent", "mode": "write"}],
                     })
                 manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
                 unrelated = home / "skills/external-skill/SKILL.md"

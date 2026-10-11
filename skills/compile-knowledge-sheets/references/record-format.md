@@ -164,9 +164,11 @@ term    := non-empty single-line string without "[[" or "]]"
   source is revised. A label may keep the source's numbering when that is the
   item's name, but then write the id yourself.
 - An accepted id is permanent: never rename it for a better name (use `label`
-  or `aliases`) and never reuse it for another meaning. Merging duplicates or
-  splitting a conflated record rewrites the inbound links once (see the
-  knowledge model's identity changes).
+  or `aliases`) and never reuse it for another concept. A changed meaning of
+  the same knowledge point overwrites the record in place under the knowledge
+  model's conflict rules and keeps the id. Merging duplicates or splitting a
+  conflated record rewrites the inbound links once (see the knowledge model's
+  identity changes).
 
 ## Drafts
 

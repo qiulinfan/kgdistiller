@@ -52,7 +52,11 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    report it.
 9. **Identity is permanent.** An accepted id and a base name are citation
    keys: they are never renamed for convenience and never reused for another
-   meaning.
+   concept.
+10. **No entity without necessity.** In the owner's words: "我们的知识库的一条原则就是如无必要, 勿增实体. 所以当你觉得一个东西没必要的时候, 不再需要的时候, 请你直接删除, 不要做 fallback."
+    Whatever a decision makes unnecessary, whether a kind, a field, a file, a
+    code path or a document passage, is deleted outright in the same change,
+    with no fallback and no compatibility path.
 
 ## Research knowledge selection
 
@@ -86,6 +90,84 @@ retrieval. Their links and evidence locate the original passages. Source text
 remains available for on-demand context through the record's base, relative
 `source` path and `lines`; `get --source-lines` reads that context live. No
 second paragraph store or source-format parser is needed for this connection.
+
+## Conflicts, updates and relocation
+
+The owner's statement below governs how conflicts between new and existing
+knowledge are detected and resolved, how accepted knowledge is updated and how
+it is relocated (rebased) to another source; the rules for them in this
+document follow it. "1a" is the rule that each concept has exactly one record,
+owned by the source that defines it (see
+[Research knowledge selection](#research-knowledge-selection)).
+
+> 你知道, 我们的知识库是一个 agentic 的知识库.
+>
+> * 入库与索引都是 agentic 的.
+>
+> 其实这两步, 都应该做冲突处理.
+> 什么流程呢?
+>
+> 1. 入库一条知识前(不论是单条, 多条还是全文都一样. 入库一篇文章/多条知识就是多次入库单条), 我们首先要索引这个知识. 这种是为了两个目的:
+>    1. 一个是刚才的 1a: 我们要确认不存在重复的知识词条定义. 注意: 这里的检索甚至包括 pending. 因为入库一条知识如果和一条 pending 撞了, 那正好就同时把 pending 划掉了. 这样就考虑到了所有的情况; 这个行为保证了 1a 的成立性.
+>    2. 另外一个就是冲突处理. 也就是说, 当我改写一篇笔记时, 我会自己重新入库它. 这个时候, 所有的知识在入库前都会索引一次. 当发现同一知识点已经定义过的时候:
+>       1. 如果意义没更改, 我们就直接忽略它.
+>       2. 如果意义更改了, 我们就直接覆写它.
+>       3. 这里顺便说一下, 我们诸如笔记这类文件也会经常改名, 甚至合并和拆分. 因而我们并不能保证同一知识点覆写/重复入库的时候是在同一篇文章的. 还有的情况包括知识重定位: 比如假设 sigma algebra 本来在 probability 里定义了一个狭义的意思, 后来在 measure theory 中定义了一个更广义的意思 -> 检测到覆写, 这个知识词条重新写, 并且它的 source 也从 prob theory 改成 measure theory.
+>
+> 另外, 当我们把一条知识记录为 pending 之前, 我们也要进行一次检索, 查看是否已经有过定义. 如有, 不要把它设置为 pending, 它是一个已知的知识. 假设此处是一个定义, 那么这里定义出的新知识就自然地和刚查出来非 pending 的这个知识形成一个 relation.
+
+The owner's answers to three follow-up questions (which of two inconsistent
+definitions overwrites the other, what happens to knowledge that disappears
+from its source, and whether relocation crosses bases), also verbatim:
+
+> 关于这三个问题:
+>
+> 1. 两处定义不一致时, 谁覆写谁?
+>    1. 新定义 tend  to 覆盖旧定义, 但是当且仅当它更 general 或者纠正了旧定义, 才直接覆盖; 其他情况下, 入库 agent 让用户进行裁决.
+> 2. 某个知识点不见了? 那么它将变为 pending, 就像是一个 git commit 一样. 他最终的命运是充新建立到其他知识源还是被遗弃? 将它变成 pending 的 agent 不用管, 而是我来管.
+> 3. 重定位当然可以跨 base, 因为检索是全局的. 那么重定位当然是全局的.
+
+The rules that follow from these statements:
+
+- **Look up before every write.** Admitting a source, or several items, is
+  admitting each knowledge point in turn. Before writing one, the admitting
+  agent looks it up in every registered base with `kgd resolve` and
+  `kgd search`, pending uses included. The same lookup precedes every pending
+  term: a term that a record anywhere defines is written as a link, and in a
+  definition that link is the relation between the new knowledge and the
+  known one.
+- **A new knowledge point** gets a new record, and the admitting Skill links
+  its pending uses in every base. A concept that merely shares the name of a
+  recorded one is new (a homonym, 1a).
+- **The same knowledge point with the same meaning** gets no new record and no
+  content change. If the recorded citation no longer verifies because the
+  source was renamed, merged, split or reworded, the record's `source`,
+  `lines` and Evidence move to the passage being admitted.
+- **The same knowledge point with a changed meaning** is overwritten in place
+  only when the new definition is more general than the recorded one or
+  corrects it. A definition that the recorded one explicitly rules out, such
+  as the error it corrected, is never more general, so re-admitting a
+  superseded passage cannot flip the record back. The record keeps its id and
+  the owner's `understanding`; everything else is rewritten from the new
+  passage, and `source` and `lines` move there. That move is a relocation. In
+  every other case, a narrower definition included, the admitting agent asks
+  the owner to decide and writes nothing for that knowledge point until they
+  do.
+- **Relocation is global.** When the passage lies in another base, the record
+  moves to that base and keeps its id, unless that base already uses the id
+  for another concept. Every link to it, in every base, is rewritten once.
+- **Knowledge that disappears becomes pending.** A record whose knowledge a
+  re-admitted source no longer contains, or whose source file no longer
+  exists, is deleted. Every scientific link to it, in every base, becomes a
+  pending term that keeps its wording, and navigation routes to it are retired
+  by the organization Skill. The agent does not look for where the knowledge
+  went. The owner decides whether it is re-established from another source or
+  abandoned. Re-establishing it is an ordinary admission whose lookup meets
+  those pending uses, and Git history keeps the deleted record.
+- **Who writes what.** New records go through drafts and `kgd accept` or
+  `kgd harvest`. Overwrites, moved citations, relocations and deletions to
+  pending are edits of accepted records that the admitting Skill makes itself,
+  because there are no update drafts. The owner reviews them with `git diff`.
 
 ## Data model
 
@@ -330,8 +412,9 @@ equation or theorem number, source ordinal, path or kind, all of which change
 when a source is revised or reorganized; a label may quote the source's own
 numbering when that is the item's name, while the id still describes the
 meaning. Once accepted, an id is permanent: it is never renamed for
-convenience and never reused for another meaning, and a changed meaning is a
-new record.
+convenience and never reused for another concept. A changed meaning of the
+same knowledge point overwrites its record in place and keeps the id (see
+[Conflicts, updates and relocation](#conflicts-updates-and-relocation)).
 
 ## Drafts
 
@@ -535,6 +618,10 @@ lines.
 
 ### Updates, deletes and identity changes of accepted records
 
+When to ignore, overwrite or relocate knowledge that is already recorded
+follows [Conflicts, updates and relocation](#conflicts-updates-and-relocation);
+this section is how such a change is written.
+
 - **Update.** Edit `entries/<id>.md` in place with an editing tool that refuses
   when the file changed since it was read (Claude Code `Edit`, Codex
   `apply_patch`); never rewrite a whole record from an earlier read. Then run
@@ -542,7 +629,19 @@ lines.
   `git diff`. Accept only creates, and the editor guards the window between
   read and write. A better name goes into `label` or `aliases`; the id stays.
 - **Delete.** Remove the file. `kgd check` then lists every inbound link left
-  dangling, local and foreign. Run `kgd index`.
+  dangling, local and foreign. Edit each one in a scientific record or draft
+  into a pending term that keeps its wording: `"[[id|wording]]"` becomes
+  `"wording"` and `"[[id]]"` the deleted record's label. Body-prose wikilinks
+  to it, which `kgd check` does not validate, become plain text the same way.
+  Navigation routes to it are retired through `$organize-kgdistiller`. Run
+  `kgd check` and `kgd index`.
+- **Relocation.** Within one base, the overwrite edits `source`, `lines` and
+  the Evidence in place. Into another base, write the record as a draft there
+  with the same id (another id only when that base already uses it for another
+  concept), adjust its links to the new base and `kgd accept` it. Then rewrite
+  every link to the old uid, in every base, to the new one: a link in the new
+  base becomes local `"[[id]]"`, any other one `"[[base:id]]"`. Finally delete
+  the old file and run `kgd check` and `kgd index`.
 - **Identity change.** Ids are permanent, so a changed identity is a one-time
   link rewrite, never a rename. Merging true duplicates keeps one record;
   splitting a record that conflated two meanings creates new records for them.

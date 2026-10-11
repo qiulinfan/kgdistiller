@@ -38,6 +38,20 @@ All notable changes are documented here.
   Obsidian plugin opens the first line of the first range. The index schema
   moves to `user_version = 2` with a `lines` column; the next `kgd index`
   recreates the database and re-embeds every record.
+- Handle knowledge conflicts at admission, following the owner's statements
+  recorded verbatim in `docs/model.md`. Every admission first looks the
+  knowledge point up in every base, pending uses included, and every term is
+  looked up before it is written as pending. A knowledge point already
+  recorded with the same meaning is ignored, and a broken citation moves to
+  the admitted passage. A changed meaning overwrites the record in place,
+  keeping its id, only when the new definition is more general or corrects
+  the old one; otherwise the admitting agent asks the owner. Relocation moves
+  a record to its new source, across bases when needed. Knowledge that
+  disappears from its source becomes pending: the record is deleted and links
+  to it become pending terms. `compile-knowledge-sheets` therefore edits
+  accepted records and runs as a `write` step, the `author` step mode is
+  removed, and `harvest-kgdistiller` looks the ticked drafts up again before
+  accepting them.
 
 ## 1.0.0 — 2026-10-10
 

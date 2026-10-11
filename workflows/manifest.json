@@ -71,13 +71,13 @@
     },
     {
       "id": "compile-knowledge-sheets",
-      "description": "Extract draft records from a bounded scope of one registered source guided by its document type, check them and generate the source's def/pending sheet for owner review; changes to accepted records are only proposed.",
+      "description": "Extract draft records for the new knowledge of a bounded scope of one registered source guided by its document type, settle the knowledge already recorded by the conflict rules, check them and generate the source's def/pending sheet for owner review.",
       "steps": [
         {
           "id": "compile",
           "skill": "compile-knowledge-sheets",
           "agent": null,
-          "mode": "author"
+          "mode": "write"
         }
       ]
     },

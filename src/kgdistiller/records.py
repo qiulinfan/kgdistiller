@@ -615,6 +615,8 @@ def record_problems(
         problems.append(("source", f"source {source!r} must be a POSIX path relative to the base root"))
     elif source in conflicts:
         problems.append(("source", f"source {source} matches globs of several types: {', '.join(conflicts[source])}"))
+    elif source not in mapping and not (base.root / source).exists():
+        problems.append(("source", f"source {source} does not exist in base {base.name}"))
     elif source not in mapping:
         problems.append(("source", (
             f"{source} is not a registered source of base {base.name}; add a glob for it under "

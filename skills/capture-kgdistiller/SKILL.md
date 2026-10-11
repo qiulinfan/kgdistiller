@@ -42,13 +42,30 @@ kgd get UID
 `resolve` lists, per term, the `senses` (records whose label or alias equals
 it), `mentions` and `pending` uses, across every base. Compare definitions and
 conditions yourself: the same name is not the same concept, and a homonym in
-another paper or base is a separate record. Decide whether the item is new or
-an existing record. A concept this source did not define or originate is not
-a record here, even when the passage explains it: link the record of its
-defining source or keep a global pending term. If
+another paper or base is a separate record. A concept this source did not
+define or originate is not a record here, even when the passage explains it:
+link the record of its defining source or keep a global pending term. If
 `lag.changed_files` is above 0, `lag.unembedded` is above 0 or
 `lag.embedding_changed` is true, run `kgd index` first so the comparison sees
 current files and vectors.
+
+Then classify the item by the knowledge model's conflict rules ("Conflicts,
+updates and relocation"):
+
+- **new**: no record holds this knowledge point, or only a homonym does.
+- **unchanged**: a record holds it with the same meaning. Write nothing new.
+  If that record's citation no longer verifies (`kgd check --base B` lists it
+  as stale or its source as missing) and this passage states the item, move
+  its `source`, `lines` and Evidence here.
+- **superseding**: a record holds it with a different meaning, and this
+  passage's definition is more general or corrects it. Overwrite that record
+  and relocate it here (step 3). A definition that the recorded one explicitly
+  rules out, such as the error it corrected, is conflicting even when it is
+  broader.
+- **conflicting**: any other changed meaning, a narrower definition
+  included. Show the owner both definitions
+  with their source lines, ask which stands, and write nothing for the item
+  until they answer.
 
 Capture a node only for a noun-like object the source defines or a theorem it
 states precisely. Any other statement that can be true or false is a relation
@@ -74,12 +91,15 @@ or `"[[base:id]]"` for another base); a link to a draft you also wrote needs
 both drafts in the same `accept`. A refusal lists each problem and writes
 nothing: fix the draft and accept again.
 
-**Existing item.** Edit `<root>/.knowledge/entries/<id>.md` in place with an
+**Recorded item.** Edit `<root>/.knowledge/entries/<id>.md` in place with an
 editing tool that refuses when the file changed since you read it (Claude Code
 `Edit`, Codex `apply_patch`); never rewrite a whole record from an earlier
-read. Never rename an accepted id: a better name goes in `label` or
-`aliases`. Merging duplicates or splitting a record that conflated two
-meanings follows the knowledge model's identity-change procedure. Then:
+read. An overwrite keeps the id and `understanding` and rewrites everything
+else from this passage, `source`, `lines` and Evidence included. When this
+passage lies in another base, the record moves there by the knowledge model's
+relocation procedure. Never rename an accepted id: a better name goes in
+`label` or `aliases`. Merging duplicates or splitting a record that conflated
+two meanings follows the knowledge model's identity-change procedure. Then:
 
 ```sh
 kgd check --base B
@@ -93,8 +113,9 @@ the quote re-copied from the source.
 
 A term the passage uses without explaining becomes a plain value (not a link)
 in `requires` or in the role where it occurs, unless a registered base already
-holds the record that defines it; `kgd resolve` checks every base, and a
-record in another base is linked as `[[base:id]]`. Do not invent its
+holds the record that defines it. Look every such term up with `kgd resolve`
+before writing it, since it checks every base; a record in another base is
+linked as `[[base:id]]`. Do not invent its
 definition or a stand-in record, and do not resolve the next level now. When
 the owner later studies it, that capture records its own direct gaps.
 
@@ -114,7 +135,8 @@ uses that mean the created record's definition; a homonym stays pending. Edit
 each kept value in place into a link that keeps the source's wording,
 `"[[id|wording]]"` within the base or `"[[base:id|wording]]"` across bases,
 with an editing tool that refuses stale reads, then run `kgd check --base B`
-for every base you edited.
+for every base you edited. Regenerate with `kgd sheet SOURCE` the existing
+sheet of every source whose records you edited, relocated or linked.
 
 ## 7. Index
 
@@ -143,8 +165,10 @@ both states and finish with `kgd index`.
 
 ## 9. Report
 
-Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
-`check` result for an in-place edit, the pending terms recorded, and the
+Return the item's classification (new, unchanged, superseding with the old
+and new source lines, or the conflict put to the owner), the uid(s), the
+accept receipt (`created`, `understanding_set`) or the `check` result for an
+in-place edit, the pending terms recorded, and the
 `index` result (`embedded`, `unembedded`, `truncated`, `embedding_error`,
 `understanding_changed`) and the pending uses you linked. Name any refusal
 and what was left unwritten, including connections you reported instead of

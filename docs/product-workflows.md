@@ -59,9 +59,9 @@ copies, discarding local edits to installed files.
 
 | Workflow | Skill | Mode | Steps |
 |---|---|---|---|
-| `capture-knowledge` | `capture-kgdistiller` | write | Read profile, compare senses, accept a scientific draft or check an in-place edit; pending terms and stated understanding; link the pending uses of created concepts in every base; automatically invoke `organize-kgdistiller` for changed accepted UIDs; index and report admission/navigation separately. |
-| `compile-knowledge-sheets` | `compile-knowledge-sheets` | author | Set the bounded scope; `kgd sheet FILE --json`; `resolve`/`search` for identity; drafts for new records; `kgd check --base B` with every draft passing; `kgd sheet FILE`; stop and report proposed changes to accepted records. |
-| `harvest-kgdistiller` | `harvest-kgdistiller` | write | `kgd harvest SHEET [--dry-run]`; link the pending uses of created concepts in every base; after admission automatically organize created accepted UIDs; index; report refused rows and navigation separately. |
+| `capture-knowledge` | `capture-kgdistiller` | write | Read profile; look up the item and its terms in every base, pending included; accept a new scientific draft, or ignore, overwrite or relocate a recorded one by the conflict rules and ask the owner otherwise; pending terms and stated understanding; link the pending uses of created concepts in every base; automatically invoke `organize-kgdistiller` for changed accepted UIDs; index and report admission/navigation separately. |
+| `compile-knowledge-sheets` | `compile-knowledge-sheets` | write | Set the bounded scope; `kgd sheet FILE --json`; look up every knowledge point and term in every base, pending included; drafts for new records; ignore, overwrite, relocate or turn pending the recorded knowledge by the conflict rules and ask the owner otherwise; `kgd check --base B` with every draft passing; `kgd sheet FILE`; organize changed accepted UIDs; index and report. |
+| `harvest-kgdistiller` | `harvest-kgdistiller` | write | Look up the ticked drafts and their pending terms again; `kgd harvest SHEET [--dry-run]`; link the pending uses of created concepts in every base; after admission automatically organize created accepted UIDs; index; report refused rows and navigation separately. |
 | `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | CLI `navigate` entrances/summaries and declared-role descent; global lexical/dense/name `search`, `resolve`, scientific `neighbors`, `get`, `browse`, `pack`; bounded evidence or ordered scientific UIDs; refresh on lag. Existing MCP reads remain optional. |
 | `organize-knowledge` | `organize-kgdistiller` | write | Register an agent-authored guide; read current topics and changed scientific records; choose useful local/global split, merge, reparent or retirement; helper checks DAG/coverage and stale reads; new navigation drafts plus accept, guarded navigation edits; check and index. |
 | `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
@@ -70,10 +70,8 @@ Step modes mean:
 
 - `read-only`: reads knowledge and changes nothing but the derived database
   (`kgd index` when a result reports lag);
-- `author`: writes drafts and generated sheets, never accepted records;
-- `write`: changes accepted knowledge or the home through `kgd` commands or
-  in-place record edits. An owner-requested edit of an accepted record that a
-  compile report proposed runs as a separate `write` step.
+- `write`: changes knowledge or the home through `kgd` commands, drafts,
+  sheets or in-place record edits.
 
 `agent: null` means the step runs in the current agent; a named agent refers
 to an installed preset. Manifests describe assets, not automatic triggers or a
@@ -88,11 +86,15 @@ lag stays rare. Edits the owner makes in Obsidian lag until the next
 `$capture-kgdistiller` saves one item the owner selected while reading: a
 node, a relation or an example. It reads the type profile with
 `kgd sheet FILE --json`, compares existing senses with `kgd resolve` and
-`kgd search` (the same name is not the same concept), and then either writes a
-draft and runs `kgd accept` on it (the capture request is the consent) or edits
-the existing record in place with a stale-read-safe editing tool followed by
-`kgd check --base B`. Unexplained terms become plain pending values, one level
-deep. `understanding` is set only from the owner's explicit statement. After
+`kgd search` in every base, pending uses included (the same name is not the
+same concept). A new item becomes a draft that it accepts with `kgd accept`
+(the capture request is the consent). An item already recorded follows the
+conflict rules of [model.md](model.md) "Conflicts, updates and relocation":
+it is ignored when its meaning is unchanged, overwritten and relocated when the
+new definition is more general or corrects the recorded one, and otherwise
+left to the owner's decision. In-place edits use a stale-read-safe editing
+tool followed by `kgd check --base B`. Unexplained terms become plain pending
+values, one level deep, unless a record anywhere defines them. `understanding` is set only from the owner's explicit statement. After
 acceptance it links the pending uses, in every base, that mean a created
 concept. It ends by automatically invoking `$organize-kgdistiller` for changed
 accepted UIDs,
@@ -106,23 +108,27 @@ establish any record's understanding.
 
 `$compile-knowledge-sheets` extracts a bounded scope of one registered source,
 up to the whole file when the owner asks for full distillation, typically for
-the owner's own notes or familiar material. It writes drafts and the sheet
-only: it checks that the drafts pass `kgd check`, generates the sheet with
-`kgd sheet FILE` and stops. Changes it would make to accepted records (edits,
-deletions, node-to-relation conversions) are listed in its report with their
-reasons and source lines. Applying one is not part of a compile run: it is a
-separate owner-requested in-place edit in `write` mode (a stale-read-safe
-edit, `kgd check --base B`, then `kgd index`), the same path as capture's
-existing-record branch and [model.md](model.md) "Updates, deletes and
-identity changes of accepted records". It also serves requests to file or
-ingest a document into the knowledge base.
+the owner's own notes or familiar material; re-admitting a rewritten note is
+the same request. It looks up every knowledge point in every base, pending
+uses included, and applies the conflict rules of [model.md](model.md)
+"Conflicts, updates and relocation". New knowledge becomes drafts that pass
+`kgd check`, listed in the sheet that `kgd sheet FILE` generates. Knowledge
+already recorded is ignored, re-cited, overwritten and relocated in place.
+Records whose knowledge the source no longer contains, or whose source file
+no longer exists, are deleted to pending. Other changed meanings wait for the
+owner's decision. These in-place edits follow "Updates, deletes and identity
+changes of accepted records"; the run then organizes the changed accepted UIDs
+and finishes with `kgd index`. It also serves requests to file or ingest a
+document into the knowledge base.
 
 ## Review and harvest
 
 The owner reviews the drafts in Obsidian (with the plugin's hidden indexing on,
 `.knowledge/` opens like any folder), edits them if needed and ticks the rows
 to accept in the source's sheet. A checkbox means "selected for acceptance",
-never "understood". `$harvest-kgdistiller` then runs `kgd harvest SHEET`,
+never "understood". `$harvest-kgdistiller` first looks the ticked drafts and
+their pending terms up again, since knowledge admitted after the compile run
+may now record them, then runs `kgd harvest SHEET`,
 which accepts exactly the ticked drafts in one call, regenerates the sheet and
 prints the receipt. The Skill then links the pending uses, in every base,
 that mean a created concept, runs `$organize-kgdistiller` for the created

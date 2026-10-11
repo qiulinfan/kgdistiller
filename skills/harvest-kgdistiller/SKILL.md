@@ -1,6 +1,6 @@
 ---
 name: harvest-kgdistiller
-description: Accept the draft records the owner ticked in a kgdistiller source sheet, with one kgd harvest call, link the pending uses of the new concepts across bases, then re-index. Use when the owner asks to harvest a sheet, accept the checked drafts, or import the items selected in Obsidian into their kgdistiller (kgd/kgdt) knowledge base.
+description: Accept the draft records the owner ticked in a kgdistiller source sheet, after looking them up again under the conflict rules, with one kgd harvest call, link the pending uses of the new concepts across bases, then re-index. Use when the owner asks to harvest a sheet, accept the checked drafts, or import the items selected in Obsidian into their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Harvest ticked drafts
@@ -11,6 +11,28 @@ the drafts in Obsidian and ticks the ones to accept. The harvest request is the
 consent for exactly those rows; do not repeat the selection in chat.
 
 Match the owner's language. Keep commands, ids and raw errors unchanged.
+
+## Look up before admitting
+
+Knowledge admitted after the compile run may already record a ticked draft or
+define one of its pending terms. For each ticked draft whose file exists, run
+`kgd resolve "LABEL" "ALIAS" ...` and `kgd search "LABEL OR DEFINING PHRASE"`,
+compare meanings and apply the knowledge model's conflict rules ("Conflicts,
+updates and relocation"):
+
+- **unchanged**: a record now holds this knowledge point with the same
+  meaning. Delete the draft; harvest skips its row.
+- **superseding**: the draft's definition is more general than the recorded
+  one or corrects it, and the recorded one does not explicitly rule it out.
+  Overwrite the record from the draft by the update or relocation procedure,
+  keeping its id and `understanding`, then delete the draft.
+- **conflicting**: any other changed meaning, a narrower definition
+  included. Stop before harvesting, show the owner both definitions with their
+  source lines and ask which stands.
+
+Also run `kgd resolve` on the ticked drafts' pending terms, and edit each one
+that a record now defines into a link that keeps its wording. Use an editing
+tool that refuses stale reads.
 
 ## Run
 
@@ -45,12 +67,15 @@ uses that mean the created record's definition; a homonym stays pending. Edit
 each kept value in place into a link that keeps the source's wording,
 `"[[id|wording]]"` within the base or `"[[base:id|wording]]"` across bases,
 with an editing tool that refuses stale reads, then run `kgd check --base B`
-for every base you edited.
+for every base you edited. Regenerate with `kgd sheet SOURCE` the existing
+sheet of every other source whose records you edited here or before
+admitting.
 
 ## Maintain topic navigation
 
 After a successful non-dry-run harvest with created UIDs, invoke
-`$organize-kgdistiller` for those accepted UIDs. Routine semantic navigation
+`$organize-kgdistiller` for those accepted UIDs and any record the lookup
+overwrote. Routine semantic navigation
 creation and growth reorganization are part of ingestion and need no second
 review. This phase writes only navigation records and their registered
 agent-authored guide; scientific content, UIDs, evidence and understanding
@@ -71,8 +96,10 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
 
 - Never re-extract the scientific source, regenerate scientific draft content
   or add scientific drafts; the reviewed drafts on disk are what gets accepted.
-  Linking pending uses edits only the values it links, and the following
-  organization phase may create navigation drafts only.
+  The lookup before admitting only deletes drafts whose knowledge is already
+  recorded, overwrites a record from a superseding draft and links pending
+  terms. Linking pending uses edits only the values it links, and the
+  following organization phase may create navigation drafts only.
 - A checkbox means "selected for acceptance", never "understood". Do not touch
   `understanding`; report `understanding_set` as returned.
 - A receipt with `aborted` names a target that appeared meanwhile; rerunning
@@ -81,6 +108,8 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
 
 ## Report
 
-Return the created uids, `understanding_set`, the regenerated sheet path, the
-pending uses you linked and the `index` result (`embedded`, `unembedded`,
+Return the drafts settled before admission (deleted as unchanged, or
+overwriting a record, with its uid) and any conflict put to the owner, the
+created uids, `understanding_set`, the regenerated sheet path, the pending
+uses you linked and the `index` result (`embedded`, `unembedded`,
 `truncated`, `embedding_error`), or the refused rows with their messages.
