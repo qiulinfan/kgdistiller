@@ -146,18 +146,11 @@ and compilation read the assigned profile before extraction; file extensions
 do not select a policy. The engine validates the declared kinds and roles.
 
 Optional editable profiles are supplied in
-`templates/document-types/{math-notes,ai-research,cs-notes,navigation}.md`, also bundled
+`templates/document-types/{math-notes,ai-research,cs-notes}.md`, also bundled
 under `kgdistiller/product/templates/document-types/` in the installed package.
 Copy a selected profile into the home's `types/`, review and edit it, and map
 the relevant source globs to its file stem. Neither installation nor
 `kgd base add` activates these templates or overwrites the owner's profiles.
-
-After authorized scientific capture/harvest, `organize-kgdistiller` activates
-the finite navigation profile if needed and registers its ordinary generated
-guide in the affected base. The guide is visible UTF-8 text outside
-`.knowledge/`; its automatic classification is attributed to the agent,
-not to the research articles. No topic list or fixed hierarchy is configured
-by hand. This opt-in Skill registration is separate from install/base-add.
 
 A type file `types/<name>.md` has a slug stem, YAML frontmatter read with
 PyYAML's `BaseLoader` and a non-empty body, the extraction guidance:
@@ -174,10 +167,8 @@ Write the guidance an agent follows when extracting knowledge from these
 documents.
 ```
 
-`node_kinds` is required; `relation_kinds`, `epistemic` and finite `navigation`
-role conventions are optional (see [model.md](model.md)). Edit scientific
-`sources` and extraction types by hand; the authorized organization Skill
-registers its own generated guide and navigation type. `kgd check` validates the result, and
+`node_kinds` is required; `relation_kinds` and `epistemic` are optional. Edit
+`sources` and the types by hand; `kgd check` validates the result, and
 `kgd sheet SOURCE --json` shows the profile a source resolves to. Sources are
 UTF-8 text documents of any format; kgdistiller reads them as numbered lines
 and never parses or converts them.

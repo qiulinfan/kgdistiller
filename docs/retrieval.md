@@ -2,7 +2,7 @@
 
 Every read goes through one derived database, `$KGDISTILLER_HOME/index.sqlite`.
 `kgd index` is its only writer; `search`, `resolve`, `get`, `neighbors`,
-`browse`, `navigate`, `pack` and the MCP server read it. The database is a pure function of `config.json`, the
+`browse`, `pack` and the MCP server read it. The database is a pure function of `config.json`, the
 `entries/*.md` files of the registered, available bases ([model.md](model.md))
 and the embedding model named by `config.json`: it may lag behind the files,
 and every read reports that lag, but it never differs from what a rebuild would
@@ -93,9 +93,7 @@ no pending table (pending gaps are `link` rows with `term`) and no
 document-type column, so editing `types/` never forces re-indexing. `kgd
 index`, the reads and `kgd base list` load `config.json` only: a malformed
 type file fails `check`, `sheet`, `accept` and `harvest`, never the index or
-the six existing retrieval primitives. `navigate` additionally loads type
-and source-glob metadata for the explicitly declared organization projection;
-a malformed profile can fail that view without disabling global retrieval.
+retrieval.
 
 ## Unified text
 
@@ -510,54 +508,6 @@ least 1 and `--requires-depth` at least 0.
 
 Packing `notes:radon-nikodym-theorem` and `notes:hahn-decomposition-theorem`
 instead packs both nodes and appends that relation as shared, with no gaps.
-
-## `kgd navigate [UID ...] [--base B]... [--limit 40] [--offset 0]`
-
-This CLI read discovers semantic topic entrances and projects one logical hop
-through independent role-bound organization records. The profile's optional
-`navigation` mapping declares the topic kind, organization kind and its parent
-and child roles. Names and membership are user data compiled by the
-organization Skill; `navigate` infers no topics and merges no identities.
-It reads those home metadata conventions, and all record bodies/links from
-one read-only database snapshot. It reads no source text and changes nothing.
-
-Without UIDs, `records` lists roots. With UIDs it lists direct children of
-those topics, deduplicated by full UID, with topics first and UID order within
-each class. Each entry contains the usual summary (`uid`, `base`, `source`,
-`lines`, `label`, `kind`, `class`, `gloss`) plus `navigation` (`topic`, `leaf`
-or `organization`), `child_count` and `parent_count`. The `gloss` is the
-existing first-sentence projection, so the Skill places its routing decision
-first. Children can be subtopics or accepted scientific nodes/relations from
-another registered base. They preserve the same UID along every parent path.
-The semantic hop is a role projection, not unrestricted two-hop neighbors.
-
-`starts` summarizes requested UIDs, `missing` names unknown requests, and
-`outside_scope` lists known requests excluded by `--base`. A scoped view
-treats a topic with only out-of-scope parents as a root. `page` has `offset`,
-`limit`, `total` and `next_offset`; `records` is capped to the selected page.
-`relations` supplies capped top-level summaries of organization records used
-for that page, `edges` supplies capped `{parent, child, relation}` pointers,
-and `truncated` counts their omitted items. An edge pointer alone is not a
-delivered scientific record. `profiles` discovers the per-source conventions.
-
-`diagnostics` gives totals and bounded examples for dangling participants,
-malformed roles, empty topics, uncovered scientific leaves and cycle
-residuals (members of cycles plus downstream topics that cannot be
-topologically removed). Traversal has no fixed topic-depth assumption and
-deduplicates shared children; scientific graph cycles are unaffected.
-`lag` retains the usual contract. Navigation is recoverable from current
-registered profiles and accepted files after database rebuild. A record with
-stale evidence is still returned. An incomplete guide does not hide records
-from global lexical/dense/name search.
-
-The CLI-first query Skill chooses useful root summaries, expands relevant
-branches, follows scientific links and supplements with global search. It
-does not reorganize the directory at query time. Exact names can start with
-resolve/search. Generated topics are navigation judgments, not scientific
-claim evidence. Benchmark results remain final scientific UID lists under
-the frozen gold protocol below; intermediate topic/edge hits do not replace
-leaf hits. The CLI has no resident encoder session: dense process-cold cost
-must not be presented as a warm query cost.
 
 ## MCP server: `kgd mcp`
 

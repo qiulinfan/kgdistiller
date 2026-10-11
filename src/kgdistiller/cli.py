@@ -162,12 +162,6 @@ def parse_args() -> argparse.Namespace:
     )
     browse.add_argument("handle", nargs="?", metavar="HANDLE", help="base, base:dir/ or base:path/file")
 
-    navigate = commands.add_parser("navigate", help="discover topic entrances or project direct children by declared navigation roles")
-    navigate.add_argument("uids", nargs="*", metavar="UID", help="omit for roots; otherwise expand topics without following scientific links")
-    navigate.add_argument("--base", action="append", default=[], metavar="B", help="scope the view to a registered base (repeatable)")
-    navigate.add_argument("--limit", type=_positive, default=40)
-    navigate.add_argument("--offset", type=_non_negative, default=0)
-
     pack = commands.add_parser(
         "pack", parents=[filters], help="pack whole records within a byte budget, with shared relations and typed gaps"
     )
@@ -357,10 +351,6 @@ def _command(args: argparse.Namespace) -> int:
         from .retrieve import browse
 
         return _print(browse(args.handle, filters=_filters(args)))
-    if args.command == "navigate":
-        from .navigation import navigate
-
-        return _print(navigate(args.uids, bases=args.base, limit=args.limit, offset=args.offset))
     if args.command == "pack":
         from .retrieve import pack
 

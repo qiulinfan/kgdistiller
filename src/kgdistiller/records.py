@@ -588,15 +588,6 @@ def _dangling(files: Files, value: Value) -> str:
     return message
 
 
-def _guide(files: Files, name: str, source: str) -> bool:
-    """Whether a source is a navigation guide: its document type declares navigation conventions."""
-    base = files.home.bases.get(name)
-    if base is None or not files.available(name):
-        return False
-    type_name = files.sources(base)[0].get(source)
-    return type_name is not None and files.home.types[type_name].navigation is not None
-
-
 def record_problems(
     files: Files, record: Record, *, draft: bool, linkable_drafts: Iterable[str] = ()
 ) -> tuple[list[tuple[str, str]], tuple[str, Ranges | None] | None]:
@@ -656,7 +647,6 @@ def record_problems(
             allowed = ", ".join(document_type.epistemic) or "no epistemic values"
             problems.append(("kind", f"epistemic {record.epistemic!r} is not allowed by {document_type.name} ({allowed})"))
     linkable = set(linkable_drafts)
-    scientific = not _guide(files, record.base, record.source)
     for role, position, value in record.values():
         if value.uid is None:
             continue
@@ -670,12 +660,7 @@ def record_problems(
         elif not files.available(target_base):
             problems.append(("link", f"{where} links base {target_base}, which is unavailable"))
         elif target in files.ids(target_base, ENTRIES) or (target_base == record.base and target in linkable):
-            found = files.record(target_base, ENTRIES, target) or files.record(target_base, DRAFTS, target)
-            if scientific and found is not None and _guide(files, target_base, found.source):
-                problems.append(("link", (
-                    f"{where} links [[{target}]], a navigation record; scientific records never link to "
-                    "topics or organization relations"
-                )))
+            continue
         elif target in files.ids(target_base, DRAFTS):
             if target_base != record.base:
                 problems.append(("link", f"{where} links a draft of base {target_base}; foreign links must target accepted records"))

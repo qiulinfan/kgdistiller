@@ -29,8 +29,6 @@ def type_document(spec: dict[str, Any]) -> str:
         lines.append(f"relation_kinds: {json.dumps(spec['relation_kinds'])}")
     if "epistemic" in spec:
         lines.append(f"epistemic: {json.dumps(spec['epistemic'])}")
-    if "navigation" in spec:
-        lines.append(f"navigation: {json.dumps(spec['navigation'])}")
     lines += ["---", "", spec.get("guidance", "Fixture guidance."), ""]
     return "\n".join(lines)
 

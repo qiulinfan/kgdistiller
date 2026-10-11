@@ -152,16 +152,12 @@ that already has a sheet and whose records step 5 edited, deleted or
 relocated, so no sheet shows a superseded state. Delete the sheet of a source
 file that no longer exists; nothing can regenerate it.
 
-## 8. Organize and index
+## 8. Index
 
-When step 5 changed or deleted accepted records, invoke
-`$organize-kgdistiller` with those UIDs, so navigation routes follow the
-changes and routes to deleted records retire. Finish with `kgd index`.
+Finish with `kgd index`.
 
 The owner then reviews the drafts in Obsidian, ticks the rows to accept and
-runs `$harvest-kgdistiller` (or `kgd accept` on chosen drafts). The harvest
-workflow organizes the records it admits; do not route unaccepted drafts or
-create a manual topic catalog here.
+runs `$harvest-kgdistiller` (or `kgd accept` on chosen drafts).
 
 ## 9. Report
 

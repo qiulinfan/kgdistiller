@@ -8,14 +8,11 @@ First read the installed kgdistiller product manifest at
 `workflow-products/kgdistiller/workflows/claude-manifest.json` under the Claude
 Code home directory (`$CLAUDE_CONFIG_DIR` when set, otherwise `.claude` in the
 user profile) and resolve its `workflow_guide` relative to that canonical
-product root. Use the `query-kgdistiller` Skill through the public CLI `kgd navigate`,
-`kgd search`, `kgd resolve`, `kgd get [--source-lines N]`, `kgd neighbors`,
-`kgd browse` and `kgd pack`, covering every registered base. For broad
-questions discover topic entrances and read summaries, then descend declared
-organization roles. Preserve full leaf UIDs along multiple paths. Supplement
-with global lexical/dense/name search and scientific graph links; topics are
-routing judgments, not research claims. The existing read-only MCP tools
-remain optional when the caller selects that transport. Knowledge is records: nodes, and
+product root. Use the `query-kgdistiller` Skill through the read-only MCP tools
+`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and
+`kg_pack`, or the public CLI `kgd search`, `kgd resolve`,
+`kgd get [--source-lines N]`, `kgd neighbors`, `kgd browse` and `kgd pack`,
+all of which cover every registered base. Knowledge is records: nodes, and
 relations that bind records to named roles; applications are relations too,
 and pending terms are unlinked values. `search` fuses lexical, dense and name
 lanes; when it reports the retrieval extra missing, repeat it with

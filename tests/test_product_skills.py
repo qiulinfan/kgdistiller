@@ -18,7 +18,7 @@ from kgdistiller.mcp import TOOL_SCHEMAS
 from tests.test_cli import COMMANDS
 
 ROOT = Path(__file__).resolve().parents[1]
-WRITING_SKILLS = ("capture-kgdistiller", "compile-knowledge-sheets", "harvest-kgdistiller", "organize-kgdistiller")
+WRITING_SKILLS = ("capture-kgdistiller", "compile-knowledge-sheets", "harvest-kgdistiller")
 CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
 COMMAND_RE = re.compile(r"(?<![\w/.-])(?:kgd|kgdistiller)[ ]+([a-z][a-z-]*)")
 TOOL_RE = re.compile(r"\bkg_[a-z_]+\b")
@@ -87,7 +87,7 @@ class ProductSkillTests(unittest.TestCase):
                 self.assertLessEqual(set(TOOL_RE.findall(text)), set(TOOL_SCHEMAS))
         self.assertEqual(
             {"capture-kgdistiller", "compile-knowledge-sheets", "deploy-kgdistiller",
-             "harvest-kgdistiller", "organize-kgdistiller", "query-kgdistiller"},
+             "harvest-kgdistiller", "query-kgdistiller"},
             {path.parent.name for path in (ROOT / "skills").glob("*/SKILL.md")},
         )
 
@@ -116,7 +116,6 @@ class ProductSkillTests(unittest.TestCase):
             "compile-knowledge-sheets": [("compile-knowledge-sheets", None, "write")],
             "harvest-kgdistiller": [("harvest-kgdistiller", None, "write")],
             "query-knowledge": [("query-kgdistiller", "query-reviewer", "read-only")],
-            "organize-knowledge": [("organize-kgdistiller", None, "write")],
             "deploy-kgdistiller": [("deploy-kgdistiller", None, "write")],
         }
         for name in ("manifest.json", "claude-manifest.json"):

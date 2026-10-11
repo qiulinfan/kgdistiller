@@ -71,18 +71,6 @@ for every base you edited. Regenerate with `kgd sheet SOURCE` the existing
 sheet of every other source whose records you edited here or before
 admitting.
 
-## Maintain topic navigation
-
-After a successful non-dry-run harvest with created UIDs, invoke
-`$organize-kgdistiller` for those accepted UIDs and any record the lookup
-overwrote. Routine semantic navigation
-creation and growth reorganization are part of ingestion and need no second
-review. This phase writes only navigation records and their registered
-agent-authored guide; scientific content, UIDs, evidence and understanding
-are preserved. It verifies leaf coverage and finishes with `kgd index`.
-An organization failure leaves harvested knowledge accepted: report the
-separate state and finish with `kgd index`.
-
 ## On refusal
 
 A refusal prints `{"refused": [{"path", "message"}]}`, exits 1 and changes
@@ -98,8 +86,7 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
   or add scientific drafts; the reviewed drafts on disk are what gets accepted.
   The lookup before admitting only deletes drafts whose knowledge is already
   recorded, overwrites a record from a superseding draft and links pending
-  terms. Linking pending uses edits only the values it links, and the
-  following organization phase may create navigation drafts only.
+  terms. Linking pending uses edits only the values it links.
 - A checkbox means "selected for acceptance", never "understood". Do not touch
   `understanding`; report `understanding_set` as returned.
 - A receipt with `aborted` names a target that appeared meanwhile; rerunning

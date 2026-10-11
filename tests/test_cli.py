@@ -16,7 +16,7 @@ from tests.knowledge_fixture import make_record_home, type_document, use_tempora
 
 COMMANDS = {
     "base", "check", "sheet", "accept", "harvest", "index", "search", "resolve", "get",
-    "neighbors", "browse", "navigate", "pack", "obsidian", "claude", "codex", "mcp",
+    "neighbors", "browse", "pack", "obsidian", "claude", "codex", "mcp",
 }
 SOURCE = "Chapter one\nA measure space is a triple (X, F, mu).\nA measure is countably additive.\n测度论研究可测空间。\n"
 

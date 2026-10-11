@@ -335,7 +335,6 @@ def sheet_json(source: Path | str) -> dict[str, Any]:
         "relation_kinds": {kind: list(roles) for kind, roles in document_type.relation_kinds.items()},
         "epistemic": list(document_type.epistemic),
         "guidance": document_type.guidance,
-        **({"navigation": document_type.navigation} if document_type.navigation is not None else {}),
         "line_count": len(source_lines(base.root / relative)),
         "records": [{
             "uid": record.uid,

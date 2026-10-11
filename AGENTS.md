@@ -49,22 +49,15 @@
   truncated. The product never re-serializes frontmatter; `--fix-lines`
   rewrites only the `lines:` line.
 - Every Skill that writes knowledge finishes with `kgd index`.
-- Automatic semantic navigation is authored by `organize-kgdistiller`, after
-  scientific admission, with optional type `navigation` role conventions.
-  Topics and organization relations remain ordinary records citing a
-  registered agent-authored UTF-8 guide outside `.knowledge/`. Do not
-  attribute generated classification to papers or add a catalog store.
-  Routine split/merge/reparent/retirement preserves scientific bytes/UIDs and
-  owner corrections. `kgd navigate` projects declared roles read-only; the
-  CLI-first query Skill also retains global lexical/dense/name retrieval.
-  `kgd index` never invokes a semantic model or generates a directory.
+- There is no topic navigation or other generated directory: the 2026-10-11
+  ablation found it gave retrieval no measurable benefit. `kgd index` never
+  invokes a semantic model.
 - A record asserts only what its cited text states: a relation citing a paper
   or note quotes text stating that relation, and a connection no source states
   is reported, never written. Each concept has one record, owned by the source
   that defines or originates it; a source that only uses a concept, even one
   it explains, records a pending term, global across bases, until the defining
-  record exists, and then links it. No record stands in for a missing source,
-  and scientific records never link to navigation records.
+  record exists, and then links it. No record stands in for a missing source.
 - Conflicts follow the owner's verbatim statements in docs/model.md
   "Conflicts, updates and relocation". Every admission first looks the
   knowledge point up in every base, pending uses included, and a term is
@@ -103,7 +96,7 @@
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain: `$KGDISTILLER_HOME/types/<name>.md`, whose
   frontmatter (read with PyYAML `BaseLoader`) has `node_kinds` and optional
-  `relation_kinds`/`epistemic`/finite `navigation` role conventions, and whose body is the guidance. A base's sources
+  `relation_kinds`/`epistemic`, and whose body is the guidance. A base's sources
   are its `sources` glob→type map; each source has exactly one type. Do not
   hardcode the owner's example types. `templates/document-types/` holds
   optional editable starting profiles; they are bundled as data, never

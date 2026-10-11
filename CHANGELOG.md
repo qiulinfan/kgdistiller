@@ -2,6 +2,18 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+- Remove topic navigation: the `organize-kgdistiller` Skill with its helper
+  and proposal reference, the `navigation` document-type template and type
+  key, `kgd navigate`, and the `check` rule against links to navigation
+  records. The 2026-10-11 ablation on 1.0.1 found that navigation gave
+  retrieval no measurable benefit while being one of the costliest steps of
+  building a knowledge base. A home whose types declare `navigation`, or whose
+  bases hold topic or organization records and their guide, deletes them
+  before upgrading. Copy-mode agent installations need `kgd claude link` or
+  `kgd codex link` again, which removes the installed `organize-kgdistiller`.
+
 ## 1.0.1 — 2026-10-11
 
 The Python core and the Obsidian plugin both move to 1.0.1. This release
