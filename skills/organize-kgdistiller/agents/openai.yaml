@@ -1,0 +1,4 @@
+interface:
+  display_name: "Organize Knowledge"
+  short_description: "Maintain topic routes over accepted knowledge"
+  default_prompt: "Use $organize-kgdistiller to organize accepted knowledge into useful topic entrances and maintain their summaries and shared UID routes as the corpus grows."

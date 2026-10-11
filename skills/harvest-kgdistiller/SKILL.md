@@ -36,6 +36,17 @@ set embedding to null`, the harvest and
 the lexical index are committed and only the vectors are missing: report that
 message to the owner and do not edit `config.json`.
 
+## Maintain topic navigation
+
+After a successful non-dry-run harvest with created UIDs, invoke
+`$organize-kgdistiller` for those accepted UIDs. Routine semantic navigation
+creation and growth reorganization are part of ingestion and need no second
+review. This phase writes only navigation records and their registered
+agent-authored guide; scientific content, UIDs, evidence and understanding
+are preserved. It verifies leaf coverage and finishes with `kgd index`.
+An organization failure leaves harvested knowledge accepted: report the
+separate state and finish with `kgd index`.
+
 ## On refusal
 
 A refusal prints `{"refused": [{"path", "message"}]}`, exits 1 and changes
@@ -47,8 +58,9 @@ fix to the owner or apply only the edit the owner asks for, then harvest again.
 
 ## Boundaries
 
-- Never re-extract the source, regenerate draft content or write new drafts;
-  the drafts as they are on disk are what gets accepted.
+- Never re-extract the scientific source, regenerate scientific draft content
+  or add scientific drafts; the reviewed drafts on disk are what gets accepted.
+  The following organization phase may create navigation drafts only.
 - A checkbox means "selected for acceptance", never "understood". Do not touch
   `understanding`; report `understanding_set` as returned.
 - A receipt with `aborted` names a target that appeared meanwhile; rerunning

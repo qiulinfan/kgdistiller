@@ -98,6 +98,10 @@ drafts that still exist.
 
 Stop here. The owner reviews the drafts in Obsidian, ticks the rows to accept
 and runs `$harvest-kgdistiller` (or `kgd accept` on chosen drafts).
+Finish with `kgd index` even though scientific drafts are not indexed.
+After admission, the harvest/capture workflow automatically runs
+`$organize-kgdistiller` to maintain topic navigation over accepted records;
+do not route unaccepted drafts or create a manual topic catalog here.
 
 Report the scope and actual coverage, the drafts written, reused records,
 ambiguous candidates left out, and the sheet path. List separately every

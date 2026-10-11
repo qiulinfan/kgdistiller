@@ -8,6 +8,14 @@ All notable changes are documented here.
   starter templates. The owner selects, edits and registers them; installation
   and base registration activate no default types. Document the research
   knowledge selection policy and source-context reading in both READMEs.
+- Add agent-authored topic navigation. The `organize-kgdistiller` Skill
+  compiles a multi-parent topic DAG with routing summaries over accepted
+  knowledge, as ordinary topic and organization records citing a registered
+  agent-authored guide, and splits, merges, reparents or retires topics as the
+  corpus grows while preserving scientific records and owner corrections. A
+  document type may declare finite `navigation` role conventions; `kgd navigate`
+  discovers root topics and projects direct children read-only. Retrieval
+  evaluation is specified as deterministic recall of frozen gold record uids.
 
 ## 1.0.0 — 2026-10-10
 

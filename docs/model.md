@@ -37,7 +37,9 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    no default embedding model.
 6. **Files decide validity; the database serves retrieval.** Validation and
    writes read files only. Retrieval reads the database only, except
-   `get --source-lines`, which reads live source text on request.
+   `get --source-lines`, which reads live source text on request. `navigate`
+   also reads home type/glob metadata to select organization roles; its
+   knowledge records and links still come from the read-only database.
 7. **The database may lag, never differ.** It is a pure function of
    `config.json`, the `entries/` files of the registered, available bases and
    the embedding model. An incremental index produces the same rows as a
@@ -66,7 +68,7 @@ second paragraph store or source-format parser is needed for this connection.
 | Home | `$KGDISTILLER_HOME` (default `~/.knowledge`): base registry, source→type globs, document types, embedding model id, the database and the lock. |
 | Base | A registered directory, normally one Obsidian vault, holding its own knowledge under `.knowledge/`. Its name is a slug that exists only in `config.json`. |
 | Source | A file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines. It has exactly one document type. |
-| Document type | `types/<name>.md`: `node_kinds`, `relation_kinds` (each kind with ordered roles) and an optional `epistemic` list; the body is the extraction guidance. |
+| Document type | `types/<name>.md`: `node_kinds`, `relation_kinds` (each kind with ordered roles), optional `epistemic` and optional finite `navigation` role conventions; the body is guidance. |
 | Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. |
 | Node | A record with no non-empty role property: a noun-like concept or an important, precisely stated result. Its kind is a node kind. |
 | Relation | A record with at least one non-empty role property. Its kind is a relation kind and its role keys are that kind's roles. Arity is unbounded; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
@@ -122,8 +124,59 @@ A type file's stem matches `^[a-z0-9][a-z0-9-]*$`. Its frontmatter, read with
 PyYAML `BaseLoader`, has only `node_kinds` (required, non-empty, unique slugs),
 `relation_kinds` (kind slug → non-empty list of unique role slugs matching
 `^[a-z][a-z0-9-]*$`, never a fixed key) and `epistemic` (unique slugs; without
-it records of this type may not carry `epistemic`). No kind is both a node kind
+it records of this type may not carry `epistemic`), plus optional `navigation`.
+That mapping has exactly `topic_kind`, `relation_kind`, `parent_role` and
+`child_role`: the topic is a declared node kind and the relation declares
+exactly the two distinct named roles. This finite convention carries no topic
+names, depth, branching or membership. No kind is both a node kind
 and a relation kind. The body, the guidance, is non-empty.
+
+## Agent-authored topic navigation
+
+The organization Skill compiles a semantic DAG over accepted knowledge:
+topic → subtopic → concept/method/result, with as many levels/branches as
+useful and multiple paths to the same scientific UID. Topic nodes and
+organization relations use the ordinary format and the profile's declared
+kinds/roles. Scientific relations remain independent retrievable records;
+organization never means implication. Short topic prose supplies the existing
+read-time `gloss`; there is no new summary property or catalog file.
+
+The finite optional `templates/document-types/navigation.md` is activated
+only by an authorized `organize-kgdistiller` invocation, normally following
+capture/harvest. The Skill registers a visible UTF-8 guide inside the selected
+base, outside `.knowledge/`, in its existing source map. The guide names the
+agent's navigation decisions and explicitly disclaims attribution to research
+sources. Navigation records cite its lines and quote those decisions. Free
+classification must never use a paper's unrelated quote as supposed evidence
+that the paper stated that classification. The product never parses this
+guide's syntax or uses it as a second directory; current records and role
+links are the authority for the navigation view.
+
+On corpus/citation growth the Skill chooses local changes first and may
+split, merge, reparent, add shared entrances or retire obsolete navigation.
+It can reorganize globally when needed. Routine navigation changes are part
+of ingestion consent, not another scientific-admission review. Scientific
+records, UIDs, evidence, understanding and links remain byte-identical.
+New navigation objects still go through drafts plus `kgd accept`. The Skill's
+helper compares exact previous text and corpus file stat under the home lock
+for in-place navigation edits/retirement, checks record validity, DAG and
+coverage, then runs `kgd check` and `kgd index`. These authoring operations
+live in the Skill, not in `index`; they invoke no model in the core.
+
+The helper protects navigation records whose current bytes/evidence differ
+from its authored form, preserving owner corrections and additional prose.
+It refuses scientific/foreign-source edits and retirement that breaks incoming
+links. Unchanged upserts keep their bytes and evidence lines. Its ephemeral
+context/proposal JSON stays outside the home and `.knowledge/`; there are no
+new manifests, plans, identity or navigation stores. Appended guide passages
+explain revisions while existing passages stay unchanged. An interrupted
+multi-phase operation may leave prepared drafts and guide text; report the
+completed phase and resume through the normal write/check/index path, never
+overwrite a concurrent owner edit. There is no hidden atomic multi-file swap.
+
+`navigate` reports invalid projections and uncovered scientific leaves.
+Incomplete navigation never hides knowledge from global search. Scope and
+identity use full base-qualified UIDs, without name-based merging.
 
 ## Record format
 

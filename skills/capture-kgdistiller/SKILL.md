@@ -102,7 +102,19 @@ includes `embedded`, `unembedded`, `truncated`, `embedding_error` and
 committed and only the vectors are missing: report that message to the owner
 and do not edit `config.json`.
 
-## 7. Report
+## 7. Maintain topic navigation
+
+After successful acceptance or an accepted-record edit, invoke
+`$organize-kgdistiller` with the changed accepted UIDs. This authorized ingestion
+phase generates/updates useful topic routes and summaries, locally first and
+globally when needed. It may split, merge, reparent or retire navigation
+records without another selection round; it preserves scientific records,
+their understanding and evidence. The organization Skill registers its own
+agent-authored guide, verifies coverage and ends with `kgd index`. A refusal
+or navigation failure does not undo the captured scientific record; report
+both states and finish with `kgd index`.
+
+## 8. Report
 
 Return the uid(s), the accept receipt (`created`, `understanding_set`) or the
 `check` result for an in-place edit, the pending terms recorded, and the

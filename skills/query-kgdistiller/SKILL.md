@@ -1,6 +1,6 @@
 ---
 name: query-kgdistiller
-description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must search records across every registered base, resolve names to their senses, mentions and pending uses, read complete records with their links and cited source lines, follow dependency and claim links, browse bases, source trees and kinds, pack budgeted evidence with its gaps, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
+description: Query a kgdistiller external-brain knowledge base through the CLI, discover semantic topic entrances and summaries, descend organization roles, and supplement with global lexical/dense/name search and scientific graph links. Use to recall concepts, methods or results, read source-backed records, resolve names, pack evidence, or classify candidate identity before authoring; preserve base-qualified senses and report gaps.
 ---
 
 # Query kgdistiller
@@ -34,21 +34,24 @@ filtered, and reports `lag`.
 
 ## Tools
 
-Recommended order: `search` for candidates, then `browse` or `resolve` to see
-the source tree and every sense of a name, `neighbors` to follow dependency
-and claim links, `get` to read complete records, and `pack` to deliver
-budgeted evidence with its gaps.
+Use the public CLI by default. For broad or descriptive questions discover
+topic entrances with `navigate`, read their short routing summaries and
+expand selected topics one semantic hop at a time. Keep useful alternative
+branches when the question spans domains. For precise names `resolve` or
+`search` can be the first step. Supplement navigation with global `search`
+and scientific `neighbors`; a route not chosen is not proof that its knowledge
+is irrelevant or absent. `get` reads full records and `pack` delivers bounded
+evidence. Do not build a new hierarchy at query time.
 
-Use the MCP tools of `kgd mcp` when they are available: `kg_search`,
-`kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and `kg_pack`. The server
-is read-only, serves the whole home and opens a fresh connection per call.
-Prefer it for repeated queries: it keeps the embedding model resident after
-the first search, while every cold CLI `kgd search` loads the model again
-(several seconds with `BAAI/bge-m3` on Apple silicon). Otherwise use the CLI;
-both print the same JSON.
+The existing MCP tools `kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`,
+`kg_browse` and `kg_pack` remain available when explicitly selected by the
+caller. The CLI is the ingestion/retrieval experiment path. Each cold CLI
+dense search loads the configured encoder; record that cost rather than
+claiming it is a resident MCP or warm CLI query.
 
 ```sh
 kgd search "QUESTION OR TERMS" [--limit 40] [--no-dense] [filters]
+kgd navigate [UID ...] [--base B]... [--limit 40] [--offset 0]
 kgd resolve "TERM" ... [filters]
 kgd get UID ... [--source-lines N]
 kgd neighbors UID ... [--role R]... [--dir out|in|both] [--depth N] [filters]
@@ -56,11 +59,32 @@ kgd browse [HANDLE] [filters]
 kgd pack UID ... [--budget BYTES] [--requires-depth N] [filters]
 ```
 
-Every command but `get` takes the filters, repeatable with OR within one
+Every command but `get` and `navigate` takes the filters, repeatable with OR within one
 filter and AND across filters: `--base B`, `--kind K`,
 `--class node|relation`, `--source PREFIX` (a base-relative path prefix, such
 as one paper's folder) and
 `--understanding unknown|not-yet-understood|understood`.
+
+**navigate** with no UID discovers root topics across every registered base.
+`records` contains bounded summaries with `uid`, `navigation` (`topic` or
+`leaf`), `gloss`, `child_count` and `parent_count`. Choose useful summaries,
+then `navigate TOPIC_UID` returns direct subtopics/scientific leaves, projected
+only from the profile's declared organization parent/child roles. `profiles`
+discovers those conventions; no handwritten topic names or fixed levels are
+needed. `page.next_offset` continues a page. Multiple paths reach the same
+base-qualified leaf UID; deduplicate it without merging same-named senses.
+Cross-base children remain visible unless a `--base` filter excludes them.
+`relations` gives the actual organization records used, `edges` are pointers
+and `diagnostics` reports cycles, dangling links and uncovered knowledge.
+
+Topics and organization summaries are explicitly agent-authored navigation
+judgments with a registered guide as their source. They help find scientific
+records; they do not establish research claims or replace a target leaf UID.
+Use scientific relations for entailment and dependencies after locating the
+leaf. Do not treat unrestricted two-hop `neighbors` (including siblings and
+parents) as a hierarchy expansion. If navigation is absent, incomplete or
+unavailable, continue global lexical/dense/name retrieval and report the gap.
+Never reorganize the directory from this read-only Skill.
 
 **search** ranks records by three lanes fused with reciprocal rank fusion:
 
@@ -144,6 +168,11 @@ Answer from returned records, citing each as `source:lines` with its uid and
 the relevant evidence quote; use `get --source-lines N` when the answer needs
 the surrounding source text. A record whose evidence `kgd check` reports as
 stale is still returned; say so when the answer depends on the cited passage.
+When the caller asks to locate records only, deliver a bounded ordered list
+of scientific UIDs observed as top-level tool records/results. A pointer in
+an edge or a topic hit alone is not a returned scientific record. Respect the
+caller’s result, time and tool budgets; do not load every branch merely to
+maximize intermediate coverage.
 
 ## Prerequisite lookup while reading
 

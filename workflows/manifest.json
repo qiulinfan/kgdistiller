@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-workflows-v1",
   "product": "kgdistiller",
-  "version": 3,
+  "version": 4,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -41,6 +41,10 @@
       "path": "skills/harvest-kgdistiller"
     },
     {
+      "name": "organize-kgdistiller",
+      "path": "skills/organize-kgdistiller"
+    },
+    {
       "name": "query-kgdistiller",
       "path": "skills/query-kgdistiller"
     }
@@ -55,7 +59,7 @@
   "workflows": [
     {
       "id": "capture-knowledge",
-      "description": "Capture one selected item while reading as a source-backed record: write a draft citing its lines verbatim and accept it, or edit an existing record in place and check it, recording direct pending terms and only the owner's stated understanding, then index.",
+      "description": "Capture one selected source-backed scientific item as a checked accepted record, preserve stated understanding, then automatically maintain semantic topic routes and summaries and index.",
       "steps": [
         {
           "id": "capture",
@@ -79,7 +83,7 @@
     },
     {
       "id": "harvest-kgdistiller",
-      "description": "Accept the drafts the owner ticked in a source sheet with one kgd harvest call, report refused rows, then index.",
+      "description": "Accept exactly the scientific drafts ticked in a source sheet, then automatically organize the new accepted UIDs into useful topic routes and re-index; report admission and navigation separately.",
       "steps": [
         {
           "id": "harvest",
@@ -91,13 +95,25 @@
     },
     {
       "id": "query-knowledge",
-      "description": "Search, resolve, navigate, browse, pack and read records across every registered base read-only, deliver source:lines with evidence quotes, classify candidate identity, and refresh the derived index only when results report lag.",
+      "description": "Use the CLI read-only to discover topic entrances, read summaries and descend organization roles, supplement with global lexical/dense/name search and scientific graph links, and deliver bounded source-backed records or ordered scientific UIDs.",
       "steps": [
         {
           "id": "query",
           "skill": "query-kgdistiller",
           "agent": "query-reviewer",
           "mode": "read-only"
+        }
+      ]
+    },
+    {
+      "id": "organize-knowledge",
+      "description": "Compile and optimize semantic topic navigation over accepted knowledge: register an agent-authored guide, choose local/global split, merge, reparent and retirement, preserve scientific UIDs and owner corrections, check DAG and leaf coverage, and index.",
+      "steps": [
+        {
+          "id": "organize",
+          "skill": "organize-kgdistiller",
+          "agent": null,
+          "mode": "write"
         }
       ]
     },

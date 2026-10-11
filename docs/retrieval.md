@@ -2,7 +2,7 @@
 
 Every read goes through one derived database, `$KGDISTILLER_HOME/index.sqlite`.
 `kgd index` is its only writer; `search`, `resolve`, `get`, `neighbors`,
-`browse`, `pack` and the MCP server read it. The database is a pure function of `config.json`, the
+`browse`, `navigate`, `pack` and the MCP server read it. The database is a pure function of `config.json`, the
 `entries/*.md` files of the registered, available bases ([model.md](model.md))
 and the embedding model named by `config.json`: it may lag behind the files,
 and every read reports that lag, but it never differs from what a rebuild would
@@ -92,7 +92,9 @@ no pending table (pending gaps are `link` rows with `term`) and no
 document-type column, so editing `types/` never forces re-indexing. `kgd
 index`, the reads and `kgd base list` load `config.json` only: a malformed
 type file fails `check`, `sheet`, `accept` and `harvest`, never the index or
-retrieval.
+the six existing retrieval primitives. `navigate` additionally loads type
+and source-glob metadata for the explicitly declared organization projection;
+a malformed profile can fail that view without disabling global retrieval.
 
 ## Unified text
 
@@ -508,6 +510,54 @@ least 1 and `--requires-depth` at least 0.
 Packing `notes:radon-nikodym-theorem` and `notes:hahn-decomposition-theorem`
 instead packs both nodes and appends that relation as shared, with no gaps.
 
+## `kgd navigate [UID ...] [--base B]... [--limit 40] [--offset 0]`
+
+This CLI read discovers semantic topic entrances and projects one logical hop
+through independent role-bound organization records. The profile's optional
+`navigation` mapping declares the topic kind, organization kind and its parent
+and child roles. Names and membership are user data compiled by the
+organization Skill; `navigate` infers no topics and merges no identities.
+It reads those home metadata conventions, and all record bodies/links from
+one read-only database snapshot. It reads no source text and changes nothing.
+
+Without UIDs, `records` lists roots. With UIDs it lists direct children of
+those topics, deduplicated by full UID, with topics first and UID order within
+each class. Each entry contains the usual summary (`uid`, `base`, `source`,
+`lines`, `label`, `kind`, `class`, `gloss`) plus `navigation` (`topic`, `leaf`
+or `organization`), `child_count` and `parent_count`. The `gloss` is the
+existing first-sentence projection, so the Skill places its routing decision
+first. Children can be subtopics or accepted scientific nodes/relations from
+another registered base. They preserve the same UID along every parent path.
+The semantic hop is a role projection, not unrestricted two-hop neighbors.
+
+`starts` summarizes requested UIDs, `missing` names unknown requests, and
+`outside_scope` lists known requests excluded by `--base`. A scoped view
+treats a topic with only out-of-scope parents as a root. `page` has `offset`,
+`limit`, `total` and `next_offset`; `records` is capped to the selected page.
+`relations` supplies capped top-level summaries of organization records used
+for that page, `edges` supplies capped `{parent, child, relation}` pointers,
+and `truncated` counts their omitted items. An edge pointer alone is not a
+delivered scientific record. `profiles` discovers the per-source conventions.
+
+`diagnostics` gives totals and bounded examples for dangling participants,
+malformed roles, empty topics, uncovered scientific leaves and cycle
+residuals (members of cycles plus downstream topics that cannot be
+topologically removed). Traversal has no fixed topic-depth assumption and
+deduplicates shared children; scientific graph cycles are unaffected.
+`lag` retains the usual contract. Navigation is recoverable from current
+registered profiles and accepted files after database rebuild. A record with
+stale evidence is still returned. An incomplete guide does not hide records
+from global lexical/dense/name search.
+
+The CLI-first query Skill chooses useful root summaries, expands relevant
+branches, follows scientific links and supplements with global search. It
+does not reorganize the directory at query time. Exact names can start with
+resolve/search. Generated topics are navigation judgments, not scientific
+claim evidence. Benchmark results remain final scientific UID lists under
+the frozen gold protocol below; intermediate topic/edge hits do not replace
+leaf hits. The CLI has no resident encoder session: dense process-cold cost
+must not be presented as a warm query cost.
+
 ## MCP server: `kgd mcp`
 
 `kgd mcp` takes no arguments. It is a read-only stdio server over the whole
@@ -539,23 +589,47 @@ in place. There are no write tools; Skills write through the CLI.
 
 ## Evaluation
 
-The primary metric is complete-evidence task success: the fraction of declared
-tasks whose actual returned evidence jointly supports every necessary fact,
-condition, intended sense and source scope, without unsupported scientific
-assertions. Its ceiling is 100%, independent of a ranking cutoff. Check source
-availability and evidence-budget feasibility before freezing a benchmark. Keep
-failed tasks in the declared denominator; report unsupported requests,
-ambiguity and source limitations explicitly rather than dropping or
-relabelling cases after evaluation.
+Primary retrieval metrics are deterministic gold-record recall, Recall@1 and
+retrieval latency. Before running the benchmark, freeze the questions, scope,
+corpus, type profiles, complete golden record texts and each question's minimal
+complete set of required global uids. The gold mapping belongs to the evaluator
+and is not exposed to the retriever. Node and relation records are both valid
+gold units; same-named records in different bases remain different uids.
 
-Derive and freeze necessary facts and conditions from the question and
-original sources before inspecting the selected packet or system answer.
-Alternative witnesses satisfy the same requirement only when meaning,
-conditions, source scope, units and conventions agree. Record references,
-declared links and storage metadata do not establish scientific coverage or
-definition equivalence. Use development cases for iteration and keep heldout
-questions out of compilation and tuning. Report ranking, candidate coverage,
-packing gaps, answer correctness, latency and model cost separately.
+For a gold set G and an ordered result list R, deduplicate R in first-occurrence
+order. Recall@K is |G intersect R[:K]| / |G|; AllGold@K is 1 exactly when G is
+a subset of R[:K]. Report the cutoffs and average per question. Hit@1 reports
+whether the first result is a gold uid; it equals Recall@1 only on single-gold
+questions. Any acceptable alternative gold sets and their scoring rule must be
+declared before the freeze. Runtime scoring uses the frozen identities, not
+an LLM's judgment of the answer or additional source context. A nested link
+pointer does not count as returning its target record.
+
+Keep ingestion coverage separate from retrieval of existing records. A pure
+retrieval benchmark checks before execution that all gold records exist in
+the frozen corpus and allowed scope. An end-to-end benchmark keeps unextracted
+gold knowledge in its declared denominator and reports those ingestion misses
+separately. Knowledge selection and any source-supported alignment of generated
+records to ingestion gold are annotation work, not a new per-run retrieval
+judge. Valid format, matching names or stored links alone do not establish
+scientific identity or faithful extraction.
+
+Time retrieval from the query or process start to the returned ranked record
+list; report cold CLI, first dense MCP call and warm MCP separately. An agentic
+run returns a budgeted ordered uid list, with planning and tool calls included
+in its retrieval time. Score its final selection, and report intermediate
+candidate hits only as diagnostics. Generating a prose answer is a separate
+stage. A successful search is not a retrieval failure because later answer
+generation failed. Keep actual retrieval failures in the declared denominator
+and report timeouts, output cutoffs and tool/model budgets.
+
+Use development cases for iteration and keep heldout queries and gold mappings
+out of compilation and tuning. Gold annotated after inspecting old outcomes
+supports retrospective diagnostics, not a new heldout claim. Empty-gold
+controls, ambiguity, source limitations, packing gaps, scientific evidence
+quality, answer correctness and model cost are reported separately from
+positive-query recall. Model-based content reviews remain diagnostics rather
+than deterministic retrieval scores.
 
 Measurements behind the current design, from the design research on the
 40-paper benchmark library (222 questions, deterministic candidate recall):

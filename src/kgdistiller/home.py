@@ -36,7 +36,8 @@ FIXED_KEYS = frozenset({
 })
 CONFIG_KEYS = {"bases", "embedding"}
 BASE_KEYS = {"path", "sources"}
-TYPE_KEYS = {"node_kinds", "relation_kinds", "epistemic"}
+TYPE_KEYS = {"node_kinds", "relation_kinds", "epistemic", "navigation"}
+NAVIGATION_KEYS = {"topic_kind", "relation_kind", "parent_role", "child_role"}
 
 
 class KnowledgeError(RuntimeError):
@@ -91,6 +92,7 @@ class DocumentType:
     relation_kinds: dict[str, tuple[str, ...]]
     epistemic: tuple[str, ...]
     guidance: str
+    navigation: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -185,10 +187,22 @@ def load_type(path: Path) -> DocumentType:
         if fixed:
             raise KnowledgeError(f"{where}: role {fixed[0]!r} of {kind} is a fixed record key")
     epistemic = _slug_list(data.get("epistemic", []), f"{where}: epistemic", SLUG_RE, required=False)
+    navigation = data.get("navigation")
+    if "navigation" in data:
+        if not isinstance(navigation, dict) or set(navigation) != NAVIGATION_KEYS:
+            raise KnowledgeError(f"{where}: navigation must have exactly {', '.join(sorted(NAVIGATION_KEYS))}")
+        if any(not isinstance(value, str) for value in navigation.values()):
+            raise KnowledgeError(f"{where}: navigation values must be strings")
+        if navigation["topic_kind"] not in node_kinds:
+            raise KnowledgeError(f"{where}: navigation.topic_kind must name a node kind")
+        roles = relation_kinds.get(navigation["relation_kind"], ())
+        if (navigation["parent_role"] == navigation["child_role"]
+                or set(roles) != {navigation["parent_role"], navigation["child_role"]}):
+            raise KnowledgeError(f"{where}: navigation.relation_kind must declare exactly the two distinct navigation roles")
     guidance = "\n".join(lines[end + 1 :]).strip()
     if not guidance:
         raise KnowledgeError(f"{where}: the body (the extraction guidance) must not be empty")
-    return DocumentType(name, node_kinds, relation_kinds, epistemic, guidance)
+    return DocumentType(name, node_kinds, relation_kinds, epistemic, guidance, navigation)
 
 
 def _missing_home(home: Path) -> KnowledgeError:

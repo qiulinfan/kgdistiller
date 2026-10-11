@@ -201,6 +201,43 @@ def obsidian(runtime: Runtime, root: Path, outside: Path) -> None:
     runtime.text("obsidian", "install", cwd=outside, expect=1)
 
 
+def topic_navigation(runtime: Runtime, root: Path, outside: Path) -> None:
+    """Run a copied shipped Skill helper with the installed package/template."""
+    installed = runtime.object("codex", "link", "--codex-home", str(outside / "codex-copy"), "--mode", "copy", cwd=outside)
+    require(installed.get("product_root") is not None, "copied runtime product root is missing")
+    helper = outside / "codex-copy/skills/organize-kgdistiller/scripts/organize.py"
+    require(helper.is_file(), "wheel/runtime copy did not include the organization helper")
+
+    def run_helper(*arguments: str) -> dict[str, Any]:
+        result = subprocess.run([sys.executable, str(helper), *arguments], cwd=outside, env=runtime.env,
+                                capture_output=True, text=True, encoding="utf-8", check=False)
+        require(result.returncode == 0, f"installed organization helper failed: {result.stdout}{result.stderr}")
+        return json.loads(result.stdout)
+
+    science = {path: path.read_bytes() for path in (root / ".knowledge/entries").glob("*.md")}
+    run_helper("init", "--base", "smoke")
+    context_path, proposal_path = outside / "navigation-context.json", outside / "navigation-proposal.json"
+    context_path.write_text(json.dumps(run_helper("context", "--base", "smoke")), encoding="utf-8")
+    scientific_uids = ["smoke:" + path.stem for path in science]
+    proposal_path.write_text(json.dumps({
+        "scope": "global", "reason": "Build a semantic entrance in the installed-wheel smoke fixture.",
+        "topics": [{"id": "topic-measures", "label": "Measure concepts", "summary": "Choose measure spaces, additivity and their precise relation."}],
+        "organizations": [{"id": "route-measures", "label": "Measure entrance", "summary": "Choose the required concept or scientific relation.",
+                           "parents": ["smoke:topic-measures"], "children": scientific_uids}], "retire": [],
+    }), encoding="utf-8")
+    authored = run_helper("apply", "--base", "smoke", "--context", str(context_path), "--proposal", str(proposal_path))
+    require(len(authored["created"]) == 2, "navigation records were not accepted")
+    roots = runtime.object("navigate", cwd=outside)
+    require([row["uid"] for row in roots["records"]] == ["smoke:topic-measures"], "topic root discovery failed")
+    children = runtime.object("navigate", "smoke:topic-measures", cwd=outside)
+    require({row["uid"] for row in children["records"]} == set(scientific_uids), "navigation omitted scientific leaves")
+    require(all(row["navigation"] == "leaf" for row in children["records"]), "scientific leaves were misclassified")
+    for path, content in science.items():
+        require(path.read_bytes() == content, "navigation changed scientific knowledge")
+    runtime.object("index", "--rebuild", cwd=outside)
+    require(runtime.object("navigate", cwd=outside) == roots, "rebuild changed the navigation view")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="kgdistiller-wheel-runtime-") as raw:
         temporary = Path(raw).resolve()
@@ -269,6 +306,7 @@ def main() -> int:
         navigate(runtime, root, outside)
 
         obsidian(runtime, root, outside)
+        topic_navigation(runtime, root, outside)
 
         require(not any(".sqlite" in path.name for path in root.rglob("*")), "the index was written into the base")
         require(not (runtime.user / ".knowledge").exists(), "the runtime wrote to the default user home")
@@ -276,7 +314,7 @@ def main() -> int:
     print(
         "installed command, base add, sheet and accept, check --fix-lines, index, search (including CJK), "
         "resolve, get, neighbors, browse, pack and Obsidian plugin install (hidden indexing and the "
-        "newLinkFormat warning) smoke passed"
+        "newLinkFormat warning), copied organization Skill and topic navigation smoke passed"
     )
     return 0
 
