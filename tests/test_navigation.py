@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import runpy
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -63,6 +66,16 @@ class NavigationTests(unittest.TestCase):
                          [organization("route-analysis", ["kb:topic-analysis"], list(self.science))], scope="global")
         self.apply(value)
         return value
+
+    def test_helper_writes_utf8_json_whatever_the_console_encoding(self) -> None:
+        self.kb.write_record("sigma-zh", "label: σ-代数\nkind: definition\nsource: notes/a.txt\nlines: 1",
+                             "σ-代数。", ["A sigma algebra is closed under complements."])
+        index()
+        result = subprocess.run([sys.executable, str(ROOT / "skills/organize-kgdistiller/scripts/organize.py"),
+                                 "context", "--base", "kb"], capture_output=True, check=False,
+                                env={**os.environ, "PYTHONIOENCODING": "cp1252"})
+        self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", "replace"))
+        self.assertIn("σ-代数", result.stdout.decode("utf-8"))
 
     def assert_science_preserved(self) -> None:
         for uid, text in self.science.items():

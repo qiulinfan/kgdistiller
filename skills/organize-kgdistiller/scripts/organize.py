@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from kgdistiller.cli import configure_console_streams
 from kgdistiller.codex_product import product_root
 from kgdistiller.home import (
     CONFIG_FILENAME,
@@ -405,6 +406,7 @@ def apply(ctx: dict[str, Any], proposal: dict[str, Any], dry_run: bool = False) 
 
 
 def main() -> int:
+    configure_console_streams()
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("init", "context", "apply"):
