@@ -28,8 +28,8 @@ dependency group provides; the model itself is replaced by a fake encoder.
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/1.0.0
-uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.0
+uv build --out-dir build/release/1.0.1
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.1
 npm test
 cd integrations/obsidian && npm ci && npm run check
 ```
@@ -103,7 +103,7 @@ Then verify that:
   syntax or converts a source;
 - `check` reports every error and every moved or stale record and exits 1 for
   any of them; staleness never hides a record from retrieval;
-- the Obsidian plugin (version 1.0.0, `isDesktopOnly: true`) passes its
+- the Obsidian plugin (version 1.0.1, `isDesktopOnly: true`) passes its
   vitest suites, including the mocked-metadata-cache cases (binary, n-ary,
   self, relation-as-participant, draft, foreign and pending) and the
   `link-grammar.json` and `name-key.json` parity fixtures shared with the
@@ -133,7 +133,7 @@ release.
 
 The monorepo publishes the plugin through root `manifest.json` and
 `versions.json`, exactly mirrored from `integrations/obsidian`. The plugin and
-the Python core are versioned independently; both are 1.0.0. A plugin release tag must
+the Python core are versioned independently; both are 1.0.1. A plugin release tag must
 be the manifest's exact `x.y.z` version, without `v`; bare `x.y.z` tags are
 reserved for plugin releases, and Python core tags are `core-x.y.z`.
 
@@ -141,7 +141,7 @@ reserved for plugin releases, and Python core tags are `core-x.y.z`.
 npm ci
 npm run build
 npm test
-node scripts/build-obsidian-plugin.mjs --verify-only --tag 1.0.0
+node scripts/build-obsidian-plugin.mjs --verify-only --tag 1.0.1
 ```
 
 The root build delegates installation and build to the integration, checks

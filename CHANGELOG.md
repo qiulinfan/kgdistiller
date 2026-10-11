@@ -2,7 +2,14 @@
 
 All notable changes are documented here.
 
-## Unreleased
+## 1.0.1 — 2026-10-11
+
+The Python core and the Obsidian plugin both move to 1.0.1. This release
+settles the knowledge model before more knowledge accumulates. Run
+`kgd index` once after upgrading: the index schema moves to version 2, so it
+recreates the database and re-embeds every record. Copy-mode agent
+installations need `kgd claude link` or `kgd codex link` again for the
+updated Skills and workflow manifests.
 
 - Bundle editable `math-notes`, `ai-research` and `cs-notes` document-type
   starter templates. The owner selects, edits and registers them; installation
