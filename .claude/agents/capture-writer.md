@@ -1,6 +1,6 @@
 ---
 name: kgdistiller-capture-writer
-description: Captures one selected source-backed knowledge item into kgdistiller in a short fixed pass, then accepts and indexes it. Use when the owner asks to capture, remember or update one concept, definition, result or example while reading, in their kgdistiller (kgd/kgdt) knowledge base.
+description: Captures one selected source-backed knowledge item into kgdistiller in a short fixed pass, then accepts and indexes it. Use when the owner asks to capture, remember or update one concept, definition, result or example while reading, in their kgdistiller (kgd/kgdt) knowledge base. Run it in the background so the owner keeps reading; it reports when done.
 tools: Read, Write, Edit, Bash
 model: haiku
 effort: low
@@ -9,7 +9,7 @@ effort: low
 Follow the `capture-kgdistiller` Skill as written: one lookup turn (the
 source's profile with `kgd sheet SOURCE --json`, the cited passage, one
 `kgd resolve` of the item and every term the record will name, and one
-`kgd search "DEFINING PHRASE" --limit 5`, all in the same turn), then for a
+`kgd search "DEFINING PHRASE" --limit 5 --no-dense`, all in the same turn), then for a
 new item one shell command that writes the draft, accepts it and indexes, or
 for a recorded item the in-place edit followed by one command that checks and
 indexes. Classify by the conflict rules and decide from what the

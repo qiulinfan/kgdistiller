@@ -7,10 +7,10 @@ description: Save or update one source-backed knowledge record while reading —
 
 Save the item the owner selected while reading as one record in its registered
 base, in a short fixed pass: one lookup turn, then one command that writes,
-accepts and indexes. Batch every lookup into that one turn, decide from what
-it returns, and look again only when a result is genuinely ambiguous. Do not
-read the whole source, survey related work or resolve prerequisites
-recursively.
+accepts and indexes, then one line to the owner. Batch every lookup into that
+one turn and decide from what it returns; look again only when a result is
+genuinely ambiguous. Do not read the whole source, survey related work or
+resolve prerequisites recursively.
 
 Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 Paths given to `kgd` may be absolute or relative to the working directory; the
@@ -18,102 +18,120 @@ base is the registered root that contains the path.
 
 ## 1. Look up, in one turn
 
-Run these together:
+Run these together, and read the cited lines of the source with your own tool:
 
 ```sh
 kgd sheet SOURCE --json
-kgd resolve "LABEL" "ALIAS" "TERM" ...
-kgd search "DEFINING PHRASE" --limit 5
+kgd resolve "NAME" "OTHER NAME" "TERM" ...
+kgd search "DEFINING PHRASE" --limit 5 --no-dense
 ```
 
-and read [references/record-format.md](references/record-format.md) and the
-cited passage of the source with your own tools.
-
-- `sheet --json` gives the source's base, document type (`node_kinds`,
-  `relation_kinds` with their roles, `epistemic`, guidance) and the records
-  already citing it. An unregistered file is an error: report the glob it asks
-  for; do not register it.
-- `resolve` takes the item's label and aliases and every term the record will
-  name as a participant or in `requires`. Per term it lists the `senses`
-  (records with that name), `mentions` and `pending` uses across every base.
-- `search` finds the same knowledge point under another name or language.
+- `sheet --json` gives the source's base and document type: `node_kinds`,
+  `relation_kinds` with their roles, `epistemic` and the guidance, plus the
+  records already citing the source. An unregistered file is an error: report
+  the glob it asks for; do not register it.
+- `resolve` takes the item's names, in the source's language and in English,
+  and every term the record will name as a participant or prerequisite. Per
+  term it lists the `senses` (records with that name), `mentions` and
+  `pending` uses in every base.
+- `search` finds the same knowledge point under another name. `--no-dense`
+  keeps the lookup free of the embedding model; give it the item's names and
+  defining words in both languages, so the name and lexical lanes match
+  translations.
 
 If a result reports `lag.changed_files` above 0 or `lag.embedding_changed`, run
-`kgd index` and repeat the lookup once. `lag.unembedded` alone needs nothing:
-records captured since the last full index lack only their vector, and
-`resolve` and the name and lexical lanes still find them.
+`kgd index` and repeat the lookup once. `lag.unembedded` alone needs nothing.
 
 ## 2. Decide
 
-Compare definitions and conditions; the same name is not the same concept.
-Classify the item by the knowledge model's conflict rules:
+The same name is not the same concept; compare definitions and conditions.
 
 - **new**: no record holds this knowledge point, or only a homonym does.
-  Its draft is `<root>/.knowledge/drafts/<id>.md` in the record format, with
-  `id = slug(label)` (append `-2`, `-3`, … on a collision), or an id from the
-  meaning when the label carries a section, figure, table, equation or theorem
-  number.
-- **unchanged**: a record holds it with the same meaning. Write nothing,
-  unless that record's citation no longer verifies and this passage states
-  the item: then move its `source`, `lines` and Evidence here.
+- **unchanged**: a record holds it with the same meaning. Write nothing, unless
+  that record's citation no longer verifies and this passage states the item:
+  then move its `source`, `lines` and Evidence here.
 - **superseding**: a record holds it with a different meaning, and this
   passage's definition is more general or corrects it. Overwrite that record
   in place, keeping its id and `understanding`. A definition the recorded one
   explicitly rules out is conflicting even when broader.
 - **conflicting**: any other changed meaning, a narrower one included. Show
-  the owner both definitions with their source lines and write nothing until
-  they answer.
+  the owner both definitions with their source lines and write nothing.
 
-Writing rules:
+Before writing, check what the passage owns:
 
-- A node only for a noun-like object the source defines or a theorem it states
-  precisely; any other statement that can be true or false is a relation whose
-  Evidence quote itself states it. A connection you would infer across
-  passages or sources is reported, never written.
-- A concept this source only uses, even one it explains, is not a record here:
-  link the defining record that `resolve` found (`"[[id]]"`, or
-  `"[[base:id]]"` across bases), otherwise keep it as a plain pending value.
-  One level only; never invent a stand-in definition.
-- Role values are links or pending concepts; settings and measured values go
-  in the prose. Copy Evidence quotes verbatim from the cited lines.
-- Set `understanding` only from the owner's explicit statement; keep an
-  existing value unless the owner changes it.
-- Edit an accepted record only with an editing tool that refuses when the file
-  changed since you read it (Claude Code `Edit`, Codex `apply_patch`). Never
-  rename an accepted id; a relocation to another base follows the knowledge
-  model's relocation procedure.
+- A node only for a noun-like object this passage defines or originates, or a
+  theorem it states precisely. A concept it credits to other work (a citation,
+  "proposed by", "popularized by", "as in") is that work's: link the record
+  `resolve` found, otherwise keep it as a plain pending value.
+- Any other statement that can be true or false, such as a result, comparison
+  or finding, is a relation whose Evidence quote itself states it. A
+  connection you would infer across passages or sources is reported, never
+  written.
 
 ## 3. Write, accept and index, in one command
 
-For a new item, write the draft and admit it in the same shell command:
+For a new item, write the draft and admit it in one shell command:
 
 ```sh
-mkdir -p <root>/.knowledge/drafts && cat > <root>/.knowledge/drafts/<id>.md <<'RECORD'
-...the record...
+mkdir -p ROOT/.knowledge/drafts && cat > ROOT/.knowledge/drafts/ID.md <<'RECORD'
+---
+label: Measure space
+kind: definition
+aliases:
+  - 测度空间
+source: notes/math/measure-theory/chapters/01-sigma-algebra.tex
+lines: 206-224
+requires:
+  - "[[sigma-algebra]]"
+  - measurable space
+---
+A measure space is a triple $(X,\mathcal M,\mu)$ with a σ-algebra $\mathcal M$ and a measure $\mu$.
+
+## Evidence
+
+> 我们称 \((X,\mathcal{M},\mu)\) 为一个 measure space.
 RECORD
-kgd accept <root>/.knowledge/drafts/<id>.md && kgd index --no-embed
+kgd accept ROOT/.knowledge/drafts/ID.md && kgd index --no-embed
 ```
 
-For an in-place edit, edit with the editing tool, then run
-`kgd check --base B && kgd index --no-embed`. `--no-embed` indexes the record
-for `resolve`, `get` and the name and lexical lanes at once, without loading
-the embedding model; its vector is built by the next full `kgd index`, which a
-reader runs when it sees `lag.unembedded` above 0. When the source already has a sheet, add
-`kgd sheet SOURCE` to the same command so the sheet shows the change. The
-owner's capture request is the consent; do not ask again. A refusal lists each
-problem and writes nothing: fix the draft and run the command again.
+- `ID` is `slug(label)` (lowercase, non-alphanumerics to `-`; append `-2` on a
+  collision), or an id from the meaning when the label carries a section,
+  figure, table, equation or theorem number. `source` is relative to the base
+  root, and `lines` lists the cited ranges, such as `46-48` or `72, 84`.
+- `kind` is one of the type's kinds. A relation adds one key per role of its
+  kind, each a list of values; `requires` lists direct prerequisites.
+- Every value is a link, `"[[id]]"` or `"[[base:id]]"` across bases, or a plain
+  pending term; settings and measured values stay in the prose.
+- The prose opens with the statement. Each `>` quote under `## Evidence` is
+  copied verbatim from the cited lines.
+- Set `epistemic` only from the type's list and `understanding` only from the
+  owner's explicit statement.
+- The complete format is
+  [references/record-format.md](references/record-format.md); read it when
+  `kgd accept` refuses, then fix the draft and run the command again.
+
+For an in-place edit of an accepted record, use an editing tool that refuses
+when the file changed since you read it (Claude Code `Edit`, Codex
+`apply_patch`), then run `kgd check --base B && kgd index --no-embed`. Never
+rename an accepted id; a relocation to another base follows the knowledge
+model's relocation procedure. When the source already has a sheet, add
+`kgd sheet SOURCE` to the command. The owner's capture request is the
+consent; do not ask again.
+
+`--no-embed` indexes the record at once for `resolve`, `get` and the name and
+lexical lanes without loading the embedding model; the next full `kgd index`,
+which a reader runs when it sees `lag.unembedded`, builds its vector.
 
 ## 4. Link pending uses, only when the lookup found them
 
-When step 1's `resolve` listed `pending` uses of the created record's own label
-or aliases that mean its definition (a homonym stays pending), edit each into
-a link that keeps the source's wording, `"[[id|wording]]"` or
-`"[[base:id|wording]]"`, then run `kgd check --base B && kgd index --no-embed`
-for every base you edited, with `kgd sheet SOURCE` for each edited record's
-source that has a sheet. Otherwise skip this step.
+When step 1's `resolve` listed `pending` uses of the created record's own names
+that mean its definition (a homonym stays pending), edit each into a link that
+keeps the source's wording, `"[[id|wording]]"` or `"[[base:id|wording]]"`, then
+run `kgd check --base B && kgd index --no-embed` for every base you edited.
+Otherwise skip this step.
 
 ## 5. Report
 
-One short answer: the classification, the uid, the pending terms recorded,
-the pending uses linked, and anything refused or left to the owner, including
-connections reported instead of written.
+One short line: the classification and uid, the pending terms recorded and the
+pending uses linked, and anything left to the owner, including connections
+reported instead of written.

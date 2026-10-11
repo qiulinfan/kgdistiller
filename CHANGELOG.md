@@ -14,16 +14,20 @@ All notable changes are documented here.
   before upgrading. Copy-mode agent installations need `kgd claude link` or
   `kgd codex link` again, which removes the installed `organize-kgdistiller`.
 - Make the writing Skills lightweight. Capture runs as a short fixed pass: one
-  batched lookup turn, then one shell command that writes the draft and runs
-  `kgd accept … && kgd index --no-embed`, so no embedding model loads at
-  admission and the next full `kgd index` builds the vector; pending uses are
-  linked only when the lookup found them. Compile and harvest look up a whole
-  batch in one turn and finish with one command. A new `capture-writer` agent
-  preset runs captures on a small model at low reasoning effort (Claude Code
-  `model: haiku`, `effort: low`; Codex `model_reasoning_effort = "low"`),
+  lookup turn (`sheet --json`, one `resolve` of every name and
+  `search --no-dense --limit 5`), then one shell command that writes the draft
+  and runs `kgd accept … && kgd index --no-embed`, then one line to the owner.
+  No embedding model loads during a capture: names in both languages let the
+  name and lexical lanes match translations, and the next full `kgd index`
+  builds the new vector. Pending uses are linked only when the lookup found
+  them, and the Skill carries a compact record template, reading the full
+  format only on a refusal. Compile and harvest look up a whole batch in one
+  turn and finish with one command. A new `capture-writer` agent preset runs
+  captures in the background on a small model at low reasoning effort (Claude
+  Code `model: haiku`, `effort: low`; Codex `model_reasoning_effort = "low"`),
   because the model's reasoning volume, not `kgd`, dominated capture time. On
   six benchmark captures with Claude Haiku 5.5 the mean fell from 445 s (the
-  old Skill with navigation, Claude Code subagent) to 34 s, median 31 s (this
+  old Skill with navigation, Claude Code subagent) to 24 s, median 24 s (this
   Skill invoked at low reasoning in a lean harness), with the same
   classifications. Relinking the agent runtimes installs the preset.
 

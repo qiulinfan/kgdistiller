@@ -53,9 +53,11 @@
   about 20 seconds. The writing Skills work in batches: one lookup turn (one
   `kgd resolve` of every name, `kgd search --limit 5` only where needed), one
   write turn, then one command that accepts or checks and indexes; nothing
-  runs after admission except linking the pending uses the lookup found. The
-  `capture-writer` presets run captures on a small model at low reasoning
-  effort, since model reasoning, not `kgd`, dominates capture time.
+  runs after admission except linking the pending uses the lookup found. A
+  capture loads no embedding model (`search --no-dense`, `index --no-embed`),
+  and the `capture-writer` presets run it in the background on a small model
+  at low reasoning effort, since model reasoning, not `kgd`, dominates capture
+  time.
   There is no topic navigation or other generated directory: the 2026-10-11
   ablation found it gave retrieval no measurable benefit. `kgd index` never
   invokes a semantic model.

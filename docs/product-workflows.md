@@ -59,7 +59,7 @@ copies, discarding local edits to installed files.
 
 | Workflow | Skill | Mode | Steps |
 |---|---|---|---|
-| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (profile, record format, cited passage, one `kgd resolve` of the item and its terms in every base, `kgd search --limit 5`); a decision by the conflict rules; one command that writes the draft citing its lines verbatim and runs `kgd accept … && kgd index`, or an in-place edit then `kgd check && kgd index`, with pending terms and stated understanding; link the pending uses of the created concept when the lookup found any; report. |
+| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (profile, cited passage, one `kgd resolve` of the item and its terms in every base, `kgd search --no-dense --limit 5`); a decision by the conflict rules; one command that writes the draft citing its lines verbatim and runs `kgd accept … && kgd index --no-embed`, or an in-place edit then `kgd check && kgd index --no-embed`, with pending terms and stated understanding; link the pending uses of the created concept when the lookup found any; report. |
 | `compile-knowledge-sheets` | `compile-knowledge-sheets` | write | Set the bounded scope; `kgd sheet FILE --json`; one lookup turn for the whole candidate batch in every base, pending included; drafts for new records and in-place settlement of recorded knowledge by the conflict rules in one write turn, the owner asked otherwise; `kgd check --base B && kgd sheet FILE && kgd index` in one command with every draft passing; report. |
 | `harvest-kgdistiller` | `harvest-kgdistiller` | write | One lookup turn for every ticked draft and its pending terms; `kgd harvest SHEET && kgd index` in one command (`--dry-run` on request); link the pending uses of created concepts when the lookup found any; report refused rows. |
 | `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get`, `neighbors`, `browse`, `pack` across every base through the CLI or the MCP tools; bounded evidence with `source:lines`; identity classification; refresh on lag. |
@@ -88,21 +88,25 @@ the type profile with `kgd sheet FILE --json` and compares existing senses
 with one `kgd resolve` of the item and its terms and one `kgd search` in every
 base, pending uses included (the same name is not the same concept). A new
 item becomes a draft that one shell command writes, accepts and indexes,
-ending in `kgd accept … && kgd index` (the capture request is the consent). An item already recorded follows the
-conflict rules of [model.md](model.md) "Conflicts, updates and relocation":
-it is ignored when its meaning is unchanged, overwritten and relocated when the
-new definition is more general or corrects the recorded one, and otherwise
-left to the owner's decision. In-place edits use a stale-read-safe editing
+ending in `kgd accept … && kgd index --no-embed` (the capture request is the
+consent). An item already recorded follows the conflict rules of
+[model.md](model.md) "Conflicts, updates and relocation": it is ignored when
+its meaning is unchanged, overwritten and relocated when the new definition is
+more general or corrects the recorded one, and otherwise left to the owner's
+decision. In-place edits use a stale-read-safe editing
 tool followed by `kgd check --base B`. Unexplained terms become plain pending
 values, one level deep, unless a record anywhere defines them. `understanding` is set only from the owner's explicit statement. When the
 lookup listed pending uses, in any base, that mean the created concept, it
 links them after acceptance and indexes again. It reports the classification,
 the uid and the pending terms in one short answer.
 
-The `capture-writer` preset runs this Skill on a small model at low reasoning
-effort (Claude Code: `model: haiku`, `effort: low`; Codex:
+The `capture-writer` preset runs this Skill in the background on a small model
+at low reasoning effort (Claude Code: `model: haiku`, `effort: low`; Codex:
 `model_reasoning_effort = "low"`), because the model's reasoning volume, not
-`kgd`, dominates a capture's time.
+`kgd`, dominates a capture's time; the owner keeps reading and gets one line
+when it is done. A capture loads no embedding model: its lookup searches the
+name and lexical lanes with the item's names in both languages, and it indexes
+with `--no-embed`, leaving the new vector to the next full `kgd index`.
 
 This is the usual writing path for a new article. Familiarity does not
 establish any record's understanding.
