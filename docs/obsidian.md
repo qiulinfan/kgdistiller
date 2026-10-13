@@ -3,9 +3,11 @@
 A base is normally one Obsidian vault, and its knowledge lives in the vault's
 hidden `.knowledge/` folder: accepted records in `entries/`, proposed records in
 `drafts/` and generated def/pending sheets in `sheets/`. Obsidian itself is the
-editor. The kgdistiller plugin adds two things: it lets Obsidian index the
-hidden folder, and it draws the records as a typed graph with a details pane.
-`kgd check` stays the only validator; the plugin never writes knowledge files.
+editor. The kgdistiller plugin adds three things: it lets Obsidian index the
+hidden folder, it draws the records as a typed graph with a details pane, and,
+once a kgd executable is configured, it looks selected text up in every
+registered base. `kgd check` stays the only validator; the plugin never writes
+knowledge files.
 
 ## Native-first editing
 
@@ -172,11 +174,82 @@ Selecting a role or `requires` edge shows its owning record. A ghost shows its
 term, its name key and every record that uses it with the role; a stub shows
 its uid; a missing record shows the path that does not exist.
 
+## Lookup
+
+Select text in any view and hold the command key (⌘ on macOS, Ctrl elsewhere)
+for 0.3 s, or run **Look up selection**. The selection, with whitespace
+collapsed and cut at 500 characters, is looked up in every registered base,
+and the **kgdistiller Lookup** view opens in the right sidebar without taking
+focus. A press starts at most one lookup, whatever keydown repeats the system
+sends. Pressing another key or a mouse button, or releasing the key, cancels
+the hold first, so shortcuts such as ⌘C and ⌘-click never start a lookup, and
+leaving the window forgets the press. Without a selection, or without a configured kgd executable, a hold
+does nothing and the command says what is missing.
+
+The view shows, from the top:
+
+- **Same name**: the records whose label or alias has the selection's name key
+  (the senses of `kg_resolve`). A shared name is not the same concept, so they
+  are candidates to compare.
+- **Pending**: the records that use the name as a pending term.
+- The record in focus (the first name match, otherwise the first search
+  result, or any record clicked):
+  - its kind, base, source and lines, understanding and epistemic label;
+  - **Neighbours within 3 steps**: a small typed graph of the records within
+    three concept steps, from `kg_neighbors --dir both --depth 6`. Relations
+    are edges: a relation with exactly two link values, both in roles, is one
+    edge labelled with its kind, and one with more values or with `requires`
+    links is a diamond joining them, its participants one step apart. A
+    relation that another record links to, and a relation in focus, remain
+    diamonds with their role edges. A relation about a single record is no
+    edge and is listed under About it instead; pending terms are left out.
+    Node records are circles coloured by kind with the graph view's palette,
+    `requires` links are dashed and count as one step. At most the 40 nearest
+    records are drawn; clicking a record or an edge puts it in focus. Over the
+    graph the wheel zooms, elsewhere it scrolls the panel;
+  - its prose and Evidence rendered as in the editor and its links by role;
+  - **About it**: the relations it takes part in, grouped by kind, with its
+    role in each;
+  - **Built on it**: the records whose `requires` lists it;
+  - its `requires` chain three levels deep
+    (`kg_neighbors --role requires --dir out --depth 3`), each record expanded
+    once and pending terms as leaves.
+- **Related**: the other records among the first ten of `kg_search`, with each
+  lane's rank and the first line of the gloss.
+
+Record ids and uids are never shown: they are addresses for programs, not
+knowledge.
+- **Open record** and **Open source** open the file in this vault when the
+  record's base is this vault, and otherwise through an `obsidian://open?path=`
+  link in the vault that holds it.
+- When a result reports lag, **Run kgd index** runs `kgd index` and repeats the
+  lookup.
+
+Settings, under **Lookup**:
+
+- **kgd executable**: the absolute path of `kgd`, since Obsidian started from
+  the Dock does not see the shell's `PATH`. Empty, the default, turns lookups
+  off.
+- **Knowledge home**: the `KGDISTILLER_HOME` that lookups use; empty keeps
+  kgd's default `~/.knowledge`. Plugin settings belong to the vault, so a test
+  vault can point at a scratch home.
+
+The plugin starts `kgd mcp` on the first lookup and keeps it running, so the
+embedding model loads once (about 4 s for `BAAI/bge-m3` on Apple silicon) and
+later searches take tens of milliseconds. It stops the server after 15 minutes
+without a lookup, when either setting changes and when the plugin unloads. It
+also runs `kgd base list` once per server to locate the bases, and `kgd index`
+only from the button. Every run gets `HF_HUB_OFFLINE=1`: vectors exist only
+after a local `kgd index` loaded the model, so the model is in the local cache.
+These processes read the home, the database and the registered bases; the
+plugin itself opens neither the home nor the database, and lookups write no
+knowledge.
+
 ## Not yet built
 
-Later owner-scheduled frontend work: editing commands, commands that run `kgd`,
-jump links from md/tex sources to records, "new record from selection", a
-shipped `.base` file and a Bases view.
+Later owner-scheduled frontend work: editing commands, jump links from md/tex
+sources to records, "new record from selection", a shipped `.base` file and a
+Bases view.
 
 ## Installation
 

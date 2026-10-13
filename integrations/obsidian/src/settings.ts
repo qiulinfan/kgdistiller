@@ -6,11 +6,17 @@ import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
 export interface KgdistillerSettings {
   showDrafts: boolean;
   hiddenKnowledgeEnabled: boolean;
+  /** Absolute path of the kgd executable that lookups run; empty turns lookups off. */
+  kgdCommand: string;
+  /** KGDISTILLER_HOME for lookups; empty keeps kgd's default home. */
+  knowledgeHome: string;
 }
 
 export const DEFAULT_SETTINGS: KgdistillerSettings = {
   showDrafts: true,
   hiddenKnowledgeEnabled: false,
+  kgdCommand: "",
+  knowledgeHome: "",
 };
 
 /**
@@ -39,6 +45,8 @@ export interface SettingsHost {
   savePluginSettings(): Promise<void>;
   applyGraphSettings(): void;
   rescanHiddenKnowledge(): Promise<void>;
+  /** Called after the kgd executable or the knowledge home changed. */
+  kgdSettingsChanged(): void;
 }
 
 export class KgdistillerSettingTab extends PluginSettingTab {
@@ -87,6 +95,34 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           }),
       );
     this.refreshHiddenKnowledgeStatus();
+
+    new Setting(containerEl).setName("Lookup").setHeading();
+    new Setting(containerEl)
+      .setName("kgd executable")
+      .setDesc("Absolute path of the kgd command, such as the output of `command -v kgd` in a terminal. Selecting text and holding the command key, or Look up selection, then queries every registered base through `kgd mcp`. Leave empty to turn lookups off.")
+      .addText((text) =>
+        text
+          .setPlaceholder("/path/to/kgd")
+          .setValue(this.host.settings.kgdCommand)
+          .onChange(async (value) => {
+            this.host.settings.kgdCommand = value.trim();
+            await this.host.savePluginSettings();
+            this.host.kgdSettingsChanged();
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Knowledge home")
+      .setDesc("The KGDISTILLER_HOME that lookups use. Leave empty for kgd's default home, ~/.knowledge.")
+      .addText((text) =>
+        text
+          .setPlaceholder("~/.knowledge")
+          .setValue(this.host.settings.knowledgeHome)
+          .onChange(async (value) => {
+            this.host.settings.knowledgeHome = value.trim();
+            await this.host.savePluginSettings();
+            this.host.kgdSettingsChanged();
+          }),
+      );
   }
 
   refreshHiddenKnowledgeStatus(): void {

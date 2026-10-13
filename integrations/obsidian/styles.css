@@ -300,3 +300,103 @@ SOFTWARE.
 .kgd-swatch-dangling {
   background: #dc2626;
 }
+
+.kgd-lookup-view {
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  padding: 10px 12px;
+}
+
+.kgd-lookup-query {
+  border-inline-start: 3px solid var(--interactive-accent);
+  color: var(--text-normal);
+  padding-inline-start: 8px;
+}
+
+.kgd-lookup-status {
+  color: var(--text-muted);
+  margin: 6px 0;
+}
+
+.kgd-lookup-error {
+  color: var(--text-error);
+}
+
+.kgd-lookup-lag button {
+  margin-inline-start: 4px;
+}
+
+.kgd-lookup-section h4,
+.kgd-lookup-record h4 {
+  margin: 12px 0 4px;
+}
+
+.kgd-lookup-hint,
+.kgd-lookup-meta,
+.kgd-lookup-ranks {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.kgd-lookup-hit {
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.kgd-lookup-hit:hover {
+  background: var(--background-modifier-hover);
+}
+
+.kgd-lookup-hit.is-selected {
+  background: var(--background-modifier-active-hover);
+}
+
+.kgd-lookup-label {
+  font-weight: var(--font-semibold);
+}
+
+.kgd-lookup-gloss {
+  color: var(--text-muted);
+}
+
+.kgd-lookup-related .kgd-lookup-gloss {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kgd-lookup-record:not(:empty) {
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 10px 0;
+  padding: 6px 0 10px;
+}
+
+.kgd-lookup-links,
+.kgd-lookup-links ul,
+.kgd-chain,
+.kgd-chain ul {
+  padding-inline-start: 18px;
+}
+
+.kgd-lookup-graph {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  height: 320px;
+  margin: 6px 0 10px;
+}
+
+.kgd-lookup-role {
+  color: var(--text-muted);
+}
+
+.kgd-pending-term {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.kgd-lookup-missing {
+  color: var(--text-error);
+}

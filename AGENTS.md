@@ -179,7 +179,11 @@
   which `tests/test_records.py` checks against `unicodedata` (regenerate it when
   that test fails after a Python Unicode upgrade), and both test suites assert
   `tests/fixtures/link-grammar.json` and `tests/fixtures/name-key.json`. It
-  reads no feed and no database. Preserve the complete upstream MIT notice and pinned source
+  reads no feed and no database. Selection lookup, off until the vault's
+  settings name a kgd executable, reads every base only through a resident
+  `kgd mcp` and runs `kgd base list` and `kgd index` with the configured
+  executable and `KGDISTILLER_HOME`; the plugin never opens the home or the
+  database itself. Preserve the complete upstream MIT notice and pinned source
   revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by

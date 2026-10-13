@@ -177,12 +177,18 @@ export function graphOptions(model: KnowledgeModel): string[] {
   return [...new Set([...model.records.values()].map((record) => record.kind).filter((kind) => kind !== ""))].sort();
 }
 
+/** A colour per non-empty kind, by the kind's position among the given kinds sorted. */
+export function kindPalette(kinds: Iterable<string>): Map<string, string> {
+  const sorted = [...new Set(kinds)].filter((kind) => kind !== "").sort();
+  return new Map(sorted.map((kind, index) => [kind, KIND_COLORS[index % KIND_COLORS.length]!]));
+}
+
 /**
  * A deterministic colour per kind over all of the model's kinds, so a colour
  * never shifts when filters or the drafts toggle change what is drawn.
  */
 export function kindColors(model: KnowledgeModel): Map<string, string> {
-  return new Map(graphOptions(model).map((kind, index) => [kind, KIND_COLORS[index % KIND_COLORS.length]!]));
+  return kindPalette([...model.records.values()].map((record) => record.kind));
 }
 
 /** The records that pass every filter. */

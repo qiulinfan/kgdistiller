@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const controls = vi.hoisted(() => ({
   headings: [] as string[], stored: null as Record<string, unknown> | null,
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
-  viewRefresh: vi.fn(), viewApply: vi.fn(),
+  viewRefresh: vi.fn(), viewApply: vi.fn(), lookup: vi.fn(),
+  domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
   commands: [] as Array<{ id: string; callback: () => void }>,
   settings: [] as Array<{
     name: string; description?: string;
     toggleChange?: (value: boolean) => void | Promise<void>;
+    textChange?: (value: string) => void | Promise<void>;
     buttonClick?: () => void | Promise<void>;
   }>,
 }));
@@ -21,6 +23,9 @@ vi.mock("obsidian", () => {
     addCommand(command: { id: string; callback: () => void }): void { controls.commands.push(command); }
     addSettingTab(): void {}
     registerEvent(): void {}
+    registerDomEvent(target: unknown, type: string, callback: (event: unknown) => void): void {
+      controls.domEvents.push({ target, type, callback });
+    }
   }
   class PluginSettingTab { containerEl: unknown; constructor(_app: unknown, _host: unknown) {} }
   class Setting {
@@ -36,6 +41,14 @@ vi.mock("obsidian", () => {
       };
       callback(control); return this;
     }
+    addText(callback: (text: unknown) => void): this {
+      const control = {
+        setPlaceholder: () => control,
+        setValue: () => control,
+        onChange: (fn: (value: string) => void | Promise<void>) => { this.record.textChange = fn; return control; },
+      };
+      callback(control); return this;
+    }
     addButton(callback: (button: unknown) => void): this {
       const control = {
         setButtonText: () => control,
@@ -47,7 +60,9 @@ vi.mock("obsidian", () => {
   class ItemView { constructor(public leaf: unknown) {} }
   class TFile { path = ""; }
   const debounce = (callback: () => void) => Object.assign(() => callback(), { cancel: () => undefined, run: () => undefined });
-  return { Plugin, PluginSettingTab, Setting, ItemView, TFile, debounce, setIcon: () => undefined,
+  class FileSystemAdapter {}
+  return { Plugin, PluginSettingTab, Setting, ItemView, TFile, FileSystemAdapter, debounce, setIcon: () => undefined,
+    Platform: { isMacOS: true },
     Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path };
 });
 vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
@@ -57,12 +72,20 @@ vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
 } }));
 vi.mock("../src/view", () => ({ KGDISTILLER_ICON: "network", VIEW_TYPE_KGDISTILLER_GRAPH: "kgdistiller-graph",
   KgdistillerGraphView: class { refresh(): void { controls.viewRefresh(); } applySettings(): void { controls.viewApply(); } } }));
+vi.mock("../src/lookup-view", () => ({ VIEW_TYPE_KGDISTILLER_LOOKUP: "kgdistiller-lookup",
+  KgdistillerLookupView: class { lookup(query: string): Promise<void> { controls.lookup(query); return Promise.resolve(); } } }));
+const mainDocument = { defaultView: { name: "main window" } };
+const domSelection = { text: "" };
+vi.stubGlobal("document", mainDocument);
+vi.stubGlobal("activeWindow", { getSelection: () => ({ toString: () => domSelection.text }) });
 
 import { TFile } from "obsidian";
 
 import { defaultFilters, graphElements, graphModel, type GraphElementData, type GraphFilters } from "../src/graph-model";
 import KgdistillerPlugin from "../src/main";
 import { DEFAULT_SETTINGS, KgdistillerSettingTab } from "../src/settings";
+import { HOLD_MS } from "../src/hold";
+import { KgdistillerLookupView } from "../src/lookup-view";
 import { KgdistillerGraphView } from "../src/view";
 import { recordFixture } from "./fixture";
 
@@ -84,8 +107,12 @@ function harness(initial: Record<string, Record<string, unknown>> = {}): Harness
     return { key };
   });
   const leaves = [{ view: new KgdistillerGraphView(undefined as never, undefined as never) }];
+  const lookupLeaves = [{ view: new KgdistillerLookupView(undefined as never, undefined as never) }];
   const plugin = new KgdistillerPlugin({
-    workspace: { getLeavesOfType: vi.fn(() => leaves), detachLeavesOfType: vi.fn(), on: on("workspace") },
+    workspace: {
+      getLeavesOfType: vi.fn((type: string) => (type === "kgdistiller-lookup" ? lookupLeaves : leaves)),
+      detachLeavesOfType: vi.fn(), on: on("workspace"), revealLeaf: vi.fn(async () => undefined), activeEditor: null,
+    },
     vault: { on: on("vault"), getMarkdownFiles: vi.fn(() => [...frontmatter.keys()].map((path) => fileAt(path))) },
     metadataCache: {
       on: on("cache"),
@@ -106,6 +133,7 @@ function showSettings(plugin: KgdistillerPlugin): KgdistillerSettingTab {
 }
 beforeEach(() => {
   controls.headings.length = 0; controls.commands.length = 0; controls.settings.length = 0;
+  controls.domEvents.length = 0; domSelection.text = "";
   controls.stored = null;
   vi.clearAllMocks();
   controls.configure.mockImplementation(async (enabled: boolean) => ({ state: enabled ? "enabled" : "disabled" }));
@@ -120,7 +148,7 @@ describe("community lifecycle conventions", () => {
   });
   it("settings use Obsidian headings without writing HTML headings", () => {
     showSettings(pluginFixture());
-    expect(controls.headings).toEqual(["Graph view", "Hidden knowledge folder"]);
+    expect(controls.headings).toEqual(["Graph view", "Hidden knowledge folder", "Lookup"]);
   });
 });
 
@@ -142,7 +170,7 @@ describe("hidden knowledge lifecycle", () => {
     expect(controls.registerView).not.toHaveBeenCalled();
     finish({ state: "enabled" }); await loading;
     expect(plugin.hiddenKnowledgeStatus.state).toBe("enabled");
-    expect(controls.registerView).toHaveBeenCalledOnce();
+    expect(controls.registerView).toHaveBeenCalledTimes(2);
     expect(controls.commands.map((command) => command.id)).toContain("rescan-hidden-knowledge-folder");
   });
   it("does not finish UI registration after unloading while indexing", async () => {
@@ -205,19 +233,19 @@ describe("hidden knowledge lifecycle", () => {
     controls.configure.mockRejectedValueOnce(new Error("Unsupported adapter"));
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.hiddenKnowledgeStatus).toMatchObject({ state: "error", message: "Unsupported adapter" });
-    expect(controls.registerView).toHaveBeenCalledOnce();
+    expect(controls.registerView).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("stored settings", () => {
-  it("defaults to drawing drafts with hidden indexing off until kgd obsidian install turns it on", () => {
-    expect(DEFAULT_SETTINGS).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: false });
+  it("defaults to drawing drafts with hidden indexing off until kgd obsidian install turns it on, and lookups off", () => {
+    expect(DEFAULT_SETTINGS).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "" });
   });
   it("replaces wrongly typed stored values with defaults and reports only those", async () => {
-    controls.stored = { showDrafts: "no", hiddenKnowledgeEnabled: true, unknown: true };
+    controls.stored = { showDrafts: "no", hiddenKnowledgeEnabled: true, kgdCommand: 7, unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
-    expect(plugin.settings).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: true });
-    expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: showDrafts."));
+    expect(plugin.settings).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "" });
+    expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: showDrafts, kgdCommand."));
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(() => showSettings(plugin)).not.toThrow();
   });
@@ -231,6 +259,7 @@ describe("hidden knowledge settings", () => {
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Graph view", "Show drafts", "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
+      "Lookup", "kgd executable", "Knowledge home",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
@@ -238,7 +267,7 @@ describe("hidden knowledge settings", () => {
   it("persists enable changes and exposes the rescan action", async () => {
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
-    expect(controls.saveData).toHaveBeenCalledWith({ showDrafts: true, hiddenKnowledgeEnabled: true });
+    expect(controls.saveData).toHaveBeenCalledWith({ showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "" });
     expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();
     expect(controls.rescan).toHaveBeenCalledOnce();
@@ -266,7 +295,8 @@ describe("live record model", () => {
   it("listens to metadata changes, deletions and renames, never to focus or leaf changes", async () => {
     const { plugin, handlers } = harness();
     await plugin.onload();
-    expect([...handlers.keys()].sort()).toEqual(["cache:changed", "cache:deleted", "cache:resolved", "vault:rename"]);
+    expect([...handlers.keys()].sort())
+      .toEqual(["cache:changed", "cache:deleted", "cache:resolved", "vault:rename", "workspace:window-open"]);
   });
 
   it("rebuilds once the metadata cache is resolved and re-renders open views", async () => {
@@ -438,5 +468,61 @@ describe("graph view", () => {
   it("clears a kind filter that no longer matches any record", async () => {
     const instance = await view([{ path: ".knowledge/entries/measure.md", frontmatter: { label: "Measure", kind: "definition" } }], "implies");
     expect((instance.filters as { kind: string }).kind).toBe("");
+  });
+});
+
+describe("selection lookup", () => {
+  it("registers the command and watches the command key in the main window and in popouts", async () => {
+    const { plugin, handlers } = harness(); await plugin.onload();
+    expect(controls.commands.map((command) => command.id)).toContain("look-up-selection");
+    const types = (target: unknown): string[] => controls.domEvents.filter((event) => event.target === target).map((event) => event.type);
+    expect(types(mainDocument)).toEqual(["keydown", "keyup", "mousedown"]);
+    expect(types(mainDocument.defaultView)).toEqual(["blur"]);
+    const popout = { defaultView: { name: "popout window" } };
+    for (const callback of handlers.get("workspace:window-open") ?? []) callback({}, { document: popout });
+    expect(types(popout)).toEqual(["keydown", "keyup", "mousedown"]);
+    expect(types(popout.defaultView)).toEqual(["blur"]);
+  });
+
+  it("tells a command user what is missing and stays silent on a long press", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    await plugin.lookUpSelection(false);
+    expect(controls.notice).not.toHaveBeenCalled();
+    await plugin.lookUpSelection(true);
+    expect(controls.notice).toHaveBeenLastCalledWith("Select text to look up.");
+    domSelection.text = "masked  autoencoder";
+    await plugin.lookUpSelection(false);
+    expect(controls.notice).toHaveBeenCalledOnce();
+    await plugin.lookUpSelection(true);
+    expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("Set the kgd executable"));
+    expect(controls.lookup).not.toHaveBeenCalled();
+  });
+
+  it("looks the selection up after a long press of the command key once kgd is configured", async () => {
+    controls.stored = { kgdCommand: "/bin/kgd" };
+    const plugin = pluginFixture(); await plugin.onload();
+    domSelection.text = " masked\nautoencoder ";
+    const keydown = controls.domEvents.find((event) => event.target === mainDocument && event.type === "keydown")!;
+    vi.useFakeTimers();
+    try {
+      keydown.callback({ key: "Meta", repeat: false });
+      vi.advanceTimersByTime(HOLD_MS);
+    } finally {
+      vi.useRealTimers();
+    }
+    await vi.waitFor(() => expect(controls.lookup).toHaveBeenCalledWith("masked autoencoder"));
+    expect(controls.notice).not.toHaveBeenCalled();
+  });
+
+  it("restarts kgd after a settings change and stops it on unload", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    const stop = vi.spyOn(plugin.kgd, "stop");
+    showSettings(plugin);
+    await controls.settings.find((setting) => setting.name === "kgd executable")!.textChange!(" /bin/kgd ");
+    await controls.settings.find((setting) => setting.name === "Knowledge home")!.textChange!("/tmp/home");
+    expect(plugin.settings).toMatchObject({ kgdCommand: "/bin/kgd", knowledgeHome: "/tmp/home" });
+    expect(stop).toHaveBeenCalledTimes(2);
+    plugin.onunload();
+    expect(stop).toHaveBeenCalledTimes(3);
   });
 });

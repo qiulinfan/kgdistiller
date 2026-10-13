@@ -4,6 +4,19 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Add selection lookup to the Obsidian plugin. Selecting text and holding the
+  command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s, or running **Look up
+  selection**, opens the **kgdistiller Lookup** sidebar. It lists the records
+  that share the selection's name as candidates to compare, the records that
+  use it as a pending term, and the related records of `kg_search`, and shows
+  the record in focus with a typed graph of its neighbours within three steps
+  (relations drawn as edges),
+  its prose, Evidence and links, the relations about it, the records built on
+  it and its `requires` chain, across every registered base. The plugin starts one
+  resident `kgd mcp` on the first lookup, so the embedding model loads once,
+  and stops it after 15 minutes idle. Lookups are off until the new **kgd
+  executable** setting names the kgd command; **Knowledge home** sets the
+  `KGDISTILLER_HOME` they use.
 - Remove topic navigation: the `organize-kgdistiller` Skill with its helper
   and proposal reference, the `navigation` document-type template and type
   key, `kgd navigate`, and the `check` rule against links to navigation

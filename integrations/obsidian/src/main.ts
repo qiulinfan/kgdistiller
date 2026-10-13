@@ -1,8 +1,13 @@
-import { Notice, Plugin, TFile, debounce, type TAbstractFile } from "obsidian";
+import { realpathSync } from "fs";
+import { FileSystemAdapter, Notice, Platform, Plugin, TFile, debounce, type TAbstractFile } from "obsidian";
 
 import type { FrontmatterRecord } from "./graph-model";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
+import { HoldTrigger } from "./hold";
+import { KgdServer } from "./kgd";
+import { lookupQuery } from "./lookup-model";
+import { KgdistillerLookupView, VIEW_TYPE_KGDISTILLER_LOOKUP } from "./lookup-view";
 import { isRecordPath } from "./records";
 
 import {
@@ -30,6 +35,9 @@ export default class KgdistillerPlugin extends Plugin {
   private modelResolved = false;
   /** Metadata events arrive per file; re-render open views once a burst settles. */
   private readonly scheduleRefresh = debounce(() => this.refreshGraphViews(), 250, true);
+  /** Lookups query every registered base through one resident `kgd mcp`. */
+  readonly kgd = new KgdServer(() => ({ command: this.settings.kgdCommand, home: this.settings.knowledgeHome }));
+  private readonly hold = new HoldTrigger(Platform.isMacOS ? "Meta" : "Control", () => void this.lookUpSelection(false));
 
   async onload(): Promise<void> {
     await this.loadPluginSettings();
@@ -62,6 +70,17 @@ export default class KgdistillerPlugin extends Plugin {
       name: "Rescan hidden knowledge folder",
       callback: () => void this.rescanHiddenKnowledge(),
     });
+    this.registerView(
+      VIEW_TYPE_KGDISTILLER_LOOKUP,
+      (leaf) => new KgdistillerLookupView(leaf, this),
+    );
+    this.addCommand({
+      id: "look-up-selection",
+      name: "Look up selection",
+      callback: () => void this.lookUpSelection(true),
+    });
+    this.watchHold(document);
+    this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, popout) => this.watchHold(popout.document)));
     this.settingsTab = new KgdistillerSettingTab(this.app, this);
     this.addSettingTab(this.settingsTab);
 
@@ -110,7 +129,68 @@ export default class KgdistillerPlugin extends Plugin {
   onunload(): void {
     this.unloaded = true;
     this.scheduleRefresh.cancel();
+    this.hold.reset();
+    this.kgd.stop();
     this.hiddenKnowledgeIndexer?.dispose();
+  }
+
+  /** Long-pressing the command key with text selected looks the text up, in the main window and in popouts. */
+  private watchHold(target: Document): void {
+    this.registerDomEvent(target, "keydown", (event) => this.hold.keydown(event), true);
+    this.registerDomEvent(target, "keyup", (event) => this.hold.keyup(event), true);
+    this.registerDomEvent(target, "mousedown", () => this.hold.cancel(), true);
+    const view = target.defaultView;
+    if (view) this.registerDomEvent(view, "blur", () => this.hold.reset());
+  }
+
+  /** Look up the selected text; a long press without a selection or without kgd configured does nothing. */
+  async lookUpSelection(fromCommand: boolean): Promise<void> {
+    const query = lookupQuery(this.selectedText());
+    if (!query) {
+      if (fromCommand) new Notice("Select text to look up.");
+      return;
+    }
+    if (!this.kgd.configured()) {
+      if (fromCommand) new Notice("Set the kgd executable in the kgdistiller settings to look up knowledge.");
+      return;
+    }
+    const view = await this.lookupView();
+    await view?.lookup(query);
+  }
+
+  private selectedText(): string {
+    const fromEditor = this.app.workspace.activeEditor?.editor?.getSelection() ?? "";
+    return fromEditor.trim() ? fromEditor : activeWindow.getSelection()?.toString() ?? "";
+  }
+
+  /** The lookup view, opened in the right sidebar without taking focus from the editor. */
+  private async lookupView(): Promise<KgdistillerLookupView | undefined> {
+    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_LOOKUP)[0];
+    if (!leaf) {
+      leaf = this.app.workspace.getRightLeaf(false) ?? undefined;
+      if (!leaf) {
+        new Notice("Could not create a workspace leaf for the kgdistiller lookup.");
+        return undefined;
+      }
+      await leaf.setViewState({ type: VIEW_TYPE_KGDISTILLER_LOOKUP, active: false });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+    return leaf.view instanceof KgdistillerLookupView ? leaf.view : undefined;
+  }
+
+  /** The real path of the vault root, which `kgd base list` reports for its base. */
+  vaultRoot(): string | undefined {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return undefined;
+    try {
+      return realpathSync(adapter.getBasePath());
+    } catch {
+      return undefined;
+    }
+  }
+
+  kgdSettingsChanged(): void {
+    this.kgd.stop();
   }
 
   async activateGraphView(): Promise<void> {
