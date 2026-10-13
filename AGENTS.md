@@ -183,7 +183,12 @@
   settings name a kgd executable, reads every base only through a resident
   `kgd mcp` and runs `kgd base list` and `kgd index` with the configured
   executable and `KGDISTILLER_HOME`; the plugin never opens the home or the
-  database itself. Preserve the complete upstream MIT notice and pinned source
+  database itself. The plugin's agent (judgment, Capture, Find sources; see
+  docs/obsidian.md "Agent") is the model-side adapter that keeps the core
+  model-free: it reaches models only through `omp auth-gateway stdio`, owns its
+  prompts and checks every model answer, and writes knowledge only as a draft
+  admitted by `kgd accept` and `kgd index --no-embed`, under the same rules as
+  the capture Skill. Preserve the complete upstream MIT notice and pinned source
   revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by

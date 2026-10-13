@@ -111,9 +111,20 @@ export class KgdServer {
   }
 
   /** Run `kgd index` and return its report; `failed` mirrors kgd's nonzero exit. */
-  async index(): Promise<{ report: Record<string, unknown>; failed: boolean }> {
-    const { stdout, failed } = await this.run(["index"], INDEX_TIMEOUT_MS);
-    return { report: JSON.parse(stdout) as Record<string, unknown>, failed };
+  index(): Promise<{ report: Record<string, unknown>; failed: boolean }> {
+    return this.command(["index"], INDEX_TIMEOUT_MS);
+  }
+
+  /** Run one kgd command that prints a JSON report, such as `sheet --json`, `accept` or `index --no-embed`. */
+  async command(args: string[], timeout = REQUEST_TIMEOUT_MS): Promise<{ report: Record<string, unknown>; failed: boolean }> {
+    const { stdout, failed } = await this.run(args, timeout);
+    let report: unknown;
+    try {
+      report = JSON.parse(stdout);
+    } catch {
+      throw new KgdError(`kgd ${args[0]} printed no JSON report`);
+    }
+    return { report: report as Record<string, unknown>, failed };
   }
 
   /** Stop the server and forget the base roots; the next call starts it with the current settings. */

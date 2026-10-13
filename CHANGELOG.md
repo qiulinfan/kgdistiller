@@ -4,6 +4,21 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Add an agent to the Obsidian lookup sidebar. With the new **omp executable**
+  and **Model** settings, the plugin asks a model through one resident
+  `omp auth-gateway stdio`, so it stores no API key. Each lookup gets a
+  judgment (**Recorded**, **Possibly** or **Not recorded**, with how the
+  selection connects to the records) in about 1.5 s. **Capture** and the
+  **Capture selection** command file the selection, from the editor or from
+  reading view, as one checked record: the plugin prepares the document type,
+  the numbered passage and the candidates, looks up every name before writing
+  it, places each evidence quote in the source, and admits the draft with
+  `kgd accept` and `kgd index --no-embed`, in about 6 s (median, low
+  reasoning) on DeepSeek V4 Flash.
+  Unchanged and borrowed items write nothing; superseding and conflicting ones
+  are shown to the owner and not yet written. **Find sources** lists the works
+  the selected lines cite from the source's reference list, the likely
+  originating papers from OpenAlex and the Wikipedia article.
 - Add selection lookup to the Obsidian plugin. Selecting text and holding the
   command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s, or running **Look up
   selection**, opens the **kgdistiller Lookup** sidebar. It lists the records

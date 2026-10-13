@@ -245,11 +245,100 @@ These processes read the home, the database and the registered bases; the
 plugin itself opens neither the home nor the database, and lookups write no
 knowledge.
 
+## Agent
+
+A small agent built into the plugin adds three things to the lookup sidebar:
+a judgment of the selection, **Capture** and **Find sources**. Nothing is
+written until the owner presses Capture or runs **Capture selection**.
+
+The agent's model calls go through one resident `omp auth-gateway stdio`,
+OMP's OpenAI-compatible gateway on stdin and stdout. OMP holds the provider
+credentials and maps roles such as `@smol` to its configured models, so the
+plugin stores no API key and talks to no provider itself. The plugin owns the
+prompts and the control flow: the model answers only by calling the agent's
+tools, a forced tool where one answer is needed. Each
+answer is checked before anything uses it; a refused answer goes back to the
+model as the tool's result, within a fixed number of calls. The gateway starts
+on the first call, stops after 15 minutes without one, when a setting below
+changes and when the plugin unloads.
+
+**Judgment.** After the deterministic results, one call compares the
+selection, read in the lines around it, with the records sharing its name and
+the search's first results, and shows **Recorded**, **Possibly** or **Not
+recorded** with one or two sentences on how the selection connects to them.
+The model first says whether the selection is a concept or a statement, and a
+match must have that class: a concept is a node, a statement a relation, and a
+record that only mentions the selection is related, not the same. A matched
+record is put in focus unless the owner has focused another one. With the
+model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
+
+**Capture** files the selection as one record by the rules of
+[the knowledge model](model.md) that the capture-kgdistiller Skill follows:
+
+- The selection comes with its source lines: from the editor directly, and in
+  reading view by finding its text in the source as reading view shows it,
+  inside the selection's block when the text occurs more than once.
+- The plugin prepares everything deterministic: `kgd sheet SOURCE --json` for
+  the document type, the records already citing the source and the base, the
+  numbered paragraph around the selection with the nearest heading, the first
+  `kg_search` results for the selection, and `kg_resolve` of the
+  Latin-script names in it.
+- The model may call `lookup` once for other names and phrases, then calls
+  `submit` with what it takes the item to be, the decision (new, unchanged,
+  superseding, conflicting, or borrowed for a concept the source only uses or
+  credits to other work) and, for a record, its label, kind, roles, requires,
+  statement and evidence quotes with their lines.
+- The plugin refuses kinds and roles the type lacks, links to records the
+  model was not shown, and values that are neither links nor terms. It looks
+  up every name the record would write (label, aliases and plain terms) and
+  returns any recorded concept the model had not seen, so a term is looked up
+  before it is written as pending. It drops a relation's aliases.
+- Evidence holds only the source's text. A quote is kept when it is verbatim
+  in its lines after collapsing whitespace, as `kgd check` compares; moved to
+  its only occurrence in the source when the lines were wrong; and replaced
+  by the source's own text when an alignment inside the cited lines is at
+  least 90% similar. Otherwise the model is shown the cited lines to copy.
+- A new record is written as a draft with every frontmatter value a quoted
+  string, admitted with `kgd accept` and indexed with `kgd index --no-embed`;
+  `kgd accept`'s refusal returns to the model. Unchanged and borrowed write
+  nothing. Superseding and conflicting show the proposed record beside the
+  recorded one and write nothing yet: the in-place overwrite of a more general
+  or corrected definition, relocation, and the linking of pending uses remain
+  the capture Skill's.
+- The sidebar reports the decision, the record and one line from the agent,
+  with a notice when the capture ends. Capture asks for low reasoning: on
+  eleven test selections from the test papers and notes it decided every one
+  as expected in two runs, with a median of about 6 s and the slowest near
+  20 s on DeepSeek V4 Flash, usually in one model call. Without reasoning the
+  median was 4 s, but a concept the paper credits to earlier work was filed as
+  its own.
+
+**Find sources**, for an unrecorded or borrowed term, shows the works the
+selected lines cite, read from the source's own reference list (block ids
+`^reference-N`), and on the web the likely originating papers from OpenAlex
+and the Wikipedia article for the term or its singular. The papers are ranked
+by the share of papers using the term that cite them, a title that starts
+with the term, an abstract that introduces it and a citation in the Wikipedia
+article. It sends the term to OpenAlex and Wikipedia only when pressed, naming
+the plugin in its User-Agent as Wikimedia asks; Wikipedia's text is shown
+with its CC BY-SA 4.0 notice. A borrowed capture runs it by itself.
+
+Settings, under **Agent**:
+
+- **omp executable**: the absolute path of `omp`. Empty, the default, turns the
+  agent off; lookups then show only the deterministic results.
+- **Model**: a model OMP knows, such as `deepseek/deepseek-v4-flash`, or an OMP
+  role, `@smol` by default.
+
+The model sees the selection, the paragraph around it and the candidate
+records; Capture's drafts and `kgd` runs stay on this machine.
+
 ## Not yet built
 
 Later owner-scheduled frontend work: editing commands, jump links from md/tex
-sources to records, "new record from selection", a shipped `.base` file and a
-Bases view.
+sources to records, a shipped `.base` file and a Bases view. For the agent:
+the in-place overwrite of superseded records and relocation, linking pending
+uses after a capture, and compiling a whole source.
 
 ## Installation
 

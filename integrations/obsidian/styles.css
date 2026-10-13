@@ -323,6 +323,55 @@ SOFTWARE.
   color: var(--text-error);
 }
 
+.kgd-lookup-agent:has(> :not(:empty)) {
+  margin: 6px 0;
+}
+
+.kgd-lookup-verdict-line,
+.kgd-lookup-capture-line {
+  border-inline-start: 3px solid var(--background-modifier-border);
+  margin-top: 4px;
+  padding-inline-start: 8px;
+}
+
+.kgd-lookup-verdict-line.is-matched,
+.kgd-lookup-capture-line.is-new,
+.kgd-lookup-capture-line.is-unchanged {
+  border-inline-start-color: var(--color-green);
+}
+
+.kgd-lookup-verdict-line.is-ambiguous,
+.kgd-lookup-capture-line.is-superseding,
+.kgd-lookup-capture-line.is-conflicting {
+  border-inline-start-color: var(--color-orange);
+}
+
+.kgd-lookup-verdict-head {
+  font-weight: var(--font-semibold);
+}
+
+.kgd-lookup-explanation {
+  color: var(--text-muted);
+  margin: 2px 0 4px;
+  padding-inline-start: 11px;
+}
+
+.kgd-lookup-actions:not(:empty) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.kgd-lookup-proposal pre {
+  font-size: var(--font-ui-smaller);
+  white-space: pre-wrap;
+}
+
+.kgd-lookup-wikipedia {
+  margin-top: 6px;
+}
+
 .kgd-lookup-lag button {
   margin-inline-start: 4px;
 }

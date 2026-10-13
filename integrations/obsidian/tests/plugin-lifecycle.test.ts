@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const controls = vi.hoisted(() => ({
   headings: [] as string[], stored: null as Record<string, unknown> | null,
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
-  viewRefresh: vi.fn(), viewApply: vi.fn(), lookup: vi.fn(),
+  viewRefresh: vi.fn(), viewApply: vi.fn(), lookup: vi.fn(), capture: vi.fn(),
   domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
   commands: [] as Array<{ id: string; callback: () => void }>,
   settings: [] as Array<{
@@ -61,8 +61,9 @@ vi.mock("obsidian", () => {
   class TFile { path = ""; }
   const debounce = (callback: () => void) => Object.assign(() => callback(), { cancel: () => undefined, run: () => undefined });
   class FileSystemAdapter {}
-  return { Plugin, PluginSettingTab, Setting, ItemView, TFile, FileSystemAdapter, debounce, setIcon: () => undefined,
-    Platform: { isMacOS: true },
+  class MarkdownView {}
+  return { Plugin, PluginSettingTab, Setting, ItemView, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
+    Platform: { isMacOS: true }, requestUrl: vi.fn(),
     Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path };
 });
 vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
@@ -73,7 +74,13 @@ vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
 vi.mock("../src/view", () => ({ KGDISTILLER_ICON: "network", VIEW_TYPE_KGDISTILLER_GRAPH: "kgdistiller-graph",
   KgdistillerGraphView: class { refresh(): void { controls.viewRefresh(); } applySettings(): void { controls.viewApply(); } } }));
 vi.mock("../src/lookup-view", () => ({ VIEW_TYPE_KGDISTILLER_LOOKUP: "kgdistiller-lookup",
-  KgdistillerLookupView: class { lookup(query: string): Promise<void> { controls.lookup(query); return Promise.resolve(); } } }));
+  KgdistillerLookupView: class {
+    lookup(selection: { text: string }, options?: { capture?: boolean }): Promise<void> {
+      if (options?.capture) controls.capture(selection.text);
+      else controls.lookup(selection.text);
+      return Promise.resolve();
+    }
+  } }));
 const mainDocument = { defaultView: { name: "main window" } };
 const domSelection = { text: "" };
 vi.stubGlobal("document", mainDocument);
@@ -112,6 +119,7 @@ function harness(initial: Record<string, Record<string, unknown>> = {}): Harness
     workspace: {
       getLeavesOfType: vi.fn((type: string) => (type === "kgdistiller-lookup" ? lookupLeaves : leaves)),
       detachLeavesOfType: vi.fn(), on: on("workspace"), revealLeaf: vi.fn(async () => undefined), activeEditor: null,
+      getActiveViewOfType: vi.fn(() => null),
     },
     vault: { on: on("vault"), getMarkdownFiles: vi.fn(() => [...frontmatter.keys()].map((path) => fileAt(path))) },
     metadataCache: {
@@ -148,7 +156,7 @@ describe("community lifecycle conventions", () => {
   });
   it("settings use Obsidian headings without writing HTML headings", () => {
     showSettings(pluginFixture());
-    expect(controls.headings).toEqual(["Graph view", "Hidden knowledge folder", "Lookup"]);
+    expect(controls.headings).toEqual(["Graph view", "Hidden knowledge folder", "Lookup", "Agent"]);
   });
 });
 
@@ -239,12 +247,16 @@ describe("hidden knowledge lifecycle", () => {
 
 describe("stored settings", () => {
   it("defaults to drawing drafts with hidden indexing off until kgd obsidian install turns it on, and lookups off", () => {
-    expect(DEFAULT_SETTINGS).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "" });
+    expect(DEFAULT_SETTINGS).toEqual({
+      showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", ompCommand: "", agentModel: "@smol",
+    });
   });
   it("replaces wrongly typed stored values with defaults and reports only those", async () => {
     controls.stored = { showDrafts: "no", hiddenKnowledgeEnabled: true, kgdCommand: 7, unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
-    expect(plugin.settings).toEqual({ showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "" });
+    expect(plugin.settings).toEqual({
+      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", ompCommand: "", agentModel: "@smol",
+    });
     expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: showDrafts, kgdCommand."));
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(() => showSettings(plugin)).not.toThrow();
@@ -259,7 +271,7 @@ describe("hidden knowledge settings", () => {
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Graph view", "Show drafts", "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
-      "Lookup", "kgd executable", "Knowledge home",
+      "Lookup", "kgd executable", "Knowledge home", "Agent", "omp executable", "Model",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
@@ -267,7 +279,9 @@ describe("hidden knowledge settings", () => {
   it("persists enable changes and exposes the rescan action", async () => {
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
-    expect(controls.saveData).toHaveBeenCalledWith({ showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "" });
+    expect(controls.saveData).toHaveBeenCalledWith({
+      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", ompCommand: "", agentModel: "@smol",
+    });
     expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();
     expect(controls.rescan).toHaveBeenCalledOnce();
@@ -476,11 +490,11 @@ describe("selection lookup", () => {
     const { plugin, handlers } = harness(); await plugin.onload();
     expect(controls.commands.map((command) => command.id)).toContain("look-up-selection");
     const types = (target: unknown): string[] => controls.domEvents.filter((event) => event.target === target).map((event) => event.type);
-    expect(types(mainDocument)).toEqual(["keydown", "keyup", "mousedown"]);
+    expect(types(mainDocument)).toEqual(["keydown", "keyup", "mousedown", "selectionchange"]);
     expect(types(mainDocument.defaultView)).toEqual(["blur"]);
     const popout = { defaultView: { name: "popout window" } };
     for (const callback of handlers.get("workspace:window-open") ?? []) callback({}, { document: popout });
-    expect(types(popout)).toEqual(["keydown", "keyup", "mousedown"]);
+    expect(types(popout)).toEqual(["keydown", "keyup", "mousedown", "selectionchange"]);
     expect(types(popout.defaultView)).toEqual(["blur"]);
   });
 
@@ -524,5 +538,33 @@ describe("selection lookup", () => {
     expect(stop).toHaveBeenCalledTimes(2);
     plugin.onunload();
     expect(stop).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("the agent", () => {
+  it("restarts the model gateway after an agent settings change, keeps a model, and stops it on unload", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    const stop = vi.spyOn(plugin.gateway, "stop");
+    showSettings(plugin);
+    await controls.settings.find((setting) => setting.name === "omp executable")!.textChange!(" /bin/omp ");
+    await controls.settings.find((setting) => setting.name === "Model")!.textChange!("  ");
+    expect(plugin.settings).toMatchObject({ ompCommand: "/bin/omp", agentModel: "@smol" });
+    expect(plugin.gateway.configured()).toBe(true);
+    expect(stop).toHaveBeenCalledTimes(2);
+    plugin.onunload();
+    expect(stop).toHaveBeenCalledTimes(3);
+  });
+
+  it("captures only a selection in a source file, with kgd and omp configured", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    expect(controls.commands.map((command) => command.id)).toContain("capture-selection");
+    await plugin.captureSelection();
+    expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("Set the kgd and omp executables"));
+    plugin.settings.kgdCommand = "/bin/kgd";
+    plugin.settings.ompCommand = "/bin/omp";
+    domSelection.text = "masked autoencoder";
+    await plugin.captureSelection();
+    expect(controls.notice).toHaveBeenLastCalledWith("Select text in a source file to capture it.");
+    expect(controls.capture).not.toHaveBeenCalled();
   });
 });

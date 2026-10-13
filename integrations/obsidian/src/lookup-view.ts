@@ -5,15 +5,17 @@
  * relations about it, the records built on it, its `requires` chain and a
  * graph of its neighbours. Every answer comes from `kgd mcp`, so it covers
  * every registered base; same name is not same concept, so name matches are
- * shown as candidates to compare.
+ * shown as candidates to compare. When the agent is set up, its judgment of
+ * the selection, Capture and the sources of an unrecorded term sit above them
+ * (agent-pane.ts).
  */
 
 import cytoscape, { type Core, type EventObject } from "cytoscape";
 import { Component, ItemView, MarkdownRenderer, Notice, normalizePath, TFile, type App, type WorkspaceLeaf } from "obsidian";
 
+import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import type { GraphElementData } from "./graph-model";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
-import type { KgdServer } from "./kgd";
 import {
   chainTree,
   inboundGroups,
@@ -41,9 +43,8 @@ const CHAIN_DEPTH = 3;
 /** The most uids one `kg_get` call takes. */
 const MAX_UIDS = 128;
 
-export interface LookupHost {
+export interface LookupHost extends AgentHost {
   app: App;
-  kgd: KgdServer;
   /** The real path of this vault's root, when the vault lives on the local filesystem. */
   vaultRoot(): string | undefined;
 }
@@ -56,15 +57,19 @@ const settle = <T>(promise: Promise<T>): Promise<Settled<T>> =>
 export class KgdistillerLookupView extends ItemView {
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
+  private agent: AgentPane | null = null;
   private namesEl: HTMLElement | null = null;
   private recordEl: HTMLElement | null = null;
   private relatedEl: HTMLElement | null = null;
   private query = "";
+  private selection: Selection | undefined;
   private resolved: Settled<ResolveResult> | undefined;
   private searched: Settled<SearchResult> | undefined;
   /** Labels of the records that use the query as a pending term; uids are never shown. */
   private ownerLabels = new Map<string, string>();
   private focus: string | undefined;
+  /** The record the lookup put in focus itself; the agent's match may replace only this one. */
+  private autoFocus: string | undefined;
   /** Each lookup and each focused record bumps these, so slower earlier answers are dropped. */
   private lookupRequest = 0;
   private focusRequest = 0;
@@ -96,6 +101,7 @@ export class KgdistillerLookupView extends ItemView {
     this.contentEl.addClass("kgd-lookup-view");
     this.queryEl = this.contentEl.createDiv({ cls: "kgd-lookup-query" });
     this.statusEl = this.contentEl.createDiv({ cls: "kgd-lookup-status" });
+    this.agent = new AgentPane(this.contentEl.createDiv(), this.host, (uid) => this.label(uid), (uid) => this.focusMatched(uid));
     // The record in focus, with its chain, sits between the name matches and the related records.
     this.namesEl = this.contentEl.createDiv({ cls: "kgd-lookup-names" });
     this.recordEl = this.contentEl.createDiv({ cls: "kgd-lookup-record" });
@@ -103,16 +109,24 @@ export class KgdistillerLookupView extends ItemView {
     this.queryEl.setText("Select text and hold the command key, or run Look up selection.");
   }
 
-  /** Look the query up in every base: names first, then the ranked search, then the best candidate in focus. */
-  async lookup(query: string): Promise<void> {
+  /**
+   * Look the selection up in every base: names first, then the ranked search,
+   * then the best candidate in focus, while the agent judges the candidates.
+   */
+  async lookup(selection: Selection, options: { capture?: boolean } = {}): Promise<void> {
     const request = ++this.lookupRequest;
+    const query = selection.text;
     this.query = query;
+    this.selection = selection;
     this.resolved = undefined;
     this.searched = undefined;
     this.focus = undefined;
+    this.autoFocus = undefined;
     ++this.focusRequest;
     this.ownerLabels = new Map();
     this.queryEl?.setText(query);
+    this.agent?.reset(selection);
+    if (options.capture) void this.agent?.startCapture();
     this.clearNeighbours();
     this.recordEl?.empty();
     this.renderResults();
@@ -129,12 +143,34 @@ export class KgdistillerLookupView extends ItemView {
     this.searched = await settle(this.host.kgd.call<SearchResult>("kg_search", { query, limit: SEARCH_LIMIT }));
     if (request !== this.lookupRequest) return;
     this.renderResults();
+    void this.agent?.judge(this.candidates());
     const best = this.resolved.value?.terms[0]?.senses[0]?.uid ?? this.searched.value?.results[0]?.uid;
-    if (best && this.focus === undefined) await this.show(best);
+    if (best && this.focus === undefined) {
+      this.autoFocus = best;
+      await this.show(best);
+    }
   }
 
   private senses(): RecordSummary[] {
     return this.resolved?.value?.terms[0]?.senses ?? [];
+  }
+
+  /** The records sharing the selection's name, then the search's ranking, each once. */
+  private candidates(): RecordSummary[] {
+    const seen = new Set<string>();
+    return [...this.senses(), ...(this.searched?.value?.results ?? [])].filter((record) => !seen.has(record.uid) && seen.add(record.uid));
+  }
+
+  private label(uid: string): string | undefined {
+    return this.candidates().find((record) => record.uid === uid)?.label;
+  }
+
+  /** Focus the record the agent matched, unless the owner has already focused another one. */
+  private focusMatched(uid: string): void {
+    if (this.focus === undefined || this.focus === this.autoFocus) {
+      this.autoFocus = uid;
+      void this.show(uid);
+    }
   }
 
   private renderResults(): void {
@@ -201,7 +237,7 @@ export class KgdistillerLookupView extends ItemView {
     } catch (error) {
       new Notice(`kgd index failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (this.query) await this.lookup(this.query);
+    if (this.selection) await this.lookup(this.selection);
   }
 
   private section(container: HTMLElement, title: string, hint: string): HTMLElement {

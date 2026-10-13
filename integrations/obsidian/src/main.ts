@@ -1,6 +1,10 @@
-import { realpathSync } from "fs";
-import { FileSystemAdapter, Notice, Platform, Plugin, TFile, debounce, type TAbstractFile } from "obsidian";
+import { promises as fs, realpathSync } from "fs";
+import { dirname } from "path";
+import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, debounce, requestUrl, type TAbstractFile } from "obsidian";
 
+import type { Selection } from "./agent-pane";
+import { locateSelection, type CaptureFiles } from "./capture";
+import { ModelGateway } from "./gateway";
 import type { FrontmatterRecord } from "./graph-model";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
@@ -8,7 +12,8 @@ import { HoldTrigger } from "./hold";
 import { KgdServer } from "./kgd";
 import { lookupQuery } from "./lookup-model";
 import { KgdistillerLookupView, VIEW_TYPE_KGDISTILLER_LOOKUP } from "./lookup-view";
-import { isRecordPath } from "./records";
+import { fold, isRecordPath } from "./records";
+import { USER_AGENT, type GetJson } from "./sources";
 
 import {
   KGDISTILLER_ICON,
@@ -21,6 +26,9 @@ import {
   mergeStoredSettings,
   type KgdistillerSettings,
 } from "./settings";
+
+/** The reading-view elements whose text is a selection's block. */
+const READING_BLOCKS = "p, li, td, th, blockquote, h1, h2, h3, h4, h5, h6";
 
 export default class KgdistillerPlugin extends Plugin {
   settings: KgdistillerSettings = { ...DEFAULT_SETTINGS };
@@ -37,7 +45,36 @@ export default class KgdistillerPlugin extends Plugin {
   private readonly scheduleRefresh = debounce(() => this.refreshGraphViews(), 250, true);
   /** Lookups query every registered base through one resident `kgd mcp`. */
   readonly kgd = new KgdServer(() => ({ command: this.settings.kgdCommand, home: this.settings.knowledgeHome }));
+  /** The agent's model calls go through one resident `omp auth-gateway stdio`. */
+  readonly gateway = new ModelGateway(() => ({ command: this.settings.ompCommand, model: this.settings.agentModel }));
+  /** Capture reads sources and writes drafts in base roots, which may lie outside this vault. */
+  readonly captureFiles: CaptureFiles = {
+    read: (path) => fs.readFile(path, "utf8"),
+    ids: async (root) => {
+      const ids = new Set<string>();
+      for (const folder of ["entries", "drafts"]) {
+        const names = await fs.readdir(`${root}/.knowledge/${folder}`).catch(() => [] as string[]);
+        for (const name of names) if (name.endsWith(".md")) ids.add(fold(name.slice(0, -3)));
+      }
+      return ids;
+    },
+    create: async (path, text) => {
+      await fs.mkdir(dirname(path), { recursive: true });
+      await fs.writeFile(path, text, { encoding: "utf8", flag: "wx" });
+    },
+    remove: (path) => fs.rm(path, { force: true }),
+  };
+  /** Source lookups name the plugin to OpenAlex and Wikipedia, as Wikimedia asks. */
+  readonly getJson: GetJson = async (url) =>
+    (await requestUrl({ url, headers: { "User-Agent": USER_AGENT, "Api-User-Agent": USER_AGENT } })).json as unknown;
   private readonly hold = new HoldTrigger(Platform.isMacOS ? "Meta" : "Control", () => void this.lookUpSelection(false));
+  /**
+   * The text last selected in a reading view, with its block's text. Opening
+   * the command palette moves the page's selection into the palette's input,
+   * so commands read it from here; a click that clears the selection in the
+   * page clears it here too.
+   */
+  private readingSelection: { text: string; block: string } | undefined;
 
   async onload(): Promise<void> {
     await this.loadPluginSettings();
@@ -78,6 +115,11 @@ export default class KgdistillerPlugin extends Plugin {
       id: "look-up-selection",
       name: "Look up selection",
       callback: () => void this.lookUpSelection(true),
+    });
+    this.addCommand({
+      id: "capture-selection",
+      name: "Capture selection",
+      callback: () => void this.captureSelection(),
     });
     this.watchHold(document);
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, popout) => this.watchHold(popout.document)));
@@ -131,22 +173,36 @@ export default class KgdistillerPlugin extends Plugin {
     this.scheduleRefresh.cancel();
     this.hold.reset();
     this.kgd.stop();
+    this.gateway.stop();
     this.hiddenKnowledgeIndexer?.dispose();
   }
 
-  /** Long-pressing the command key with text selected looks the text up, in the main window and in popouts. */
+  /**
+   * Long-pressing the command key with text selected looks the text up, in
+   * the main window and in popouts; selections in reading view are remembered.
+   */
   private watchHold(target: Document): void {
     this.registerDomEvent(target, "keydown", (event) => this.hold.keydown(event), true);
     this.registerDomEvent(target, "keyup", (event) => this.hold.keyup(event), true);
     this.registerDomEvent(target, "mousedown", () => this.hold.cancel(), true);
+    this.registerDomEvent(target, "selectionchange", () => this.rememberReadingSelection(target));
     const view = target.defaultView;
     if (view) this.registerDomEvent(view, "blur", () => this.hold.reset());
   }
 
+  private rememberReadingSelection(target: Document): void {
+    const selection = target.getSelection();
+    const node = selection?.anchorNode;
+    const element = node instanceof Element ? node : node?.parentElement;
+    if (!element?.closest(".markdown-reading-view")) return;
+    const text = selection?.toString() ?? "";
+    this.readingSelection = text.trim() ? { text, block: element.closest(READING_BLOCKS)?.textContent ?? "" } : undefined;
+  }
+
   /** Look up the selected text; a long press without a selection or without kgd configured does nothing. */
   async lookUpSelection(fromCommand: boolean): Promise<void> {
-    const query = lookupQuery(this.selectedText());
-    if (!query) {
+    const selection = await this.selection();
+    if (!selection) {
       if (fromCommand) new Notice("Select text to look up.");
       return;
     }
@@ -155,12 +211,55 @@ export default class KgdistillerPlugin extends Plugin {
       return;
     }
     const view = await this.lookupView();
-    await view?.lookup(query);
+    await view?.lookup(selection);
   }
 
-  private selectedText(): string {
-    const fromEditor = this.app.workspace.activeEditor?.editor?.getSelection() ?? "";
-    return fromEditor.trim() ? fromEditor : activeWindow.getSelection()?.toString() ?? "";
+  /** Look the selection up, then capture it from the lookup sidebar. */
+  async captureSelection(): Promise<void> {
+    if (!this.gateway.configured() || !this.kgd.configured()) {
+      new Notice("Set the kgd and omp executables in the kgdistiller settings to capture knowledge.");
+      return;
+    }
+    const selection = await this.selection();
+    if (!selection?.source) {
+      new Notice("Select text in a source file to capture it.");
+      return;
+    }
+    const view = await this.lookupView();
+    await view?.lookup(selection, { capture: true });
+  }
+
+  /**
+   * The current selection with the lines around it: from the editor with its
+   * line numbers, or from reading view, whose text is located in the file.
+   */
+  private async selection(): Promise<Selection | undefined> {
+    const root = this.vaultRoot();
+    const pathOf = (file: TFile | null | undefined) => (root && file ? `${root}/${file.path}` : undefined);
+    const active = this.app.workspace.activeEditor;
+    const editor = active?.editor;
+    const fromEditor = editor?.getSelection() ?? "";
+    if (editor && fromEditor.trim()) {
+      const from = editor.getCursor("from");
+      const to = editor.getCursor("to");
+      const last = to.ch === 0 && to.line > from.line ? to.line - 1 : to.line;
+      const context = Array.from({ length: last - from.line + 1 }, (_, offset) => editor.getLine(from.line + offset)).join("\n");
+      const text = lookupQuery(fromEditor);
+      const path = pathOf(active?.file);
+      return { text, context, ...(path ? { source: { path, from: from.line + 1, to: last + 1 } } : {}) };
+    }
+    const markdown = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const path = pathOf(markdown?.file);
+    const dom = activeWindow.getSelection();
+    const reading = markdown?.getMode() === "preview" && !dom?.toString().trim() ? this.readingSelection : undefined;
+    const selected = reading?.text ?? dom?.toString() ?? "";
+    const text = lookupQuery(selected);
+    if (!text) return undefined;
+    const context = reading?.block ?? dom?.anchorNode?.parentElement?.closest(READING_BLOCKS)?.textContent ?? "";
+    if (!path || markdown?.getMode() !== "preview") return { text, context };
+    const lines = (await this.captureFiles.read(path).catch(() => "")).replace(/\r\n?/g, "\n").split("\n");
+    const range = locateSelection(selected, lines, context);
+    return { text, context, ...(range ? { source: { path, from: range[0], to: range[1] } } : {}) };
   }
 
   /** The lookup view, opened in the right sidebar without taking focus from the editor. */
@@ -191,6 +290,10 @@ export default class KgdistillerPlugin extends Plugin {
 
   kgdSettingsChanged(): void {
     this.kgd.stop();
+  }
+
+  agentSettingsChanged(): void {
+    this.gateway.stop();
   }
 
   async activateGraphView(): Promise<void> {

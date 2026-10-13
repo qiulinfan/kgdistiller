@@ -10,6 +10,10 @@ export interface KgdistillerSettings {
   kgdCommand: string;
   /** KGDISTILLER_HOME for lookups; empty keeps kgd's default home. */
   knowledgeHome: string;
+  /** Absolute path of the omp executable whose model gateway the agent uses; empty turns the agent off. */
+  ompCommand: string;
+  /** The model the agent asks: one OMP knows, or an OMP role such as `@smol`. */
+  agentModel: string;
 }
 
 export const DEFAULT_SETTINGS: KgdistillerSettings = {
@@ -17,6 +21,8 @@ export const DEFAULT_SETTINGS: KgdistillerSettings = {
   hiddenKnowledgeEnabled: false,
   kgdCommand: "",
   knowledgeHome: "",
+  ompCommand: "",
+  agentModel: "@smol",
 };
 
 /**
@@ -47,6 +53,8 @@ export interface SettingsHost {
   rescanHiddenKnowledge(): Promise<void>;
   /** Called after the kgd executable or the knowledge home changed. */
   kgdSettingsChanged(): void;
+  /** Called after the omp executable or the agent's model changed. */
+  agentSettingsChanged(): void;
 }
 
 export class KgdistillerSettingTab extends PluginSettingTab {
@@ -121,6 +129,34 @@ export class KgdistillerSettingTab extends PluginSettingTab {
             this.host.settings.knowledgeHome = value.trim();
             await this.host.savePluginSettings();
             this.host.kgdSettingsChanged();
+          }),
+      );
+
+    new Setting(containerEl).setName("Agent").setHeading();
+    new Setting(containerEl)
+      .setName("omp executable")
+      .setDesc("Absolute path of the omp command (oh-my-pi), such as the output of `command -v omp`. The agent judges each lookup and captures selections through `omp auth-gateway stdio`, which uses the models and credentials configured in OMP; this plugin stores no API key. Leave empty to turn the agent off.")
+      .addText((text) =>
+        text
+          .setPlaceholder("/path/to/omp")
+          .setValue(this.host.settings.ompCommand)
+          .onChange(async (value) => {
+            this.host.settings.ompCommand = value.trim();
+            await this.host.savePluginSettings();
+            this.host.agentSettingsChanged();
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Model")
+      .setDesc("A model OMP knows, such as deepseek/deepseek-v4-flash, or an OMP role such as @smol. A small, fast model such as DeepSeek V4 Flash keeps a judgment near 1.5 s and a capture near 6 s.")
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.agentModel)
+          .setValue(this.host.settings.agentModel)
+          .onChange(async (value) => {
+            this.host.settings.agentModel = value.trim() || DEFAULT_SETTINGS.agentModel;
+            await this.host.savePluginSettings();
+            this.host.agentSettingsChanged();
           }),
       );
   }
