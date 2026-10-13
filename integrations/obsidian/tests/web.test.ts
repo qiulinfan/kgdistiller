@@ -40,6 +40,18 @@ describe("web search events", () => {
     ]);
   });
 
+  it("link papers to their arXiv abstract page, once", () => {
+    expect(webSources(JSON.parse(toolEnd({ response: { sources: [
+      { title: "BEiT pdf", url: "https://arxiv.org/pdf/2106.08254v2", snippet: "" },
+      { title: "BEiT html", url: "https://arxiv.org/html/2106.08254v1", snippet: "" },
+      { title: "MAE", url: "https://ar5iv.labs.arxiv.org/html/2111.06377", snippet: "" },
+      { title: "MAE on alphaXiv", url: "https://www.alphaxiv.org/abs/2111.06377", snippet: "" },
+    ] } })))).toEqual([
+      { title: "BEiT pdf", url: "https://arxiv.org/abs/2106.08254", snippet: "" },
+      { title: "MAE", url: "https://arxiv.org/abs/2111.06377", snippet: "" },
+    ]);
+  });
+
   it("report the tool's error and ignore other events", () => {
     expect(webSources(JSON.parse(toolEnd({ error: "No search provider is available" })))).toEqual(new WebSearchError("No search provider is available"));
     expect(webSources({ type: "tool_execution_end", toolName: "web_search", result: { content: [{ text: "Error: offline" }] } }))

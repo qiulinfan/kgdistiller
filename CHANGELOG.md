@@ -13,6 +13,12 @@ All notable changes are documented here.
   checked against what the tools returned; records appear as K1, K2, … and web
   pages as W1, W2, …, listed apart. Answers took 4 to 6 s from the knowledge
   base and 8 to 11 s with a web search on DeepSeek V4 Flash.
+- Find sources reads Wikipedia at the section a redirect points into and shows
+  the first paper it cites, lists Wikipedia before the papers ranked by
+  OpenAlex's citation graph only papers with an origin signal, and links every
+  paper to its arXiv page, found through OpenAlex or one arXiv title search; a
+  paper not on arXiv says so.
+  Paper links in search answers point to arXiv abstract pages.
 - Add an agent to the Obsidian lookup sidebar. With the new **omp executable**
   and **Model** settings, the plugin asks a model through one resident
   `omp auth-gateway stdio`, so it stores no API key. Each lookup gets a

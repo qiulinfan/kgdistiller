@@ -9,6 +9,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { tmpdir } from "os";
 
+import { arxivId, arxivUrl } from "./sources";
+
 export interface WebSource {
   title: string;
   url: string;
@@ -34,7 +36,11 @@ export function webSearchArgs(model: string, query: string): string[] {
   ];
 }
 
-/** The sources of one `tool_execution_end` event of web_search, or the error it reports. */
+/**
+ * The sources of one `tool_execution_end` event of web_search, or the error it
+ * reports. A paper's PDF, HTML or mirror page becomes its arXiv abstract page,
+ * and a page that appears twice is kept once.
+ */
 export function webSources(event: unknown): WebSource[] | WebSearchError | undefined {
   const value = event as {
     type?: unknown;
@@ -49,12 +55,17 @@ export function webSources(event: unknown): WebSource[] | WebSearchError | undef
     const text = value.result?.content?.[0]?.text;
     return new WebSearchError(typeof text === "string" ? text.slice(0, 300) : "the web search returned no sources");
   }
+  const seen = new Set<string>();
   return sources.flatMap((source: { title?: unknown; url?: unknown; snippet?: unknown }) => {
     if (typeof source?.url !== "string") return [];
+    const arxiv = arxivId(source.url);
+    const url = arxiv ? arxivUrl(arxiv) : source.url;
+    if (seen.has(url)) return [];
+    seen.add(url);
     const snippet = typeof source.snippet === "string" ? source.snippet.split(/\s+/).filter(Boolean).join(" ") : "";
     return [{
-      title: typeof source.title === "string" && source.title.trim() ? source.title.trim() : source.url,
-      url: source.url,
+      title: typeof source.title === "string" && source.title.trim() ? source.title.trim() : url,
+      url,
       snippet: snippet.length > SNIPPET_CHARS ? `${snippet.slice(0, SNIPPET_CHARS)}…` : snippet,
     }];
   });

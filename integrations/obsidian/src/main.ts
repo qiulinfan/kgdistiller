@@ -14,7 +14,7 @@ import { KgdServer } from "./kgd";
 import { lookupQuery } from "./lookup-model";
 import { KgdistillerLookupView, VIEW_TYPE_KGDISTILLER_LOOKUP } from "./lookup-view";
 import { fold, isRecordPath } from "./records";
-import { USER_AGENT, type GetJson } from "./sources";
+import { USER_AGENT, type Fetch } from "./sources";
 
 import {
   KGDISTILLER_ICON,
@@ -69,9 +69,9 @@ export default class KgdistillerPlugin extends Plugin {
   webSearch(query: string): Promise<WebSource[]> {
     return webSearch(this.settings.ompCommand.trim(), this.settings.agentModel.trim(), query);
   }
-  /** Source lookups name the plugin to OpenAlex and Wikipedia, as Wikimedia asks. */
-  readonly getJson: GetJson = async (url) =>
-    (await requestUrl({ url, headers: { "User-Agent": USER_AGENT, "Api-User-Agent": USER_AGENT } })).json as unknown;
+  /** Source lookups name the plugin to Wikipedia, OpenAlex and arXiv, as Wikimedia asks. */
+  readonly fetchText: Fetch = async (url) =>
+    (await requestUrl({ url, headers: { "User-Agent": USER_AGENT, "Api-User-Agent": USER_AGENT } })).text;
   private readonly hold = new HoldTrigger(Platform.isMacOS ? "Meta" : "Control", () => void this.lookUpSelection(false));
   /**
    * The text last selected in a reading view, with its block's text. Opening

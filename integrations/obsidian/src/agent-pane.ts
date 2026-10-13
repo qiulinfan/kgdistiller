@@ -14,7 +14,7 @@ import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
 import { answerMarkdown, searchKnowledge, stepText, type SearchAnswer } from "./search";
-import { citedReferences, findSources, type GetJson, type Reference, type Sources } from "./sources";
+import { arxivId, citedReferences, findSources, type Fetch, type Reference, type Sources } from "./sources";
 import type { WebSource } from "./web";
 
 /** The selected passage a lookup started from. */
@@ -31,7 +31,7 @@ export interface AgentHost {
   kgd: KgdServer;
   gateway: ModelGateway;
   captureFiles: CaptureFiles;
-  getJson: GetJson;
+  fetchText: Fetch;
   webSearch(query: string): Promise<WebSource[]>;
 }
 
@@ -258,7 +258,7 @@ export class AgentPane {
     const status = element.createDiv({ cls: "kgd-lookup-hint", text: "Searching OpenAlex and Wikipedia…" });
     let found: Sources;
     try {
-      found = await findSources(selection.text, this.host.getJson);
+      found = await findSources(selection.text, this.host.fetchText);
     } catch (error) {
       if (request !== this.request) return;
       status.setText(`The web search failed: ${message(error)}`);
@@ -280,24 +280,16 @@ export class AgentPane {
       item.createSpan({ cls: "kgd-lookup-meta", text: `[${reference.number}] ` });
       if (reference.url) item.createEl("a", { text: reference.text, href: reference.url });
       else item.createSpan({ text: reference.text });
+      if (reference.url && !arxivId(reference.url)) item.createSpan({ cls: "kgd-lookup-meta", text: " · not on arXiv" });
     }
   }
 
   private renderSources(found: Sources): void {
     const section = this.sourcesEl.createDiv({ cls: "kgd-lookup-section" });
-    section.createEl("h4", { text: "On the web" });
+    section.createEl("h4", { text: "Where it comes from" });
     if (found.papers.length === 0 && !found.wikipedia) {
-      section.createDiv({ cls: "kgd-empty-state", text: "OpenAlex and Wikipedia found nothing for this term." });
+      section.createDiv({ cls: "kgd-empty-state", text: "Wikipedia, OpenAlex and arXiv found nothing for this term." });
       return;
-    }
-    if (found.papers.length > 0) {
-      section.createDiv({ cls: "kgd-lookup-hint", text: "Likely originating papers, from OpenAlex, best first." });
-      const list = section.createEl("ul", { cls: "kgd-lookup-links" });
-      for (const paper of found.papers) {
-        const item = list.createEl("li");
-        item.createEl("a", { text: paper.title, href: paper.url });
-        item.createSpan({ cls: "kgd-lookup-meta", text: ` · ${paper.year} · cited ${paper.citations}` });
-      }
     }
     const wikipedia = found.wikipedia;
     if (wikipedia) {
@@ -308,7 +300,25 @@ export class AgentPane {
         item.createEl("a", { text: wikipedia.zh.title, href: wikipedia.zh.url });
       }
       if (wikipedia.extract) item.createDiv({ cls: "kgd-lookup-gloss", text: wikipedia.extract });
+      if (wikipedia.cites) {
+        const cites = item.createDiv();
+        cites.createSpan({ cls: "kgd-lookup-meta", text: "It cites first: " });
+        cites.createEl("a", { text: wikipedia.cites.title || `arXiv:${wikipedia.cites.arxiv}`, href: wikipedia.cites.url });
+        cites.createSpan({ cls: "kgd-lookup-meta", text: ` · arXiv:${wikipedia.cites.arxiv}` });
+      }
       item.createDiv({ cls: "kgd-lookup-hint", text: "Text from Wikipedia, CC BY-SA 4.0." });
+    }
+    if (found.papers.length === 0) {
+      section.createDiv({ cls: "kgd-lookup-hint", text: "No paper stands out in OpenAlex as where the term comes from." });
+    } else {
+      section.createDiv({ cls: "kgd-lookup-hint", text: "Most cited by the papers that use the term (OpenAlex), best first." });
+      const list = section.createEl("ul", { cls: "kgd-lookup-links" });
+      for (const paper of found.papers) {
+        const item = list.createEl("li");
+        item.createEl("a", { text: paper.title, href: paper.url });
+        const where = paper.arxiv ? `arXiv:${paper.arxiv}` : "not on arXiv";
+        item.createSpan({ cls: "kgd-lookup-meta", text: ` · ${paper.year} · ${where} · cited ${paper.citations}` });
+      }
     }
   }
 

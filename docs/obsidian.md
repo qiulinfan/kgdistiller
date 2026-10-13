@@ -315,15 +315,24 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
   median was 4 s, but a concept the paper credits to earlier work was filed as
   its own.
 
-**Find sources**, for an unrecorded or borrowed term, shows the works the
-selected lines cite, read from the source's own reference list (block ids
-`^reference-N`), and on the web the likely originating papers from OpenAlex
-and the Wikipedia article for the term or its singular. The papers are ranked
-by the share of papers using the term that cite them, a title that starts
-with the term, an abstract that introduces it and a citation in the Wikipedia
-article. It sends the term to OpenAlex and Wikipedia only when pressed, naming
-the plugin in its User-Agent as Wikimedia asks; Wikipedia's text is shown
-with its CC BY-SA 4.0 notice. A borrowed capture runs it by itself.
+**Find sources**, for an unrecorded or borrowed term, locates where it comes
+from three ways. First, the works the selected lines cite, read from the
+source's own reference list (block ids `^reference-N`). Then, on the web,
+Wikipedia's article on the term, read at the section a redirect points into
+(masked autoencoder is the Masked Autoencoder section of Vision transformer),
+with its opening sentences and the first paper that text cites; and OpenAlex's
+citation graph: the papers most cited by the papers using the term, ranked
+also by a title that starts with the term, an abstract that introduces it and
+Wikipedia's citation. A paper is listed only with such an origin signal: a
+title that merely contains the term, as for latent representation or mask
+token, lists nothing. Every paper is shown as its arXiv page, found from
+OpenAlex's arXiv location or DOI, from a same-titled arXiv record of OpenAlex
+(a published version and its preprint are one paper), or from one arXiv title
+search spaced at least three seconds from the last, as arXiv's terms ask; a
+paper arXiv does not hold says so and links its DOI. It sends the term to
+Wikipedia, OpenAlex and arXiv only when pressed, naming the plugin in its
+User-Agent as Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0
+notice. A borrowed capture runs it by itself.
 
 **Search** answers what is typed into the search box, from the knowledge
 base first and from the web for what it does not hold. The deterministic
@@ -339,6 +348,8 @@ one the tools returned; the sidebar shows them as K1, K2, … (a click puts the
 record in focus) and W1, W2, … (links to the pages), with the cited records and
 pages listed under **From the knowledge base** and **From the web**. The
 answer keeps the two apart and says so when the knowledge base holds nothing.
+A web source that is a paper's PDF, HTML or mirror page is linked as its arXiv
+abstract page.
 A model that writes its answer as text instead of calling the answer tool has
 still answered, and the sixth model call must answer. On seven questions
 about the test papers and notes, answers took 4 to 6 s from the knowledge

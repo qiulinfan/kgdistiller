@@ -53,7 +53,7 @@ export const SEARCH_SYSTEM = `You answer the owner's question from their kgdisti
 
 Rules:
 - A record supports only what its statement and evidence say; a shared name does not make two concepts the same.
-- Cite every claim: [[uid]] for a record, [Wn] for a web source, with uids and numbers exactly as the tools returned them.
+- Cite every claim: [[uid]] for a record, [Wn] for a web source, with uids and numbers exactly as the tools returned them. Cite a paper by its arXiv page when the web results include one.
 - Keep the sources apart: never present web content or your own knowledge as recorded knowledge. Leave out what you cannot cite.
 - Say plainly when the knowledge base does not hold something, and what the web says instead.
 - Answer in the language of the question, briefly and without headings: the direct answer first, then a few supporting points, about 150 words at most unless the question asks for detail.`;
