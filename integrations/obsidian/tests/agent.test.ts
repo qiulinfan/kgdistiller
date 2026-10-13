@@ -81,6 +81,31 @@ describe("the agent loop", () => {
     ]);
   });
 
+  it("runs a turn's read-only calls together, reports each call, and the rest in order", async () => {
+    const order: string[] = [];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const slow: Tool<string> = {
+      spec: { type: "function", function: { name: "slow", description: "", parameters: { type: "object" } } },
+      concurrent: true,
+      run: async () => { order.push("slow start"); await gate; order.push("slow end"); return "slow"; },
+    };
+    const fast: Tool<string> = {
+      spec: { type: "function", function: { name: "fast", description: "", parameters: { type: "object" } } },
+      concurrent: true,
+      run: async () => { order.push("fast"); release(); return "fast"; },
+    };
+    const calls: string[] = [];
+    const { complete, requests } = scripted(reply([call("slow", {}, "a"), call("fast", {}, "b")]), reply([call("submit", { answer: "good" })]));
+    await runJob(complete, { system: "S", user: "U", tools: [slow, fast, submit], turns: 2, onCall: (tool) => calls.push(tool) });
+    expect(order).toEqual(["slow start", "fast", "slow end"]);
+    expect(calls).toEqual(["slow", "fast", "submit"]);
+    expect(requests[1]!.messages.slice(3)).toEqual([
+      { role: "tool", tool_call_id: "a", content: "slow" },
+      { role: "tool", tool_call_id: "b", content: "fast" },
+    ]);
+  });
+
   it("fails after its turn limit, keeping the steps it took", async () => {
     const { complete } = scripted(reply([call("submit", { answer: "bad" })]), reply([call("submit", { answer: "bad" })]));
     const job = runJob(complete, { system: "S", user: "U", tools: [submit], turns: 2 });

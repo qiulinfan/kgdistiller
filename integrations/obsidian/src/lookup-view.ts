@@ -5,9 +5,10 @@
  * relations about it, the records built on it, its `requires` chain and a
  * graph of its neighbours. Every answer comes from `kgd mcp`, so it covers
  * every registered base; same name is not same concept, so name matches are
- * shown as candidates to compare. When the agent is set up, its judgment of
- * the selection, Capture and the sources of an unrecorded term sit above them
- * (agent-pane.ts).
+ * shown as candidates to compare. The search box at the top looks up typed
+ * text the same way. When the agent is set up, its judgment of a selection,
+ * Capture, the sources of an unrecorded term and the answer to a typed
+ * question sit above the results (agent-pane.ts).
  */
 
 import cytoscape, { type Core, type EventObject } from "cytoscape";
@@ -20,6 +21,7 @@ import {
   chainTree,
   inboundGroups,
   lagging,
+  lookupQuery,
   linksByRole,
   NEIGHBOUR_STEPS,
   NEIGHBOUR_WALK_DEPTH,
@@ -55,6 +57,7 @@ const settle = <T>(promise: Promise<T>): Promise<Settled<T>> =>
   promise.then((value) => ({ value }), (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
 
 export class KgdistillerLookupView extends ItemView {
+  private searchEl: HTMLInputElement | null = null;
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private agent: AgentPane | null = null;
@@ -74,6 +77,7 @@ export class KgdistillerLookupView extends ItemView {
   private lookupRequest = 0;
   private focusRequest = 0;
   private renderComponent: Component | null = null;
+  private answerComponent: Component | null = null;
   private neighbours: Core | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly host: LookupHost) {
@@ -99,21 +103,42 @@ export class KgdistillerLookupView extends ItemView {
   async onOpen(): Promise<void> {
     this.contentEl.empty();
     this.contentEl.addClass("kgd-lookup-view");
+    const search = this.contentEl.createEl("input", {
+      cls: "kgd-lookup-search",
+      type: "search",
+      attr: { placeholder: "Search the knowledge base, or ask a question", "aria-label": "Search the knowledge base" },
+    });
+    search.addEventListener("keydown", (event) => {
+      // Enter while an input method is composing picks a candidate; it does not search.
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      const text = lookupQuery(search.value);
+      if (text) void this.lookup({ text, context: "" }, { question: true });
+    });
+    this.searchEl = search;
     this.queryEl = this.contentEl.createDiv({ cls: "kgd-lookup-query" });
     this.statusEl = this.contentEl.createDiv({ cls: "kgd-lookup-status" });
-    this.agent = new AgentPane(this.contentEl.createDiv(), this.host, (uid) => this.label(uid), (uid) => this.focusMatched(uid));
+    this.agent = new AgentPane(this.contentEl.createDiv(), this.host, (uid) => this.label(uid), (uid) => this.focusMatched(uid),
+      (markdown, element) => this.renderAnswerMarkdown(markdown, element));
     // The record in focus, with its chain, sits between the name matches and the related records.
     this.namesEl = this.contentEl.createDiv({ cls: "kgd-lookup-names" });
     this.recordEl = this.contentEl.createDiv({ cls: "kgd-lookup-record" });
     this.relatedEl = this.contentEl.createDiv({ cls: "kgd-lookup-related" });
-    this.queryEl.setText("Select text and hold the command key, or run Look up selection.");
+    this.queryEl.setText("Select text and hold the command key, run Look up selection, or type in the box above.");
+  }
+
+  /** Put the cursor in the search box, as the Search knowledge command does. */
+  focusSearch(): void {
+    this.searchEl?.focus();
+    this.searchEl?.select();
   }
 
   /**
    * Look the selection up in every base: names first, then the ranked search,
-   * then the best candidate in focus, while the agent judges the candidates.
+   * then the best candidate in focus, while the agent judges the candidates or,
+   * for a question typed in the search box, answers it.
    */
-  async lookup(selection: Selection, options: { capture?: boolean } = {}): Promise<void> {
+  async lookup(selection: Selection, options: { capture?: boolean; question?: boolean } = {}): Promise<void> {
     const request = ++this.lookupRequest;
     const query = selection.text;
     this.query = query;
@@ -125,8 +150,9 @@ export class KgdistillerLookupView extends ItemView {
     ++this.focusRequest;
     this.ownerLabels = new Map();
     this.queryEl?.setText(query);
-    this.agent?.reset(selection);
+    this.agent?.reset(selection, options.question);
     if (options.capture) void this.agent?.startCapture();
+    if (options.question) void this.agent?.ask(query);
     this.clearNeighbours();
     this.recordEl?.empty();
     this.renderResults();
@@ -143,7 +169,7 @@ export class KgdistillerLookupView extends ItemView {
     this.searched = await settle(this.host.kgd.call<SearchResult>("kg_search", { query, limit: SEARCH_LIMIT }));
     if (request !== this.lookupRequest) return;
     this.renderResults();
-    void this.agent?.judge(this.candidates());
+    if (!options.question) void this.agent?.judge(this.candidates());
     const best = this.resolved.value?.terms[0]?.senses[0]?.uid ?? this.searched.value?.results[0]?.uid;
     if (best && this.focus === undefined) {
       this.autoFocus = best;
@@ -238,6 +264,14 @@ export class KgdistillerLookupView extends ItemView {
       new Notice(`kgd index failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (this.selection) await this.lookup(this.selection);
+  }
+
+  /** Render an agent answer's Markdown, replacing the previous answer's rendering. */
+  private async renderAnswerMarkdown(markdown: string, element: HTMLElement): Promise<void> {
+    if (this.answerComponent) this.removeChild(this.answerComponent);
+    const component = this.addChild(new Component());
+    this.answerComponent = component;
+    await MarkdownRenderer.render(this.app, markdown, element, "", component);
   }
 
   private section(container: HTMLElement, title: string, hint: string): HTMLElement {

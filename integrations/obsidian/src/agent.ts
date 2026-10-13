@@ -18,6 +18,8 @@ export type ToolOutcome<R> = string | { done: R };
 
 export interface Tool<R> {
   spec: ToolSpec;
+  /** A read-only tool: its calls in one turn run at the same time, before the others. */
+  concurrent?: boolean;
   /** Run one call; a thrown error is reported to the model as the result. */
   run(args: Record<string, unknown>): Promise<ToolOutcome<R>>;
 }
@@ -30,8 +32,18 @@ export interface Job<R> {
   turns: number;
   /** The tool the first turn must call; later turns may call any tool. */
   first?: string;
+  /** The tool the last allowed turn must call, so the job ends with an answer. */
+  last?: string;
+  /**
+   * What a reply in plain text means. Absent, the model is reminded to use the
+   * tools; present, the text is taken as this answer, and a refusal goes back
+   * to the model as a message.
+   */
+  onText?: (text: string) => Promise<ToolOutcome<R>>;
   /** The model's reasoning effort; absent means none. */
   effort?: ChatRequest["reasoning_effort"];
+  /** Told of each tool call as it starts, for showing progress. */
+  onCall?: (tool: string, args: Record<string, unknown>) => void;
 }
 
 export interface Step {
@@ -56,7 +68,7 @@ export async function runJob<R>(complete: Complete, job: Job<R>): Promise<JobRes
   const usage: Usage = { prompt_tokens: 0, completion_tokens: 0 };
   const steps: Step[] = [];
   for (let turn = 1; turn <= job.turns; turn++) {
-    const forced = turn === 1 && job.first ? job.first : undefined;
+    const forced = turn === 1 && job.first ? job.first : turn === job.turns && job.last ? job.last : undefined;
     const reply = await complete({
       messages,
       tools: specs,
@@ -68,21 +80,30 @@ export async function runJob<R>(complete: Complete, job: Job<R>): Promise<JobRes
     const calls = reply.message.tool_calls ?? [];
     messages.push({ role: "assistant", content: reply.message.content, ...(calls.length ? { tool_calls: calls } : {}) });
     if (calls.length === 0) {
-      messages.push({ role: "user", content: "Answer only by calling one of the tools." });
+      const text = reply.message.content?.trim() ?? "";
+      const outcome = job.onText && text ? await job.onText(text) : "Answer only by calling one of the tools.";
+      if (typeof outcome !== "string") {
+        steps.push({ tool: "text", arguments: "", result: "done" });
+        return { value: outcome.done, turns: turn, usage, steps };
+      }
+      messages.push({ role: "user", content: outcome });
       continue;
     }
-    for (const call of calls) {
+    const execute = async (call: (typeof calls)[number]): Promise<ToolOutcome<R>> => {
       const tool = tools.get(call.function.name);
-      let outcome: ToolOutcome<R>;
-      if (!tool) {
-        outcome = `error: there is no tool named ${call.function.name}`;
-      } else {
-        try {
-          outcome = await tool.run(parseArguments(call.function.arguments));
-        } catch (error) {
-          outcome = `error: ${error instanceof Error ? error.message : String(error)}`;
-        }
+      if (!tool) return `error: there is no tool named ${call.function.name}`;
+      try {
+        const args = parseArguments(call.function.arguments);
+        job.onCall?.(call.function.name, args);
+        return await tool.run(args);
+      } catch (error) {
+        return `error: ${error instanceof Error ? error.message : String(error)}`;
       }
+    };
+    // Read-only calls run together; the others run afterwards in order, and the first finished value ends the job.
+    const early = await Promise.all(calls.map((call) => (tools.get(call.function.name)?.concurrent ? execute(call) : undefined)));
+    for (const [index, call] of calls.entries()) {
+      const outcome = early[index] ?? await execute(call);
       if (typeof outcome !== "string") {
         steps.push({ tool: call.function.name, arguments: call.function.arguments, result: "done" });
         return { value: outcome.done, turns: turn, usage, steps };

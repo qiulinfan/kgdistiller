@@ -308,6 +308,11 @@ SOFTWARE.
   padding: 10px 12px;
 }
 
+.kgd-lookup-search {
+  margin-bottom: 8px;
+  width: 100%;
+}
+
 .kgd-lookup-query {
   border-inline-start: 3px solid var(--interactive-accent);
   color: var(--text-normal);
@@ -344,6 +349,26 @@ SOFTWARE.
 .kgd-lookup-capture-line.is-superseding,
 .kgd-lookup-capture-line.is-conflicting {
   border-inline-start-color: var(--color-orange);
+}
+
+.kgd-lookup-verdict-line.is-answer {
+  border-inline-start-color: var(--interactive-accent);
+}
+
+.kgd-lookup-steps {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin: 4px 0;
+  padding-inline-start: 18px;
+}
+
+.kgd-lookup-answer-body {
+  padding-inline-start: 11px;
+}
+
+.kgd-lookup-citations {
+  font-size: var(--font-ui-smaller);
+  padding-inline-start: 22px;
 }
 
 .kgd-lookup-verdict-head {

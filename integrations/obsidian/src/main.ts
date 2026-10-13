@@ -5,6 +5,7 @@ import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, debou
 import type { Selection } from "./agent-pane";
 import { locateSelection, type CaptureFiles } from "./capture";
 import { ModelGateway } from "./gateway";
+import { webSearch, type WebSource } from "./web";
 import type { FrontmatterRecord } from "./graph-model";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
@@ -64,6 +65,10 @@ export default class KgdistillerPlugin extends Plugin {
     },
     remove: (path) => fs.rm(path, { force: true }),
   };
+  /** The agent's web searches go through OMP's own search chain, with the agent's model. */
+  webSearch(query: string): Promise<WebSource[]> {
+    return webSearch(this.settings.ompCommand.trim(), this.settings.agentModel.trim(), query);
+  }
   /** Source lookups name the plugin to OpenAlex and Wikipedia, as Wikimedia asks. */
   readonly getJson: GetJson = async (url) =>
     (await requestUrl({ url, headers: { "User-Agent": USER_AGENT, "Api-User-Agent": USER_AGENT } })).json as unknown;
@@ -120,6 +125,11 @@ export default class KgdistillerPlugin extends Plugin {
       id: "capture-selection",
       name: "Capture selection",
       callback: () => void this.captureSelection(),
+    });
+    this.addCommand({
+      id: "search-knowledge",
+      name: "Search knowledge",
+      callback: () => void this.lookupView().then((view) => view?.focusSearch()),
     });
     this.watchHold(document);
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, popout) => this.watchHold(popout.document)));

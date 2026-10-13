@@ -177,7 +177,8 @@ its uid; a missing record shows the path that does not exist.
 ## Lookup
 
 Select text in any view and hold the command key (⌘ on macOS, Ctrl elsewhere)
-for 0.3 s, or run **Look up selection**. The selection, with whitespace
+for 0.3 s, run **Look up selection**, or type into the search box at the top
+of the view and press Enter (**Search knowledge** puts the cursor there). The selection, with whitespace
 collapsed and cut at 500 characters, is looked up in every registered base,
 and the **kgdistiller Lookup** view opens in the right sidebar without taking
 focus. A press starts at most one lookup, whatever keydown repeats the system
@@ -247,9 +248,10 @@ knowledge.
 
 ## Agent
 
-A small agent built into the plugin adds three things to the lookup sidebar:
-a judgment of the selection, **Capture** and **Find sources**. Nothing is
-written until the owner presses Capture or runs **Capture selection**.
+A small agent built into the plugin adds four things to the lookup sidebar:
+a judgment of the selection, **Capture**, **Find sources**, and an answer to
+whatever is typed into the search box. Nothing is written until the owner
+presses Capture or runs **Capture selection**.
 
 The agent's model calls go through one resident `omp auth-gateway stdio`,
 OMP's OpenAI-compatible gateway on stdin and stdout. OMP holds the provider
@@ -323,6 +325,26 @@ article. It sends the term to OpenAlex and Wikipedia only when pressed, naming
 the plugin in its User-Agent as Wikimedia asks; Wikipedia's text is shown
 with its CC BY-SA 4.0 notice. A borrowed capture runs it by itself.
 
+**Search** answers what is typed into the search box, from the knowledge
+base first and from the web for what it does not hold. The deterministic
+results appear as for a selection; the agent starts from the first search
+results and the records named in the question, then reads more through
+read-only tools, called together where they are independent:
+`kg_search`, `kg_get` and `kg_neighbors` through `kgd mcp`, and `web_search`
+through OMP's own search chain (one short `omp -p --mode json` run that may
+only call OMP's web_search tool, stopped at its result, since the gateway has
+no search route). Each step shows in the sidebar as it runs. The answer cites
+records as `[[uid]]` and web sources as `[Wn]`, and every citation must be
+one the tools returned; the sidebar shows them as K1, K2, … (a click puts the
+record in focus) and W1, W2, … (links to the pages), with the cited records and
+pages listed under **From the knowledge base** and **From the web**. The
+answer keeps the two apart and says so when the knowledge base holds nothing.
+A model that writes its answer as text instead of calling the answer tool has
+still answered, and the sixth model call must answer. On seven questions
+about the test papers and notes, answers took 4 to 6 s from the knowledge
+base alone and 8 to 11 s with a web search, on DeepSeek V4 Flash without
+reasoning.
+
 Settings, under **Agent**:
 
 - **omp executable**: the absolute path of `omp`. Empty, the default, turns the
@@ -330,8 +352,10 @@ Settings, under **Agent**:
 - **Model**: a model OMP knows, such as `deepseek/deepseek-v4-flash`, or an OMP
   role, `@smol` by default.
 
-The model sees the selection, the paragraph around it and the candidate
-records; Capture's drafts and `kgd` runs stay on this machine.
+The model sees the selection or the question, the paragraph around a
+selection and the records the agent reads; web searches send their queries
+to the search providers configured in OMP. Capture's drafts and `kgd` runs
+stay on this machine.
 
 ## Not yet built
 

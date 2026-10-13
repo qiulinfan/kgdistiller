@@ -1,8 +1,9 @@
 /**
- * The agent's part of the lookup sidebar: the judgment of the selection, the
- * Capture action and the sources of an unrecorded term. The deterministic
- * results above it appear first; the judgment follows about a second later,
- * and nothing is written until the owner presses Capture.
+ * The agent's part of the lookup sidebar: the judgment of a selection, the
+ * Capture action, the sources of an unrecorded term, and the answer to a
+ * question typed into the search box. The deterministic results below it
+ * appear first; the agent's part follows, and nothing is written until the
+ * owner presses Capture.
  */
 
 import { Notice } from "obsidian";
@@ -12,7 +13,9 @@ import type { ModelGateway } from "./gateway";
 import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
+import { answerMarkdown, searchKnowledge, stepText, type SearchAnswer } from "./search";
 import { citedReferences, findSources, type GetJson, type Reference, type Sources } from "./sources";
+import type { WebSource } from "./web";
 
 /** The selected passage a lookup started from. */
 export interface Selection {
@@ -29,6 +32,7 @@ export interface AgentHost {
   gateway: ModelGateway;
   captureFiles: CaptureFiles;
   getJson: GetJson;
+  webSearch(query: string): Promise<WebSource[]>;
 }
 
 const DECISIONS: Record<CaptureResult["decision"], string> = {
@@ -43,6 +47,7 @@ export class AgentPane {
   private selection: Selection | undefined;
   private request = 0;
   private readonly verdictEl: HTMLElement;
+  private readonly answerEl: HTMLElement;
   private readonly actionsEl: HTMLElement;
   private readonly captureEl: HTMLElement;
   private readonly sourcesEl: HTMLElement;
@@ -52,22 +57,92 @@ export class AgentPane {
     private readonly host: AgentHost,
     private readonly labels: (uid: string) => string | undefined,
     private readonly show: (uid: string) => void,
+    private readonly renderMarkdown: (markdown: string, element: HTMLElement) => Promise<void>,
   ) {
     container.addClass("kgd-lookup-agent");
     this.verdictEl = container.createDiv({ cls: "kgd-lookup-verdict" });
+    this.answerEl = container.createDiv({ cls: "kgd-lookup-answer" });
     this.actionsEl = container.createDiv({ cls: "kgd-lookup-actions" });
     this.captureEl = container.createDiv({ cls: "kgd-lookup-capture" });
     this.sourcesEl = container.createDiv({ cls: "kgd-lookup-sources" });
   }
 
-  /** Start over for a new selection; the actions appear at once. */
-  reset(selection: Selection): void {
+  /** Start over for a new selection or question; a selection's actions appear at once. */
+  reset(selection: Selection, question = false): void {
     this.selection = selection;
     this.request++;
-    for (const element of [this.verdictEl, this.actionsEl, this.captureEl, this.sourcesEl]) element.empty();
-    if (!this.host.gateway.configured()) return;
+    for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.captureEl, this.sourcesEl]) element.empty();
+    if (!this.host.gateway.configured() || question) return;
     if (selection.source) this.button("Capture", true, (button) => this.capture(button));
     this.button("Find sources", false, (button) => this.sources(button));
+  }
+
+  /** Answer a question from the knowledge base and the web, showing each step as it runs. */
+  async ask(question: string): Promise<void> {
+    if (!this.host.gateway.configured()) return;
+    const request = this.request;
+    const element = this.answerEl;
+    element.empty();
+    const steps = element.createEl("ul", { cls: "kgd-lookup-steps" });
+    const status = element.createDiv({ cls: "kgd-lookup-hint", text: "Searching…" });
+    const started = performance.now();
+    let answer: SearchAnswer;
+    try {
+      answer = await searchKnowledge((chat) => this.host.gateway.complete(chat), this.host.kgd, (query) => this.host.webSearch(query), question,
+        (step) => { if (request === this.request && step.tool !== "answer") steps.createEl("li", { text: stepText(step) }); });
+    } catch (error) {
+      if (request !== this.request) return;
+      status.remove();
+      element.createDiv({ cls: "kgd-lookup-error", text: `The agent could not answer: ${message(error)}` });
+      return;
+    }
+    if (request !== this.request) return;
+    status.remove();
+    await this.renderAnswer(answer, performance.now() - started);
+  }
+
+  private async renderAnswer(answer: SearchAnswer, ms: number): Promise<void> {
+    const element = this.answerEl;
+    const head = element.createDiv({ cls: "kgd-lookup-verdict-line is-answer" });
+    head.createSpan({ cls: "kgd-lookup-verdict-head", text: "Answer" });
+    head.createSpan({ cls: "kgd-lookup-meta", text: ` · ${seconds(ms)}` });
+    const body = element.createDiv({ cls: "kgd-lookup-answer-body" });
+    await this.renderMarkdown(answerMarkdown(answer), body);
+    // Record citations are links to "#kgd-record-N"; they focus the record here instead of navigating.
+    body.addEventListener("click", (event) => {
+      const link = (event.target as HTMLElement | null)?.closest("a");
+      const target = link?.getAttribute("data-href") ?? link?.getAttribute("href") ?? "";
+      const match = /^#kgd-record-(\d+)$/.exec(target);
+      const record = match ? answer.records[Number(match[1]) - 1] : undefined;
+      if (!record) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.show(record.uid);
+    }, true);
+    if (answer.records.length > 0) {
+      const section = element.createDiv({ cls: "kgd-lookup-section" });
+      section.createEl("h4", { text: "From the knowledge base" });
+      const list = section.createEl("ul", { cls: "kgd-lookup-citations" });
+      for (const [index, record] of answer.records.entries()) {
+        const item = list.createEl("li");
+        item.createSpan({ cls: "kgd-lookup-meta", text: `K${index + 1} ` });
+        const link = item.createEl("a", { text: record.label, href: "#" });
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          this.show(record.uid);
+        });
+      }
+    }
+    if (answer.web.length > 0) {
+      const section = element.createDiv({ cls: "kgd-lookup-section" });
+      section.createEl("h4", { text: "From the web" });
+      const list = section.createEl("ul", { cls: "kgd-lookup-citations" });
+      for (const source of answer.web) {
+        const item = list.createEl("li");
+        item.createSpan({ cls: "kgd-lookup-meta", text: `W${source.number} ` });
+        item.createEl("a", { text: source.title, href: source.url });
+      }
+    }
   }
 
   /** Judge the selection against the lookup's candidates and show the verdict. */
