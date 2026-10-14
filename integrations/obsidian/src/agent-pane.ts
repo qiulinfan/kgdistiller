@@ -13,8 +13,9 @@ import type { ModelGateway } from "./gateway";
 import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
+import { judgeOrigin, originQuery, type Origin } from "./origin";
 import { answerMarkdown, searchKnowledge, stepText, type SearchAnswer } from "./search";
-import { arxivId, citedReferences, findSources, type Fetch, type Reference, type Sources } from "./sources";
+import { arxivId, citedReferences, sourceOpening, wikipediaArticles, type Encyclopedia, type Fetch, type Reference } from "./sources";
 import type { WebSource } from "./web";
 
 /** The selected passage a lookup started from. */
@@ -238,6 +239,11 @@ export class AgentPane {
     }
   }
 
+  /**
+   * Find where the selected term comes from: the references the selection
+   * cites at once, then the work the agent judges to have introduced the term
+   * and the Wikipedia article it judges to be about it.
+   */
   private async sources(button?: HTMLButtonElement): Promise<void> {
     const selection = this.selection;
     if (!selection) return;
@@ -245,29 +251,87 @@ export class AgentPane {
     if (button) button.disabled = true;
     const element = this.sourcesEl;
     element.empty();
-    let cited: Reference[] = [];
-    if (selection.source) {
-      try {
-        const lines = (await this.host.captureFiles.read(selection.source.path)).replace(/\r\n?/g, "\n").split("\n");
-        cited = citedReferences(lines.slice(selection.source.from - 1, selection.source.to).join("\n"), lines);
-      } catch {
-        cited = [];
-      }
-    }
-    if (cited.length > 0) this.renderReferences(cited);
-    const status = element.createDiv({ cls: "kgd-lookup-hint", text: "Searching OpenAlex and Wikipedia…" });
-    let found: Sources;
+    const started = performance.now();
+    const section = element.createDiv({ cls: "kgd-lookup-section" });
+    section.createEl("h4", { text: "Where it comes from" });
+    const status = section.createDiv({ cls: "kgd-lookup-hint", text: "Searching the web and Wikipedia…" });
+    const lines = selection.source
+      ? (await this.host.captureFiles.read(selection.source.path).catch(() => "")).replace(/\r\n?/g, "\n").split("\n")
+      : [];
+    const source = selection.source && lines.some((line) => line.trim()) ? sourceOpening(lines, selection.source.path) : undefined;
+    const references = selection.source ? citedReferences(lines.slice(selection.source.from - 1, selection.source.to).join("\n"), lines) : [];
+    if (references.length > 0) this.renderReferences(references);
+    // Either service failing leaves the other's candidates to judge; the sidebar says which failed.
+    const failures: string[] = [];
+    const [results, articles] = await Promise.all([
+      this.host.webSearch(originQuery(selection.text)).catch((error: unknown) => {
+        failures.push(`The web search failed: ${message(error)}`);
+        return [];
+      }),
+      wikipediaArticles(selection.text, this.host.fetchText).catch((error: unknown) => {
+        failures.push(`Wikipedia did not answer: ${message(error)}`);
+        return [];
+      }),
+    ]);
+    if (request !== this.request) return;
+    status.setText("Judging where it comes from…");
+    let origin: Origin;
     try {
-      found = await findSources(selection.text, this.host.fetchText);
+      origin = await judgeOrigin((chat) => this.host.gateway.complete(chat), this.host.fetchText,
+        { term: selection.text, context: selection.context, ...(source ? { source } : {}), references, results, articles });
     } catch (error) {
       if (request !== this.request) return;
-      status.setText(`The web search failed: ${message(error)}`);
+      status.remove();
+      section.createDiv({ cls: "kgd-lookup-error", text: `The agent could not find where it comes from: ${message(error)}` });
       if (button) button.disabled = false;
       return;
     }
     if (request !== this.request) return;
     status.remove();
-    this.renderSources(found);
+    this.renderOrigin(section, origin, performance.now() - started);
+    this.renderWikipedia(section, origin.wikipedia);
+    for (const failure of failures) section.createDiv({ cls: "kgd-lookup-hint", text: failure });
+  }
+
+  private renderOrigin(element: HTMLElement, origin: Origin, ms: number): void {
+    const line = element.createDiv({ cls: `kgd-lookup-verdict-line${origin.work ? " is-origin" : ""}` });
+    const head = {
+      source: "Introduced by this source: ",
+      reference: `Introduced by [${origin.reference ?? ""}]: `,
+      web: "Introduced by: ",
+      none: "No originating work found",
+    }[origin.choice];
+    line.createSpan({ cls: "kgd-lookup-verdict-head", text: head });
+    const work = origin.work;
+    if (work) {
+      if (work.url) line.createEl("a", { text: work.title, href: work.url });
+      else line.createSpan({ text: work.title });
+      const where = work.arxiv ? `arXiv:${work.arxiv}` : origin.arxivError ? `arXiv did not answer: ${origin.arxivError}` : "not on arXiv";
+      line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${[work.year, where].filter(Boolean).join(" · ")}` });
+    }
+    line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${seconds(ms)}` });
+    if (origin.reason) element.createDiv({ cls: "kgd-lookup-explanation", text: origin.reason });
+  }
+
+  private renderWikipedia(element: HTMLElement, wikipedia: Encyclopedia | undefined): void {
+    if (!wikipedia) {
+      element.createDiv({ cls: "kgd-lookup-hint", text: "No Wikipedia article is about it in this sense." });
+      return;
+    }
+    const item = element.createDiv({ cls: "kgd-lookup-wikipedia" });
+    item.createEl("a", { text: `Wikipedia: ${wikipedia.title}${wikipedia.section ? ` § ${wikipedia.section}` : ""}`, href: wikipedia.url });
+    if (wikipedia.zh) {
+      item.createSpan({ text: " · " });
+      item.createEl("a", { text: wikipedia.zh.title, href: wikipedia.zh.url });
+    }
+    if (wikipedia.extract) item.createDiv({ cls: "kgd-lookup-gloss", text: wikipedia.extract });
+    if (wikipedia.cites) {
+      const cites = item.createDiv();
+      cites.createSpan({ cls: "kgd-lookup-meta", text: "It cites first: " });
+      cites.createEl("a", { text: wikipedia.cites.title || `arXiv:${wikipedia.cites.arxiv}`, href: wikipedia.cites.url });
+      cites.createSpan({ cls: "kgd-lookup-meta", text: ` · arXiv:${wikipedia.cites.arxiv}` });
+    }
+    item.createDiv({ cls: "kgd-lookup-hint", text: "Text from Wikipedia, CC BY-SA 4.0." });
   }
 
   private renderReferences(references: Reference[]): void {
@@ -281,44 +345,6 @@ export class AgentPane {
       if (reference.url) item.createEl("a", { text: reference.text, href: reference.url });
       else item.createSpan({ text: reference.text });
       if (reference.url && !arxivId(reference.url)) item.createSpan({ cls: "kgd-lookup-meta", text: " · not on arXiv" });
-    }
-  }
-
-  private renderSources(found: Sources): void {
-    const section = this.sourcesEl.createDiv({ cls: "kgd-lookup-section" });
-    section.createEl("h4", { text: "Where it comes from" });
-    if (found.papers.length === 0 && !found.wikipedia) {
-      section.createDiv({ cls: "kgd-empty-state", text: "Wikipedia, OpenAlex and arXiv found nothing for this term." });
-      return;
-    }
-    const wikipedia = found.wikipedia;
-    if (wikipedia) {
-      const item = section.createDiv({ cls: "kgd-lookup-wikipedia" });
-      item.createEl("a", { text: `Wikipedia: ${wikipedia.title}${wikipedia.section ? ` § ${wikipedia.section}` : ""}`, href: wikipedia.url });
-      if (wikipedia.zh) {
-        item.createSpan({ text: " · " });
-        item.createEl("a", { text: wikipedia.zh.title, href: wikipedia.zh.url });
-      }
-      if (wikipedia.extract) item.createDiv({ cls: "kgd-lookup-gloss", text: wikipedia.extract });
-      if (wikipedia.cites) {
-        const cites = item.createDiv();
-        cites.createSpan({ cls: "kgd-lookup-meta", text: "It cites first: " });
-        cites.createEl("a", { text: wikipedia.cites.title || `arXiv:${wikipedia.cites.arxiv}`, href: wikipedia.cites.url });
-        cites.createSpan({ cls: "kgd-lookup-meta", text: ` · arXiv:${wikipedia.cites.arxiv}` });
-      }
-      item.createDiv({ cls: "kgd-lookup-hint", text: "Text from Wikipedia, CC BY-SA 4.0." });
-    }
-    if (found.papers.length === 0) {
-      section.createDiv({ cls: "kgd-lookup-hint", text: "No paper stands out in OpenAlex as where the term comes from." });
-    } else {
-      section.createDiv({ cls: "kgd-lookup-hint", text: "Most cited by the papers that use the term (OpenAlex), best first." });
-      const list = section.createEl("ul", { cls: "kgd-lookup-links" });
-      for (const paper of found.papers) {
-        const item = list.createEl("li");
-        item.createEl("a", { text: paper.title, href: paper.url });
-        const where = paper.arxiv ? `arXiv:${paper.arxiv}` : "not on arXiv";
-        item.createSpan({ cls: "kgd-lookup-meta", text: ` · ${paper.year} · ${where} · cited ${paper.citations}` });
-      }
     }
   }
 

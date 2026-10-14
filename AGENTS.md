@@ -186,7 +186,7 @@
   database itself. The plugin's agent (judgment, Capture, Find sources and
   search; see docs/obsidian.md "Agent") is the model-side adapter that keeps
   the core model-free: it reaches models only through `omp auth-gateway
-  stdio` and the web only through OMP's web_search, owns its prompts and
+  stdio` and searches the web only through OMP's web_search, owns its prompts and
   checks every model answer and citation, and writes knowledge only as a draft
   admitted by `kgd accept` and `kgd index --no-embed`, under the same rules as
   the capture Skill. Preserve the complete upstream MIT notice and pinned source

@@ -315,24 +315,44 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
   median was 4 s, but a concept the paper credits to earlier work was filed as
   its own.
 
-**Find sources**, for an unrecorded or borrowed term, locates where it comes
-from three ways. First, the works the selected lines cite, read from the
-source's own reference list (block ids `^reference-N`). Then, on the web,
-Wikipedia's article on the term, read at the section a redirect points into
-(masked autoencoder is the Masked Autoencoder section of Vision transformer),
-with its opening sentences and the first paper that text cites; and OpenAlex's
-citation graph: the papers most cited by the papers using the term, ranked
-also by a title that starts with the term, an abstract that introduces it and
-Wikipedia's citation. A paper is listed only with such an origin signal: a
-title that merely contains the term, as for latent representation or mask
-token, lists nothing. Every paper is shown as its arXiv page, found from
-OpenAlex's arXiv location or DOI, from a same-titled arXiv record of OpenAlex
-(a published version and its preprint are one paper), or from one arXiv title
-search spaced at least three seconds from the last, as arXiv's terms ask; a
-paper arXiv does not hold says so and links its DOI. It sends the term to
-Wikipedia, OpenAlex and arXiv only when pressed, naming the plugin in its
-User-Agent as Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0
-notice. A borrowed capture runs it by itself.
+**Find sources**, for an unrecorded or borrowed term, finds the work that
+introduced it and the Wikipedia article that explains it. The sidebar lists at
+once the works the selected lines cite, read from the source's own reference
+list (block ids `^reference-N`). Then, at the same time, one web search
+through OMP's search chain (as for Search below) asks who first introduced the
+term, and Wikipedia gives the article the term's name leads to, read at the
+section a redirect points into (masked autoencoder is the Masked Autoencoder
+section of Vision transformer), and the first three articles its search finds.
+One model call at low reasoning then judges both. It picks the originating
+work among the source being read (its title and opening lines), the
+references the selected lines cite and the first eight web results, or none,
+as for a general term with no single origin or when the origin is not among
+them; and the Wikipedia article that explains the term as the text uses it,
+even under another name (latent representation is explained by Latent
+space), or none, since a name or a search also finds other things of the same
+name (BEiT finds Beit Shemesh, and linear probing the hash-table method). It
+says why in one sentence, and the plugin refuses a choice that names no
+candidate. A web search or Wikipedia that fails leaves the other's candidates
+to judge, and the sidebar says which failed. The work is shown with its title
+as the candidate gives it (the model's title when the candidate's text holds
+it) and, when it has an arXiv link of its own, as its arXiv page with the year
+its arXiv id gives. Only a work without such a link is searched on arXiv by
+title, once and at least three seconds after the last search, as arXiv's terms
+ask, since arXiv's API refuses clients that ask too often; a work arXiv does
+not hold says so and keeps its own link. The article is shown with its opening
+sentences, the Chinese article and the first paper its text cites. On nine
+test terms from the MAE paper and the notes, the last round picked as
+expected: BEiT, block-wise masking and MoCo v3 through the references the
+passage cites, masked autoencoder as the paper being read, denoising
+autoencoder as its reference (not on arXiv), variational autoencoder as
+Auto-Encoding Variational Bayes, and none for latent representation, partial
+fine-tuning and linear probing; latent representation was explained by
+Latent space in five runs out of five, and every same-named article was left
+out. A lookup took about 6 to 9 s on DeepSeek V4 Flash, a hard term up to
+about a minute. It sends the term to the search providers configured in OMP,
+Wikipedia and arXiv only when pressed, naming the plugin in its User-Agent as
+Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
+borrowed capture runs it by itself.
 
 **Search** answers what is typed into the search box, from the knowledge
 base first and from the web for what it does not hold. The deterministic
@@ -364,8 +384,9 @@ Settings, under **Agent**:
   role, `@smol` by default.
 
 The model sees the selection or the question, the paragraph around a
-selection and the records the agent reads; web searches send their queries
-to the search providers configured in OMP. Capture's drafts and `kgd` runs
+selection (for Find sources also the source's opening lines and the references
+it cites) and the records and web results the agent reads; web searches send
+their queries to the search providers configured in OMP. Capture's drafts and `kgd` runs
 stay on this machine.
 
 ## Not yet built

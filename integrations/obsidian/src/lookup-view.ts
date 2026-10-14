@@ -231,7 +231,7 @@ export class KgdistillerLookupView extends ItemView {
         for (const hit of related) this.hit(section, hit, rankText(search.lanes, hit.ranks));
       }
       if (senses.length === 0 && pending.length === 0 && search.results.length === 0) {
-        container.createDiv({ cls: "kgd-empty-state", text: "Nothing in the knowledge base matches this selection." });
+        container.createDiv({ cls: "kgd-lookup-status", text: "Nothing in the knowledge base matches this selection." });
       }
     }
   }

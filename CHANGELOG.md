@@ -13,12 +13,19 @@ All notable changes are documented here.
   checked against what the tools returned; records appear as K1, K2, … and web
   pages as W1, W2, …, listed apart. Answers took 4 to 6 s from the knowledge
   base and 8 to 11 s with a web search on DeepSeek V4 Flash.
-- Find sources reads Wikipedia at the section a redirect points into and shows
-  the first paper it cites, lists Wikipedia before the papers ranked by
-  OpenAlex's citation graph only papers with an origin signal, and links every
-  paper to its arXiv page, found through OpenAlex or one arXiv title search; a
-  paper not on arXiv says so.
-  Paper links in search answers point to arXiv abstract pages.
+- Find sources judges the work that introduced a term and the Wikipedia
+  article that explains it: one web search through OMP asks who first
+  introduced the term while Wikipedia gives the article its name leads to and
+  the first three its search finds, and one model call at low reasoning picks
+  the originating work among the source being read, the references the
+  selected lines cite and the web results, or none for a general term, and the
+  article that explains the term as the text uses it, leaving out articles
+  about other things of the same name, with one sentence on why. The work
+  links to its arXiv page with the year its arXiv id gives; only a work without
+  an arXiv link is searched on arXiv by title, and a work not on arXiv says so.
+  On nine test terms the last round picked as expected, in about 6 to 9 s on
+  DeepSeek V4 Flash. Paper links in search answers point to arXiv abstract
+  pages.
 - Add an agent to the Obsidian lookup sidebar. With the new **omp executable**
   and **Model** settings, the plugin asks a model through one resident
   `omp auth-gateway stdio`, so it stores no API key. Each lookup gets a
@@ -31,9 +38,9 @@ All notable changes are documented here.
   `kgd accept` and `kgd index --no-embed`, in about 6 s (median, low
   reasoning) on DeepSeek V4 Flash.
   Unchanged and borrowed items write nothing; superseding and conflicting ones
-  are shown to the owner and not yet written. **Find sources** lists the works
-  the selected lines cite from the source's reference list, the likely
-  originating papers from OpenAlex and the Wikipedia article.
+  are shown to the owner and not yet written. **Find sources** shows where an
+  unrecorded term comes from: the works the selected lines cite from the
+  source's reference list, the Wikipedia article and the originating work.
 - Add selection lookup to the Obsidian plugin. Selecting text and holding the
   command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s, or running **Look up
   selection**, opens the **kgdistiller Lookup** sidebar. It lists the records

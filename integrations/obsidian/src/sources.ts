@@ -1,54 +1,48 @@
 /**
- * Where an unrecorded term comes from, located three ways:
- * - the references the selected passage itself cites, from the source's own
+ * What Find sources reads without a model:
+ * - the source being read: its title and opening lines, with its authors and
+ *   links;
+ * - the references the selected passage cites, from the source's own
  *   reference list (block ids `^reference-N`, as the owner's paper
  *   translations write them);
- * - Wikipedia's article on the term, read at the section a redirect points
- *   into, with the first paper that text cites;
- * - OpenAlex's citation graph: the papers that the papers using the term cite
- *   most, ranked with a title that starts with the term, an abstract that
- *   introduces it and Wikipedia's citation. These signals picked the right
- *   paper for BEiT, masked autoencoder, denoising autoencoder and variational
- *   autoencoder.
- * Every paper is shown as its arXiv page: from OpenAlex's arXiv location or
- * DOI, from a same-titled arXiv record of OpenAlex, or from one arXiv title
- * search. A paper arXiv does not hold is shown as such, with its DOI. The web
- * lookup runs only when the owner asks, since it sends the term to these
- * services. Nothing here is written to the knowledge base.
+ * - Wikipedia's articles for the term: the one its name leads to, read at the
+ *   section a redirect points into, and the first ones Wikipedia's search
+ *   finds, each with the first paper its text cites, for the agent to judge
+ *   which is about the term as the text uses it;
+ * - arXiv's record of a paper found by its title, for a paper shown without
+ *   its own arXiv link.
+ * The web lookups run only when the owner asks, since they send the term to
+ * these services. Nothing here is written to the knowledge base.
  */
 
-export const OPENALEX = "https://api.openalex.org/works";
 export const WIKIPEDIA = "https://en.wikipedia.org/w/api.php";
 export const ARXIV = "https://export.arxiv.org/api/query";
 /** Wikimedia asks every client to name itself with a contact address. */
 export const USER_AGENT = "kgdistiller-obsidian (https://github.com/qiulinfan/kgdistiller)";
-const TITLE_RESULTS = 15;
-const COCITING_RESULTS = 100;
-const COCITED_DETAILS = 4;
-export const PAPERS_SHOWN = 3;
-/**
- * The least score of a paper shown as a likely origin. A title that merely
- * contains the term and its citation count stay below it; a paper reaches it
- * only with an origin signal: a share of the papers using the term citing it,
- * a title that starts with the term, or Wikipedia's citation.
- */
-export const ORIGIN_SCORE = 2;
 /** arXiv's API terms ask for at most one request every three seconds. */
 export const ARXIV_INTERVAL_MS = 3000;
 const SNIPPET_SENTENCES = 2;
+/** Articles Wikipedia's search adds to the one the term's name leads to. */
+export const WIKIPEDIA_RESULTS = 3;
+/** Characters of a source's opening lines kept for the model. */
+const OPENING_CHARS = 600;
 
-/** One GET returning the response body as text; the plugin passes Obsidian's requestUrl. */
+/** One GET returning the response body as text; it throws a FetchError for an error status. */
 export type Fetch = (url: string) => Promise<string>;
 
-export interface Paper {
-  title: string;
-  year: string;
-  /** The arXiv id, when arXiv holds the paper. */
-  arxiv?: string;
-  /** The arXiv abstract page, otherwise the paper's DOI or landing page. */
-  url: string;
-  citations: number;
-  score: number;
+export class FetchError extends Error {}
+
+/** The error for an error status, with the service's own message from a JSON body. */
+export function fetchError(url: string, status: number, body: string): FetchError {
+  let detail = "";
+  try {
+    const parsed = JSON.parse(body) as { message?: unknown; error?: unknown };
+    detail = typeof parsed.message === "string" ? parsed.message : typeof parsed.error === "string" ? parsed.error : "";
+  } catch {
+    detail = "";
+  }
+  const host = /^https?:\/\/([^/]+)/.exec(url)?.[1] ?? url;
+  return new FetchError(`${host} answered ${status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
 }
 
 export interface Encyclopedia {
@@ -62,16 +56,36 @@ export interface Encyclopedia {
   cites?: { title: string; arxiv: string; url: string };
 }
 
-export interface Sources {
-  papers: Paper[];
-  wikipedia?: Encyclopedia;
-}
-
 /** One entry of a source's reference list that a passage cites. */
 export interface Reference {
   number: string;
   text: string;
   url?: string;
+}
+
+/** The source being read: its title and its opening lines up to the next heading. */
+export interface SourceOpening {
+  title: string;
+  text: string;
+}
+
+/**
+ * The opening of a source: its first heading as the title, or else the file's
+ * name, and its text up to the next heading, after any frontmatter.
+ */
+export function sourceOpening(lines: readonly string[], path: string): SourceOpening {
+  let start = 0;
+  if (lines[0]?.trim() === "---") {
+    const end = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+    start = end < 0 ? 0 : end + 1;
+  }
+  while (start < lines.length && !lines[start]!.trim()) start++;
+  const heading = /^#\s+(.+)$/.exec(lines[start] ?? "")?.[1]?.trim();
+  let end = start + 1;
+  while (end < lines.length && !/^#{1,6}\s/.test(lines[end]!)) end++;
+  const text = lines.slice(start, end).join(" ").split(/\s+/).filter(Boolean).join(" ");
+  const name = path.slice(path.lastIndexOf("/") + 1).replace(/\.md$/i, "");
+  return { title: heading ?? name, text: text.length > OPENING_CHARS ? `${text.slice(0, OPENING_CHARS)}…` : text };
 }
 
 /**
@@ -92,37 +106,20 @@ export function citedReferences(text: string, lines: readonly string[]): Referen
   return references;
 }
 
-/** The arXiv id in an arXiv URL (abs, pdf, html, ar5iv or alphaxiv) or an arXiv DOI, without its version. */
+/**
+ * The arXiv id in an arXiv URL (abs, pdf, html, ar5iv or alphaxiv), an arXiv
+ * DOI or an `arXiv:` citation, without its version.
+ */
 export function arxivId(text: string | null | undefined): string | undefined {
   if (!text) return undefined;
-  const match = /(?:arxiv\.org\/(?:abs|pdf|html)\/|ar5iv(?:\.labs)?\.arxiv\.org\/(?:abs|html)\/|ar5iv\.org\/(?:abs|html)\/|alphaxiv\.org\/(?:abs|overview)\/|10\.48550\/arxiv\.)(\d{4}\.\d{4,5})/i.exec(text);
+  const match = /(?:arxiv\.org\/(?:abs|pdf|html)\/|ar5iv(?:\.labs)?\.arxiv\.org\/(?:abs|html)\/|ar5iv\.org\/(?:abs|html)\/|alphaxiv\.org\/(?:abs|overview)\/|10\.48550\/arxiv\.|\barxiv:\s*)(\d{4}\.\d{4,5})/i.exec(text);
   return match?.[1];
 }
 
 export const arxivUrl = (id: string): string => `https://arxiv.org/abs/${id}`;
 
-interface Work {
-  id: string;
-  display_name?: string | null;
-  publication_date?: string | null;
-  cited_by_count?: number | null;
-  doi?: string | null;
-  abstract_inverted_index?: Record<string, number[]> | null;
-  referenced_works?: string[] | null;
-  locations?: Array<{ landing_page_url?: string | null; pdf_url?: string | null }> | null;
-}
-
-const WORK_FIELDS = "id,display_name,publication_date,cited_by_count,doi,abstract_inverted_index,locations";
-const INTRODUCES = /\b(we|this paper|this work)\s+(propose|introduce|present|call|name|develop|describe)\b/i;
-const OVERVIEW = /\b(introduction to|tutorial|survey|review)\b/i;
-
 function query(params: Record<string, string | number>): string {
   return Object.entries(params).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join("&");
-}
-
-/** A work's arXiv id, from its DOI or any of its locations. */
-export function workArxiv(work: Work): string | undefined {
-  return arxivId(work.doi) ?? (work.locations ?? []).map((location) => arxivId(location.landing_page_url) ?? arxivId(location.pdf_url)).find(Boolean);
 }
 
 /** Lowercased words with plural s dropped, so "auto-encoders" and "autoencoder" compare equal. */
@@ -131,65 +128,10 @@ export function normalizeTitle(text: string): string {
     .map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word)).join(" ");
 }
 
-export function abstractText(index: Work["abstract_inverted_index"]): string {
-  if (!index) return "";
-  const placed: Array<[number, string]> = [];
-  for (const [word, positions] of Object.entries(index)) for (const position of positions) placed.push([position, word]);
-  return placed.sort((a, b) => a[0] - b[0]).map(([, word]) => word).join(" ");
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Rank candidate works for a term; `shares` maps work ids to their co-citation
- * share and `wikipediaArxiv` holds the arXiv ids Wikipedia's text cites. A work
- * without its own arXiv id takes that of a same-titled work, its arXiv record.
- */
-export function rankPapers(term: string, works: readonly Work[], shares: ReadonlyMap<string, number>, wikipediaArxiv: readonly string[]): Paper[] {
-  const wanted = normalizeTitle(term);
-  const most = Math.max(1, ...works.map((work) => work.cited_by_count ?? 0));
-  const startsWith = new RegExp(`^\\s*${escapeRegExp(term)}\\s*[:\\-–]`, "i");
-  const definesAcronym = new RegExp(`${escapeRegExp(term).replace(/\\ /g, "s?\\s+")}s?\\s*\\(([A-Z][A-Za-z0-9-]{1,8})\\)`, "i");
-  const twins = new Map<string, string>();
-  for (const work of works) {
-    const id = workArxiv(work);
-    if (id && work.display_name) twins.set(normalizeTitle(work.display_name), id);
-  }
-  const papers = new Map<string, Paper>();
-  for (const work of works) {
-    const title = work.display_name ?? "";
-    if (!title) continue;
-    const arxiv = workArxiv(work) ?? twins.get(normalizeTitle(title));
-    const summary = abstractText(work.abstract_inverted_index);
-    const score = 3 * (shares.get(work.id) ?? 0)
-      + (normalizeTitle(title).includes(wanted) ? 1 : 0)
-      + (startsWith.test(title) ? 2 : 0)
-      + (INTRODUCES.test(summary) && normalizeTitle(summary).includes(wanted) ? 0.7 : 0)
-      + (definesAcronym.test(summary) ? 0.7 : 0)
-      + (arxiv && wikipediaArxiv.includes(arxiv) ? 1 : 0)
-      + 0.5 * ((work.cited_by_count ?? 0) / most)
-      - (OVERVIEW.test(title) ? 1.5 : 0);
-    const paper: Paper = {
-      title,
-      year: (work.publication_date ?? "").slice(0, 4),
-      ...(arxiv ? { arxiv } : {}),
-      url: arxiv ? arxivUrl(arxiv) : work.doi ?? work.id,
-      citations: work.cited_by_count ?? 0,
-      score: Math.round(score * 100) / 100,
-    };
-    // A published version and its arXiv record are one paper: keep the better-scored entry, citations summed.
-    const key = arxiv ?? `title:${normalizeTitle(title)}`;
-    const known = papers.get(key);
-    if (!known) papers.set(key, paper);
-    else papers.set(key, { ...(known.score >= paper.score ? known : paper), citations: known.citations + paper.citations, year: [known.year, paper.year].filter(Boolean).sort()[0] ?? "" });
-  }
-  return [...papers.values()].sort((a, b) => b.score - a.score);
-}
-
 interface WikiPage {
   title?: string;
+  /** A search result's rank. */
+  index?: number;
   missing?: boolean;
   extract?: string;
   pageprops?: { disambiguation?: string };
@@ -305,86 +247,89 @@ export function wikipediaEntry(page: WikiPage, section: string | undefined, wiki
   };
 }
 
-/** arXiv ids by normalized title, from an arXiv API Atom feed. */
-export function arxivFeed(atom: string): Map<string, string> {
-  const found = new Map<string, string>();
-  for (const entry of atom.split("<entry>").slice(1)) {
-    const id = arxivId(/<id>([^<]+)<\/id>/.exec(entry)?.[1]);
-    const title = /<title>([\s\S]*?)<\/title>/.exec(entry)?.[1];
-    if (id && title) found.set(normalizeTitle(title.replace(/&amp;/g, "&")), id);
-  }
-  return found;
-}
-
-let lastArxivRequest = 0;
-
-/** One arXiv title search for papers without an arXiv id, spaced as arXiv's terms ask. */
-async function arxivByTitle(papers: Paper[], fetch: Fetch): Promise<Paper[]> {
-  const missing = papers.filter((paper) => !paper.arxiv);
-  if (missing.length === 0) return papers;
-  const phrases = missing.map((paper) => `ti:"${paper.title.replace(/[^\p{L}\p{N}\s-]+/gu, " ").split(/\s+/).filter(Boolean).join(" ")}"`);
-  const wait = lastArxivRequest + ARXIV_INTERVAL_MS - Date.now();
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  lastArxivRequest = Date.now();
-  let found: Map<string, string>;
-  try {
-    found = arxivFeed(await fetch(`${ARXIV}?${query({ search_query: phrases.join(" OR "), max_results: 10 })}`));
-  } catch {
-    return papers;
-  }
-  return papers.map((paper) => {
-    const id = paper.arxiv ?? found.get(normalizeTitle(paper.title));
-    return id && !paper.arxiv ? { ...paper, arxiv: id, url: arxivUrl(id) } : paper;
-  });
-}
-
 async function json<T>(fetch: Fetch, url: string): Promise<T | undefined> {
   return JSON.parse(await fetch(url)) as T;
 }
 
-export async function findSources(term: string, fetch: Fetch): Promise<Sources> {
-  const phrase = term.includes(" ") ? `"${term}"` : term;
-  const titled = `${OPENALEX}?${query({ "search.title": phrase, "per-page": TITLE_RESULTS, select: WORK_FIELDS })}`;
-  const citing = `${OPENALEX}?${query({ "search.title_and_abstract": phrase, "per-page": COCITING_RESULTS, select: "id,referenced_works" })}`;
-  const wiki = `${WIKIPEDIA}?${query({
-    action: "query", format: "json", formatversion: 2, origin: "*", titles: wikipediaTitles(term).join("|"), redirects: 1,
-    prop: "extracts|pageprops|langlinks|revisions", exintro: 1, explaintext: 1, exsentences: SNIPPET_SENTENCES, ppprop: "disambiguation",
-    lllang: "zh", rvprop: "content", rvslots: "main", rvsection: 0,
-  })}`;
-  const [titleReply, citingReply, wikiReply] = await Promise.all([
-    json<{ results?: Work[] }>(fetch, titled),
-    json<{ results?: Work[] }>(fetch, citing),
-    json<WikiReply>(fetch, wiki).catch(() => undefined),
-  ]);
-  const counts = new Map<string, number>();
-  let using = 0;
-  for (const work of citingReply?.results ?? []) {
-    const references = new Set(work.referenced_works ?? []);
-    if (references.size === 0) continue;
-    using++;
-    for (const reference of references) counts.set(reference, (counts.get(reference) ?? 0) + 1);
-  }
-  const shares = new Map([...counts].map(([id, count]) => [id, count / Math.max(using, 1)]));
-  const works = new Map((titleReply?.results ?? []).map((work) => [work.id, work]));
-  const cocited = [...counts].sort((a, b) => b[1] - a[1]).slice(0, COCITED_DETAILS).map(([id]) => id).filter((id) => !works.has(id));
-  const located = wikipediaPage(wikiReply);
+/** What every article query asks for: the lead's first sentences, disambiguation, the Chinese article and the lead's wikitext. */
+const ARTICLE_PROPS = {
+  prop: "extracts|pageprops|langlinks|revisions", exintro: 1, explaintext: 1, exsentences: SNIPPET_SENTENCES, exlimit: "max",
+  ppprop: "disambiguation", lllang: "zh", rvprop: "content", rvslots: "main", rvsection: 0,
+};
+
+/** Wikipedia's entry for a term's name, or undefined when it has no article under that name. */
+export async function findWikipedia(term: string, fetch: Fetch): Promise<Encyclopedia | undefined> {
+  const located = wikipediaPage(await json<WikiReply>(fetch, `${WIKIPEDIA}?${query({
+    action: "query", format: "json", formatversion: 2, origin: "*", titles: wikipediaTitles(term).join("|"), redirects: 1, ...ARTICLE_PROPS,
+  })}`));
+  if (!located) return undefined;
   // A redirect into a section needs the article's text, since the section, not the lead, is about the term.
-  const [details, article] = await Promise.all([
-    cocited.length
-      ? json<{ results?: Work[] }>(fetch, `${OPENALEX}?${query({ filter: `openalex:${cocited.map((id) => id.slice(id.lastIndexOf("/") + 1)).join("|")}`, select: WORK_FIELDS })}`)
-      : Promise.resolve(undefined),
-    located?.section
-      ? json<WikiReply>(fetch, `${WIKIPEDIA}?${query({
-        action: "query", format: "json", formatversion: 2, origin: "*", titles: located.page.title!, prop: "revisions", rvprop: "content", rvslots: "main",
-      })}`).catch(() => undefined)
-      : Promise.resolve(undefined),
+  const article = located.section
+    ? await json<WikiReply>(fetch, `${WIKIPEDIA}?${query({
+      action: "query", format: "json", formatversion: 2, origin: "*", titles: located.page.title!, prop: "revisions", rvprop: "content", rvslots: "main",
+    })}`)
+    : undefined;
+  return wikipediaEntry(located.page, located.section, article?.query?.pages?.[0]?.revisions?.[0]?.slots?.main?.content ?? "");
+}
+
+/**
+ * Wikipedia's articles that may be about a term: the one its name leads to,
+ * then the first ones Wikipedia's search finds, without disambiguation pages.
+ * A name or a search may lead to another thing of the same name, so the agent
+ * judges which, if any, is about the term as the text uses it.
+ */
+export async function wikipediaArticles(term: string, fetch: Fetch): Promise<Encyclopedia[]> {
+  const [named, searched] = await Promise.all([
+    findWikipedia(term, fetch),
+    json<WikiReply>(fetch, `${WIKIPEDIA}?${query({
+      action: "query", format: "json", formatversion: 2, origin: "*", generator: "search", gsrsearch: term, gsrlimit: WIKIPEDIA_RESULTS, ...ARTICLE_PROPS,
+    })}`),
   ]);
-  for (const work of details?.results ?? []) works.set(work.id, work);
-  const wikitext = article?.query?.pages?.[0]?.revisions?.[0]?.slots?.main?.content ?? "";
-  const wikipedia = located ? wikipediaEntry(located.page, located.section, wikitext) : undefined;
-  const cited = wikipedia ? wikiCitations(located!.section ? wikiSection(wikitext, located!.section) ?? "" : located!.page.revisions?.[0]?.slots?.main?.content ?? "")
-    .map((each) => each.arxiv) : [];
-  const ranked = rankPapers(term, [...works.values()], shares, cited).filter((paper) => paper.score >= ORIGIN_SCORE);
-  const papers = await arxivByTitle(ranked.slice(0, PAPERS_SHOWN), fetch);
-  return { papers, ...(wikipedia ? { wikipedia } : {}) };
+  const found = (searched?.query?.pages ?? [])
+    .filter((page) => page.title && !page.missing && page.pageprops?.disambiguation === undefined && page.title !== named?.title)
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    .map((page) => wikipediaEntry(page, undefined, ""));
+  return [...(named ? [named] : []), ...found];
+}
+
+/** A paper as arXiv records it. */
+export interface ArxivEntry {
+  arxiv: string;
+  title: string;
+  year: string;
+}
+
+function xmlText(text: string): string {
+  return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&apos;/g, "'").replace(/&amp;/g, "&")
+    .split(/\s+/).filter(Boolean).join(" ");
+}
+
+/** The entries of an arXiv API Atom feed. */
+export function arxivFeed(atom: string): ArxivEntry[] {
+  const entries: ArxivEntry[] = [];
+  for (const entry of atom.split("<entry>").slice(1)) {
+    const arxiv = arxivId(/<id>([^<]+)<\/id>/.exec(entry)?.[1]);
+    const title = /<title>([\s\S]*?)<\/title>/.exec(entry)?.[1];
+    if (arxiv && title) entries.push({ arxiv, title: xmlText(title), year: /<published>(\d{4})/.exec(entry)?.[1] ?? "" });
+  }
+  return entries;
+}
+
+/** When each fetcher may next ask arXiv: one plugin has one fetcher, so one clock. */
+const arxivSlots = new WeakMap<Fetch, number>();
+
+/** One arXiv API request, spaced at least three seconds from the last one through the same fetcher. */
+async function arxivQuery(fetch: Fetch, params: Record<string, string | number>): Promise<ArxivEntry[]> {
+  const at = Math.max(Date.now(), (arxivSlots.get(fetch) ?? 0) + ARXIV_INTERVAL_MS);
+  arxivSlots.set(fetch, at);
+  if (at > Date.now()) await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
+  return arxivFeed(await fetch(`${ARXIV}?${query(params)}`));
+}
+
+/** arXiv's record of the paper with this title, from one title search. */
+export async function arxivByTitle(fetch: Fetch, title: string): Promise<ArxivEntry | undefined> {
+  const phrase = title.replace(/[^\p{L}\p{N}\s-]+/gu, " ").split(/\s+/).filter(Boolean).join(" ");
+  const wanted = normalizeTitle(title);
+  const entries = await arxivQuery(fetch, { search_query: `ti:"${phrase}"`, max_results: 10 });
+  return entries.find((entry) => normalizeTitle(entry.title) === wanted);
 }

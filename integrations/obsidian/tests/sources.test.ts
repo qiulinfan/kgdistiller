@@ -1,21 +1,41 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  abstractText,
+  ARXIV_INTERVAL_MS,
+  arxivByTitle,
   arxivFeed,
   arxivId,
   citedReferences,
-  findSources,
+  fetchError,
+  findWikipedia,
   normalizeTitle,
-  rankPapers,
+  wikipediaArticles,
+  sourceOpening,
   wikiCitations,
   wikipediaEntry,
   wikipediaPage,
   wikipediaTitles,
   wikiPlain,
   wikiSection,
-  workArxiv,
 } from "../src/sources";
+
+describe("the source being read", () => {
+  it("is its first heading with the text up to the next heading", () => {
+    const lines = ["# Masked Autoencoders Are Scalable Vision Learners", "", "Kaiming He、Xinlei Chen", "",
+      "原文：[arXiv:2111.06377v3](https://arxiv.org/abs/2111.06377v3)。", "", "## 摘要", "本文表明"];
+    expect(sourceOpening(lines, "/papers/MAE/mae_ch.md")).toEqual({
+      title: "Masked Autoencoders Are Scalable Vision Learners",
+      text: "# Masked Autoencoders Are Scalable Vision Learners Kaiming He、Xinlei Chen 原文：[arXiv:2111.06377v3](https://arxiv.org/abs/2111.06377v3)。",
+    });
+  });
+
+  it("skips frontmatter, is named by its file without a heading, and is kept short", () => {
+    const opening = sourceOpening(["---", "tags: [a]", "---", "", "Notes on autoencoders.", "x ".repeat(400)], "/notes/Autoencoders.md");
+    expect(opening.title).toBe("Autoencoders");
+    expect(opening.text.startsWith("Notes on autoencoders. x x")).toBe(true);
+    expect(opening.text).toHaveLength(601);
+  });
+});
 
 describe("cited references", () => {
   const lines = [
@@ -38,70 +58,70 @@ describe("cited references", () => {
 });
 
 describe("arXiv ids", () => {
-  it("are read from arXiv pages, mirrors and DOIs, without versions", () => {
+  it("are read from arXiv pages, mirrors, DOIs and citations, without versions", () => {
     for (const url of ["https://arxiv.org/abs/2111.06377v3", "http://arxiv.org/pdf/2111.06377", "https://arxiv.org/html/2111.06377v1",
-      "https://ar5iv.labs.arxiv.org/html/2111.06377", "https://www.alphaxiv.org/abs/2111.06377", "https://doi.org/10.48550/arXiv.2111.06377"]) {
+      "https://ar5iv.labs.arxiv.org/html/2111.06377", "https://www.alphaxiv.org/abs/2111.06377", "https://doi.org/10.48550/arXiv.2111.06377",
+      "Kaiming He et al. Masked autoencoders. arXiv: 2111.06377, 2021."]) {
       expect(arxivId(url)).toBe("2111.06377");
     }
     expect(arxivId("https://doi.org/10.1109/cvpr52688.2022.01553")).toBeUndefined();
     expect(arxivId(undefined)).toBeUndefined();
   });
-
-  it("come from a work's DOI or any location", () => {
-    expect(workArxiv({ id: "W1", doi: "https://doi.org/10.48550/arxiv.1312.6114" })).toBe("1312.6114");
-    expect(workArxiv({ id: "W2", doi: "https://doi.org/10.1/x", locations: [{ landing_page_url: "https://dare.uva.nl/x" }, { pdf_url: "https://arxiv.org/pdf/1312.6114" }] }))
-      .toBe("1312.6114");
-    expect(workArxiv({ id: "W3", doi: "https://doi.org/10.1145/1390156.1390294" })).toBeUndefined();
-  });
-
-  it("are found by title in an arXiv feed", () => {
-    const atom = `<feed><entry><id>http://arxiv.org/abs/2111.06377v3</id><title>Masked Autoencoders Are Scalable
-      Vision Learners</title></entry><entry><id>http://arxiv.org/abs/1312.6114v11</id><title>Auto-Encoding Variational Bayes</title></entry></feed>`;
-    expect(arxivFeed(atom)).toEqual(new Map([
-      [normalizeTitle("Masked Autoencoders Are Scalable Vision Learners"), "2111.06377"],
-      [normalizeTitle("Auto-Encoding Variational Bayes"), "1312.6114"],
-    ]));
-  });
 });
 
-describe("ranking papers", () => {
-  it("normalizes titles and rebuilds abstracts", () => {
+describe("arXiv records", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const FEED = `<feed><entry><id>http://arxiv.org/abs/2111.06377v3</id><published>2021-11-11T18:46:40Z</published><title>Masked Autoencoders Are Scalable
+      Vision Learners</title></entry><entry><id>http://arxiv.org/abs/1312.6114v11</id><published>2013-12-20T20:58:10Z</published><title>Auto-Encoding Variational Bayes &amp; more</title></entry></feed>`;
+
+  it("are read from an arXiv feed with their titles and years", () => {
+    expect(arxivFeed(FEED)).toEqual([
+      { arxiv: "2111.06377", title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021" },
+      { arxiv: "1312.6114", title: "Auto-Encoding Variational Bayes & more", year: "2013" },
+    ]);
+    expect(arxivFeed("<feed><entry><id>http://arxiv.org/api/errors#incorrect_id_format_for_x</id><title>Error</title></entry></feed>")).toEqual([]);
+  });
+
+  it("are searched by title and kept only when the title is the same", async () => {
+    const urls: string[] = [];
+    const fetch = async (url: string): Promise<string> => {
+      urls.push(url);
+      return FEED;
+    };
+    vi.useFakeTimers();
+    const same = arxivByTitle(fetch, "Masked autoencoders are scalable vision learners");
+    const other = arxivByTitle(fetch, "Masked autoencoders");
+    await vi.advanceTimersByTimeAsync(ARXIV_INTERVAL_MS);
+    await expect(same).resolves.toEqual({ arxiv: "2111.06377", title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021" });
+    await expect(other).resolves.toBeUndefined();
+    expect(urls).toEqual([
+      "https://export.arxiv.org/api/query?search_query=ti%3A%22Masked%20autoencoders%20are%20scalable%20vision%20learners%22&max_results=10",
+      "https://export.arxiv.org/api/query?search_query=ti%3A%22Masked%20autoencoders%22&max_results=10",
+    ]);
+  });
+
+  it("are asked at most once every three seconds through one fetcher", async () => {
+    const times: number[] = [];
+    const fetch = async (): Promise<string> => {
+      times.push(Date.now());
+      return "<feed></feed>";
+    };
+    let other = 0;
+    vi.useFakeTimers();
+    const asked = Promise.all([arxivByTitle(fetch, "A"), arxivByTitle(fetch, "B"),
+      arxivByTitle(async () => { other++; return "<feed></feed>"; }, "B")]);
+    await vi.advanceTimersByTimeAsync(ARXIV_INTERVAL_MS - 1);
+    expect([times.length, other]).toEqual([1, 1]);
+    await vi.advanceTimersByTimeAsync(1);
+    await asked;
+    expect(times[1]! - times[0]!).toBe(ARXIV_INTERVAL_MS);
+  });
+
+  it("compare titles without case, punctuation or plurals", () => {
     expect(normalizeTitle("Stacked Denoising Auto-Encoders: Learning")).toBe("stacked denoising autoencoder learning");
-    expect(abstractText({ We: [0], propose: [1], BEiT: [2, 4], call: [3] })).toBe("We propose BEiT call BEiT");
-    expect(abstractText(null)).toBe("");
-  });
-
-  it("prefers the co-cited paper that introduces the term over popular later papers, linking arXiv", () => {
-    const papers = rankPapers("variational autoencoder", [
-      { id: "W1", display_name: "Auto-Encoding Variational Bayes", publication_date: "2013-12-20", cited_by_count: 20000, doi: "https://doi.org/10.48550/arxiv.1312.6114" },
-      { id: "W2", display_name: "An Introduction to Variational Autoencoders", publication_date: "2019-01-01", cited_by_count: 3000 },
-      { id: "W3", display_name: "Variational autoencoders for collaborative filtering", publication_date: "2018-01-01", cited_by_count: 2000, doi: "https://doi.org/10.1145/3178876.3186150" },
-    ], new Map([["W1", 0.58], ["W3", 0.05]]), ["1312.6114"]);
-    expect(papers.map((paper) => paper.title)).toEqual([
-      "Auto-Encoding Variational Bayes", "Variational autoencoders for collaborative filtering", "An Introduction to Variational Autoencoders"]);
-    expect(papers[0]).toEqual({
-      title: "Auto-Encoding Variational Bayes", year: "2013", arxiv: "1312.6114", url: "https://arxiv.org/abs/1312.6114", citations: 20000, score: 3.24,
-    });
-    expect(papers[1]).toMatchObject({ url: "https://doi.org/10.1145/3178876.3186150" });
-    expect(papers[1]).not.toHaveProperty("arxiv");
-  });
-
-  it("joins a published paper with its same-titled arXiv record", () => {
-    const papers = rankPapers("masked autoencoder", [
-      { id: "W1", display_name: "Masked Autoencoders Are Scalable Vision Learners", publication_date: "2022-06-01", cited_by_count: 5000, doi: "https://doi.org/10.1109/cvpr52688.2022.01553" },
-      { id: "W2", display_name: "Masked autoencoders are scalable vision learners", publication_date: "2021-11-11", cited_by_count: 900, doi: "https://doi.org/10.48550/arxiv.2111.06377" },
-    ], new Map([["W1", 0.89]]), []);
-    expect(papers).toEqual([{
-      title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021", arxiv: "2111.06377", url: "https://arxiv.org/abs/2111.06377", citations: 5900, score: 4.17,
-    }]);
-  });
-
-  it("rewards a title that starts with the term", () => {
-    const [first] = rankPapers("BEiT", [
-      { id: "W1", display_name: "Beit Shemesh water supply", cited_by_count: 5 },
-      { id: "W2", display_name: "BEiT: BERT Pre-Training of Image Transformers", cited_by_count: 800 },
-    ], new Map(), []);
-    expect(first?.title).toBe("BEiT: BERT Pre-Training of Image Transformers");
   });
 });
 
@@ -175,43 +195,55 @@ describe("Wikipedia", () => {
   });
 });
 
-describe("finding sources", () => {
-  it("shows no paper when only the term's appearance in titles speaks for it", async () => {
-    const fetch = async (url: string): Promise<string> => {
-      if (url.includes("search.title=")) {
-        return JSON.stringify({ results: [{ id: "W1", display_name: "POI2Vec: Geographical Latent Representation", cited_by_count: 223, doi: "https://doi.org/10.1/x" }] });
-      }
-      if (url.includes("search.title_and_abstract=")) return JSON.stringify({ results: [{ id: "W5", referenced_works: ["W8"] }, { id: "W6", referenced_works: ["W9"] }] });
-      if (url.includes("filter=openalex")) return JSON.stringify({ results: [] });
-      throw new Error("not asked");
-    };
-    await expect(findSources("latent representation", fetch)).resolves.toEqual({ papers: [] });
-  });
-
-  it("asks OpenAlex and Wikipedia together, then the co-cited works, then arXiv for papers without an arXiv id", async () => {
+describe("finding Wikipedia's entry", () => {
+  it("reads the article at the section a redirect points into", async () => {
     const urls: string[] = [];
     const fetch = async (url: string): Promise<string> => {
       urls.push(url);
-      if (url.includes("search.title=")) {
-        return JSON.stringify({ results: [{ id: "W9", display_name: "BEiT: BERT Pre-Training of Image Transformers", cited_by_count: 800, doi: "https://doi.org/10.48550/arxiv.2106.08254" }] });
+      if (url.includes("redirects=1")) {
+        return JSON.stringify({ query: {
+          redirects: [{ from: "Masked autoencoder", to: "Vision transformer", tofragment: "Masked Autoencoder" }],
+          pages: [{ title: "Vision transformer", extract: "A vision transformer (ViT) is a transformer.", revisions: [{ slots: { main: { content: "lead" } } }] }],
+        } });
       }
-      if (url.includes("search.title_and_abstract=")) return JSON.stringify({ results: [{ id: "W5", referenced_works: ["W9", "W7"] }, { id: "W6", referenced_works: ["W9"] }] });
-      if (url.includes("filter=openalex")) return JSON.stringify({ results: [{ id: "W7", display_name: "Attention is all you need", cited_by_count: 90000, doi: "https://doi.org/10.5555/x" }] });
-      if (url.startsWith("https://export.arxiv.org")) {
-        return "<feed><entry><id>http://arxiv.org/abs/1706.03762v7</id><title>Attention Is All You Need</title></entry></feed>";
-      }
-      throw new Error("wikipedia is down");
+      return JSON.stringify({ query: { pages: [{ title: "Vision transformer", revisions: [{ slots: { main: { content: VISION_TRANSFORMER } } }] }] } });
     };
-    const found = await findSources("BEiT", fetch);
-    expect(found.papers.map((paper) => [paper.title, paper.url])).toEqual([
-      ["BEiT: BERT Pre-Training of Image Transformers", "https://arxiv.org/abs/2106.08254"],
-      ["Attention is all you need", "https://arxiv.org/abs/1706.03762"],
-    ]);
-    expect(found.papers.every((paper) => paper.score >= 2)).toBe(true);
-    expect(found.wikipedia).toBeUndefined();
-    expect(urls[0]).toContain("search.title=BEiT");
-    expect(urls[2]).toContain("titles=BEiT");
-    expect(urls[3]).toContain("filter=openalex%3AW7");
-    expect(urls[4]).toContain("search_query=ti%3A%22Attention%20is%20all%20you%20need%22");
+    const entry = await findWikipedia("masked autoencoder", fetch);
+    expect(entry?.url).toBe("https://en.wikipedia.org/wiki/Vision_transformer#Masked_Autoencoder");
+    expect(entry?.cites?.arxiv).toBe("2111.06377");
+    expect(urls[0]).toContain("titles=Masked%20autoencoder");
+    expect(urls[1]).toContain("titles=Vision%20transformer");
+    expect(urls[1]).not.toContain("rvsection");
+  });
+
+  it("adds the articles Wikipedia's search finds first, in rank order, without disambiguation pages or the named article again", async () => {
+    const urls: string[] = [];
+    const fetch = async (url: string): Promise<string> => {
+      urls.push(url);
+      if (url.includes("generator=search")) {
+        return JSON.stringify({ query: { pages: [
+          { title: "Latent space", index: 2, extract: "A latent space is an embedding.", langlinks: [{ lang: "zh", title: "潜空间 (机器学习)" }] },
+          { title: "Latent (disambiguation)", index: 3, pageprops: { disambiguation: "" } },
+          { title: "Latent diffusion model", index: 1, extract: "The latent diffusion model is a diffusion model.", revisions: [{ slots: { main: { content: "{{cite arXiv |title=High-Resolution Image Synthesis |eprint=2112.10752}}" } } }] },
+          { title: "Latent representation", index: 4, extract: "Named again." },
+        ] } });
+      }
+      return JSON.stringify({ query: { pages: [{ title: "Latent representation", extract: "Named.", revisions: [{ slots: { main: { content: "" } } }] }] } });
+    };
+    const articles = await wikipediaArticles("latent representation", fetch);
+    expect(articles.map((article) => article.title)).toEqual(["Latent representation", "Latent diffusion model", "Latent space"]);
+    expect(articles[1]?.cites).toEqual({ title: "High-Resolution Image Synthesis", arxiv: "2112.10752", url: "https://arxiv.org/abs/2112.10752" });
+    expect(articles[2]?.zh?.title).toBe("潜空间 (机器学习)");
+    expect(urls.find((url) => url.includes("generator=search"))).toContain("gsrsearch=latent%20representation&gsrlimit=3");
+    await expect(wikipediaArticles("BEiT", async (url) => JSON.stringify({ query: { pages: url.includes("generator=search") ? [] : [{ title: "BEiT", missing: true }] } })))
+      .resolves.toEqual([]);
+  });
+
+  it("is undefined without an article, and a service's error says why", async () => {
+    await expect(findWikipedia("BEiT", async () => JSON.stringify({ query: { pages: [{ title: "BEiT", missing: true }] } }))).resolves.toBeUndefined();
+    await expect(findWikipedia("BEiT", async (url) => { throw fetchError(url, 503, "<html>down</html>"); }))
+      .rejects.toThrow("en.wikipedia.org answered 503");
+    expect(fetchError("https://export.arxiv.org/api/query", 429, JSON.stringify({ error: "Rate exceeded" })).message)
+      .toBe("export.arxiv.org answered 429: Rate exceeded");
   });
 });
