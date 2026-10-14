@@ -143,10 +143,11 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl).setName("Agent").setHeading();
-    this.apiText("Model API endpoint", "Full Chat Completions URL. Leave empty to turn the agent off. Requests go directly to this service.",
+    new Setting(containerEl).setName("Agent").setHeading()
+      .setDesc("The agent judges lookups, captures selections, finds sources and answers searches. It needs the model API endpoint, model and, for a hosted service, its API key; web search needs no key.");
+    this.apiText("Model API endpoint", "Required. The full Chat Completions URL, such as https://api.deepseek.com/chat/completions. Leave empty to turn the agent off. Requests go directly to this service.",
       "modelEndpoint", "https://api.example.com/v1/chat/completions");
-    this.apiText("Model", "The model ID your API accepts; it must support function tools.", "agentModel", "model-id");
+    this.apiText("Model", "Required. The model ID that endpoint accepts, such as deepseek-flash; it must support function tools.", "agentModel", "model-id");
     new Setting(containerEl)
       .setName("Model API format")
       .setDesc("Choose DeepSeek for its thinking controls. Other Chat Completions services must support reasoning_effort (none and low).")
@@ -160,7 +161,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           await this.host.savePluginSettings();
           this.host.agentSettingsChanged();
         }));
-    this.apiSecret("Model API key", "Choose or add a secret in Obsidian. Leave empty only for a local API that needs no authentication.", "modelKey");
+    this.apiSecret("Model API key", "Required by a hosted service. Choose a secret in Obsidian's SecretStorage, or add one holding the key; the plugin stores only the secret's name. Leave empty only for a local API that needs no authentication.", "modelKey");
     new Setting(containerEl).setName("Web search").setHeading();
     this.apiSecret("Exa API key", "Optional. Web search asks Exa's hosted MCP server (mcp.exa.ai) directly and works without a key at Exa's free rate limits; choose or add an Exa key in Obsidian SecretStorage to use your Exa plan's limits.", "exaKey");
   }
