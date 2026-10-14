@@ -186,8 +186,9 @@
   database itself. The plugin's agent (judgment, Capture, Find sources and
   search; see docs/obsidian.md "Agent") is the model-side adapter that keeps
   the core model-free: its harness runs inside the plugin, calls the configured
-  Chat Completions model API and Tavily-compatible search API directly, and
-  stores API keys only through Obsidian SecretStorage. It depends on no external
+  Chat Completions model API and Exa's hosted MCP search directly (keyless
+  unless the owner adds an Exa key), and stores API keys only through
+  Obsidian SecretStorage. It depends on no external
   agent runtime, owns its prompts and
   checks every model answer and citation, and writes knowledge only as a draft
   admitted by `kgd accept` and `kgd index --no-embed`, under the same rules as

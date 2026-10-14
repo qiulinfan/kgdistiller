@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { afterEach, describe, expect, it } from "vitest";
-import { ApiClient, apiUrl } from "../src/api";
+import { ApiClient, ApiError, apiUrl } from "../src/api";
 import { ModelClient } from "../src/model";
-import { webSearch } from "../src/web";
+import { EXA_MCP_URL, webSearch } from "../src/web";
 import { searchKnowledge, type SearchKgd } from "../src/search";
 
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -69,22 +69,43 @@ describe("the plugin's HTTP transport", () => {
     await expect(api.post(url, "", {}, 1000)).rejects.toThrow("closed");
   });
 
+  it("posts with the caller's headers, returns the text and keeps the HTTP status of a failure", async () => {
+    const url = await server((req, res, body) => {
+      if (req.url === "/limited") { res.writeHead(429); res.end("slow down"); return; }
+      expect(req.headers["x-api-key"]).toBe("synthetic-test-key");
+      expect(req.headers.authorization).toBeUndefined();
+      expect(req.headers["content-type"]).toBe("application/json");
+      res.setHeader("Content-Type", "text/event-stream");
+      res.end(`data: ${JSON.stringify({ received: body })}\n\n`);
+    });
+    const api = client();
+    await expect(api.postText(url, { "x-api-key": "synthetic-test-key" }, { query: "测度" }, 1000))
+      .resolves.toBe(`data: ${JSON.stringify({ received: { query: "测度" } })}\n\n`);
+    const failure = await api.postText(`${url}/limited`, {}, {}, 1000).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(429);
+  });
+
   it.each(["https://user:secret@example.org", "https://example.org?api_key=secret", "file:///tmp/x", "http://remote.example.org", "not a URL"])("rejects an invalid API address: %s", (url) => {
     expect(() => apiUrl(url)).toThrow();
   });
 });
 
-it("answers through the internal harness, direct model API and direct search API", async () => {
+it("answers through the internal harness, direct model API and Exa's MCP search", async () => {
   let modelCalls = 0;
   let searches = 0;
   const url = await server((req, res, body) => {
-    res.setHeader("Content-Type", "application/json");
-    if (req.url === "/search") {
+    if (req.url === "/mcp") {
       searches++;
-      expect(req.headers.authorization).toBe("Bearer search-test-key");
-      expect(body.query).toBe("masked autoencoder site:arxiv.org");
-      res.end(JSON.stringify({ results: [{ title: "MAE", url: "https://arxiv.org/abs/2111.06377", content: "MAE reconstructs masked image patches." }] }));
+      expect(req.headers["x-api-key"]).toBe("exa-test-key");
+      expect(req.headers.accept).toBe("application/json, text/event-stream");
+      expect(body.method).toBe("tools/call");
+      expect(body.params).toEqual({ name: "web_search_exa", arguments: { query: "masked autoencoder site:arxiv.org", numResults: 8 } });
+      const text = "Title: MAE\nURL: https://arxiv.org/abs/2111.06377\nPublished: N/A\nHighlights:\nMAE reconstructs masked image patches.";
+      res.setHeader("Content-Type", "text/event-stream");
+      res.end(`event: message\ndata: ${JSON.stringify({ result: { content: [{ type: "text", text }] }, jsonrpc: "2.0", id: 1 })}\n\n`);
     } else {
+      res.setHeader("Content-Type", "application/json");
       modelCalls++;
       expect(req.headers.authorization).toBe("Bearer model-test-key");
       if (modelCalls === 2) expect(JSON.stringify(body.messages)).toContain("MAE reconstructs masked image patches.");
@@ -98,7 +119,11 @@ it("answers through the internal harness, direct model API and direct search API
   const model = new ModelClient(() => ({ endpoint: `${url}/chat/completions`, apiKey: "model-test-key", model: "test", protocol: "chat-completions" }), api.post);
   const kgd: SearchKgd = { call: async <T>(tool: string): Promise<T> => (tool === "kg_search" ? { results: [] } : { terms: [] }) as T };
   const answer = await searchKnowledge((request) => model.complete(request), kgd,
-    (query) => webSearch({ endpoint: `${url}/search`, apiKey: "search-test-key" }, query, api.post), "What is MAE?",
+    // The local server stands in for Exa's MCP server.
+    (query) => webSearch("exa-test-key", query, (target, headers, body, timeout) => {
+      expect(target).toBe(EXA_MCP_URL);
+      return api.postText(`${url}/mcp`, headers, body, timeout);
+    }), "What is MAE?",
     { reading: { base: "papers", source: "mae.md", type: "research" } });
   expect(answer.text).toContain("[W1]");
   expect(answer.web).toEqual([{ number: 1, title: "MAE", url: "https://arxiv.org/abs/2111.06377", snippet: "MAE reconstructs masked image patches." }]);

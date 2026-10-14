@@ -16,8 +16,8 @@ export interface KgdistillerSettings {
   modelProtocol: "chat-completions" | "deepseek";
   /** SecretStorage identifiers, never API key values. */
   modelKey: string;
-  searchEndpoint: string;
-  searchKey: string;
+  /** Empty searches the web at Exa's free rate limits. */
+  exaKey: string;
 }
 
 export const DEFAULT_SETTINGS: KgdistillerSettings = {
@@ -29,8 +29,7 @@ export const DEFAULT_SETTINGS: KgdistillerSettings = {
   agentModel: "",
   modelProtocol: "chat-completions",
   modelKey: "",
-  searchEndpoint: "https://api.tavily.com/search",
-  searchKey: "",
+  exaKey: "",
 };
 
 /**
@@ -163,12 +162,10 @@ export class KgdistillerSettingTab extends PluginSettingTab {
         }));
     this.apiSecret("Model API key", "Choose or add a secret in Obsidian. Leave empty only for a local API that needs no authentication.", "modelKey");
     new Setting(containerEl).setName("Web search").setHeading();
-    this.apiText("Search API endpoint", "Tavily Search API, or a service implementing its request and response format. Queries go directly to this service.",
-      "searchEndpoint", DEFAULT_SETTINGS.searchEndpoint);
-    this.apiSecret("Search API key", "Choose or add the search service's key in Obsidian SecretStorage. Web search needs its own key; local knowledge queries do not.", "searchKey");
+    this.apiSecret("Exa API key", "Optional. Web search asks Exa's hosted MCP server (mcp.exa.ai) directly and works without a key at Exa's free rate limits; choose or add an Exa key in Obsidian SecretStorage to use your Exa plan's limits.", "exaKey");
   }
 
-  private apiText(name: string, description: string, key: "modelEndpoint" | "agentModel" | "searchEndpoint", placeholder: string): void {
+  private apiText(name: string, description: string, key: "modelEndpoint" | "agentModel", placeholder: string): void {
     new Setting(this.containerEl).setName(name).setDesc(description).addText((text) => text
       .setPlaceholder(placeholder).setValue(this.host.settings[key]).onChange(async (value) => {
         this.host.settings[key] = value.trim();
@@ -177,7 +174,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
       }));
   }
 
-  private apiSecret(name: string, description: string, key: "modelKey" | "searchKey"): void {
+  private apiSecret(name: string, description: string, key: "modelKey" | "exaKey"): void {
     const setting = new Setting(this.containerEl).setName(name).setDesc(description);
     new SecretComponent(this.app, setting.controlEl).setValue(this.host.settings[key]).onChange(async (id) => {
       this.host.settings[key] = id;

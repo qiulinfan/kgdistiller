@@ -5,22 +5,25 @@ All notable changes are documented here.
 ## Unreleased
 
 - Run the Obsidian agent entirely inside the plugin. Replace OMP's model
-  gateway and per-search extension process with direct Chat Completions and
-  Tavily-compatible Search API requests. Configure endpoints, the actual
-  model ID and API keys through Obsidian SecretStorage (settings store secret
-  IDs only). Keep the existing tool loop and local kgd engine; handle DeepSeek
+  gateway and per-search extension process with direct Chat Completions
+  requests and direct calls to Exa's hosted MCP search, which needs no key.
+  Configure the model endpoint, the actual model ID and API keys through
+  Obsidian SecretStorage (settings store secret IDs only); an Exa key is
+  optional. Keep the existing tool loop and local kgd engine; handle DeepSeek
   thinking/tool calls directly. Reuse HTTP connections and cancel requests on
   timeout, settings changes and unload. The previous OMP settings are removed
   without a fallback; configure the new API settings before using the agent.
   Local HTTP tests cover a complete search-and-answer round with synthetic
-  keys; the timings below describe the earlier OMP implementation, not the
-  new transport.
+  keys. With `deepseek-flash` and keyless Exa, a web search took 0.5 to 2 s,
+  five research questions were answered in 4.2 to 15.4 s and Find sources
+  picked eight of nine test terms as expected; the other timings below
+  describe the earlier OMP implementation.
 - Add agentic search to the Obsidian lookup sidebar. A search box at the top
   of the sidebar (and the **Search knowledge** command) looks typed text up
   like a selection, and the agent answers it from the knowledge base first and
   from the web for what the knowledge base does not hold: it reads records
   with `kg_search`, `kg_get` and `kg_neighbors` and searches the web through
-  the configured Search API, showing each step as it runs. Every citation is
+  Exa's hosted MCP search, showing each step as it runs. Every citation is
   checked against what the tools returned; records appear as K1, K2, … and web
   pages as W1, W2, …, listed apart. Answers took 4 to 6 s from the knowledge
   base and 8 to 11 s with a web search on DeepSeek V4 Flash.

@@ -3,6 +3,15 @@ import { Agent as HttpAgent, request as httpRequest, type ClientRequest } from "
 import { Agent as HttpsAgent, request as httpsRequest } from "https";
 
 export type PostJson = (url: string, key: string, body: Record<string, unknown>, timeout: number) => Promise<unknown>;
+/** POST a JSON body with the caller's own headers and return the response text. */
+export type PostText = (url: string, headers: Record<string, string>, body: Record<string, unknown>, timeout: number) => Promise<string>;
+
+/** A failed API request; `status` is the HTTP status when the service answered. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
 
 export function apiUrl(value: string): URL {
   let url: URL;
@@ -20,36 +29,41 @@ export class ApiClient {
   private readonly pending = new Map<ClientRequest, (error: Error) => void>();
   private closed = false;
 
+  /** POST JSON with a bearer key and parse the JSON reply. */
   readonly post: PostJson = async (endpoint, key, body, timeout) => {
-    if (this.closed) throw new Error("The plugin's API client is closed.");
+    const text = await this.postText(endpoint, {
+      Accept: "application/json",
+      ...(key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {}),
+    }, body, timeout);
+    try { return JSON.parse(text); } catch { throw new ApiError("The API returned invalid JSON."); }
+  };
+
+  readonly postText: PostText = async (endpoint, headers, body, timeout) => {
+    if (this.closed) throw new ApiError("The plugin's API client is closed.");
     const url = apiUrl(endpoint);
     const payload = JSON.stringify(body);
     return new Promise((resolve, reject) => {
       const secure = url.protocol === "https:";
       const request = (secure ? httpsRequest : httpRequest)(url, {
         method: "POST", agent: secure ? this.https : this.http,
-        headers: {
-          "Content-Type": "application/json", "Accept": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
-          ...(key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {}),
-        },
+        headers: { ...headers, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
       });
       let settled = false;
-      const finish = (error?: Error, value?: unknown): void => {
+      const finish = (error?: Error, value?: string): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         this.pending.delete(request);
-        if (error) reject(error); else resolve(value);
+        if (error) reject(error); else resolve(value ?? "");
       };
       const abort = (error: Error): void => { finish(error); request.destroy(); };
-      const timer = setTimeout(() => abort(new Error(`API request timed out after ${timeout / 1000} s.`)), timeout);
+      const timer = setTimeout(() => abort(new ApiError(`API request timed out after ${timeout / 1000} s.`)), timeout);
       this.pending.set(request, abort);
       // No redirects: credentials are sent only to the configured endpoint.
       request.on("response", (response) => {
         const status = response.statusCode ?? 0;
         if (status < 200 || status >= 300) {
-          finish(new Error(`API request failed (HTTP ${status}).${status === 401 || status === 403 ? " Check the API key and access permissions." : ""}`));
+          finish(new ApiError(`API request failed (HTTP ${status}).${status === 401 || status === 403 ? " Check the API key and access permissions." : ""}`, status));
           response.destroy();
           return;
         }
@@ -57,25 +71,22 @@ export class ApiClient {
         let bytes = 0;
         response.on("data", (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > 8 * 1024 * 1024) abort(new Error("API response exceeds 8 MiB."));
+          if (bytes > 8 * 1024 * 1024) abort(new ApiError("API response exceeds 8 MiB."));
           else chunks.push(chunk);
         });
-        response.on("error", () => finish(new Error("API response was interrupted.")));
-        response.on("end", () => {
-          try { finish(undefined, JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-          catch { finish(new Error("The API returned invalid JSON.")); }
-        });
+        response.on("error", () => finish(new ApiError("API response was interrupted.")));
+        response.on("end", () => finish(undefined, Buffer.concat(chunks).toString("utf8")));
       });
       request.on("error", (error) => {
         // Transport errors can include headers or URLs; expose only our own errors and error codes.
-        finish(new Error(`API connection failed (${(error as NodeJS.ErrnoException).code ?? "network error"}).`));
+        finish(new ApiError(`API connection failed (${(error as NodeJS.ErrnoException).code ?? "network error"}).`));
       });
       request.end(payload);
     });
   };
 
   cancel(): void {
-    for (const abort of this.pending.values()) abort(new Error("API request cancelled."));
+    for (const abort of this.pending.values()) abort(new ApiError("API request cancelled."));
   }
 
   close(): void {

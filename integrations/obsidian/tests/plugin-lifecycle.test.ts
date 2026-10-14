@@ -263,14 +263,14 @@ describe("hidden knowledge lifecycle", () => {
 describe("stored settings", () => {
   it("defaults to drawing drafts with hidden indexing off until kgd obsidian install turns it on, and lookups off", () => {
     expect(DEFAULT_SETTINGS).toEqual({
-      showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", searchEndpoint: "https://api.tavily.com/search", searchKey: "",
+      showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", exaKey: "",
     });
   });
   it("replaces wrongly typed stored values with defaults and reports only those", async () => {
     controls.stored = { showDrafts: "no", hiddenKnowledgeEnabled: true, kgdCommand: 7, unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.settings).toEqual({
-      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", searchEndpoint: "https://api.tavily.com/search", searchKey: "",
+      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", exaKey: "",
     });
     expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: showDrafts, kgdCommand."));
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
@@ -286,7 +286,7 @@ describe("hidden knowledge settings", () => {
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Graph view", "Show drafts", "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
-      "Lookup", "kgd executable", "Knowledge home", "Agent", "Model API endpoint", "Model", "Model API format", "Model API key", "Web search", "Search API endpoint", "Search API key",
+      "Lookup", "kgd executable", "Knowledge home", "Agent", "Model API endpoint", "Model", "Model API format", "Model API key", "Web search", "Exa API key",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
@@ -295,7 +295,7 @@ describe("hidden knowledge settings", () => {
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
     expect(controls.saveData).toHaveBeenCalledWith({
-      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", searchEndpoint: "https://api.tavily.com/search", searchKey: "",
+      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", exaKey: "",
     });
     expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();

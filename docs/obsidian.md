@@ -256,7 +256,7 @@ presses Capture or runs **Capture selection**.
 
 The harness runs inside the plugin (`agent.ts`). Model requests go directly
 from `model.ts` to the configured Chat Completions API, and search tools call
-the configured Tavily-compatible Search API from `web.ts`. No OMP, external
+Exa's hosted MCP server (`https://mcp.exa.ai/mcp`) from `web.ts`. No OMP, external
 agent executable, gateway process, generated extension or temporary search
 file is involved. Local knowledge still uses the separately installed `kgd`
 engine through its resident MCP server and admission commands.
@@ -342,7 +342,7 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
 introduced it and the Wikipedia article that explains it. The sidebar lists at
 once the works the selected lines cite, read from the source's own reference
 list (block ids `^reference-N`). Then, at the same time, one web search
-through the configured Search API (as for Search below) asks who first introduced the
+through Exa (as for Search below) asks who first introduced the
 term, and Wikipedia gives the article the term's name leads to, read at the
 section a redirect points into (masked autoencoder is the Masked Autoencoder
 section of Vision transformer), and the first three articles its search finds.
@@ -372,11 +372,12 @@ Auto-Encoding Variational Bayes, and none for latent representation, partial
 fine-tuning and linear probing; latent representation was explained by
 Latent space in five runs out of five, and every same-named article was left
 out. A lookup took about 6 to 9 s on DeepSeek V4 Flash, a hard term up to
-about a minute. With the web search sending the origin query as written (see
-Search below), one round of the same nine terms, searched by Exa while OMP's
-Parallel answered 429, picked eight as expected; linear probing picked the
-paper on linear classifier probes (arXiv 1610.01644) instead of none, and the
-web search took 0.9 to 2.1 s. It sends the term to the configured search service,
+about a minute. With the plugin's own harness, the direct DeepSeek API
+(`deepseek-flash`) and Exa's keyless search sending the origin query as
+written, one round of the same nine terms picked eight as expected; linear
+probing picked the paper on linear classifier probes (arXiv 1610.01644)
+instead of none. The web search took 0.6 to 1.8 s, the judgment 3 to 22 s. It
+sends the term to Exa,
 Wikipedia and arXiv only when pressed, naming the plugin in its User-Agent as
 Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
 borrowed capture runs it by itself.
@@ -390,14 +391,15 @@ note is a registered source, that source and its document type (from
 tools, called together where they are independent: `kg_search`, `kg_get` and
 `kg_neighbors` through `kgd mcp`; `paper_search`, which searches arXiv for
 papers that may answer the question and keeps only arXiv pages; and
-`web_search`. Both web tools make one direct HTTP POST to the configured
-Tavily-compatible endpoint, with the query normalized onto one line,
-`search_depth: basic`, `max_results: 8`, `include_answer: false`,
-`include_raw_content: false` and `auto_parameters: false`. Search returns
-results directly without another model call. Each result supplies its title,
-HTTP(S) URL and at most 400 characters of content to the model. Duplicate
-arXiv mirror URLs are collapsed. A paper search adds `site:arxiv.org` to the
-query and keeps only arXiv results. While the owner reads a registered source,
+`web_search`. Both web tools make one direct HTTP POST to Exa's hosted MCP
+server: a JSON-RPC `tools/call` of its `web_search_exa` tool with the query
+normalized onto one line and `numResults: 8`, accepting JSON or server-sent
+events. Without a key it searches at Exa's free rate limits, which Exa does
+not publish; a 429 is reported as that limit. Search returns results directly
+without another model call. Each result supplies its title, HTTP(S) URL and at
+most 400 characters of its highlights to the model. Duplicate arXiv mirror
+URLs are collapsed. A paper search adds `site:arxiv.org` to the query, which
+Exa honours, and keeps the results that are arXiv papers. While the owner reads a registered source,
 which is research material, the agent is offered the paper search only, so
 an answer cites papers rather than encyclopedia or tutorial pages. Each step
 shows in the sidebar as it runs. The answer cites records as `[[uid]]` and
@@ -410,8 +412,10 @@ abstract page. The answer keeps the knowledge base and the web apart and says
 so when the knowledge base holds nothing. A model that writes its answer as
 text instead of calling the answer tool has still answered, and the sixth
 model call must answer. On five research questions asked while reading the
-MAE paper, answers took 5.5 to 11 s on DeepSeek V4 Flash without reasoning,
-and every web source they cited was an arXiv paper.
+MAE paper, answers took 4.2 to 15.4 s with the direct DeepSeek API
+(`deepseek-flash`, reasoning off) and Exa's keyless search, against 5.5 to
+11 s earlier through OMP, and every web source they cited was an arXiv paper.
+An Exa search took 0.5 to 2 s.
 
 Settings, under **Agent**:
 
@@ -428,20 +432,18 @@ Settings, under **Agent**:
 
 Under **Web search**:
 
-- **Search API endpoint**: `https://api.tavily.com/search` by default, or a
-  compatible endpoint using Bearer authentication and Tavily's `results`
-  response with `title`, `url` and `content` fields.
-- **Search API key**: select or add the search service's secret. This is
-  separate from the model API key and is required for web searches.
+- **Exa API key**: optional. Empty, web searches use Exa's keyless, free and
+  rate-limited service; a key selected or added in SecretStorage is sent in
+  the `x-api-key` header and moves searches to that Exa plan's limits.
 
-Protocols: [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search),
+Protocols: [Exa MCP](https://exa.ai/docs/reference/exa-mcp),
 [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 and [DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/).
 
 The model sees the selection or the question, the paragraph around a
 selection (for Find sources also the source's opening lines and the references
 it cites) and the records and web results the agent reads; web searches send
-their queries to the configured Search API. Capture's drafts and `kgd` runs
+their queries to Exa. Capture's drafts and `kgd` runs
 stay on this machine.
 
 ## Not yet built

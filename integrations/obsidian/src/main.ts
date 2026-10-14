@@ -76,9 +76,9 @@ export default class KgdistillerPlugin extends Plugin {
     },
     remove: (path) => fs.rm(path, { force: true }),
   };
-  /** The agent's web searches call the configured search API directly. */
+  /** The agent's web searches call Exa's hosted MCP server directly, with the owner's Exa key when one is set. */
   webSearch(query: string): Promise<WebSource[]> {
-    return webSearch({ endpoint: this.settings.searchEndpoint, apiKey: this.secret(this.settings.searchKey) }, query, this.api.post);
+    return webSearch(this.secret(this.settings.exaKey), query, this.api.postText);
   }
 
   /** The registered source open in the main area's editor or reading view, from `kgd sheet --json`, which writes nothing. */
