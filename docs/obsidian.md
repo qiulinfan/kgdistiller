@@ -355,26 +355,32 @@ Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
 borrowed capture runs it by itself.
 
 **Search** answers what is typed into the search box, from the knowledge
-base first and from the web for what it does not hold. The deterministic
-results appear as for a selection; the agent starts from the first search
-results and the records named in the question, then reads more through
-read-only tools, called together where they are independent:
-`kg_search`, `kg_get` and `kg_neighbors` through `kgd mcp`, and `web_search`
-through OMP's own search chain (one short `omp -p --mode json` run that may
-only call OMP's web_search tool, stopped at its result, since the gateway has
-no search route). Each step shows in the sidebar as it runs. The answer cites
-records as `[[uid]]` and web sources as `[Wn]`, and every citation must be
-one the tools returned; the sidebar shows them as K1, K2, … (a click puts the
-record in focus) and W1, W2, … (links to the pages), with the cited records and
-pages listed under **From the knowledge base** and **From the web**. The
-answer keeps the two apart and says so when the knowledge base holds nothing.
-A web source that is a paper's PDF, HTML or mirror page is linked as its arXiv
-abstract page.
-A model that writes its answer as text instead of calling the answer tool has
-still answered, and the sixth model call must answer. On seven questions
-about the test papers and notes, answers took 4 to 6 s from the knowledge
-base alone and 8 to 11 s with a web search, on DeepSeek V4 Flash without
-reasoning.
+base first and from papers and the web for what it does not hold. The
+deterministic results appear as for a selection; the agent starts from the
+first search results, the records named in the question and, when the active
+note is a registered source, that source and its document type (from
+`kgd sheet --json`, which writes nothing). It reads more through read-only
+tools, called together where they are independent: `kg_search`, `kg_get` and
+`kg_neighbors` through `kgd mcp`; `paper_search`, which searches arXiv for
+papers that may answer the question and keeps only arXiv pages; and
+`web_search`. Both web tools go through OMP's own search chain, one short
+`omp -p --mode json` run that may only call OMP's web_search tool, stopped at
+its result, since the gateway has no search route; a paper search adds
+`site:arxiv.org` to the query. While the owner reads a registered source,
+which is research material, the agent is offered the paper search only, so
+an answer cites papers rather than encyclopedia or tutorial pages. Each step
+shows in the sidebar as it runs. The answer cites records as `[[uid]]` and
+papers and web pages as `[Wn]`, and every citation must be one the tools
+returned; the sidebar shows them as K1, K2, … (a click puts the record in
+focus) and W1, W2, … (links to the pages), with the cited records, papers
+and other pages listed apart under **From the knowledge base**, **Papers** and
+**From the web**. A paper's PDF, HTML or mirror page is linked as its arXiv
+abstract page. The answer keeps the knowledge base and the web apart and says
+so when the knowledge base holds nothing. A model that writes its answer as
+text instead of calling the answer tool has still answered, and the sixth
+model call must answer. On five research questions asked while reading the
+MAE paper, answers took 5.5 to 11 s on DeepSeek V4 Flash without reasoning,
+and every web source they cited was an arXiv paper.
 
 Settings, under **Agent**:
 

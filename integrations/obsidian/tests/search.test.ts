@@ -8,6 +8,7 @@ import {
   neighborText,
   recordText,
   searchKnowledge,
+  paperQuery,
   searchUser,
   stepText,
   type SearchKgd,
@@ -124,11 +125,46 @@ describe("searching", () => {
       [["kg_search", { query: "BEiT" }], ["web_search", { query: "BEiT paper" }]],
       [["answer", { answer: `BEiT predicts visual tokens [W1]; MAE reconstructs pixels [[${mae.uid}]].` }]],
     );
-    const answer = await searchKnowledge(complete, kgd, async (query) => { queries.push(query); return web; }, "What is BEiT?", (step) => steps.push(step));
+    const answer = await searchKnowledge(complete, kgd, async (query) => { queries.push(query); return web; }, "What is BEiT?",
+      { onStep: (step) => steps.push(step) });
     expect(answer).toMatchObject({ turns: 2, records: [{ uid: mae.uid, label: mae.label }], web: [{ number: 1, url: web[0]!.url }] });
     expect(queries).toEqual(["BEiT paper"]);
     expect(steps).toEqual([{ tool: "kg_search", query: "BEiT" }, { tool: "web_search", query: "BEiT paper" }, { tool: "answer" }]);
-    expect(requests[1]!.messages.at(-1)!.content).toBe(`[W1] BEiT — ${web[0]!.url}\n    We introduce BEiT.`);
+    expect(requests[1]!.messages.at(-1)!.content).toBe(`[W1] BEiT — arXiv:2106.08254 — ${web[0]!.url}\n    We introduce BEiT.`);
+  });
+
+  it("searches arXiv for papers, keeps only arXiv pages, and numbers them with the web sources", async () => {
+    const queries: string[] = [];
+    const found: WebSource[] = [
+      { title: "Masked Autoencoders are Robust Data Augmentors", url: "https://arxiv.org/abs/2206.04846", snippet: "MAE as augmentation." },
+      { title: "A blog post", url: "https://example.org/mae", snippet: "Not a paper." },
+    ];
+    const { complete, requests } = model(
+      [["web_search", { query: "BEiT" }], ["paper_search", { query: "why MAE needs no data augmentation" }]],
+      [["answer", { answer: "Masking acts as augmentation [W1]." }]],
+    );
+    const reading = { base: "papers", source: "papers/mae/mae_ch.md", type: "ai-research" };
+    const steps: SearchStep[] = [];
+    const answer = await searchKnowledge(complete, kgd, async (query) => { queries.push(query); return query.endsWith("site:arxiv.org") ? found : web; },
+      "为什么 MAE 不需要 data augmentation？", { reading, onStep: (step) => steps.push(step) });
+    expect(queries).toEqual([paperQuery("why MAE needs no data augmentation")]);
+    expect(answer.web.map((source) => [source.number, source.url])).toEqual([[1, found[0]!.url]]);
+    expect(requests[0]!.tools!.map((tool) => tool.function.name)).toEqual(["kg_search", "kg_get", "kg_neighbors", "paper_search", "answer"]);
+    expect(requests[1]!.messages.slice(-2)).toEqual([
+      { role: "tool", tool_call_id: "c1-0", content: "error: there is no tool named web_search" },
+      { role: "tool", tool_call_id: "c1-1",
+        content: "[W1] Masked Autoencoders are Robust Data Augmentors — arXiv:2206.04846 — https://arxiv.org/abs/2206.04846\n    MAE as augmentation." },
+    ]);
+    expect(requests[0]!.messages[1]!.content).toContain(
+      "The owner is reading papers/mae/mae_ch.md in base papers, a source of document type ai-research.");
+    expect(steps[0]).toEqual({ tool: "paper_search", query: "why MAE needs no data augmentation" });
+    expect(stepText(steps[0]!)).toBe("Searching papers: why MAE needs no data augmentation");
+  });
+
+  it("offers the general web search only when the owner reads no registered source", async () => {
+    const { complete, requests } = model([["answer", { answer: "Nothing found." }]]);
+    await searchKnowledge(complete, kgd, async () => [], "Q?");
+    expect(requests[0]!.tools!.map((tool) => tool.function.name)).toEqual(["kg_search", "kg_get", "kg_neighbors", "paper_search", "web_search", "answer"]);
   });
 
   it("takes a text reply as the answer and returns a refused one as a message", async () => {

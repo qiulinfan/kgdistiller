@@ -5,6 +5,7 @@ import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, debou
 import type { Selection } from "./agent-pane";
 import { locateSelection, type CaptureFiles } from "./capture";
 import { ModelGateway } from "./gateway";
+import type { Reading } from "./search";
 import { webSearch, type WebSource } from "./web";
 import type { FrontmatterRecord } from "./graph-model";
 
@@ -68,6 +69,22 @@ export default class KgdistillerPlugin extends Plugin {
   /** The agent's web searches go through OMP's own search chain, with the agent's model. */
   webSearch(query: string): Promise<WebSource[]> {
     return webSearch(this.settings.ompCommand.trim(), this.settings.agentModel.trim(), query);
+  }
+
+  /** The registered source open in the main area's editor or reading view, from `kgd sheet --json`, which writes nothing. */
+  async reading(): Promise<Reading | undefined> {
+    const root = this.vaultRoot();
+    // The question is typed in the sidebar, so the note being read is the main area's most recent leaf, not the active one.
+    const view = this.app.workspace.getMostRecentLeaf()?.view;
+    const file = view instanceof MarkdownView ? view.file : null;
+    if (!root || !file) return undefined;
+    try {
+      const { report, failed } = await this.kgd.command(["sheet", `${root}/${file.path}`, "--json"]);
+      const { base, source, type } = report as Partial<Reading>;
+      return !failed && base && source && type ? { base, source, type } : undefined;
+    } catch {
+      return undefined;
+    }
   }
   /** Source lookups name the plugin to Wikipedia and arXiv, as Wikimedia asks. */
   readonly fetchText: Fetch = async (url) => {

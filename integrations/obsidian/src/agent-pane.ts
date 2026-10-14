@@ -14,7 +14,7 @@ import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
 import { judgeOrigin, originQuery, type Origin } from "./origin";
-import { answerMarkdown, searchKnowledge, stepText, type SearchAnswer } from "./search";
+import { answerMarkdown, searchKnowledge, stepText, type Reading, type SearchAnswer } from "./search";
 import { arxivId, citedReferences, sourceOpening, wikipediaArticles, type Encyclopedia, type Fetch, type Reference } from "./sources";
 import type { WebSource } from "./web";
 
@@ -34,6 +34,8 @@ export interface AgentHost {
   captureFiles: CaptureFiles;
   fetchText: Fetch;
   webSearch(query: string): Promise<WebSource[]>;
+  /** The registered source in the active editor or reading view, if any. */
+  reading(): Promise<Reading | undefined>;
 }
 
 const DECISIONS: Record<CaptureResult["decision"], string> = {
@@ -89,8 +91,11 @@ export class AgentPane {
     const started = performance.now();
     let answer: SearchAnswer;
     try {
-      answer = await searchKnowledge((chat) => this.host.gateway.complete(chat), this.host.kgd, (query) => this.host.webSearch(query), question,
-        (step) => { if (request === this.request && step.tool !== "answer") steps.createEl("li", { text: stepText(step) }); });
+      const reading = await this.host.reading();
+      answer = await searchKnowledge((chat) => this.host.gateway.complete(chat), this.host.kgd, (query) => this.host.webSearch(query), question, {
+        ...(reading ? { reading } : {}),
+        onStep: (step) => { if (request === this.request && step.tool !== "answer") steps.createEl("li", { text: stepText(step) }); },
+      });
     } catch (error) {
       if (request !== this.request) return;
       status.remove();
@@ -134,14 +139,20 @@ export class AgentPane {
         });
       }
     }
-    if (answer.web.length > 0) {
+    // Papers, linked to arXiv, are listed apart from other web pages.
+    const papers = answer.web.filter((source) => arxivId(source.url) !== undefined);
+    const pages = answer.web.filter((source) => arxivId(source.url) === undefined);
+    for (const [title, sources] of [["Papers", papers], ["From the web", pages]] as const) {
+      if (sources.length === 0) continue;
       const section = element.createDiv({ cls: "kgd-lookup-section" });
-      section.createEl("h4", { text: "From the web" });
+      section.createEl("h4", { text: title });
       const list = section.createEl("ul", { cls: "kgd-lookup-citations" });
-      for (const source of answer.web) {
+      for (const source of sources) {
         const item = list.createEl("li");
         item.createSpan({ cls: "kgd-lookup-meta", text: `W${source.number} ` });
         item.createEl("a", { text: source.title, href: source.url });
+        const id = arxivId(source.url);
+        if (id) item.createSpan({ cls: "kgd-lookup-meta", text: ` · arXiv:${id}` });
       }
     }
   }

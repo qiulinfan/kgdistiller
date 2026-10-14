@@ -1,11 +1,15 @@
 /**
  * The agent's search: answer the owner's question from the knowledge base
- * first and from the web for what it does not hold. The plugin gives the model
- * the first search results and the records named in the question; the model
- * reads more of the knowledge base or searches the web through read-only
- * tools, called together where they are independent, and finishes with one
- * answer. Every citation is checked against what the tools returned: `[[uid]]`
- * for a record, `[Wn]` for a web source, so the answer keeps recorded
+ * first, then from papers and the web for what it does not hold. The plugin
+ * gives the model the first search results, the records named in the
+ * question, and the document the owner is reading with its document type; the
+ * model reads more of the knowledge base, searches arXiv for papers that may
+ * answer the question, or searches the web, through read-only tools called
+ * together where they are independent, and finishes with one answer. While the
+ * owner reads a registered source, research material, the web is searched
+ * for papers only, so the answer cites papers rather than general pages. Every
+ * citation is checked against what the tools returned: `[[uid]]` for a
+ * record, `[Wn]` for a paper or web page, so the answer keeps recorded
  * knowledge and the web apart and cites nothing it was not shown.
  */
 
@@ -13,6 +17,7 @@ import { runJob, type Complete, type Tool } from "./agent";
 import { selectionNames } from "./capture";
 import type { ToolSpec } from "./gateway";
 import type { GetResult, NeighborsResult, RecordSummary, ResolveResult, SearchResult } from "./lookup-model";
+import { arxivId } from "./sources";
 import type { WebSource } from "./web";
 
 /** The kgd reads a search needs; `KgdServer` provides them. */
@@ -21,6 +26,13 @@ export interface SearchKgd {
 }
 
 export type SearchWeb = (query: string) => Promise<WebSource[]>;
+
+/** The registered source the owner is reading, as `kgd sheet --json` reports it. */
+export interface Reading {
+  base: string;
+  source: string;
+  type: string;
+}
 
 export interface Citation {
   uid: string;
@@ -37,7 +49,7 @@ export interface SearchAnswer {
 }
 
 export type SearchStep =
-  | { tool: "kg_search" | "web_search"; query: string }
+  | { tool: "kg_search" | "paper_search" | "web_search"; query: string }
   | { tool: "kg_get"; count: number }
   | { tool: "kg_neighbors"; count: number }
   | { tool: "answer" };
@@ -49,11 +61,11 @@ const MAX_DEPTH = 3;
 /** Characters of a record's prose or of one evidence quote shown to the model. */
 const TEXT_CHARS = 700;
 
-export const SEARCH_SYSTEM = `You answer the owner's question from their kgdistiller knowledge base, a research knowledge base of records extracted from papers and notes, and from the web for what the knowledge base does not hold. Nodes are concepts; relations are statements binding records to roles. The first search results are given. Read the records you rely on with kg_get unless their gloss already answers; use kg_search for other wordings and kg_neighbors for links and prerequisite chains; use web_search only for what the records do not answer. Call independent tools together in one turn. Answer after one or two rounds of tools; take more only when the question needs them. Then call answer once.
+export const SEARCH_SYSTEM = `You answer the owner's question from their kgdistiller knowledge base, a research knowledge base of records extracted from papers and notes, and from papers and the web for what the knowledge base does not hold. Nodes are concepts; relations are statements binding records to roles. The first search results are given, with the document the owner is reading when it is a registered source. Read the records you rely on with kg_get unless their gloss already answers; use kg_search for other wordings and kg_neighbors for links and prerequisite chains. For what the records do not answer, search papers that may answer the question with paper_search; when web_search is offered, use it for what papers do not cover. Call independent tools together in one turn. Answer after one or two rounds of tools; take more only when the question needs them. Then call answer once.
 
 Rules:
 - A record supports only what its statement and evidence say; a shared name does not make two concepts the same.
-- Cite every claim: [[uid]] for a record, [Wn] for a web source, with uids and numbers exactly as the tools returned them. Cite a paper by its arXiv page when the web results include one.
+- Cite every claim: [[uid]] for a record, [Wn] for a paper or web page, with uids and numbers exactly as the tools returned them. Cite a paper by its arXiv page when the results include one.
 - Keep the sources apart: never present web content or your own knowledge as recorded knowledge. Leave out what you cannot cite.
 - Say plainly when the knowledge base does not hold something, and what the web says instead.
 - Answer in the language of the question, briefly and without headings: the direct answer first, then a few supporting points, about 150 words at most unless the question asks for detail.`;
@@ -95,11 +107,19 @@ const TOOLS: Record<string, ToolSpec> = {
       },
     },
   },
+  paper_search: {
+    type: "function",
+    function: {
+      name: "paper_search",
+      description: "Search arXiv for papers that may answer a question; write the query in English. Papers are numbered with the web sources, W1, W2, …",
+      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+    },
+  },
   web_search: {
     type: "function",
     function: {
       name: "web_search",
-      description: "Search the web; sources are numbered W1, W2, … across the whole search.",
+      description: "Search the web; sources are numbered W1, W2, … across the whole search, papers included.",
       parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
     },
   },
@@ -132,8 +152,9 @@ class SearchState {
   }
 }
 
-export function searchUser(question: string, first: SearchResult, named: ResolveResult | undefined): string {
+export function searchUser(question: string, first: SearchResult, named: ResolveResult | undefined, reading?: Reading): string {
   const parts = [`Question: ${question}`];
+  if (reading) parts.push(`The owner is reading ${reading.source} in base ${reading.base}, a source of document type ${reading.type}.`);
   parts.push(first.results.length
     ? `Knowledge base search for the question:\n${first.results.map(summaryLine).join("\n")}`
     : "A knowledge base search for the question finds no record.");
@@ -196,8 +217,18 @@ export function acceptAnswer(text: string, labels: ReadonlyMap<string, string>, 
   return { text: answer, records, web: [...cited.values()].sort((a, b) => a.number - b.number) };
 }
 
+export interface SearchOptions {
+  /** The registered source the owner is reading, if any. */
+  reading?: Reading;
+  /** Told of each step as it starts. */
+  onStep?: (step: SearchStep) => void;
+}
+
+/** The query that keeps a web search to arXiv. */
+export const paperQuery = (query: string): string => `${query} site:arxiv.org`;
+
 export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: SearchWeb, question: string,
-  onStep: (step: SearchStep) => void = () => undefined): Promise<SearchAnswer & { turns: number }> {
+  { reading, onStep = () => undefined }: SearchOptions = {}): Promise<SearchAnswer & { turns: number }> {
   const state = new SearchState();
   const names = selectionNames(question);
   const [first, named] = await Promise.all([
@@ -252,6 +283,21 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
       },
     },
     {
+      spec: TOOLS.paper_search!,
+      concurrent: true,
+      run: async (args) => {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) return "error: query is required";
+        onStep({ tool: "paper_search", query });
+        const papers = (await web(paperQuery(query))).filter((source) => arxivId(source.url) !== undefined);
+        if (!papers.length) return "The paper search found nothing.";
+        return numbered(state, papers);
+      },
+    },
+  ];
+  // Reading research, the owner wants papers that may answer the question, not general pages.
+  if (!reading) {
+    tools.push({
       spec: TOOLS.web_search!,
       concurrent: true,
       run: async (args) => {
@@ -260,12 +306,10 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
         onStep({ tool: "web_search", query });
         const sources = await web(query);
         if (!sources.length) return "The web search found nothing.";
-        const start = state.web.length;
-        state.web.push(...sources);
-        return sources.map((source, index) => `[W${start + index + 1}] ${source.title} — ${source.url}\n    ${source.snippet}`).join("\n");
+        return numbered(state, sources);
       },
-    },
-  ];
+    });
+  }
   const answer = async (text: string) => {
     const accepted = acceptAnswer(text, state.labels, state.web);
     if (typeof accepted === "string") return accepted;
@@ -275,7 +319,7 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
   tools.push({ spec: TOOLS.answer!, run: (args) => answer(typeof args.answer === "string" ? args.answer : "") });
   const result = await runJob(complete, {
     system: SEARCH_SYSTEM,
-    user: searchUser(question, first, named),
+    user: searchUser(question, first, named, reading),
     tools,
     turns: 6,
     last: "answer",
@@ -283,6 +327,16 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
     onText: answer,
   });
   return { ...result.value, turns: result.turns };
+}
+
+/** Number new sources after those the search has already seen, and list them for the model. */
+function numbered(state: SearchState, sources: readonly WebSource[]): string {
+  const start = state.web.length;
+  state.web.push(...sources);
+  return sources.map((source, index) => {
+    const id = arxivId(source.url);
+    return `[W${start + index + 1}] ${source.title}${id ? ` — arXiv:${id}` : ""} — ${source.url}\n    ${source.snippet}`;
+  }).join("\n");
 }
 
 function uidsOf(value: unknown): string[] {
@@ -295,6 +349,7 @@ function uidsOf(value: unknown): string[] {
 export function stepText(step: SearchStep): string {
   switch (step.tool) {
     case "kg_search": return `Searching the knowledge base: ${step.query}`;
+    case "paper_search": return `Searching papers: ${step.query}`;
     case "web_search": return `Searching the web: ${step.query}`;
     case "kg_get": return `Reading ${step.count} record${step.count === 1 ? "" : "s"}`;
     case "kg_neighbors": return `Following the links of ${step.count} record${step.count === 1 ? "" : "s"}`;

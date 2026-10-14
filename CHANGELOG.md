@@ -26,6 +26,12 @@ All notable changes are documented here.
   On nine test terms the last round picked as expected, in about 6 to 9 s on
   DeepSeek V4 Flash. Paper links in search answers point to arXiv abstract
   pages.
+- Search answers research questions from papers. The agent is told which
+  registered source the owner is reading and its document type, gains a paper
+  search that looks on arXiv for papers that may answer the question, and,
+  while a registered source is open, is offered no general web search, so its
+  answers cite papers instead of encyclopedia or tutorial pages. Cited papers
+  are listed under Papers, apart from other web pages.
 - Add an agent to the Obsidian lookup sidebar. With the new **omp executable**
   and **Model** settings, the plugin asks a model through one resident
   `omp auth-gateway stdio`, so it stores no API key. Each lookup gets a
