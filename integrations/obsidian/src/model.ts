@@ -1,0 +1,119 @@
+/** The plugin's direct Chat Completions client. No external agent runtime is involved. */
+import { apiUrl, type PostJson } from "./api";
+
+export interface ModelSettings {
+  endpoint: string;
+  apiKey: string;
+  model: string;
+  protocol: "chat-completions" | "deepseek";
+}
+
+export const MODEL_TIMEOUT_MS = 120 * 1000;
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export type ChatMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[]; reasoning_content?: string }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+export interface ToolSpec {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
+export interface ChatRequest {
+  messages: ChatMessage[];
+  tools?: ToolSpec[];
+  /** "required" makes the model call some tool; a named tool forces that one. */
+  tool_choice?: "auto" | "required" | { type: "function"; function: { name: string } };
+  /** "none" keeps the model's reasoning off; a level turns it on. */
+  reasoning_effort?: "none" | "low" | "medium" | "high";
+  max_tokens?: number;
+}
+
+export interface Usage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export interface ChatReply {
+  model: string;
+  message: { content: string | null; tool_calls?: ToolCall[]; reasoning_content?: string };
+  finish_reason: string;
+  usage: Usage;
+}
+
+
+export class ModelClient {
+  constructor(private readonly settings: () => ModelSettings, private readonly post: PostJson) {}
+
+  configured(): boolean {
+    const settings = this.settings();
+    return settings.endpoint.trim() !== "" && settings.model.trim() !== "";
+  }
+
+  async complete(request: ChatRequest): Promise<ChatReply> {
+    const settings = this.settings();
+    if (!this.configured()) throw new Error("Set the model API endpoint and model in the kgdistiller settings.");
+    apiUrl(settings.endpoint);
+    const { reasoning_effort, ...chat } = request;
+    const body: Record<string, unknown> = { ...chat, model: settings.model.trim(), stream: false };
+    if (settings.protocol === "deepseek") {
+      body.thinking = { type: reasoning_effort && reasoning_effort !== "none" ? "enabled" : "disabled" };
+      if (reasoning_effort && reasoning_effort !== "none") {
+        body.reasoning_effort = reasoning_effort;
+        // DeepSeek thinking mode rejects required/named tool_choice. Offer only
+        // the named tool when forced; the harness checks it and retries plain text.
+        if (request.tool_choice && request.tool_choice !== "auto") {
+          body.tool_choice = "auto";
+          if (typeof request.tool_choice === "object") {
+            const name = request.tool_choice.function.name;
+            body.tools = request.tools?.filter((tool) => tool.function.name === name);
+          }
+        }
+      }
+    } else if (reasoning_effort) {
+      body.reasoning_effort = reasoning_effort;
+    }
+    return chatReply(await this.post(settings.endpoint, settings.apiKey, body, MODEL_TIMEOUT_MS));
+  }
+}
+
+/** Validate the tool-call envelope before the internal harness executes anything. */
+export function chatReply(value: unknown): ChatReply {
+  const body = value as { model?: unknown; choices?: Array<{ message?: unknown; finish_reason?: unknown }>; usage?: Partial<Usage> } | null;
+  const choice = Array.isArray(body?.choices) ? body.choices[0] : undefined;
+  const message = choice?.message as { content?: unknown; tool_calls?: unknown; reasoning_content?: unknown } | undefined;
+  if (!message || typeof message !== "object") throw new Error("The model API returned no message.");
+  if (message.content != null && typeof message.content !== "string") throw new Error("The model API returned invalid content.");
+  let calls: ToolCall[] | undefined;
+  if (message.tool_calls !== undefined) {
+    if (!Array.isArray(message.tool_calls)) throw new Error("The model API returned invalid tool calls.");
+    const ids = new Set<string>();
+    calls = message.tool_calls.map((call: unknown) => {
+      const item = call as Partial<ToolCall> | null;
+      if (!item || typeof item.id !== "string" || !item.id || ids.has(item.id) || item.type !== "function"
+        || typeof item.function?.name !== "string" || !item.function.name || typeof item.function.arguments !== "string") {
+        throw new Error("The model API returned an invalid tool call.");
+      }
+      ids.add(item.id);
+      return { id: item.id, type: "function", function: { name: item.function.name, arguments: item.function.arguments } };
+    });
+  }
+  const count = (n: unknown): number => typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0;
+  return {
+    model: typeof body?.model === "string" ? body.model : "",
+    message: {
+      content: typeof message.content === "string" ? message.content : null,
+      ...(calls ? { tool_calls: calls } : {}),
+      ...(typeof message.reasoning_content === "string" ? { reasoning_content: message.reasoning_content } : {}),
+    },
+    finish_reason: typeof choice?.finish_reason === "string" ? choice.finish_reason : "",
+    usage: { prompt_tokens: count(body?.usage?.prompt_tokens), completion_tokens: count(body?.usage?.completion_tokens) },
+  };
+}

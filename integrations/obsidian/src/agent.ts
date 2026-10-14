@@ -5,7 +5,7 @@
  * result, so the model can correct it within the job's turn limit.
  */
 
-import type { ChatMessage, ChatReply, ChatRequest, ToolSpec, Usage } from "./gateway";
+import type { ChatMessage, ChatReply, ChatRequest, ToolSpec, Usage } from "./model";
 
 export class AgentError extends Error {
   constructor(message: string, readonly steps: readonly Step[] = []) {
@@ -78,7 +78,10 @@ export async function runJob<R>(complete: Complete, job: Job<R>): Promise<JobRes
     usage.prompt_tokens += reply.usage.prompt_tokens;
     usage.completion_tokens += reply.usage.completion_tokens;
     const calls = reply.message.tool_calls ?? [];
-    messages.push({ role: "assistant", content: reply.message.content, ...(calls.length ? { tool_calls: calls } : {}) });
+    messages.push({ role: "assistant", content: reply.message.content,
+      ...(calls.length ? { tool_calls: calls } : {}),
+      ...(reply.message.reasoning_content !== undefined ? { reasoning_content: reply.message.reasoning_content } : {}),
+    });
     if (calls.length === 0) {
       const text = reply.message.content?.trim() ?? "";
       const outcome = job.onText && text ? await job.onText(text) : "Answer only by calling one of the tools.";
@@ -90,6 +93,7 @@ export async function runJob<R>(complete: Complete, job: Job<R>): Promise<JobRes
       continue;
     }
     const execute = async (call: (typeof calls)[number]): Promise<ToolOutcome<R>> => {
+      if (forced && call.function.name !== forced) return `error: call ${forced} on this turn`;
       const tool = tools.get(call.function.name);
       if (!tool) return `error: there is no tool named ${call.function.name}`;
       try {

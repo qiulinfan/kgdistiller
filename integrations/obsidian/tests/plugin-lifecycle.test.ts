@@ -5,11 +5,14 @@ const controls = vi.hoisted(() => ({
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
   viewRefresh: vi.fn(), viewApply: vi.fn(), lookup: vi.fn(), capture: vi.fn(),
   domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
+  secrets: new Map<string, string>(),
   commands: [] as Array<{ id: string; callback: () => void }>,
   settings: [] as Array<{
     name: string; description?: string;
     toggleChange?: (value: boolean) => void | Promise<void>;
     textChange?: (value: string) => void | Promise<void>;
+    secretChange?: (value: string) => unknown;
+    dropdownChange?: (value: string) => unknown;
     buttonClick?: () => void | Promise<void>;
   }>,
 }));
@@ -27,10 +30,16 @@ vi.mock("obsidian", () => {
       controls.domEvents.push({ target, type, callback });
     }
   }
-  class PluginSettingTab { containerEl: unknown; constructor(_app: unknown, _host: unknown) {} }
+  class PluginSettingTab { containerEl: unknown; constructor(public app: unknown, _host: unknown) {} }
   class Setting {
     private record: (typeof controls.settings)[number] = { name: "" };
+    controlEl = this.record;
     constructor(_container: unknown) { controls.settings.push(this.record); }
+    addDropdown(callback: (dropdown: unknown) => void): this {
+      const control = { addOption: () => control, setValue: () => control,
+        onChange: (fn: (value: string) => unknown) => { this.record.dropdownChange = fn; return control; } };
+      callback(control); return this;
+    }
     setName(name: string): this { this.record.name = name; return this; }
     setHeading(): this { controls.headings.push(this.record.name); return this; }
     setDesc(description: string): this { this.record.description = description; return this; }
@@ -57,12 +66,17 @@ vi.mock("obsidian", () => {
       callback(control); return this;
     }
   }
+  class SecretComponent {
+    constructor(_app: unknown, private record: (typeof controls.settings)[number]) {}
+    setValue(): this { return this; }
+    onChange(callback: (value: string) => unknown): this { this.record.secretChange = callback; return this; }
+  }
   class ItemView { constructor(public leaf: unknown) {} }
   class TFile { path = ""; }
   const debounce = (callback: () => void) => Object.assign(() => callback(), { cancel: () => undefined, run: () => undefined });
   class FileSystemAdapter {}
   class MarkdownView {}
-  return { Plugin, PluginSettingTab, Setting, ItemView, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
+  return { Plugin, PluginSettingTab, Setting, SecretComponent, ItemView, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
     Platform: { isMacOS: true }, requestUrl: vi.fn(),
     Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path };
 });
@@ -126,6 +140,7 @@ function harness(initial: Record<string, Record<string, unknown>> = {}): Harness
       on: on("cache"),
       getFileCache: vi.fn((file: { path: string }) => frontmatter.has(file.path) ? { frontmatter: frontmatter.get(file.path) } : null),
     },
+    secretStorage: { getSecret: (id: string) => controls.secrets.get(id) ?? null },
     plugins: { enabledPlugins: new Set<string>(), plugins: {} },
   } as never, {} as never);
   const emit = (source: "cache" | "vault", name: string, ...args: unknown[]): void => {
@@ -142,7 +157,7 @@ function showSettings(plugin: KgdistillerPlugin): KgdistillerSettingTab {
 beforeEach(() => {
   controls.headings.length = 0; controls.commands.length = 0; controls.settings.length = 0;
   controls.domEvents.length = 0; domSelection.text = "";
-  controls.stored = null;
+  controls.stored = null; controls.secrets.clear();
   vi.clearAllMocks();
   controls.configure.mockImplementation(async (enabled: boolean) => ({ state: enabled ? "enabled" : "disabled" }));
   controls.rescan.mockResolvedValue({ state: "enabled" });
@@ -156,7 +171,7 @@ describe("community lifecycle conventions", () => {
   });
   it("settings use Obsidian headings without writing HTML headings", () => {
     showSettings(pluginFixture());
-    expect(controls.headings).toEqual(["Graph view", "Hidden knowledge folder", "Lookup", "Agent"]);
+    expect(controls.headings).toEqual(["Graph view", "Hidden knowledge folder", "Lookup", "Agent", "Web search"]);
   });
 });
 
@@ -248,14 +263,14 @@ describe("hidden knowledge lifecycle", () => {
 describe("stored settings", () => {
   it("defaults to drawing drafts with hidden indexing off until kgd obsidian install turns it on, and lookups off", () => {
     expect(DEFAULT_SETTINGS).toEqual({
-      showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", ompCommand: "", agentModel: "@smol",
+      showDrafts: true, hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", searchEndpoint: "https://api.tavily.com/search", searchKey: "",
     });
   });
   it("replaces wrongly typed stored values with defaults and reports only those", async () => {
     controls.stored = { showDrafts: "no", hiddenKnowledgeEnabled: true, kgdCommand: 7, unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.settings).toEqual({
-      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", ompCommand: "", agentModel: "@smol",
+      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", searchEndpoint: "https://api.tavily.com/search", searchKey: "",
     });
     expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: showDrafts, kgdCommand."));
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
@@ -271,7 +286,7 @@ describe("hidden knowledge settings", () => {
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Graph view", "Show drafts", "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
-      "Lookup", "kgd executable", "Knowledge home", "Agent", "omp executable", "Model",
+      "Lookup", "kgd executable", "Knowledge home", "Agent", "Model API endpoint", "Model", "Model API format", "Model API key", "Web search", "Search API endpoint", "Search API key",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
@@ -280,7 +295,7 @@ describe("hidden knowledge settings", () => {
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
     expect(controls.saveData).toHaveBeenCalledWith({
-      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", ompCommand: "", agentModel: "@smol",
+      showDrafts: true, hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", searchEndpoint: "https://api.tavily.com/search", searchKey: "",
     });
     expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();
@@ -542,26 +557,26 @@ describe("selection lookup", () => {
 });
 
 describe("the agent", () => {
-  it("restarts the model gateway after an agent settings change, keeps a model, and stops it on unload", async () => {
-    const plugin = pluginFixture(); await plugin.onload();
-    const stop = vi.spyOn(plugin.gateway, "stop");
-    showSettings(plugin);
-    await controls.settings.find((setting) => setting.name === "omp executable")!.textChange!(" /bin/omp ");
-    await controls.settings.find((setting) => setting.name === "Model")!.textChange!("  ");
-    expect(plugin.settings).toMatchObject({ ompCommand: "/bin/omp", agentModel: "@smol" });
-    expect(plugin.gateway.configured()).toBe(true);
-    expect(stop).toHaveBeenCalledTimes(2);
+  it("configures direct API calls and stores secret references rather than keys", async () => {
+    const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
+    await controls.settings.find((setting) => setting.name === "Model API endpoint")!.textChange!(" https://example.org/v1/chat/completions ");
+    await controls.settings.find((setting) => setting.name === "Model")!.textChange!(" test-model ");
+    controls.secrets.set("model-key", "synthetic-secret-value");
+    await controls.settings.find((setting) => setting.name === "Model API key")!.secretChange!("model-key");
+    expect(plugin.settings).toMatchObject({ modelEndpoint: "https://example.org/v1/chat/completions", agentModel: "test-model", modelKey: "model-key" });
+    expect(plugin.model.configured()).toBe(true);
+    expect(JSON.stringify(controls.saveData.mock.calls)).not.toContain("synthetic-secret-value");
     plugin.onunload();
-    expect(stop).toHaveBeenCalledTimes(3);
   });
 
-  it("captures only a selection in a source file, with kgd and omp configured", async () => {
+  it("captures only a selection in a source file, with kgd and a model API configured", async () => {
     const plugin = pluginFixture(); await plugin.onload();
     expect(controls.commands.map((command) => command.id)).toContain("capture-selection");
     await plugin.captureSelection();
-    expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("Set the kgd and omp executables"));
+    expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("Set the kgd executable, model API endpoint and model"));
     plugin.settings.kgdCommand = "/bin/kgd";
-    plugin.settings.ompCommand = "/bin/omp";
+    plugin.settings.modelEndpoint = "https://example.org/v1/chat/completions";
+    plugin.settings.agentModel = "test-model";
     domSelection.text = "masked autoencoder";
     await plugin.captureSelection();
     expect(controls.notice).toHaveBeenLastCalledWith("Select text in a source file to capture it.");

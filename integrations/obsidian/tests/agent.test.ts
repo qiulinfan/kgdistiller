@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentError, runJob, type Complete, type Tool } from "../src/agent";
-import type { ChatReply, ChatRequest, ToolCall } from "../src/gateway";
+import type { ChatReply, ChatRequest, ToolCall } from "../src/model";
 
 function call(name: string, args: unknown, id = name): ToolCall {
   return { id, type: "function", function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) } };

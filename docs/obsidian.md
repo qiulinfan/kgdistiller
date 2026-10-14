@@ -6,8 +6,9 @@ hidden `.knowledge/` folder: accepted records in `entries/`, proposed records in
 editor. The kgdistiller plugin adds three things: it lets Obsidian index the
 hidden folder, it draws the records as a typed graph with a details pane, and,
 once a kgd executable is configured, it looks selected text up in every
-registered base. `kgd check` stays the only validator; the plugin never writes
-knowledge files.
+registered base. Its optional agent runs inside the plugin and calls model
+and search APIs directly. `kgd check` stays the validator; Capture writes only
+drafts admitted by `kgd accept`.
 
 ## Native-first editing
 
@@ -253,16 +254,38 @@ a judgment of the selection, **Capture**, **Find sources**, and an answer to
 whatever is typed into the search box. Nothing is written until the owner
 presses Capture or runs **Capture selection**.
 
-The agent's model calls go through one resident `omp auth-gateway stdio`,
-OMP's OpenAI-compatible gateway on stdin and stdout. OMP holds the provider
-credentials and maps roles such as `@smol` to its configured models, so the
-plugin stores no API key and talks to no provider itself. The plugin owns the
-prompts and the control flow: the model answers only by calling the agent's
-tools, a forced tool where one answer is needed. Each
-answer is checked before anything uses it; a refused answer goes back to the
-model as the tool's result, within a fixed number of calls. The gateway starts
-on the first call, stops after 15 minutes without one, when a setting below
-changes and when the plugin unloads.
+The harness runs inside the plugin (`agent.ts`). Model requests go directly
+from `model.ts` to the configured Chat Completions API, and search tools call
+the configured Tavily-compatible Search API from `web.ts`. No OMP, external
+agent executable, gateway process, generated extension or temporary search
+file is involved. Local knowledge still uses the separately installed `kgd`
+engine through its resident MCP server and admission commands.
+
+The plugin owns prompts, tool execution, concurrent read-only calls, bounded
+turns and answer validation. Standard Chat Completions requests carry
+`reasoning_effort`; the DeepSeek format maps thinking controls, preserves
+`reasoning_content` across tool rounds and uses `auto` tool choice while
+thinking (DeepSeek rejects forced choices then). A forced turn offers only
+its named tool in that mode, and the harness rejects another tool's call.
+API keys are selected or created with Obsidian's `SecretComponent` and read
+from `app.secretStorage`; plugin `data.json` stores only secret identifiers.
+It never imports OMP credentials or role aliases. Existing installations must
+configure the new API endpoints, actual model ID and secret references.
+
+The desktop HTTP client reuses connections, limits JSON responses to 8 MiB,
+and cancels requests after 120 seconds for a model or 60 seconds for search.
+Changing API settings cancels pending API requests; unloading closes the
+client. HTTPS is required except for loopback HTTP services. Redirects are
+not followed and error response bodies are not displayed, so credentials
+stay with the configured endpoint. API requests are not retried implicitly.
+Missing search configuration is reported as a tool error; local knowledge
+queries remain available.
+
+The timing and quality observations below were measured with the earlier
+OMP integration. They have not been remeasured for the direct API transport.
+The direct transport is covered by local HTTP integration tests, including a
+complete model → search → cited-answer round; these use synthetic keys and
+make no calls to paid services.
 
 **Judgment.** After the deterministic results, one call compares the
 selection, read in the lines around it, with the records sharing its name and
@@ -319,7 +342,7 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
 introduced it and the Wikipedia article that explains it. The sidebar lists at
 once the works the selected lines cite, read from the source's own reference
 list (block ids `^reference-N`). Then, at the same time, one web search
-through OMP's search chain (as for Search below) asks who first introduced the
+through the configured Search API (as for Search below) asks who first introduced the
 term, and Wikipedia gives the article the term's name leads to, read at the
 section a redirect points into (masked autoencoder is the Masked Autoencoder
 section of Vision transformer), and the first three articles its search finds.
@@ -349,7 +372,11 @@ Auto-Encoding Variational Bayes, and none for latent representation, partial
 fine-tuning and linear probing; latent representation was explained by
 Latent space in five runs out of five, and every same-named article was left
 out. A lookup took about 6 to 9 s on DeepSeek V4 Flash, a hard term up to
-about a minute. It sends the term to the search providers configured in OMP,
+about a minute. With the web search sending the origin query as written (see
+Search below), one round of the same nine terms, searched by Exa while OMP's
+Parallel answered 429, picked eight as expected; linear probing picked the
+paper on linear classifier probes (arXiv 1610.01644) instead of none, and the
+web search took 0.9 to 2.1 s. It sends the term to the configured search service,
 Wikipedia and arXiv only when pressed, naming the plugin in its User-Agent as
 Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
 borrowed capture runs it by itself.
@@ -363,10 +390,14 @@ note is a registered source, that source and its document type (from
 tools, called together where they are independent: `kg_search`, `kg_get` and
 `kg_neighbors` through `kgd mcp`; `paper_search`, which searches arXiv for
 papers that may answer the question and keeps only arXiv pages; and
-`web_search`. Both web tools go through OMP's own search chain, one short
-`omp -p --mode json` run that may only call OMP's web_search tool, stopped at
-its result, since the gateway has no search route; a paper search adds
-`site:arxiv.org` to the query. While the owner reads a registered source,
+`web_search`. Both web tools make one direct HTTP POST to the configured
+Tavily-compatible endpoint, with the query normalized onto one line,
+`search_depth: basic`, `max_results: 8`, `include_answer: false`,
+`include_raw_content: false` and `auto_parameters: false`. Search returns
+results directly without another model call. Each result supplies its title,
+HTTP(S) URL and at most 400 characters of content to the model. Duplicate
+arXiv mirror URLs are collapsed. A paper search adds `site:arxiv.org` to the
+query and keeps only arXiv results. While the owner reads a registered source,
 which is research material, the agent is offered the paper search only, so
 an answer cites papers rather than encyclopedia or tutorial pages. Each step
 shows in the sidebar as it runs. The answer cites records as `[[uid]]` and
@@ -384,15 +415,33 @@ and every web source they cited was an arXiv paper.
 
 Settings, under **Agent**:
 
-- **omp executable**: the absolute path of `omp`. Empty, the default, turns the
-  agent off; lookups then show only the deterministic results.
-- **Model**: a model OMP knows, such as `deepseek/deepseek-v4-flash`, or an OMP
-  role, `@smol` by default.
+- **Model API endpoint**: the full Chat Completions URL, including
+  `/chat/completions`; empty turns the agent off. For example,
+  `https://api.deepseek.com/chat/completions` with the DeepSeek format.
+- **Model**: the actual model ID accepted by that endpoint, never an OMP role.
+  Empty also turns the agent off.
+- **Model API format**: **Chat Completions** for a service accepting
+  `reasoning_effort` (`none` and `low`), or **DeepSeek** for its thinking and
+  tool-choice rules.
+- **Model API key**: select or add a secret in Obsidian SecretStorage. It may
+  be empty for a local service that requires no authentication.
+
+Under **Web search**:
+
+- **Search API endpoint**: `https://api.tavily.com/search` by default, or a
+  compatible endpoint using Bearer authentication and Tavily's `results`
+  response with `title`, `url` and `content` fields.
+- **Search API key**: select or add the search service's secret. This is
+  separate from the model API key and is required for web searches.
+
+Protocols: [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search),
+[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)
+and [DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/).
 
 The model sees the selection or the question, the paragraph around a
 selection (for Find sources also the source's opening lines and the references
 it cites) and the records and web results the agent reads; web searches send
-their queries to the search providers configured in OMP. Capture's drafts and `kgd` runs
+their queries to the configured Search API. Capture's drafts and `kgd` runs
 stay on this machine.
 
 ## Not yet built

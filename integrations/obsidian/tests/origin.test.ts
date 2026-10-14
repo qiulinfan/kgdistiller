@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ChatReply, ChatRequest } from "../src/gateway";
+import type { ChatReply, ChatRequest } from "../src/model";
 import { acceptOrigin, judgeOrigin, originQuery, originUser, originWork, type OriginInput } from "../src/origin";
 
 const BEIT = { number: "2", text: "Hangbo Bao, Li Dong, and Furu Wei. BEiT: BERT pre-training of image transformers. arXiv:2106.08254, 2021.", url: "https://arxiv.org/abs/2106.08254" };

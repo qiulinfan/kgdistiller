@@ -9,7 +9,7 @@
 import { Notice } from "obsidian";
 
 import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
-import type { ModelGateway } from "./gateway";
+import type { ModelClient } from "./model";
 import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
@@ -30,7 +30,7 @@ export interface Selection {
 
 export interface AgentHost {
   kgd: KgdServer;
-  gateway: ModelGateway;
+  model: ModelClient;
   captureFiles: CaptureFiles;
   fetchText: Fetch;
   webSearch(query: string): Promise<WebSource[]>;
@@ -75,14 +75,14 @@ export class AgentPane {
     this.selection = selection;
     this.request++;
     for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.captureEl, this.sourcesEl]) element.empty();
-    if (!this.host.gateway.configured() || question) return;
+    if (!this.host.model.configured() || question) return;
     if (selection.source) this.button("Capture", true, (button) => this.capture(button));
     this.button("Find sources", false, (button) => this.sources(button));
   }
 
   /** Answer a question from the knowledge base and the web, showing each step as it runs. */
   async ask(question: string): Promise<void> {
-    if (!this.host.gateway.configured()) return;
+    if (!this.host.model.configured()) return;
     const request = this.request;
     const element = this.answerEl;
     element.empty();
@@ -92,7 +92,7 @@ export class AgentPane {
     let answer: SearchAnswer;
     try {
       const reading = await this.host.reading();
-      answer = await searchKnowledge((chat) => this.host.gateway.complete(chat), this.host.kgd, (query) => this.host.webSearch(query), question, {
+      answer = await searchKnowledge((chat) => this.host.model.complete(chat), this.host.kgd, (query) => this.host.webSearch(query), question, {
         ...(reading ? { reading } : {}),
         onStep: (step) => { if (request === this.request && step.tool !== "answer") steps.createEl("li", { text: stepText(step) }); },
       });
@@ -160,14 +160,14 @@ export class AgentPane {
   /** Judge the selection against the lookup's candidates and show the verdict. */
   async judge(candidates: RecordSummary[]): Promise<void> {
     const selection = this.selection;
-    if (!selection || !this.host.gateway.configured()) return;
+    if (!selection || !this.host.model.configured()) return;
     const request = this.request;
     this.verdictEl.empty();
     this.verdictEl.createSpan({ cls: "kgd-lookup-hint", text: "Judging…" });
     const started = performance.now();
     let judgment: Judgment;
     try {
-      judgment = await judgeSelection((chat) => this.host.gateway.complete(chat), { selection: selection.text, context: selection.context, candidates });
+      judgment = await judgeSelection((chat) => this.host.model.complete(chat), { selection: selection.text, context: selection.context, candidates });
     } catch (error) {
       if (request !== this.request) return;
       this.verdictEl.empty();
@@ -212,7 +212,7 @@ export class AgentPane {
     const status = this.captureEl.createDiv({ cls: "kgd-lookup-hint", text: "Capturing…" });
     const started = performance.now();
     try {
-      const result = await captureSelection((chat) => this.host.gateway.complete(chat), this.host.kgd, this.host.captureFiles,
+      const result = await captureSelection((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles,
         { ...selection.source, selection: selection.text });
       const ms = performance.now() - started;
       new Notice(`kgdistiller: ${DECISIONS[result.decision]}${result.label ? `: ${result.label}` : ""}`);
@@ -288,7 +288,7 @@ export class AgentPane {
     status.setText("Judging where it comes from…");
     let origin: Origin;
     try {
-      origin = await judgeOrigin((chat) => this.host.gateway.complete(chat), this.host.fetchText,
+      origin = await judgeOrigin((chat) => this.host.model.complete(chat), this.host.fetchText,
         { term: selection.text, context: selection.context, ...(source ? { source } : {}), references, results, articles });
     } catch (error) {
       if (request !== this.request) return;

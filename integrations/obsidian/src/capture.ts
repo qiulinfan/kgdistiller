@@ -13,7 +13,7 @@
 
 import { runJob, type Complete, type Tool } from "./agent";
 import { mergeRanges, normalizeSpace, parseRanges, placeQuote, rangesText, type Range } from "./evidence";
-import type { ToolSpec } from "./gateway";
+import type { ToolSpec } from "./model";
 import type { RecordSummary, ResolveResult, SearchResult } from "./lookup-model";
 import { fold } from "./records";
 

@@ -15,7 +15,7 @@
 
 import { runJob, type Complete, type Tool } from "./agent";
 import { selectionNames } from "./capture";
-import type { ToolSpec } from "./gateway";
+import type { ToolSpec } from "./model";
 import type { GetResult, NeighborsResult, RecordSummary, ResolveResult, SearchResult } from "./lookup-model";
 import { arxivId } from "./sources";
 import type { WebSource } from "./web";

@@ -14,7 +14,7 @@ import {
   type CaptureKgd,
   type Sheet,
 } from "../src/capture";
-import type { ChatReply, ChatRequest } from "../src/gateway";
+import type { ChatReply, ChatRequest } from "../src/model";
 import type { RecordSummary } from "../src/lookup-model";
 
 const SOURCE = "/vaults/papers/papers/mae/mae_ch.md";

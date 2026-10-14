@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ChatReply, ChatRequest } from "../src/gateway";
+import type { ChatReply, ChatRequest } from "../src/model";
 import type { GetResult, NeighborsResult, RecordSummary } from "../src/lookup-model";
 import {
   acceptAnswer,

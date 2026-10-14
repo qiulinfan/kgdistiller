@@ -4,17 +4,28 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Run the Obsidian agent entirely inside the plugin. Replace OMP's model
+  gateway and per-search extension process with direct Chat Completions and
+  Tavily-compatible Search API requests. Configure endpoints, the actual
+  model ID and API keys through Obsidian SecretStorage (settings store secret
+  IDs only). Keep the existing tool loop and local kgd engine; handle DeepSeek
+  thinking/tool calls directly. Reuse HTTP connections and cancel requests on
+  timeout, settings changes and unload. The previous OMP settings are removed
+  without a fallback; configure the new API settings before using the agent.
+  Local HTTP tests cover a complete search-and-answer round with synthetic
+  keys; the timings below describe the earlier OMP implementation, not the
+  new transport.
 - Add agentic search to the Obsidian lookup sidebar. A search box at the top
   of the sidebar (and the **Search knowledge** command) looks typed text up
   like a selection, and the agent answers it from the knowledge base first and
   from the web for what the knowledge base does not hold: it reads records
   with `kg_search`, `kg_get` and `kg_neighbors` and searches the web through
-  OMP's own web_search, showing each step as it runs. Every citation is
+  the configured Search API, showing each step as it runs. Every citation is
   checked against what the tools returned; records appear as K1, K2, … and web
   pages as W1, W2, …, listed apart. Answers took 4 to 6 s from the knowledge
   base and 8 to 11 s with a web search on DeepSeek V4 Flash.
 - Find sources judges the work that introduced a term and the Wikipedia
-  article that explains it: one web search through OMP asks who first
+  article that explains it: one web search asks who first
   introduced the term while Wikipedia gives the article its name leads to and
   the first three its search finds, and one model call at low reasoning picks
   the originating work among the source being read, the references the
@@ -32,9 +43,9 @@ All notable changes are documented here.
   while a registered source is open, is offered no general web search, so its
   answers cite papers instead of encyclopedia or tutorial pages. Cited papers
   are listed under Papers, apart from other web pages.
-- Add an agent to the Obsidian lookup sidebar. With the new **omp executable**
-  and **Model** settings, the plugin asks a model through one resident
-  `omp auth-gateway stdio`, so it stores no API key. Each lookup gets a
+- Add an agent to the Obsidian lookup sidebar. With the model API
+  settings, the plugin asks the configured model directly; keys live in
+  Obsidian SecretStorage. Each lookup gets a
   judgment (**Recorded**, **Possibly** or **Not recorded**, with how the
   selection connects to the records) in about 1.5 s. **Capture** and the
   **Capture selection** command file the selection, from the editor or from

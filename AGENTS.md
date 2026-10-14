@@ -185,8 +185,10 @@
   executable and `KGDISTILLER_HOME`; the plugin never opens the home or the
   database itself. The plugin's agent (judgment, Capture, Find sources and
   search; see docs/obsidian.md "Agent") is the model-side adapter that keeps
-  the core model-free: it reaches models only through `omp auth-gateway
-  stdio` and searches the web only through OMP's web_search, owns its prompts and
+  the core model-free: its harness runs inside the plugin, calls the configured
+  Chat Completions model API and Tavily-compatible search API directly, and
+  stores API keys only through Obsidian SecretStorage. It depends on no external
+  agent runtime, owns its prompts and
   checks every model answer and citation, and writes knowledge only as a draft
   admitted by `kgd accept` and `kgd index --no-embed`, under the same rules as
   the capture Skill. Preserve the complete upstream MIT notice and pinned source

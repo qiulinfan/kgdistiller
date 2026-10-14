@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Plugin, PluginSettingTab, SecretComponent, Setting } from "obsidian";
 
 import { KNOWLEDGE_DIRECTORY } from "./records";
 import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
@@ -10,10 +10,14 @@ export interface KgdistillerSettings {
   kgdCommand: string;
   /** KGDISTILLER_HOME for lookups; empty keeps kgd's default home. */
   knowledgeHome: string;
-  /** Absolute path of the omp executable whose model gateway the agent uses; empty turns the agent off. */
-  ompCommand: string;
-  /** The model the agent asks: one OMP knows, or an OMP role such as `@smol`. */
+  /** Full Chat Completions URL; empty turns the agent off. */
+  modelEndpoint: string;
   agentModel: string;
+  modelProtocol: "chat-completions" | "deepseek";
+  /** SecretStorage identifiers, never API key values. */
+  modelKey: string;
+  searchEndpoint: string;
+  searchKey: string;
 }
 
 export const DEFAULT_SETTINGS: KgdistillerSettings = {
@@ -21,8 +25,12 @@ export const DEFAULT_SETTINGS: KgdistillerSettings = {
   hiddenKnowledgeEnabled: false,
   kgdCommand: "",
   knowledgeHome: "",
-  ompCommand: "",
-  agentModel: "@smol",
+  modelEndpoint: "",
+  agentModel: "",
+  modelProtocol: "chat-completions",
+  modelKey: "",
+  searchEndpoint: "https://api.tavily.com/search",
+  searchKey: "",
 };
 
 /**
@@ -42,6 +50,10 @@ export function mergeStoredSettings(stored: unknown): { settings: KgdistillerSet
     if (typeof record[key] === typeof fallback) target[key] = record[key];
     else rejected.push(key);
   }
+  if (!["chat-completions", "deepseek"].includes(settings.modelProtocol)) {
+    settings.modelProtocol = DEFAULT_SETTINGS.modelProtocol;
+    rejected.push("modelProtocol");
+  }
   return { settings, rejected };
 }
 
@@ -53,7 +65,7 @@ export interface SettingsHost {
   rescanHiddenKnowledge(): Promise<void>;
   /** Called after the kgd executable or the knowledge home changed. */
   kgdSettingsChanged(): void;
-  /** Called after the omp executable or the agent's model changed. */
+  /** Called after model or search API settings change. */
   agentSettingsChanged(): void;
 }
 
@@ -133,32 +145,45 @@ export class KgdistillerSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl).setName("Agent").setHeading();
+    this.apiText("Model API endpoint", "Full Chat Completions URL. Leave empty to turn the agent off. Requests go directly to this service.",
+      "modelEndpoint", "https://api.example.com/v1/chat/completions");
+    this.apiText("Model", "The model ID your API accepts; it must support function tools.", "agentModel", "model-id");
     new Setting(containerEl)
-      .setName("omp executable")
-      .setDesc("Absolute path of the omp command (oh-my-pi), such as the output of `command -v omp`. The agent judges each lookup and captures selections through `omp auth-gateway stdio`, which uses the models and credentials configured in OMP; this plugin stores no API key. Leave empty to turn the agent off.")
-      .addText((text) =>
-        text
-          .setPlaceholder("/path/to/omp")
-          .setValue(this.host.settings.ompCommand)
-          .onChange(async (value) => {
-            this.host.settings.ompCommand = value.trim();
-            await this.host.savePluginSettings();
-            this.host.agentSettingsChanged();
-          }),
-      );
-    new Setting(containerEl)
-      .setName("Model")
-      .setDesc("A model OMP knows, such as deepseek/deepseek-v4-flash, or an OMP role such as @smol. A small, fast model such as DeepSeek V4 Flash keeps a judgment near 1.5 s and a capture near 6 s.")
-      .addText((text) =>
-        text
-          .setPlaceholder(DEFAULT_SETTINGS.agentModel)
-          .setValue(this.host.settings.agentModel)
-          .onChange(async (value) => {
-            this.host.settings.agentModel = value.trim() || DEFAULT_SETTINGS.agentModel;
-            await this.host.savePluginSettings();
-            this.host.agentSettingsChanged();
-          }),
-      );
+      .setName("Model API format")
+      .setDesc("Choose DeepSeek for its thinking controls. Other Chat Completions services must support reasoning_effort (none and low).")
+      .addDropdown((dropdown) => dropdown
+        .addOption("chat-completions", "Chat Completions")
+        .addOption("deepseek", "DeepSeek")
+        .setValue(this.host.settings.modelProtocol)
+        .onChange(async (value) => {
+          if (value !== "chat-completions" && value !== "deepseek") return;
+          this.host.settings.modelProtocol = value;
+          await this.host.savePluginSettings();
+          this.host.agentSettingsChanged();
+        }));
+    this.apiSecret("Model API key", "Choose or add a secret in Obsidian. Leave empty only for a local API that needs no authentication.", "modelKey");
+    new Setting(containerEl).setName("Web search").setHeading();
+    this.apiText("Search API endpoint", "Tavily Search API, or a service implementing its request and response format. Queries go directly to this service.",
+      "searchEndpoint", DEFAULT_SETTINGS.searchEndpoint);
+    this.apiSecret("Search API key", "Choose or add the search service's key in Obsidian SecretStorage. Web search needs its own key; local knowledge queries do not.", "searchKey");
+  }
+
+  private apiText(name: string, description: string, key: "modelEndpoint" | "agentModel" | "searchEndpoint", placeholder: string): void {
+    new Setting(this.containerEl).setName(name).setDesc(description).addText((text) => text
+      .setPlaceholder(placeholder).setValue(this.host.settings[key]).onChange(async (value) => {
+        this.host.settings[key] = value.trim();
+        await this.host.savePluginSettings();
+        this.host.agentSettingsChanged();
+      }));
+  }
+
+  private apiSecret(name: string, description: string, key: "modelKey" | "searchKey"): void {
+    const setting = new Setting(this.containerEl).setName(name).setDesc(description);
+    new SecretComponent(this.app, setting.controlEl).setValue(this.host.settings[key]).onChange(async (id) => {
+      this.host.settings[key] = id;
+      await this.host.savePluginSettings();
+      this.host.agentSettingsChanged();
+    });
   }
 
   refreshHiddenKnowledgeStatus(): void {

@@ -4,7 +4,8 @@ import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, debou
 
 import type { Selection } from "./agent-pane";
 import { locateSelection, type CaptureFiles } from "./capture";
-import { ModelGateway } from "./gateway";
+import { ModelClient } from "./model";
+import { ApiClient } from "./api";
 import type { Reading } from "./search";
 import { webSearch, type WebSource } from "./web";
 import type { FrontmatterRecord } from "./graph-model";
@@ -47,8 +48,17 @@ export default class KgdistillerPlugin extends Plugin {
   private readonly scheduleRefresh = debounce(() => this.refreshGraphViews(), 250, true);
   /** Lookups query every registered base through one resident `kgd mcp`. */
   readonly kgd = new KgdServer(() => ({ command: this.settings.kgdCommand, home: this.settings.knowledgeHome }));
-  /** The agent's model calls go through one resident `omp auth-gateway stdio`. */
-  readonly gateway = new ModelGateway(() => ({ command: this.settings.ompCommand, model: this.settings.agentModel }));
+  /** Model and search requests run directly inside the desktop plugin. */
+  private readonly api = new ApiClient();
+  readonly model = new ModelClient(() => ({
+    endpoint: this.settings.modelEndpoint, model: this.settings.agentModel,
+    protocol: this.settings.modelProtocol,
+    apiKey: this.secret(this.settings.modelKey),
+  }), this.api.post);
+
+  private secret(id: string): string {
+    return id ? this.app.secretStorage.getSecret(id) ?? "" : "";
+  }
   /** Capture reads sources and writes drafts in base roots, which may lie outside this vault. */
   readonly captureFiles: CaptureFiles = {
     read: (path) => fs.readFile(path, "utf8"),
@@ -66,9 +76,9 @@ export default class KgdistillerPlugin extends Plugin {
     },
     remove: (path) => fs.rm(path, { force: true }),
   };
-  /** The agent's web searches go through OMP's own search chain, with the agent's model. */
+  /** The agent's web searches call the configured search API directly. */
   webSearch(query: string): Promise<WebSource[]> {
-    return webSearch(this.settings.ompCommand.trim(), this.settings.agentModel.trim(), query);
+    return webSearch({ endpoint: this.settings.searchEndpoint, apiKey: this.secret(this.settings.searchKey) }, query, this.api.post);
   }
 
   /** The registered source open in the main area's editor or reading view, from `kgd sheet --json`, which writes nothing. */
@@ -203,7 +213,7 @@ export default class KgdistillerPlugin extends Plugin {
     this.scheduleRefresh.cancel();
     this.hold.reset();
     this.kgd.stop();
-    this.gateway.stop();
+    this.api.close();
     this.hiddenKnowledgeIndexer?.dispose();
   }
 
@@ -246,8 +256,8 @@ export default class KgdistillerPlugin extends Plugin {
 
   /** Look the selection up, then capture it from the lookup sidebar. */
   async captureSelection(): Promise<void> {
-    if (!this.gateway.configured() || !this.kgd.configured()) {
-      new Notice("Set the kgd and omp executables in the kgdistiller settings to capture knowledge.");
+    if (!this.model.configured() || !this.kgd.configured()) {
+      new Notice("Set the kgd executable, model API endpoint and model in the kgdistiller settings to capture knowledge.");
       return;
     }
     const selection = await this.selection();
@@ -323,7 +333,7 @@ export default class KgdistillerPlugin extends Plugin {
   }
 
   agentSettingsChanged(): void {
-    this.gateway.stop();
+    this.api.cancel();
   }
 
   async activateGraphView(): Promise<void> {
