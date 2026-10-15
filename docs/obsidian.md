@@ -156,10 +156,11 @@ ten others unanswered for over a minute.
 
 The plugin owns prompts, tool execution, concurrent read-only calls, bounded
 turns and answer validation. Standard Chat Completions requests carry
-`reasoning_effort`; the DeepSeek format maps thinking controls, preserves
-`reasoning_content` across tool rounds and uses `auto` tool choice while
-thinking (DeepSeek rejects forced choices then). A forced turn offers only
-its named tool in that mode, and the harness rejects another tool's call.
+`reasoning_effort`; the thinking switch, which DeepSeek and Zhipu take, also
+turns thinking on or off with `thinking`, preserves `reasoning_content` across
+tool rounds and uses `auto` tool choice while thinking (DeepSeek rejects
+forced choices then). A forced turn offers only its named tool in that mode,
+and the harness rejects another tool's call.
 API keys are selected or created with Obsidian's `SecretComponent` and read
 from `app.secretStorage`; plugin `data.json` stores only secret identifiers.
 It never imports OMP credentials or role aliases. Existing installations must
@@ -326,22 +327,23 @@ service and name, suggesting a name after the service until one is typed,
 and adds nothing until both are set and the name is free. A provider has:
 
 - **Service**: its kind. A hosted service gives the base URL and the request
-  format, so neither is typed: DeepSeek (`https://api.deepseek.com`, DeepSeek
-  format), OpenAI, OpenRouter, SiliconFlow, Moonshot (Kimi), Zhipu (GLM),
-  Alibaba Qwen (DashScope), Volcengine Doubao (Ark), Groq, Mistral, xAI,
-  MiniMax, StepFun and Together AI, each of whose `/models` and
-  `/chat/completions` answered on 2026-10-15. Ollama and LM Studio run
-  locally and take their default address unless **Base URL** gives another;
-  **Other OpenAI-compatible service** takes its own **Base URL** (the URL
-  that `/chat/completions` and `/models` follow) and **API format**.
-  Changing the service keeps the provider's name.
+  format, so neither is typed: DeepSeek (`https://api.deepseek.com`), OpenAI,
+  OpenRouter, SiliconFlow, Moonshot (Kimi), Zhipu (GLM), Alibaba Qwen
+  (DashScope), Volcengine Doubao (Ark), Groq, Mistral, xAI, MiniMax, StepFun
+  and Together AI, each of whose `/models` and `/chat/completions` answered on
+  2026-10-15. DeepSeek and Zhipu take the thinking switch, the others Chat
+  Completions. Ollama and LM Studio run locally and take their default address
+  unless **Base URL** gives another; **Other OpenAI-compatible service** takes
+  its own **Base URL** (the URL that `/chat/completions` and `/models` follow)
+  and **API format**. Changing the service keeps the provider's name.
 - **Name**: shown in the sidebar's model list. No two providers share a name;
   a rename the sidebar's choice used follows the provider, and **Remove**
   deletes the provider, clearing the choice when it was in use.
 - **API format**, only for another service: **Chat Completions** for a
-  service accepting `reasoning_effort` (`none` and `low`), or **DeepSeek** for
-  its thinking and tool-choice rules. Every hosted service but DeepSeek uses
-  Chat Completions, so it too must accept `reasoning_effort`.
+  service accepting `reasoning_effort` (`none` and `low`), or **Thinking
+  switch (DeepSeek, Zhipu)**, which also turns thinking on or off, with
+  DeepSeek's tool-choice rules. Every hosted service but DeepSeek and Zhipu
+  uses Chat Completions, so it too must accept `reasoning_effort`.
 - **API key**: select or add a secret in Obsidian SecretStorage. A local
   server usually needs none.
 - **Models**: the models the provider lists at `GET <base URL>/models`, sent

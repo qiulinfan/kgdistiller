@@ -29,6 +29,8 @@ describe("a provider's addresses", () => {
     expect(formatOf(deepseek)).toBe("deepseek");
     expect(baseUrlOf({ ...deepseek, baseUrl: "https://elsewhere.example" })).toBe("https://api.deepseek.com");
     expect(chatUrl({ ...deepseek, kind: "openrouter" })).toBe("https://openrouter.ai/api/v1/chat/completions");
+    // Zhipu turns thinking off as DeepSeek does: GLM-4.5 Flash ignores reasoning_effort none.
+    expect(formatOf({ ...deepseek, kind: "zhipu" })).toBe("deepseek");
   });
 
   it("are a local server's or another service's own, with a local server's default", () => {

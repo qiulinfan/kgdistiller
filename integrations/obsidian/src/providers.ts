@@ -30,7 +30,7 @@ export const PROVIDER_KINDS: readonly ProviderKind[] = [
   { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", format: "chat-completions" },
   { id: "siliconflow", label: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", format: "chat-completions" },
   { id: "moonshot", label: "Moonshot (Kimi)", baseUrl: "https://api.moonshot.cn/v1", format: "chat-completions" },
-  { id: "zhipu", label: "Zhipu (GLM)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", format: "chat-completions" },
+  { id: "zhipu", label: "Zhipu (GLM)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", format: "deepseek" },
   { id: "qwen", label: "Alibaba Qwen (DashScope)", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", format: "chat-completions" },
   { id: "doubao", label: "Volcengine Doubao (Ark)", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", format: "chat-completions" },
   { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", format: "chat-completions" },

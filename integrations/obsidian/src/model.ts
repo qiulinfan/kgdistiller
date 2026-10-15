@@ -5,6 +5,7 @@ export interface ModelSettings {
   endpoint: string;
   apiKey: string;
   model: string;
+  /** "deepseek" turns thinking on and off as DeepSeek and Zhipu do; "chat-completions" sends reasoning_effort alone. */
   protocol: "chat-completions" | "deepseek";
 }
 

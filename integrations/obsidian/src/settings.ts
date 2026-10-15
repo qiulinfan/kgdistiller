@@ -250,7 +250,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Service")
       .setDesc(kind.ownUrl ? (kind.baseUrl ? `Runs on this machine, by default at ${kind.baseUrl}.` : "Any service with OpenAI's Chat Completions and models endpoints.")
-        : `${kind.baseUrl}${kind.format === "deepseek" ? ", in DeepSeek's format" : ""}.`)
+        : `${kind.baseUrl}${kind.format === "deepseek" ? ", with the thinking switch" : ""}.`)
       .addDropdown((dropdown) => {
         for (const option of PROVIDER_KINDS) dropdown.addOption(option.id, option.label);
         dropdown.setValue(provider.kind).onChange(async (id) => {
@@ -291,10 +291,10 @@ export class KgdistillerSettingTab extends PluginSettingTab {
     if (kind.ownFormat) {
       new Setting(containerEl)
         .setName("API format")
-        .setDesc("Choose DeepSeek for its thinking controls. Other services must support reasoning_effort (none and low).")
+        .setDesc("How a request names its reasoning. Chat Completions sends reasoning_effort alone; the thinking switch also turns thinking on or off, as DeepSeek and Zhipu do.")
         .addDropdown((dropdown) => dropdown
           .addOption("chat-completions", "Chat Completions")
-          .addOption("deepseek", "DeepSeek")
+          .addOption("deepseek", "Thinking switch (DeepSeek, Zhipu)")
           .setValue(provider.format)
           .onChange(async (value) => {
             if (value !== "chat-completions" && value !== "deepseek") return;

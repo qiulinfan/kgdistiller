@@ -392,7 +392,7 @@ describe("the agent", () => {
     expect(plugin.settings.providers).toEqual([{ name: "work", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }]);
     expect(names()).toEqual(expect.arrayContaining(["Provider", "Service", "Name", "API key", "Models"]));
     expect(names()).not.toContain("Base URL");
-    expect(last("Service").description).toBe("https://api.deepseek.com, in DeepSeek's format.");
+    expect(last("Service").description).toBe("https://api.deepseek.com, with the thinking switch.");
     controls.secrets.set("deepseek-key", "synthetic-secret-value");
     await last("API key").secretChange!("deepseek-key");
     await button(last("Models"), "Detect");

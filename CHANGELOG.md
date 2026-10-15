@@ -4,6 +4,12 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Zhipu providers use the thinking switch that DeepSeek providers use:
+  reasoning `none` now sends `thinking: disabled` instead of
+  `reasoning_effort: none`, which GLM-4.5 Flash ignored and kept thinking;
+  with thinking off it answered a forced tool call in about 1 s. The custom
+  **API format** option for this format is now called **Thinking switch
+  (DeepSeek, Zhipu)**.
 - Model and search errors show the service's own explanation, read from a
   JSON error body on one line of at most 300 characters with the request's key
   replaced by `[key]`, instead of only the HTTP status. A 429 that persists
