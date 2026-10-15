@@ -1,5 +1,5 @@
 /** The plugin's direct Chat Completions client. No external agent runtime is involved. */
-import { apiUrl, type PostJson } from "./api";
+import { ApiError, apiUrl, type PostJson } from "./api";
 
 export interface ModelSettings {
   endpoint: string;
@@ -9,6 +9,11 @@ export interface ModelSettings {
 }
 
 export const MODEL_TIMEOUT_MS = 120 * 1000;
+/** The waits before asking again a service that answered 503 (busy) or 429 (too many requests). */
+export const BUSY_RETRY_DELAYS_MS: readonly number[] = [1000, 2000];
+
+export type Wait = (ms: number) => Promise<void>;
+const wait: Wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface ToolCall {
   id: string;
@@ -50,14 +55,35 @@ export interface ChatReply {
 
 
 export class ModelClient {
-  constructor(private readonly settings: () => ModelSettings, private readonly post: PostJson) {}
+  constructor(private readonly settings: () => ModelSettings, private readonly post: PostJson, private readonly pause: Wait = wait) {}
 
   configured(): boolean {
     const settings = this.settings();
     return settings.endpoint.trim() !== "" && settings.model.trim() !== "";
   }
 
+  /**
+   * One model call. A service that answers 503 or 429 is asked again after
+   * 1 s and then 2 s, each time with the current settings; any other failure,
+   * a timeout included, is reported at once.
+   */
   async complete(request: ChatRequest): Promise<ChatReply> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.send(request);
+      } catch (error) {
+        if (!(error instanceof ApiError) || (error.status !== 503 && error.status !== 429)) throw error;
+        const delay = BUSY_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          throw new Error(`The model service is busy (HTTP ${error.status}): it refused the request and ${BUSY_RETRY_DELAYS_MS.length} retries. `
+            + "Try again in a moment, or set another Chat Completions service in the kgdistiller settings.");
+        }
+        await this.pause(delay);
+      }
+    }
+  }
+
+  private async send(request: ChatRequest): Promise<ChatReply> {
     const settings = this.settings();
     if (!this.configured()) throw new Error("Set the model API endpoint and model in the kgdistiller settings.");
     apiUrl(settings.endpoint);

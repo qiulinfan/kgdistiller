@@ -4,6 +4,10 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- The Obsidian agent asks a busy model service again: a model request
+  answered with HTTP 503 or 429 is retried after 1 s and then 2 s, and when
+  the service still refuses, the sidebar says the model service is busy
+  instead of only reporting the HTTP status.
 - Merge the Obsidian graph view into the lookup sidebar. A graph of every
   record was too large to read anything from, so the plugin keeps one
   sidebar, opened from the ribbon (**Open kgdistiller**) or the lookup

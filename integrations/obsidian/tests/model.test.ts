@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { chatReply, ModelClient, type ModelSettings } from "../src/model";
-import type { PostJson } from "../src/api";
+import { ApiError, type PostJson } from "../src/api";
 import { runJob } from "../src/agent";
 
 const settings: ModelSettings = { endpoint: "https://example.com/v1/chat/completions", apiKey: "test-key", model: "test-model", protocol: "chat-completions" };
@@ -60,6 +60,50 @@ describe("direct model requests", () => {
     await model.complete({ messages: [], reasoning_effort: "none" });
     expect(post.mock.calls[2]![2]).toMatchObject({ thinking: { type: "disabled" } });
     expect(post.mock.calls[2]![2]).not.toHaveProperty("reasoning_effort");
+  });
+});
+
+describe("a busy model service", () => {
+  const busy = (status: number) => new ApiError(`API request failed (HTTP ${status}).`, status);
+
+  it("is asked again after 1 s and 2 s while it answers 503 or 429", async () => {
+    const post = vi.fn<PostJson>().mockRejectedValueOnce(busy(503)).mockRejectedValueOnce(busy(429)).mockResolvedValue(answer());
+    const waits: number[] = [];
+    const model = new ModelClient(() => settings, post, async (ms) => { waits.push(ms); });
+    await expect(model.complete({ messages: [] })).resolves.toMatchObject({ message: { content: "ok" } });
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([1000, 2000]);
+  });
+
+  it("is reported as busy when it still refuses after two retries", async () => {
+    const post = vi.fn<PostJson>().mockRejectedValue(busy(503));
+    const waits: number[] = [];
+    const model = new ModelClient(() => settings, post, async (ms) => { waits.push(ms); });
+    await expect(model.complete({ messages: [] })).rejects.toThrow(
+      "The model service is busy (HTTP 503): it refused the request and 2 retries. Try again in a moment");
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([1000, 2000]);
+    await expect(new ModelClient(() => settings, vi.fn<PostJson>().mockRejectedValue(busy(429)), async () => undefined)
+      .complete({ messages: [] })).rejects.toThrow("The model service is busy (HTTP 429)");
+  });
+
+  it("is not asked again after any other failure", async () => {
+    for (const error of [busy(500), busy(401), new ApiError("API request timed out after 120 s."), new Error("The model API returned no message.")]) {
+      const post = vi.fn<PostJson>().mockRejectedValue(error);
+      const pause = vi.fn(async () => undefined);
+      await expect(new ModelClient(() => settings, post, pause).complete({ messages: [] })).rejects.toBe(error);
+      expect(post).toHaveBeenCalledOnce();
+      expect(pause).not.toHaveBeenCalled();
+    }
+  });
+
+  it("is asked again with the current settings", async () => {
+    const current = { ...settings };
+    const post = vi.fn<PostJson>()
+      .mockImplementationOnce(async () => { Object.assign(current, { model: "other" }); throw busy(503); })
+      .mockResolvedValue(answer());
+    await new ModelClient(() => current, post, async () => undefined).complete({ messages: [] });
+    expect(post.mock.calls.map((call) => (call[2] as { model: string }).model)).toEqual(["test-model", "other"]);
   });
 });
 

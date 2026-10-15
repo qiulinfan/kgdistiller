@@ -142,6 +142,14 @@ agent executable, gateway process, generated extension or temporary search
 file is involved. Local knowledge still uses the separately installed `kgd`
 engine through its resident MCP server and admission commands.
 
+A model request that the service answers with HTTP 503 (busy) or 429 (too
+many requests) is sent again after 1 s and then after 2 s, each time with the
+current settings. When the third attempt is refused too, the sidebar says the
+model service is busy, gives the status, and suggests trying again or setting
+another Chat Completions service. Any other failure, a timeout included, is
+reported at once. On 2026-10-14 DeepSeek answered 503 "Service is too busy"
+to some requests and left most of ten others unanswered for over a minute.
+
 The plugin owns prompts, tool execution, concurrent read-only calls, bounded
 turns and answer validation. Standard Chat Completions requests carry
 `reasoning_effort`; the DeepSeek format maps thinking controls, preserves
