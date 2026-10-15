@@ -230,7 +230,9 @@ def main() -> int:
         require("- [ ] [[.knowledge/drafts/measure-theory|测度论]]" in sheet.read_text(encoding="utf-8"),
                 "sheet does not list the draft")
         receipt = runtime.object("accept", ".knowledge/drafts/measure-theory.md", cwd=root)
+        indexed = receipt.pop("index", None) or {}
         require(receipt == {"created": ["smoke:measure-theory"], "understanding_set": []}, f"accept receipt: {receipt}")
+        require(indexed.get("created") and indexed["bases"]["smoke"]["parsed"] == 3, f"accept index report: {indexed}")
 
         require(runtime.object("check", cwd=outside) == CLEAN, "fresh records did not check clean")
         write(source, "Preface\n\n" + SOURCE)
@@ -245,7 +247,8 @@ def main() -> int:
         require(runtime.object("check", cwd=root) == CLEAN, "check after --fix-lines is not clean")
 
         report = runtime.object("index", "--no-embed", cwd=outside)
-        require(report["created"] and report["bases"]["smoke"]["parsed"] == 3, f"index report: {report}")
+        # accept built the index; --fix-lines rewrote the three records since.
+        require(not report["created"] and report["bases"]["smoke"]["parsed"] == 3, f"index report: {report}")
         require((runtime.home / "index.sqlite").is_file(), "index.sqlite is not in the home")
         found = runtime.object("search", "measure space", cwd=outside)
         require(found["results"][0]["uid"] == "smoke:measure-space", f"search ranking: {found['results'][:3]}")

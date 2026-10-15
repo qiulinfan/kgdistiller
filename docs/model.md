@@ -563,11 +563,15 @@ or relative to the working directory.
    validation with different text stops the run, and the receipt lists what
    was already created under `created` plus `aborted: {path, message}`.
    Rerunning the same command completes an interrupted run.
-6. Print `{"created": [uid], "understanding_set": [{"uid", "value"}]}`.
-   `understanding_set` lists the created records whose understanding is not
-   `unknown`.
-
-`accept` does not index; the calling Skill runs `kgd index`.
+6. Release the lock and run `kgd index` with its embedding phase limited to
+   the created records: every changed record file is indexed, the new records
+   are embedded, and a record edited since it was embedded keeps waiting for
+   the owner's re-embed (docs/retrieval.md, "When records are embedded").
+7. Print `{"created": [uid], "understanding_set": [{"uid", "value"}], "index":
+   {...}}`. `understanding_set` lists the created records whose understanding
+   is not `unknown`, and `index` is the report of step 6. An embedding failure
+   is reported there and does not undo the acceptance; the exit code reflects
+   only refusals and aborts.
 
 ### `kgd harvest SHEET [--dry-run]`
 

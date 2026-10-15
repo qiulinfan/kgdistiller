@@ -29,7 +29,7 @@ from .home import (
     load_home,
     lock,
 )
-from .index import name_key
+from .index import index, name_key
 from .records import (
     DRAFTS,
     ENTRIES,
@@ -123,11 +123,14 @@ def _understanding(path: Path, uid: str) -> str:
 
 
 def accept(paths: Iterable[Path | str], dry_run: bool = False) -> dict[str, Any]:
-    """Promote drafts to accepted records, all or nothing.
+    """Promote drafts to accepted records, all or nothing, then index them and embed the created records.
 
     Returns ``{"refused": [{path, message}]}``, ``{"would_create": [uid]}`` for a
     dry run, or the receipt ``{"created": [uid], "understanding_set": [{uid, value}]}``.
     A receipt with ``aborted`` lists what was created before a target appeared.
+    When records were created, ``index`` is the report of the index run that
+    follows, outside the home lock: every changed record file is indexed, but
+    only the created records are embedded.
     """
     home = load_home(home_directory())
     selected: list[tuple[Base, str, Path]] = []
@@ -146,55 +149,64 @@ def accept(paths: Iterable[Path | str], dry_run: bool = False) -> dict[str, Any]
     if refused:
         return {"refused": refused}
     with lock():
-        files = Files(home)
-        chosen: dict[str, set[str]] = {}
-        for base, identifier, _ in selected:
-            chosen.setdefault(base.name, set()).add(fold(identifier))
-        plan: list[tuple[Path, Path, str, Record | None]] = []
-        for base, identifier, path in selected:
-            target = base.root / KNOWLEDGE_DIRECTORY / ENTRIES / f"{identifier}.md"
+        receipt = _promote(home, selected, dry_run)
+    if receipt.get("created"):
+        receipt["index"] = index(only=receipt["created"])
+    return receipt
+
+
+def _promote(home: Home, selected: list[tuple[Base, str, Path]], dry_run: bool) -> dict[str, Any]:
+    """The part of ``accept`` under the home lock: validate every draft, then link each into ``entries/``."""
+    refused: list[dict[str, str]] = []
+    files = Files(home)
+    chosen: dict[str, set[str]] = {}
+    for base, identifier, _ in selected:
+        chosen.setdefault(base.name, set()).add(fold(identifier))
+    plan: list[tuple[Path, Path, str, Record | None]] = []
+    for base, identifier, path in selected:
+        target = base.root / KNOWLEDGE_DIRECTORY / ENTRIES / f"{identifier}.md"
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError) as error:
+            refused.append({"path": str(path), "message": f"cannot read the draft: {error}"})
+            continue
+        record, existing, problems = _validate_draft(
+            files, base, identifier, path, text, chosen[base.name] - {fold(identifier)}
+        )
+        if existing is not None:
+            plan.append((path, existing, text, None))
+            continue
+        refused.extend({"path": str(path), "message": message} for message in problems)
+        if record is not None:
+            plan.append((path, target, text, record))
+    if refused:
+        return {"refused": refused}
+    uids = [f"{base.name}:{identifier}" for base, identifier, _ in selected]
+    if dry_run:
+        return {"would_create": uids}
+    created: list[str] = []
+    understanding_set: list[dict[str, str]] = []
+    for (path, target, text, record), uid in zip(plan, uids, strict=True):
+        if record is not None:
+            target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                text = read_text(path)
-            except (OSError, UnicodeDecodeError) as error:
-                refused.append({"path": str(path), "message": f"cannot read the draft: {error}"})
-                continue
-            record, existing, problems = _validate_draft(
-                files, base, identifier, path, text, chosen[base.name] - {fold(identifier)}
-            )
-            if existing is not None:
-                plan.append((path, existing, text, None))
-                continue
-            refused.extend({"path": str(path), "message": message} for message in problems)
-            if record is not None:
-                plan.append((path, target, text, record))
-        if refused:
-            return {"refused": refused}
-        uids = [f"{base.name}:{identifier}" for base, identifier, _ in selected]
-        if dry_run:
-            return {"would_create": uids}
-        created: list[str] = []
-        understanding_set: list[dict[str, str]] = []
-        for (path, target, text, record), uid in zip(plan, uids, strict=True):
-            if record is not None:
-                target.parent.mkdir(parents=True, exist_ok=True)
+                os.link(path, target)
+            except FileExistsError:
                 try:
-                    os.link(path, target)
-                except FileExistsError:
-                    try:
-                        identical = read_text(target) == text
-                    except (OSError, UnicodeDecodeError):
-                        identical = False
-                    if not identical:
-                        return {
-                            "created": created,
-                            "understanding_set": understanding_set,
-                            "aborted": {"path": str(path), "message": f"{target} appeared with different text; nothing was overwritten"},
-                        }
-            os.unlink(path)
-            created.append(uid)
-            understanding = record.understanding if record is not None else _understanding(target, uid)
-            if understanding != "unknown":
-                understanding_set.append({"uid": uid, "value": understanding})
+                    identical = read_text(target) == text
+                except (OSError, UnicodeDecodeError):
+                    identical = False
+                if not identical:
+                    return {
+                        "created": created,
+                        "understanding_set": understanding_set,
+                        "aborted": {"path": str(path), "message": f"{target} appeared with different text; nothing was overwritten"},
+                    }
+        os.unlink(path)
+        created.append(uid)
+        understanding = record.understanding if record is not None else _understanding(target, uid)
+        if understanding != "unknown":
+            understanding_set.append({"uid": uid, "value": understanding})
     return {"created": created, "understanding_set": understanding_set}
 
 

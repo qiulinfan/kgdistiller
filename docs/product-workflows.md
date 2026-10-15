@@ -155,9 +155,10 @@ a bounded evidence packet whose gaps are reported, never filled by guessing.
 `search` fuses a lexical, a dense and a name lane; when the retrieval extra is
 missing it fails unless the dense lane is skipped with `--no-dense` (MCP:
 `no_dense`). Answers cite `source:lines` with evidence quotes. When a result
-reports `lag.changed_files > 0`, `lag.unembedded > 0` or
-`lag.embedding_changed`, the reader runs `kgd index` and repeats the query;
-that derived refresh is its only write. Lookup during reading happens at the
+reports `lag.changed_files > 0`, the reader runs `kgd index --no-embed` and
+repeats the query; that keyword refresh is its only write. `lag.unembedded`
+and `lag.embedding_changed` are reported as weaker dense coverage; re-embedding
+is the owner's call. Lookup during reading happens at the
 actual use sites; a record not found is not proof the owner lacks the concept,
 and only the owner's stated understanding allows treating a record as
 mastered. Identity classification for authoring returns `matched`,

@@ -32,6 +32,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import defaultdict
+from collections.abc import Iterable
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
@@ -375,8 +376,11 @@ def _refresh_texts(connection: sqlite3.Connection, pool: dict[str, bytes]) -> in
     return reused
 
 
-def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
+def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None = None) -> dict[str, Any]:
     """Bring the database up to date: the lexical phase, then (unless ``embed`` is False) the embedding phase.
+
+    ``only`` limits the embedding phase to those uids, as ``accept`` does for
+    the records it creates; other rows without a vector wait for a full run.
 
     The report has the shape documented in docs/retrieval.md under ``kgd index``.
     A run is clean when no file was unparseable, every base was available and
@@ -456,7 +460,7 @@ def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
         connection.execute("COMMIT")
         if embed and model:
             try:
-                _embed(connection, model, report)
+                _embed(connection, model, report, None if only is None else set(only))
             except KnowledgeError as error:
                 report["embedding_error"] = str(error)
         report["unembedded"] = _unembedded(connection)
@@ -469,9 +473,12 @@ def index(rebuild: bool = False, embed: bool = True) -> dict[str, Any]:
     return report
 
 
-def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any]) -> None:
-    """Encode the rows whose ``vec`` is NULL; each batch write is guarded by text and model."""
-    rows = connection.execute("SELECT uid, text FROM record WHERE vec IS NULL ORDER BY rowid").fetchall()
+def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any], only: set[str] | None) -> None:
+    """Encode the rows whose ``vec`` is NULL, or those of ``only``; each batch write is guarded by text and model."""
+    rows = [
+        row for row in connection.execute("SELECT uid, text FROM record WHERE vec IS NULL ORDER BY rowid")
+        if only is None or row["uid"] in only
+    ]
     if not rows:
         return
     try:

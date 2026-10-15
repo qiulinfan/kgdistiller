@@ -131,10 +131,6 @@ export function lookupQuery(selection: string): string {
   return selection.split(/\s+/).filter(Boolean).join(" ").slice(0, MAX_QUERY_LENGTH);
 }
 
-/** Whether a read reports the index behind the record files (docs/retrieval.md, "Reads and lag"). */
-export function lagging(lag: Lag | undefined): boolean {
-  return lag !== undefined && (lag.changed_files > 0 || lag.unembedded > 0 || lag.embedding_changed);
-}
 
 /** A search hit's lane ranks, such as "lexical 3 · dense 1 · name –", in the order the lanes ran. */
 export function rankText(lanes: readonly string[], ranks: Record<string, number | null>): string {

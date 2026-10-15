@@ -48,7 +48,13 @@
   `check --fix-lines` and `base add|rm`; no data file is ever locked or
   truncated. The product never re-serializes frontmatter; `--fix-lines`
   rewrites only the `lines:` line.
-- Every Skill that writes knowledge finishes with `kgd index`.
+- Embedding follows admission, not edits (owner, 2026-10-15). `kgd accept`
+  and `kgd harvest` end with an index run that embeds only the records they
+  created. After any edit of an accepted record, by an agent or by hand,
+  Skills and the plugin run `kgd index --no-embed`; re-embedding an edited
+  record is the owner's manual action (`kgd index`, the plugin's Re-embed),
+  and whether it has work is `unembedded`, derived from the stored unified
+  text, never from a snapshot or hash.
 - Ingestion stays lightweight; the owner's budget for waiting on one capture
   is about 20 seconds. On 2026-10-11 the owner accepted about 24 seconds of
   background processing per capture over making `kgd` call a model itself:
@@ -56,8 +62,9 @@
   `kgd resolve` of every name, `kgd search --limit 5` only where needed), one
   write turn, then one command that accepts or checks and indexes; nothing
   runs after admission except linking the pending uses the lookup found. A
-  capture loads no embedding model (`search --no-dense`, `index --no-embed`),
-  and the `capture-writer` presets run it in the background on a small model
+  capture's lookup loads no embedding model (`search --no-dense`); its
+  `kgd accept` loads it once to embed the new record, about 5 s. The
+  `capture-writer` presets run it in the background on a small model
   at low reasoning effort, since model reasoning, not `kgd`, dominates capture
   time.
   There is no topic navigation or other generated directory: the 2026-10-11
@@ -196,7 +203,8 @@
   checks every model answer and citation, and writes knowledge only as a
   draft, under the same rules as the capture Skill; the agent never accepts,
   and a draft becomes knowledge when the owner accepts it in the Capture view
-  (`kgd accept`, then `kgd index --no-embed`). Preserve the complete upstream MIT notice and pinned source
+  (`kgd accept`, which indexes and embeds it). The plugin re-indexes the
+  keyword index whenever a record file changes. Preserve the complete upstream MIT notice and pinned source
   revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by

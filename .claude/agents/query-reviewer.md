@@ -22,9 +22,10 @@ closures, `browse` gives base, source and kind views, and `pack` gives
 budgeted packets whose gaps are reported, never filled by guessing. Batch
 candidates, keep lane ranks and ambiguity explicit, and deliver each record's
 uid with `source:lines` and its evidence quotes. When a result reports
-`lag.changed_files` above 0, `lag.unembedded` above 0 or
-`lag.embedding_changed`, run `kgd index` and repeat the query; that derived
-refresh is the only write allowed. Never edit a source, record, draft or
+`lag.changed_files` above 0, run `kgd index --no-embed` and repeat the query;
+that keyword refresh is the only write allowed. Report `lag.unembedded` or
+`lag.embedding_changed` as weaker dense coverage and leave re-embedding to the
+owner. Never edit a source, record, draft or
 sheet, never run accept, harvest or `check --fix-lines`, and never promote
 lexical, dense (embedding), name, translation, acronym or link similarity into
 identity. Records with stale evidence are still returned; report that when an

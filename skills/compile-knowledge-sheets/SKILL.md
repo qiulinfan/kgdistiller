@@ -66,9 +66,10 @@ conditions yourself. The same name is not the same
 concept: a homonym gets its own record. A concept this source did not define
 or originate is not a node here, even when the source explains it: link the
 record of its defining source or keep a global pending term. Leave ambiguous
-candidates out and list them. If `lag.changed_files` is above 0,
-`lag.unembedded` is above 0 or `lag.embedding_changed` is true, run
-`kgd index` first and repeat the lookup once. `kgd check --base B` tells you
+candidates out and list them. If `lag.changed_files` is above 0, run
+`kgd index --no-embed` first and repeat the lookup once; `lag.unembedded` and
+`lag.embedding_changed` only weaken the dense lane, and re-embedding is the
+owner's call. `kgd check --base B` tells you
 which recorded citations no longer verify.
 
 Classify every candidate:
@@ -143,7 +144,7 @@ Write every draft of step 4 and every edit of step 5 in the same turn.
 ## 6. Check, generate the sheet and index, in one command
 
 ```sh
-kgd check --base B && kgd sheet SOURCE && kgd index
+kgd check --base B && kgd sheet SOURCE && kgd index --no-embed
 ```
 
 Every draft you wrote and every record you edited must pass `check`: no

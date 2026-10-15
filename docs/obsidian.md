@@ -105,9 +105,17 @@ knowledge.
 - **Open record** and **Open source** open the file in this vault when the
   record's base is this vault, and otherwise through an `obsidian://open?path=`
   link in the vault that holds it.
-- When a result reports lag, **Run kgd index** runs `kgd index` and repeats the
-  lookup, or lists the source again. Records just edited or captured appear
-  once the index has them.
+- The keyword index follows the record files without being asked: a record
+  file of this vault created, saved, renamed or deleted is indexed with
+  `kgd index --no-embed` once 0.3 s pass without another save, and so is any
+  change a read reports (`lag.changed_files`, such as a record edited in
+  another vault) and every change made while Obsidian was closed, when the
+  plugin loads. This takes tens of milliseconds and loads no model.
+- **Re-embed**, below the search box, runs `kgd index` and then repeats the
+  lookup, or lists the source again. It is solid and shows a count while
+  records' texts have changed since their vectors were computed, or the model
+  changed, and grey otherwise; an edited record is never re-embedded
+  unasked (docs/retrieval.md, "When records are embedded").
 
 Settings, under **Lookup**:
 
@@ -462,9 +470,10 @@ Accept.
   drafts it links, and otherwise lists `kgd accept`'s refusals. The view lists
   the drafts again whenever a draft file of this vault is saved, so an edit
   made in the editor is checked as soon as it is saved.
-- **Accept** runs `kgd accept` on the draft and the drafts it links, then
-  `kgd index --no-embed`; the record can be looked up at once. On 2026-10-15
-  checking, accepting, indexing and finding a new record took about 0.1 s.
+- **Accept** runs `kgd accept` on the draft and the drafts it links, which
+  indexes them and embeds them; the card reads "Accepting and embedding…"
+  until it returns. On 2026-10-15 checking, accepting and indexing took about
+  0.1 s and loading the embedding model about 5 s more.
   **Open draft** opens the draft file in a split beside the source for any
   edit. **Discard** asks first, then deletes the draft; nothing remembers it,
   and a draft that linked it cannot be accepted until that link is edited.

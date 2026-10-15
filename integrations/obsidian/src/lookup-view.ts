@@ -18,10 +18,10 @@ import { Component, ItemView, MarkdownRenderer, Notice, setIcon, type App, type 
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
+import { needsEmbedding, type Indexer } from "./indexing";
 import {
   chainTree,
   inboundGroups,
-  lagging,
   lookupQuery,
   linksByRole,
   NEIGHBOUR_STEPS,
@@ -74,6 +74,7 @@ export interface LookupHost extends AgentHost {
   /** The reasoning levels the provider in use documents and the level chosen. */
   reasoningChoices(): ReasoningChoices;
   chooseReasoning(choice: ReasoningChoice): Promise<void>;
+  indexer: Indexer;
 }
 
 type Settled<T> = { value: T; error?: undefined } | { value?: undefined; error: string };
@@ -86,6 +87,7 @@ export class KgdistillerLookupView extends ItemView {
   private modelsRequest = 0;
   private reasoningEl: HTMLSelectElement | null = null;
   private searchEl: HTMLInputElement | null = null;
+  private reembedEl: HTMLButtonElement | null = null;
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private agent: AgentPane | null = null;
@@ -163,6 +165,11 @@ export class KgdistillerLookupView extends ItemView {
       if (text) void this.lookup({ text, context: "" }, { question: true });
     });
     this.searchEl = search;
+    const reembed = this.contentEl.createEl("button", { cls: "kgd-lookup-reembed" });
+    reembed.addEventListener("click", () => void this.reembed());
+    this.reembedEl = reembed;
+    this.renderReembed();
+    this.register(this.host.indexer.onChange(() => this.renderReembed()));
     this.queryEl = this.contentEl.createDiv({ cls: "kgd-lookup-query" });
     this.statusEl = this.contentEl.createDiv({ cls: "kgd-lookup-status" });
     this.agent = new AgentPane(this.contentEl.createDiv(), this.host, (uid) => this.label(uid), (uid) => this.focusMatched(uid),
@@ -404,20 +411,29 @@ export class KgdistillerLookupView extends ItemView {
       if (error) status.createDiv({ cls: "kgd-lookup-error", text: error });
     }
     const lag: Lag | undefined = this.listed?.lag ?? this.searched?.value?.lag ?? this.resolved?.value?.lag;
-    if (lagging(lag)) {
-      const line = status.createDiv({ cls: "kgd-lookup-lag" });
-      line.createSpan({ text: "The index is behind the record files. " });
-      const button = line.createEl("button", { text: "Run kgd index" });
-      button.addEventListener("click", () => void this.reindex(button));
-    }
+    if (lag) this.host.indexer.observe(lag);
   }
 
-  private async reindex(button: HTMLButtonElement): Promise<void> {
-    button.disabled = true;
-    button.setText("Indexing…");
+  /** Re-embed is solid, with its count, while a record's vector is missing or stale, and grey otherwise. */
+  private renderReembed(): void {
+    const button = this.reembedEl;
+    if (!button) return;
+    const { state, busy } = this.host.indexer;
+    const pending = needsEmbedding(state);
+    button.toggleClass("mod-cta", pending && !busy);
+    button.disabled = busy || !pending;
+    button.setText(busy ? "Embedding…" : state && state.unembedded > 0 ? `Re-embed ${state.unembedded}` : "Re-embed");
+    button.setAttr("aria-label", busy ? "kgd index is embedding"
+      : pending ? (state?.embeddingChanged ? "The embedding model changed; embed every record again"
+        : `Embed the ${state?.unembedded} record${state?.unembedded === 1 ? "" : "s"} whose text changed since its vector`)
+        : "Every record's vector matches its text");
+  }
+
+  private async reembed(): Promise<void> {
+    const started = performance.now();
     try {
-      const { failed } = await this.host.kgd.index();
-      if (failed) new Notice("kgd index reported problems; run `kgd index` in a terminal to see them.");
+      const embedded = await this.host.indexer.reembed();
+      new Notice(`kgdistiller embedded ${embedded} record${embedded === 1 ? "" : "s"} in ${((performance.now() - started) / 1000).toFixed(1)} s.`);
     } catch (error) {
       new Notice(`kgd index failed: ${error instanceof Error ? error.message : String(error)}`);
     }

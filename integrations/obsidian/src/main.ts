@@ -24,6 +24,7 @@ import { webSearch, type WebSource } from "./web";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
 import { HoldTrigger } from "./hold";
+import { Indexer } from "./indexing";
 import { KgdServer } from "./kgd";
 import { lookupQuery } from "./lookup-model";
 import { KgdistillerCaptureView, VIEW_TYPE_KGDISTILLER_CAPTURE } from "./capture-view";
@@ -38,6 +39,11 @@ import {
   type KgdistillerSettings,
 } from "./settings";
 
+/** Record files of this vault's base, as vault paths. */
+const ENTRIES_FOLDER = ".knowledge/entries/";
+/** Saves within this delay of each other index once. */
+const ENTRY_INDEX_DELAY_MS = 300;
+
 /** The reading-view elements whose text is a selection's block. */
 const READING_BLOCKS = "p, li, td, th, blockquote, h1, h2, h3, h4, h5, h6";
 
@@ -51,6 +57,9 @@ export default class KgdistillerPlugin extends Plugin {
   private unloaded = false;
   /** Lookups query every registered base through one resident `kgd mcp`. */
   readonly kgd = new KgdServer(() => ({ command: this.settings.kgdCommand, home: this.settings.knowledgeHome }));
+  /** Keyword indexing follows the record files; embedding waits for the owner's Re-embed. */
+  readonly indexer = new Indexer(this.kgd, (message) => new Notice(message));
+  private entriesTimer: number | undefined;
   /** Model and search requests run directly inside the desktop plugin. */
   private readonly api = new ApiClient();
   /**
@@ -163,6 +172,15 @@ export default class KgdistillerPlugin extends Plugin {
       name: "Show drafts",
       callback: () => void this.captureView().then((view) => view?.listDrafts()),
     });
+    // A record file written, edited, renamed or removed in this vault is indexed again without embeddings.
+    this.registerEvent(this.app.vault.on("create", (file) => this.entryChanged(file.path)));
+    this.registerEvent(this.app.vault.on("modify", (file) => this.entryChanged(file.path)));
+    this.registerEvent(this.app.vault.on("delete", (file) => this.entryChanged(file.path)));
+    this.registerEvent(this.app.vault.on("rename", (file, old) => {
+      this.entryChanged(file.path);
+      this.entryChanged(old);
+    }));
+    this.app.workspace.onLayoutReady(() => void this.indexer.refresh());
     this.watchHold(document);
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, popout) => this.watchHold(popout.document)));
     this.settingsTab = new KgdistillerSettingTab(this.app, this);
@@ -171,6 +189,7 @@ export default class KgdistillerPlugin extends Plugin {
 
   onunload(): void {
     this.unloaded = true;
+    if (this.entriesTimer !== undefined) window.clearTimeout(this.entriesTimer);
     this.hold.reset();
     this.kgd.stop();
     this.api.close();
@@ -260,6 +279,12 @@ export default class KgdistillerPlugin extends Plugin {
     const lines = (await this.captureFiles.read(path).catch(() => "")).replace(/\r\n?/g, "\n").split("\n");
     const range = locateSelection(selected, lines, context);
     return { text, context, ...(range ? { source: { path, from: range[0], to: range[1] } } : {}) };
+  }
+
+  private entryChanged(path: string): void {
+    if (!path.startsWith(ENTRIES_FOLDER)) return;
+    window.clearTimeout(this.entriesTimer);
+    this.entriesTimer = window.setTimeout(() => void this.indexer.refresh(), ENTRY_INDEX_DELAY_MS);
   }
 
   /** The lookup view, opened in the right sidebar without taking focus from the editor. */

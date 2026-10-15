@@ -4,6 +4,19 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- A new record is embedded when it is admitted, and an edited one only when
+  the owner asks. `kgd accept` and `kgd harvest` now end with an index run
+  whose embedding phase covers only the records they created, and report it
+  under `index`; a capture's accept takes about 5 s more, loading the model.
+  Skills refresh the keyword index after an edit with `kgd index --no-embed`,
+  and never re-embed. The Obsidian plugin indexes a record file of its vault
+  for keyword search as soon as it is created, saved, renamed or deleted, and
+  any change a read reports, without asking, and its lookup sidebar replaces
+  **Run kgd index** with **Re-embed**: solid with the number of records whose
+  text changed since their vector was computed, or after a model change, and
+  grey otherwise. That number comes from the text each vector was computed
+  from, which the index already keeps, so touching a file or changing its
+  understanding asks for no embedding.
 - Add the **Zhipu GLM Coding Plan** service for the Obsidian agent, at
   `https://open.bigmodel.cn/api/coding/paas/v4` with the thinking switch. A
   GLM Coding Plan's quota is spent only through that address: with the same

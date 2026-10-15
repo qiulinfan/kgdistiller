@@ -4,7 +4,6 @@ import {
   MAX_QUERY_LENGTH,
   chainTree,
   inboundGroups,
-  lagging,
   linksByRole,
   kindPalette,
   lookupQuery,
@@ -27,15 +26,6 @@ describe("the lookup query", () => {
 });
 
 describe("result shaping", () => {
-  it("reports lag only when the index is behind or the model changed", () => {
-    expect(lagging(undefined)).toBe(false);
-    expect(lagging(LAG)).toBe(false);
-    expect(lagging({ ...LAG, changed_files: 1 })).toBe(true);
-    expect(lagging({ ...LAG, unembedded: 2 })).toBe(true);
-    expect(lagging({ ...LAG, embedding_changed: true })).toBe(true);
-    expect(lagging({ ...LAG, unavailable_bases: ["papers"] })).toBe(false);
-  });
-
   it("lists lane ranks in the order the lanes ran, with a dash for a miss", () => {
     expect(rankText(["lexical", "dense", "name"], { lexical: 3, dense: 1, name: null })).toBe("lexical 3 · dense 1 · name –");
   });

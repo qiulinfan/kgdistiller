@@ -10,8 +10,9 @@ from unittest.mock import patch
 
 from kgdistiller import write
 from kgdistiller.home import KnowledgeError, LockConflict, lock
+from kgdistiller.index import index, open_read_only
 from kgdistiller.write import accept, drafts, harvest, sheet, sheet_json
-from tests.knowledge_fixture import make_record_home
+from tests.knowledge_fixture import fake_encoder, make_record_home
 
 SOURCE = "notes/a.txt"
 LINES = [
@@ -22,6 +23,12 @@ LINES = [
     "The sum of two subspaces is a subspace.",
     "Unique sentence about dimension.",
 ]
+
+
+def without_index(receipt: dict[str, Any]) -> dict[str, Any]:
+    """An accept receipt without the report of the index run that follows it."""
+    assert "index" in receipt, receipt
+    return {key: value for key, value in receipt.items() if key != "index"}
 
 
 def node(label: str, lines: str, *, kind: str = "definition", extra: str = "") -> str:
@@ -52,14 +59,14 @@ class AcceptTest(WriteTestCase):
         receipt = accept([draft])
         self.assertEqual(
             {"created": ["kb:dimension"], "understanding_set": [{"uid": "kb:dimension", "value": "not-yet-understood"}]},
-            receipt,
+            without_index(receipt),
         )
         self.assertFalse(draft.exists())
         self.assertEqual(content, self.kb.path("dimension").read_bytes())
 
     def test_unknown_understanding_is_not_listed(self) -> None:
         draft = self.draft("dimension", node("Dimension", "6"))
-        self.assertEqual({"created": ["kb:dimension"], "understanding_set": []}, accept([str(draft)]))
+        self.assertEqual({"created": ["kb:dimension"], "understanding_set": []}, without_index(accept([str(draft)])))
 
     def test_dry_run_writes_nothing(self) -> None:
         draft = self.draft("dimension", node("Dimension", "6"))
@@ -124,10 +131,28 @@ class AcceptTest(WriteTestCase):
         os.link(draft, self.kb.path("dimension"))
         self.assertEqual(
             {"created": ["kb:dimension"], "understanding_set": [{"uid": "kb:dimension", "value": "understood"}]},
-            accept([draft]),
+            without_index(accept([draft])),
         )
         self.assertFalse(draft.exists())
         self.assertTrue(self.kb.path("dimension").exists())
+
+    def test_accept_indexes_and_embeds_only_the_records_it_creates(self) -> None:
+        self.kb.embedding = "fake-model"
+        self.kb.write_config()
+        with fake_encoder():
+            index()
+            self.kb.write_record(
+                "subspace", node("Subspace", "4", extra='understanding: understood\nrequires: ["vector space"]'),
+                "An edited body.", ["A subspace is closed under addition."],
+            )
+            receipt = accept([self.draft("dimension", node("Dimension", "6"))])
+        self.assertEqual((1, 1), (receipt["index"]["embedded"], receipt["index"]["unembedded"]))
+        connection = open_read_only()
+        try:
+            vectors = dict(connection.execute("SELECT uid, vec IS NOT NULL FROM record"))
+        finally:
+            connection.close()
+        self.assertEqual({"kb:dimension": 1, "kb:subspace": 0}, vectors)
 
     def test_never_overwrites_a_target_that_appears(self) -> None:
         first = self.draft("first", node("First", "6"))
@@ -355,7 +380,7 @@ class HarvestTest(SheetTestCase):
         self.tick("direct-sum")
         self.tick("criterion")
         receipt = harvest(self.sheet)
-        self.assertEqual({"created": ["kb:direct-sum", "kb:criterion"], "understanding_set": []}, receipt)
+        self.assertEqual({"created": ["kb:direct-sum", "kb:criterion"], "understanding_set": []}, without_index(receipt))
         text = self.sheet.read_text(encoding="utf-8")
         self.assertIn("· 6 accepted · 0 drafts", text)
         self.assertIn("- [[.knowledge/entries/direct-sum|Direct sum]] · L5-5 — Direct.", text)

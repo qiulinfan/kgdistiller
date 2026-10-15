@@ -39,8 +39,9 @@ kgd search "DEFINING PHRASE" --limit 5 --no-dense
   defining words in both languages, so the name and lexical lanes match
   translations.
 
-If a result reports `lag.changed_files` above 0 or `lag.embedding_changed`, run
-`kgd index` and repeat the lookup once. `lag.unembedded` alone needs nothing.
+If a result reports `lag.changed_files` above 0, run `kgd index --no-embed` and
+repeat the lookup once. `lag.unembedded` and `lag.embedding_changed` need
+nothing: re-embedding is the owner's call.
 
 ## 2. Decide
 
@@ -91,7 +92,7 @@ A measure space is a triple $(X,\mathcal M,\mu)$ with a σ-algebra $\mathcal M$ 
 
 > 我们称 \((X,\mathcal{M},\mu)\) 为一个 measure space.
 RECORD
-kgd accept ROOT/.knowledge/drafts/ID.md && kgd index --no-embed
+kgd accept ROOT/.knowledge/drafts/ID.md
 ```
 
 - `ID` is `slug(label)` (lowercase, non-alphanumerics to `-`; append `-2` on a
@@ -118,9 +119,10 @@ model's relocation procedure. When the source already has a sheet, add
 `kgd sheet SOURCE` to the command. The owner's capture request is the
 consent; do not ask again.
 
-`--no-embed` indexes the record at once for `resolve`, `get` and the name and
-lexical lanes without loading the embedding model; the next full `kgd index`,
-which a reader runs when it sees `lag.unembedded`, builds its vector.
+`kgd accept` indexes the new record and embeds it before it returns, so every
+lane finds it at once. After an in-place edit, `kgd index --no-embed` updates
+the keyword index only; the edited record's vector is rebuilt when the owner
+re-embeds (`kgd index`), never by a Skill.
 
 ## 4. Link pending uses, only when the lookup found them
 

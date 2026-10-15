@@ -27,8 +27,9 @@ filtered, and reports `lag`.
   and types.
 - Never run `kgd accept`, `kgd harvest`, `kgd check --fix-lines` or
   `kgd base add|rm`, and never write drafts.
-- The one write allowed is the derived refresh `kgd index` when results report
-  lag (below).
+- The one write allowed is the derived keyword refresh `kgd index --no-embed`
+  when results report changed files (below). Never re-embed: that is the
+  owner's call.
 - Never promote lexical, dense (embedding), name, translation, acronym or link
   similarity into identity.
 
@@ -129,14 +130,14 @@ at least two packed records, while the compact JSON of `records` stays within
 
 Every result has `lag`: `changed_files`, `unavailable_bases`, `unembedded`,
 `embedding_changed`. When `lag.changed_files` is above 0, record files changed
-since the last index: run `kgd index` (the one allowed write) and repeat the
-query. `lag.unembedded` above 0 means some records have no vector yet, so the
-dense lane misses them; `lag.embedding_changed` means the configured model
+since the last index: run `kgd index --no-embed` (the one allowed write) and
+repeat the query. `lag.unembedded` above 0 means some records have no current
+vector, because their text changed since they were embedded, so the dense lane
+misses or misranks them; `lag.embedding_changed` means the configured model
 differs from the one that built the vectors, and the dense lane keeps using
-the previous model until re-embedding. For either, also run `kgd index` and
-repeat the query. A model change re-embeds every record, which takes minutes
-(about two per 500 records with `BAAI/bge-m3` on Apple silicon), so report the
-wall time. Report `unavailable_bases` as missing coverage.
+the previous model. Report either as weaker dense coverage and leave
+re-embedding (`kgd index`) to the owner. Report `unavailable_bases` as missing
+coverage.
 
 ## Deliver evidence
 

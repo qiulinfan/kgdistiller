@@ -160,7 +160,7 @@ function harness(): Harness {
     workspace: {
       getLeavesOfType: vi.fn((type: string) => (type === "kgdistiller-lookup" ? lookupLeaves : type === "kgdistiller-capture" ? captureLeaves : [])),
       createLeafBySplit: vi.fn(split),
-      getMostRecentLeaf: vi.fn(() => readingLeaf), setActiveLeaf: vi.fn(),
+      getMostRecentLeaf: vi.fn(() => readingLeaf), setActiveLeaf: vi.fn(), onLayoutReady: vi.fn(),
       detachLeavesOfType: vi.fn(), on: on("workspace"), revealLeaf: vi.fn(async () => undefined), activeEditor: null,
       getActiveViewOfType: vi.fn(() => null),
     },
@@ -224,6 +224,30 @@ describe("community lifecycle conventions", () => {
     expect(controls.sourcesFor).toHaveBeenCalledExactlyOnceWith("masked autoencoder");
     controls.commands.find((command) => command.id === "show-drafts")!.callback();
     await vi.waitFor(() => expect(controls.relist).toHaveBeenCalledOnce());
+  });
+});
+
+describe("record indexing", () => {
+  it("indexes this vault's record files without embeddings once a burst of saves settles, and nothing else", async () => {
+    vi.useFakeTimers();
+    (globalThis as { window?: unknown }).window = globalThis;
+    try {
+      const { plugin, handlers } = harness(); await plugin.onload();
+      const refresh = vi.spyOn(plugin.indexer, "refresh").mockResolvedValue();
+      const fire = (event: string, path: string) => { for (const callback of handlers.get(`vault:${event}`) ?? []) callback({ path }, "old.md"); };
+      fire("modify", ".knowledge/entries/elbo.md");
+      fire("create", ".knowledge/entries/vae.md");
+      fire("modify", "notes/a.md");
+      fire("modify", ".knowledge/drafts/x.md");
+      vi.advanceTimersByTime(300);
+      expect(refresh).toHaveBeenCalledOnce();
+      fire("delete", ".knowledge/entries/vae.md");
+      vi.advanceTimersByTime(300);
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+      vi.useRealTimers();
+    }
   });
 });
 

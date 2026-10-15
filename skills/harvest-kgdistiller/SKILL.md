@@ -1,6 +1,6 @@
 ---
 name: harvest-kgdistiller
-description: Accept the draft records the owner ticked in a kgdistiller source sheet, after looking them up again under the conflict rules, with one kgd harvest call, link the pending uses of the new concepts across bases, then re-index. Use when the owner asks to harvest a sheet, accept the checked drafts, or import the items selected in Obsidian into their kgdistiller (kgd/kgdt) knowledge base.
+description: Accept the draft records the owner ticked in a kgdistiller source sheet, after looking them up again under the conflict rules, with one kgd harvest call, link the pending uses of the new concepts across bases, then refresh the keyword index. Use when the owner asks to harvest a sheet, accept the checked drafts, or import the items selected in Obsidian into their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Harvest ticked drafts
@@ -39,12 +39,12 @@ for. Compare meanings and apply the knowledge model's conflict rules
 Edit each of the ticked drafts' pending terms that a record now defines into
 a link that keeps its wording, with an editing tool that refuses stale reads.
 
-## Harvest and index, in one command
+## Harvest, in one command
 
 Paths may be absolute or relative to the working directory.
 
 ```sh
-kgd harvest SHEET && kgd index
+kgd harvest SHEET
 ```
 
 `kgd harvest SHEET --dry-run` prints `{"would_create": [uid]}` and writes
@@ -54,12 +54,12 @@ nothing; use it only when the owner wants to see the selection first.
 `kgd accept` on the rest under the home lock. On success it moves each draft
 into `entries/` without overwriting anything, regenerates the sheet (accepted
 rows move into their kind sections, unticked drafts stay unticked) and prints
-the receipt `{"created": [uid], "understanding_set": [{"uid", "value"}]}`. Then
-`kgd index` makes the new records searchable; every knowledge write ends with
-it. Its report includes `embedded`, `unembedded`, `truncated` and
-`embedding_error`. If `embedding_error` says `install kgdistiller[retrieval] or
-set embedding to null`, the harvest and
-the lexical index are committed and only the vectors are missing: report that
+the receipt `{"created": [uid], "understanding_set": [{"uid", "value"}],
+"index": {...}}`: `kgd accept` itself indexes the record files and embeds the
+records it created, and `index` is that run's report, with `embedded`,
+`unembedded`, `truncated` and `embedding_error`. If `embedding_error` says
+`install kgdistiller[retrieval] or set embedding to null`, the harvest and the
+lexical index are committed and only the vectors are missing: report that
 message to the owner and do not edit `config.json`.
 
 ## Link pending uses, only when the lookup found them
@@ -70,8 +70,9 @@ definition (a homonym stays pending; `kgd get UID --source-lines 5` only when
 the gloss leaves it open), edit each kept value in place into a link that
 keeps the source's wording, `"[[id|wording]]"` within the base or
 `"[[base:id|wording]]"` across bases, with an editing tool that refuses stale
-reads, then run in one command `kgd check --base B && kgd index` for every
-base you edited, with `kgd sheet SOURCE` for every other source whose records
+reads, then run in one command `kgd check --base B && kgd index --no-embed` for
+every base you edited (an edited record keeps its vector until the owner
+re-embeds), with `kgd sheet SOURCE` for every other source whose records
 you edited and that has a sheet. Otherwise skip this step.
 
 ## On refusal

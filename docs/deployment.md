@@ -221,6 +221,9 @@ up-to-date index runs in well under a second. The report adds `reused`
 leading part and listed rather than cut silently) and `embedding_error`
 (`null`, or why the embedding phase failed). `--no-embed` skips the
 embedding phase and leaves changed rows unembedded until the next run.
+`kgd accept` and `kgd harvest` run the index themselves and embed only the
+records they create; an edited record is re-embedded only by a plain
+`kgd index` the owner runs.
 `--rebuild` re-derives every row in place in one transaction and re-uses the
 existing vectors by text, so it loads no model. If `embedding` is set but the
 `retrieval` extra is missing, `kgd index` commits the lexical phase, reports

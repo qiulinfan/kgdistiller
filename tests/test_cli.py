@@ -249,13 +249,15 @@ class EndToEndTest(unittest.TestCase):
         drafts = (".knowledge/drafts/measure-space.md", ".knowledge/drafts/space-implies-measure.md")
         self.assertEqual(output(kgdistiller("accept", *drafts, "--dry-run", cwd=root)),
                          {"would_create": ["kb:measure-space", "kb:space-implies-measure"]})
-        self.assertEqual(output(kgdistiller("accept", *drafts, cwd=root)),
-                         {"created": ["kb:measure-space", "kb:space-implies-measure"], "understanding_set": []})
+        accepted = output(kgdistiller("accept", *drafts, cwd=root))
+        indexed = accepted.pop("index")
+        self.assertEqual((indexed["created"], indexed["bases"]["kb"]["parsed"], indexed["unembedded"]), (True, 3, 0))
+        self.assertEqual(accepted, {"created": ["kb:measure-space", "kb:space-implies-measure"], "understanding_set": []})
         self.assertFalse((root / ".knowledge/drafts/measure-space.md").exists())
         self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": []})
 
         report = output(kgdistiller("index", "--no-embed", cwd=root))
-        self.assertEqual((report["created"], report["bases"]["kb"]["parsed"], report["unembedded"]), (True, 3, 0))
+        self.assertEqual((report["created"], report["bases"]["kb"]["parsed"], report["unembedded"]), (False, 0, 0))
         self.assertEqual(output(kgdistiller("index", cwd=root))["bases"]["kb"]["parsed"], 0)
         self.assertEqual(output(kgdistiller("index", "--rebuild", cwd=root))["bases"]["kb"]["parsed"], 3)
 

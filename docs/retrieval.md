@@ -229,6 +229,27 @@ the restore took 115 s and reproduced every `record`, `link`, `name`, `fts` and
 embedded database took 0.26 s and re-used all 535 vectors without loading the
 model; a no-op `kgd index` took 0.07 s.
 
+## When records are embedded
+
+A new record is embedded when it is admitted: `kgd accept` and `kgd harvest`
+end with an index run whose embedding phase covers only the records they
+created. A record edited after admission, by an agent or by hand, is
+re-embedded only when the owner asks, with a plain `kgd index`; Skills and the
+Obsidian plugin refresh the keyword index after edits with
+`kgd index --no-embed` and never re-embed on their own.
+
+Whether a re-embed has work needs no snapshot or hash. Each row keeps the
+unified text its vector was computed from, and the lexical phase sets `vec`
+to NULL only when that text changes (step 7), so `unembedded` counts exactly
+the records whose embedding input changed. Touching a file, or changing a
+field the unified text leaves out such as `understanding` or `lines`, leaves
+the vector current; renaming a record that others require changes their text
+too, since it carries the required labels. The Obsidian plugin's Re-embed
+button is solid with that count while it is above 0 or the model changed, and
+grey otherwise. Measured on 2026-10-15 with `BAAI/bge-m3` on Apple silicon:
+`kgd accept` of one draft takes about 5 s more than before, nearly all of it
+loading the model, and encoding one record in a warm process takes 0.09 s.
+
 ## Reads and lag
 
 `search`, `resolve`, `get`, `neighbors`, `browse`, `pack` and the MCP server
@@ -251,8 +272,9 @@ carries:
   `meta.embedding`; the stored vectors belong to the previous model, and the
   dense lane keeps using it until `kgd index` re-embeds.
 
-When `changed_files` is above 0, `unembedded` is above 0 or
-`embedding_changed` is true, run `kgd index` and repeat the read.
+When `changed_files` is above 0, run `kgd index --no-embed` and repeat the
+read. `unembedded` and `embedding_changed` weaken only the dense lane, and
+re-embedding them is the owner's call (see "When records are embedded").
 
 ## Filters
 

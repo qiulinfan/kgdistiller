@@ -113,7 +113,7 @@ class MCPTest(unittest.TestCase):
         result = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})["result"]
         self.assertEqual({"tools": {"listChanged": False}}, result["capabilities"])
         self.assertIn("Read-only", result["instructions"])
-        self.assertIn("run `kgd index`", result["instructions"])
+        self.assertIn("run `kgd index --no-embed`", result["instructions"])
         self.assertEqual({}, server.handle({"jsonrpc": "2.0", "id": 2, "method": "ping"})["result"])
 
     def test_inputs_are_bounded_and_unknown_arguments_rejected(self) -> None:

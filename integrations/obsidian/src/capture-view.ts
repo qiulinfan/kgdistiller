@@ -3,7 +3,7 @@
  * draft waiting for the owner. Capture never accepts: it writes a draft, which
  * appears here in full as `kg_drafts` reads it from the file, with each value's
  * target and what `kgd accept` would refuse. Accept admits the draft with the
- * drafts it links (`kgd accept`, then `kgd index --no-embed`); Open draft
+ * drafts it links (`kgd accept`, which indexes and embeds them); Open draft
  * opens the file beside the source for editing; Discard deletes it. The view
  * lists the drafts again whenever a draft file of this vault changes, so an
  * edit is checked as soon as it is saved. Record ids and uids are never shown.
@@ -14,7 +14,8 @@ import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, setIcon,
 import type { Selection } from "./agent-pane";
 import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
 import { acceptanceGroup, groupProblems, valuesByRole, valueText, type Draft, type DraftsResult } from "./drafts";
-import type { KgdServer } from "./kgd";
+import { INDEX_TIMEOUT_MS, type KgdServer } from "./kgd";
+import type { Indexer } from "./indexing";
 import type { ModelClient } from "./model";
 import { openInBase } from "./open";
 import { firstLine } from "./records";
@@ -34,6 +35,7 @@ export interface CaptureHost {
   vaultRoot(): string | undefined;
   /** A capture found the item borrowed: show where it comes from in the lookup sidebar. */
   borrowed(selection: Selection): void;
+  indexer: Indexer;
 }
 
 /** One capture: drafting until `result` or `error` arrives; a new draft leaves the list for the draft itself. */
@@ -312,7 +314,8 @@ export class KgdistillerCaptureView extends ItemView {
     }
     const actions = card.createDiv({ cls: "kgd-lookup-actions" });
     const busy = group.some((member) => this.busy.has(member.uid));
-    const accept = actions.createEl("button", { cls: "mod-cta", text: group.length > 1 ? `Accept with ${group.length - 1} draft${group.length > 2 ? "s" : ""}` : "Accept" });
+    const acceptText = busy ? "Accepting and embedding…" : group.length > 1 ? `Accept with ${group.length - 1} draft${group.length > 2 ? "s" : ""}` : "Accept";
+    const accept = actions.createEl("button", { cls: "mod-cta", text: acceptText });
     accept.disabled = busy || problems.length > 0;
     accept.addEventListener("click", () => void this.acceptGroup(group));
     const edit = actions.createEl("button", { text: "Open draft" });
@@ -322,20 +325,22 @@ export class KgdistillerCaptureView extends ItemView {
     discard.addEventListener("click", () => new DiscardModal(this.app, draft, () => void this.discardDraft(draft)).open());
   }
 
-  /** Accept a draft with the drafts it links, then index them without embeddings. */
+  /** Accept a draft with the drafts it links; `kgd accept` indexes them and embeds the records it creates. */
   private async acceptGroup(group: Draft[]): Promise<void> {
     for (const member of group) this.busy.add(member.uid);
     this.renderDrafts();
     const started = performance.now();
     try {
-      const accepted = await this.host.kgd.command(["accept", ...group.map((member) => member.path)]);
+      const accepted = await this.host.kgd.command(["accept", ...group.map((member) => member.path)], INDEX_TIMEOUT_MS);
       const refused = (accepted.report.refused as Array<{ message?: string }> | undefined) ?? [];
       if (accepted.failed || refused.length) {
         throw new Error(refused.map((item) => item.message).filter(Boolean).join("; ") || "kgd accept refused the drafts");
       }
-      const indexed = await this.host.kgd.command(["index", "--no-embed"]);
+      const indexed = accepted.report.index as { embedding_error?: string | null } | undefined;
+      this.host.indexer.observeReport(indexed);
       const labels = group.map((member) => member.label ?? member.id).join(", ");
-      new Notice(`kgdistiller accepted ${labels} in ${seconds(performance.now() - started)}${indexed.failed ? "; kgd index reported problems" : ""}.`);
+      const unembedded = indexed?.embedding_error ? `; not embedded: ${indexed.embedding_error}` : "";
+      new Notice(`kgdistiller accepted ${labels} in ${seconds(performance.now() - started)}${unembedded}.`);
       for (const member of group) {
         this.notes.delete(member.uid);
         this.expanded.delete(member.uid);
