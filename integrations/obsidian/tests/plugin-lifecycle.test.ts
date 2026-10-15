@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const controls = vi.hoisted(() => ({
   headings: [] as string[], stored: null as Record<string, unknown> | null,
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
-  lookup: vi.fn(), capture: vi.fn(), showModels: vi.fn(), listModels: vi.fn(), probeLevels: vi.fn(), post: vi.fn(),
+  lookup: vi.fn(), capture: vi.fn(), showModels: vi.fn(), listModels: vi.fn(), post: vi.fn(),
   drafted: vi.fn(), relist: vi.fn(), sourcesFor: vi.fn(),
   ribbons: [] as Array<{ icon: string; title: string }>,
   domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
@@ -99,7 +99,7 @@ vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
   dispose(): void { controls.dispose(); }
 } }));
 vi.mock("../src/providers", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/providers")>(), listModels: controls.listModels, probeLevels: controls.probeLevels,
+  ...await importOriginal<typeof import("../src/providers")>(), listModels: controls.listModels,
 }));
 // The model's requests reach controls.post instead of the network.
 vi.mock("../src/api", async (importOriginal) => ({
@@ -185,8 +185,6 @@ beforeEach(() => {
   controls.rescan.mockResolvedValue({ state: "enabled" });
   controls.listModels.mockReset();
   controls.listModels.mockResolvedValue([]);
-  controls.probeLevels.mockReset();
-  controls.probeLevels.mockResolvedValue({ answers: [], refusal: "" });
   controls.post.mockReset();
   controls.post.mockResolvedValue({ choices: [{ message: { content: "ok" } }] });
 });
@@ -318,20 +316,18 @@ describe("stored settings", () => {
   it("defaults to hidden indexing off until kgd obsidian install turns it on, and lookups and the agent off", () => {
     expect(DEFAULT_SETTINGS).toEqual({
       hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", providers: [], provider: "", model: "",
-      reasoning: "", reasoningLevels: [], exaKey: "",
+      reasoning: "", exaKey: "",
     });
   });
   it("replaces wrongly typed stored values with defaults and reports only those", async () => {
-    const provider = { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "deepseek-key" };
-    const levels = { provider: "deepseek", model: "deepseek-flash", levels: ["none", "low"] };
+    const provider = { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "deepseek-key" };
     controls.stored = { hiddenKnowledgeEnabled: true, kgdCommand: 7, model: false, reasoning: "turbo",
-      providers: [provider, { ...provider, format: "x" }], reasoningLevels: [levels, { ...levels, levels: ["turbo"] }], unknown: true };
+      providers: [provider, { ...provider, format: "x" }], unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.settings).toEqual({
       hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", providers: [provider], provider: "", model: "",
-      reasoning: "", reasoningLevels: [levels], exaKey: "",
+      reasoning: "", exaKey: "",
     });
-    // Detected levels that are not valid are detected again, so they go unreported.
     expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: kgdCommand, model, reasoning, providers."));
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(() => showSettings(plugin)).not.toThrow();
@@ -356,7 +352,7 @@ describe("hidden knowledge settings", () => {
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
     expect(controls.saveData).toHaveBeenCalledWith({
       hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", providers: [], provider: "", model: "",
-      reasoning: "", reasoningLevels: [], exaKey: "",
+      reasoning: "", exaKey: "",
     });
     expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();
@@ -443,7 +439,7 @@ describe("the agent", () => {
     await last("Service").dropdownChange!("deepseek");
     expect(last("Name").textValue).toBe("deepseek");
     await redraw(buttonOf(last(""), "Add"));
-    expect(plugin.settings.providers).toEqual([{ name: "work", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }]);
+    expect(plugin.settings.providers).toEqual([{ name: "work", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" }]);
     expect(names()).toEqual(expect.arrayContaining(["Provider", "Service", "Name", "API key", "Models"]));
     expect(names()).not.toContain("Base URL");
     expect(last("Service").description).toBe("https://api.deepseek.com, with the thinking switch.");
@@ -491,7 +487,7 @@ describe("the agent", () => {
   it("tests a provider's connection from its settings and shows the result", async () => {
     controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }] };
     const plugin = pluginFixture(); await plugin.onload();
-    const report = "Connected: deepseek-flash accepts reasoning none, low. At reasoning none it answered in 0.9 s with the tool call the agent needs.";
+    const report = "Connected: deepseek-flash answered at reasoning none in 0.9 s with the tool call the agent needs.";
     const test = vi.spyOn(plugin, "testProvider").mockResolvedValue(report);
     showSettings(plugin);
     await button(last("Connection"), "Test");
@@ -499,57 +495,43 @@ describe("the agent", () => {
     expect(last("Connection").description).toBe(report);
   });
 
-  it("tests a model at each reasoning level and stores the levels it accepts for the sidebar", async () => {
-    controls.stored = { providers: [{ name: "glm", kind: "zhipu", baseUrl: "", format: "chat-completions", apiKey: "" }],
-      reasoningLevels: [{ provider: "glm", model: "glm-4.5-flash", levels: ["none"] }] };
-    controls.listModels.mockResolvedValue(["glm-5.3-flash"]);
-    controls.probeLevels.mockResolvedValueOnce({ answers: [{ level: "low", seconds: 1.2, tool: true }, { level: "max", seconds: 3, tool: true }], refusal: "" });
+  it("tests a provider with one request at its lowest documented level", async () => {
+    controls.stored = { providers: [{ name: "local", kind: "custom", baseUrl: "http://localhost:8080/v1", format: "chat-completions", levels: ["low", "high"], apiKey: "" }] };
+    controls.listModels.mockResolvedValue(["qwen3"]);
+    controls.post.mockResolvedValue({ choices: [{ message: { content: null, tool_calls: [{ id: "1", type: "function", function: { name: "ok", arguments: "{}" } }] } }] });
     const plugin = pluginFixture(); await plugin.onload();
-    await expect(plugin.testProvider(plugin.settings.providers[0]!)).resolves.toBe(
-      "Connected: glm-5.3-flash accepts reasoning low, max. At reasoning low it answered in 1.2 s with the tool call the agent needs.");
-    // Testing a provider detects its levels again, so those of its other models are forgotten.
-    expect(plugin.settings.reasoningLevels).toEqual([{ provider: "glm", model: "glm-5.3-flash", levels: ["low", "max"] }]);
-    expect(controls.showModels).toHaveBeenCalled();
-    controls.probeLevels.mockRejectedValueOnce(new Error("The model service refused the request and 2 retries (HTTP 429): 余额不足或无可用资源包,请充值。"));
-    await expect(plugin.testProvider(plugin.settings.providers[0]!)).resolves.toBe(
-      "glm-5.3-flash did not answer: The model service refused the request and 2 retries (HTTP 429): 余额不足或无可用资源包,请充值。");
+    await expect(plugin.testProvider(plugin.settings.providers[0]!)).resolves.toMatch(
+      /^Connected: qwen3 answered at reasoning low in \d+\.\d s with the tool call the agent needs\.$/);
+    expect(controls.post).toHaveBeenCalledOnce();
+    expect(controls.post.mock.calls[0]![2]).toMatchObject({ model: "qwen3", reasoning_effort: "low" });
   });
 
-  it("detects the reasoning levels of the model in use once and sends each job's level moved to one the model accepts", async () => {
-    controls.stored = { providers: [{ name: "glm", kind: "zhipu", baseUrl: "", format: "chat-completions", apiKey: "" }],
-      provider: "glm", model: "glm-5.3-flash" };
-    controls.probeLevels.mockResolvedValue({ answers: [{ level: "low", seconds: 1, tool: true }, { level: "high", seconds: 2, tool: true }], refusal: "" });
+  it("lists the provider's documented levels at once and sends each job's level moved to one of them", async () => {
+    controls.stored = { providers: [{ name: "ds", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }], provider: "ds", model: "deepseek-flash" };
     const plugin = pluginFixture(); await plugin.onload();
-    await expect(plugin.reasoningChoices()).resolves.toEqual({ chosen: "", levels: ["low", "high"] });
+    expect(plugin.reasoningChoices()).toEqual({ chosen: "", levels: ["none", "low", "high", "max"] });
+    await plugin.model.complete({ messages: [], reasoning_effort: "medium" });
+    expect(controls.post.mock.calls.at(-1)![2]).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "high" });
+    await plugin.chooseReasoning("max");
     await plugin.model.complete({ messages: [], reasoning_effort: "none" });
-    expect(controls.post.mock.calls.at(-1)![2]).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "low" });
-    expect(controls.probeLevels).toHaveBeenCalledOnce();
-    expect(controls.saveData).toHaveBeenLastCalledWith(expect.objectContaining({
-      reasoningLevels: [{ provider: "glm", model: "glm-5.3-flash", levels: ["low", "high"] }] }));
-    await plugin.chooseReasoning("high");
-    await plugin.model.complete({ messages: [], reasoning_effort: "none" });
-    expect(controls.post.mock.calls.at(-1)![2]).toMatchObject({ reasoning_effort: "high" });
-    // Another model may not accept the level, so it starts at each job's own.
-    await plugin.chooseModel({ provider: "glm", model: "glm-4.5-flash" });
+    expect(controls.post.mock.calls.at(-1)![2]).toMatchObject({ reasoning_effort: "max" });
+    // Another model of the same service keeps the level; a provider that does not document it goes back to auto.
+    await plugin.chooseModel({ provider: "ds", model: "deepseek-v4-pro" });
+    expect(plugin.settings.reasoning).toBe("max");
+    plugin.settings.providers.push({ name: "local", kind: "custom", baseUrl: "http://localhost:8080/v1", format: "chat-completions", levels: ["low"], apiKey: "" });
+    await plugin.chooseModel({ provider: "local", model: "qwen3" });
     expect(plugin.settings.reasoning).toBe("");
+    expect(plugin.reasoningChoices()).toEqual({ chosen: "", levels: ["low"] });
   });
 
-  it("keeps a failed detection for the session, until the settings change or a refresh", async () => {
-    controls.stored = { providers: [{ name: "glm", kind: "zhipu", baseUrl: "", format: "chat-completions", apiKey: "" }],
-      provider: "glm", model: "glm-5.3-flash" };
-    const exhausted = "The model service refused the request and 2 retries (HTTP 429): 余额不足或无可用资源包,请充值。";
-    controls.probeLevels.mockRejectedValue(new Error(exhausted));
-    const plugin = pluginFixture(); await plugin.onload();
-    await expect(plugin.reasoningChoices()).resolves.toEqual({ chosen: "", error: exhausted });
-    // Without the levels, a job's own level goes as it is.
-    await plugin.model.complete({ messages: [], reasoning_effort: "none" });
-    expect(controls.post.mock.calls.at(-1)![2]).toMatchObject({ thinking: { type: "disabled" } });
-    expect(controls.probeLevels).toHaveBeenCalledOnce();
-    plugin.agentSettingsChanged();
-    await plugin.reasoningChoices();
-    expect(controls.probeLevels).toHaveBeenCalledTimes(2);
-    await plugin.reasoningChoices(true);
-    expect(controls.probeLevels).toHaveBeenCalledTimes(3);
+  it("takes another service's reasoning levels from its settings, refusing unknown ones", async () => {
+    controls.stored = { providers: [{ name: "local", kind: "custom", baseUrl: "http://localhost:8080/v1", format: "chat-completions", levels: [], apiKey: "" }] };
+    const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
+    await last("Reasoning levels").textChange!("high, none turbo");
+    expect(last("Reasoning levels").description).toContain("Not a level: turbo");
+    expect(plugin.settings.providers[0]!.levels).toEqual([]);
+    await last("Reasoning levels").textChange!("high, none low");
+    expect(plugin.settings.providers[0]!.levels).toEqual(["none", "low", "high"]);
   });
 
   it("says what the connection test could not do before sending a request", async () => {
@@ -567,9 +549,8 @@ describe("the agent", () => {
       { name: "openai", kind: "openai", baseUrl: "", format: "chat-completions", apiKey: "" },
     ], provider: "deepseek", model: "deepseek-flash" };
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
-    plugin.settings.reasoningLevels = [{ provider: "deepseek", model: "deepseek-flash", levels: ["none"] }];
     await last("Name").textChange!("ds");
-    expect(plugin.settings).toMatchObject({ provider: "ds", model: "deepseek-flash", reasoningLevels: [] });
+    expect(plugin.settings).toMatchObject({ provider: "ds", model: "deepseek-flash" });
     await last("Name").textChange!("openai");
     expect(plugin.settings.providers[0]!.name).toBe("ds");
     expect(last("Name").description).toContain("a name that no other provider has");
@@ -606,7 +587,7 @@ describe("the agent", () => {
     await plugin.captureSelection();
     expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("add a model provider in the kgdistiller settings"));
     plugin.settings.kgdCommand = "/bin/kgd";
-    plugin.settings.providers = [{ name: "test", kind: "custom", baseUrl: "https://example.org/v1", format: "chat-completions", apiKey: "" }];
+    plugin.settings.providers = [{ name: "test", kind: "custom", baseUrl: "https://example.org/v1", format: "chat-completions", levels: [], apiKey: "" }];
     Object.assign(plugin.settings, { provider: "test", model: "test-model" });
     domSelection.text = "masked autoencoder";
     await plugin.captureSelection();

@@ -4,6 +4,11 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Add the **Zhipu GLM Coding Plan** service for the Obsidian agent, at
+  `https://open.bigmodel.cn/api/coding/paas/v4` with the thinking switch. A
+  GLM Coding Plan's quota is spent only through that address: with the same
+  key, Zhipu's general address answered 429 with code 1113 (no balance) while
+  the plan's address answered every request.
 - Capture in the Obsidian plugin only drafts; the owner accepts. The agent
   writes a draft and stops, and the new **kgdistiller Capture** view, opened
   below the lookup sidebar, shows the captures being drafted and every draft
@@ -22,15 +27,13 @@ All notable changes are documented here.
   linking it and exactly what `kgd accept` would refuse, writing nothing and
   taking no lock. `kgd accept` and `kgd drafts` share one validation.
 - Choose the Obsidian agent's reasoning level in the lookup sidebar, beside
-  the model, from the levels that model accepts. The plugin detects them by
-  asking the model once at each level a request can name (`none` through
-  `max`) with the agent's kind of request, keeps those the service did not
-  refuse with HTTP 400 or 422, and stores them with the vault's settings.
-  **auto** keeps each job's own level, moved to the next one up that the
-  model accepts, so a model that refuses `none`, as GLM-5.3 Flash refused
-  `reasoning_effort: none` with HTTP 400, is asked at a level it accepts; a
-  chosen level goes with every request, and choosing another model returns
-  to auto. **Test** now lists the levels a model accepts.
+  the model, from the levels the provider's service documents. Each service
+  kind declares the levels its vendor documents as distinct (DeepSeek and
+  Zhipu: none, low, high, max), and Ollama, LM Studio and another service list
+  theirs in settings, so the list appears at once and no request is sent to
+  find it. **auto** keeps each job's own level, moved to the next one up that
+  the service documents; a chosen level goes with every request. **Test**
+  sends one request at the level judgments use.
 - Zhipu providers use the thinking switch that DeepSeek providers use:
   reasoning `none` now sends `thinking: disabled` instead of
   `reasoning_effort: none`, which GLM-4.5 Flash ignored and kept thinking;
@@ -44,18 +47,18 @@ All notable changes are documented here.
   an exhausted balance, such as Zhipu's code 1113.
 - Configure several model providers for the Obsidian agent and switch models
   in the sidebar. A provider is a service, a name and an API key in
-  SecretStorage: fourteen hosted services (DeepSeek, OpenAI, OpenRouter,
-  SiliconFlow, Moonshot, Zhipu, Qwen, Doubao, Groq, Mistral, xAI, MiniMax,
-  StepFun, Together AI) give their base URL and request format, Ollama and LM
-  Studio run locally at their default address unless another is given, and
-  another OpenAI-compatible service takes its own base URL and format. Its
-  models are detected at `GET <base URL>/models`, and **Test** sends one
-  request of the kind the agent sends, to check the connection. The **Model
-  providers** settings show one provider at a time, picked from a list, and
-  **Add** asks for the service and the name first. The lookup
-  sidebar lists every provider's models grouped by provider and uses the one
-  chosen there. The single **Model API endpoint**, **Model**, **Model API
-  format** and **Model API key** settings are removed without a migration;
+  SecretStorage: fifteen hosted services (DeepSeek, OpenAI, OpenRouter,
+  SiliconFlow, Moonshot, Zhipu, Zhipu GLM Coding Plan, Qwen, Doubao, Groq,
+  Mistral, xAI, MiniMax, StepFun, Together AI) give their base URL and request
+  format, Ollama and LM Studio run locally at their default address unless
+  another is given, and another OpenAI-compatible service takes its own base
+  URL and format. Its models are detected at `GET <base URL>/models`, and
+  **Test** sends one request of the kind the agent sends, to check the
+  connection. The **Model providers** settings show one provider at a time,
+  picked from a list, and **Add** asks for the service and the name first. The
+  lookup sidebar lists every provider's models grouped by provider and uses
+  the one chosen there. The single **Model API endpoint**, **Model**, **Model
+  API format** and **Model API key** settings are removed without a migration;
   add the provider again.
 - The Obsidian agent asks a busy model service again: a model request
   answered with HTTP 503 or 429 is retried after 1 s and then 2 s, and when

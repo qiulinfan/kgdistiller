@@ -2,11 +2,10 @@
 import { ApiError, apiUrl, type PostJson } from "./api";
 
 /**
- * The reasoning levels a request can name, from none to the most, as
- * DeepSeek lists them; OpenAI and Zhipu accept some of them. Which ones a
- * model accepts is detected by asking it (providers.ts).
+ * The reasoning levels a request can name, from none to the most. Each
+ * service kind declares the ones its vendor documents (providers.ts).
  */
-export const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"] as const;
+export const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 /** A level for every request, or empty for each request's own. */
 export type ReasoningChoice = ReasoningLevel | "";
@@ -14,12 +13,12 @@ export type ReasoningChoice = ReasoningLevel | "";
 export const isReasoningLevel = (value: unknown): value is ReasoningLevel => REASONING_LEVELS.includes(value as ReasoningLevel);
 
 /**
- * The level a request goes at when the model accepts `levels`: the wanted one,
- * else the next one up, else the highest; none at all when the model accepts
- * no level, and the wanted one while the levels are not known.
+ * The level a request goes at when the service documents `levels`: the wanted
+ * one, else the next one up, else the highest; none at all when it documents
+ * no level.
  */
-export function sentLevel(wanted: ReasoningLevel | undefined, levels: readonly ReasoningLevel[] | undefined): ReasoningLevel | undefined {
-  if (!wanted || !levels || levels.includes(wanted)) return wanted;
+export function sentLevel(wanted: ReasoningLevel | undefined, levels: readonly ReasoningLevel[]): ReasoningLevel | undefined {
+  if (!wanted || levels.includes(wanted)) return wanted;
   const rank = REASONING_LEVELS.indexOf(wanted);
   return levels.find((level) => REASONING_LEVELS.indexOf(level) > rank) ?? levels.at(-1);
 }
@@ -32,8 +31,8 @@ export interface ModelSettings {
   protocol: "chat-completions" | "deepseek";
   /** The owner's level for every request; absent or empty leaves each request its own. */
   reasoning?: ReasoningChoice;
-  /** The levels the model accepts, once detected; a request's own level is moved to one of them. */
-  levels?: () => Promise<readonly ReasoningLevel[] | undefined>;
+  /** The levels the service documents; a request's own level is moved to one of them. */
+  levels: readonly ReasoningLevel[];
 }
 
 export const MODEL_TIMEOUT_MS = 120 * 1000;
@@ -118,7 +117,7 @@ export class ModelClient {
     if (!this.configured()) throw new Error("Add a model provider in the kgdistiller settings and choose a model in the sidebar.");
     apiUrl(settings.endpoint);
     const { reasoning_effort: wanted, ...chat } = request;
-    const effort = settings.reasoning || sentLevel(wanted, await settings.levels?.());
+    const effort = settings.reasoning || sentLevel(wanted, settings.levels);
     const body: Record<string, unknown> = { ...chat, model: settings.model.trim(), stream: false };
     if (effort && settings.protocol === "deepseek") {
       body.thinking = { type: effort !== "none" ? "enabled" : "disabled" };

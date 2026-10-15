@@ -159,7 +159,7 @@ it("answers through the internal harness, direct model API and Exa's MCP search"
     }
   });
   const api = client();
-  const model = new ModelClient(() => ({ endpoint: `${url}/chat/completions`, apiKey: "model-test-key", model: "test", protocol: "chat-completions" }), api.post);
+  const model = new ModelClient(() => ({ endpoint: `${url}/chat/completions`, apiKey: "model-test-key", model: "test", protocol: "chat-completions", levels: ["none"] }), api.post);
   const kgd: SearchKgd = { call: async <T>(tool: string): Promise<T> => (tool === "kg_search" ? { results: [] } : { terms: [] }) as T };
   const answer = await searchKnowledge((request) => model.complete(request), kgd,
     // The local server stands in for Exa's MCP server.

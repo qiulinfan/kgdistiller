@@ -3,13 +3,13 @@
  * a known kind, with its key in Obsidian's SecretStorage. A kind gives the
  * base URL and request format of a hosted service; a local server or another
  * OpenAI-compatible service takes its own. A provider's models are detected
- * at `GET <base URL>/models`, and the sidebar lists them grouped by provider;
- * the reasoning levels a model accepts are detected by asking it at each.
+ * at `GET <base URL>/models`, and the sidebar lists them grouped by provider.
+ * A kind also declares the reasoning levels its vendor documents; another
+ * OpenAI-compatible service takes the levels its provider lists.
  */
-import { ApiError, type GetJson } from "./api";
+import type { GetJson } from "./api";
 import {
   isReasoningLevel,
-  REASONING_LEVELS,
   sentLevel,
   type ChatReply,
   type ChatRequest,
@@ -31,27 +31,59 @@ export interface ProviderKind {
   ownUrl?: boolean;
   /** The request format is the provider's own. */
   ownFormat?: boolean;
+  /** The reasoning levels are the provider's own. */
+  ownLevels?: boolean;
+  /**
+   * The reasoning levels the vendor documents as distinct, from none to the
+   * most; empty when a request cannot set one. Names a service maps onto
+   * another level are left out.
+   */
+  levels: readonly ReasoningLevel[];
 }
 
-/** The services a provider can be. Each hosted URL answered `/models` and `/chat/completions` (2026-10-15). */
+/**
+ * The services a provider can be. Each hosted URL answered `/models` and
+ * `/chat/completions` (2026-10-15). `levels` are the distinct levels each
+ * vendor's documentation gives for what a request here sends (`reasoning_effort`,
+ * with `thinking` for the thinking switch), read 2026-10-15. A service whose
+ * models each take their own levels, or that controls thinking only through
+ * another parameter, declares none, and a request leaves reasoning to it.
+ */
 export const PROVIDER_KINDS: readonly ProviderKind[] = [
-  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", format: "deepseek" },
-  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", format: "chat-completions" },
-  { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", format: "chat-completions" },
-  { id: "siliconflow", label: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", format: "chat-completions" },
-  { id: "moonshot", label: "Moonshot (Kimi)", baseUrl: "https://api.moonshot.cn/v1", format: "chat-completions" },
-  { id: "zhipu", label: "Zhipu (GLM)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", format: "deepseek" },
-  { id: "qwen", label: "Alibaba Qwen (DashScope)", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", format: "chat-completions" },
-  { id: "doubao", label: "Volcengine Doubao (Ark)", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", format: "chat-completions" },
-  { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", format: "chat-completions" },
-  { id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", format: "chat-completions" },
-  { id: "xai", label: "xAI", baseUrl: "https://api.x.ai/v1", format: "chat-completions" },
-  { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimax.chat/v1", format: "chat-completions" },
-  { id: "stepfun", label: "StepFun", baseUrl: "https://api.stepfun.com/v1", format: "chat-completions" },
-  { id: "together", label: "Together AI", baseUrl: "https://api.together.xyz/v1", format: "chat-completions" },
-  { id: "ollama", label: "Ollama (local)", baseUrl: "http://localhost:11434/v1", format: "chat-completions", ownUrl: true },
-  { id: "lm-studio", label: "LM Studio (local)", baseUrl: "http://localhost:1234/v1", format: "chat-completions", ownUrl: true },
-  { id: "custom", label: "Other OpenAI-compatible service", format: "chat-completions", ownUrl: true, ownFormat: true },
+  // api-docs.deepseek.com/guides/thinking_mode: minimal and low run at low, medium to xhigh at high, max at max.
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", format: "deepseek", levels: ["none", "low", "high", "max"] },
+  // OpenAI's ReasoningEffort; not every reasoning model takes every value.
+  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", format: "chat-completions", levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
+  // Takes a reasoning object, not reasoning_effort.
+  { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", format: "chat-completions", levels: [] },
+  // Thinking is enable_thinking; reasoning_effort only for a few models.
+  { id: "siliconflow", label: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", format: "chat-completions", levels: [] },
+  // Each Kimi model has its own control.
+  { id: "moonshot", label: "Moonshot (Kimi)", baseUrl: "https://api.moonshot.cn/v1", format: "chat-completions", levels: [] },
+  // docs.bigmodel.cn: GLM-5.2 runs at none, high or max; GLM-5.3 always thinks, at low, high or max.
+  { id: "zhipu", label: "Zhipu (GLM)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", format: "deepseek", levels: ["none", "low", "high", "max"] },
+  // A GLM Coding Plan's quota is spent only through this address; the general one bills the account balance.
+  { id: "zhipu-coding", label: "Zhipu GLM Coding Plan", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4", format: "deepseek", levels: ["none", "low", "high", "max"] },
+  // Thinking is enable_thinking.
+  { id: "qwen", label: "Alibaba Qwen (DashScope)", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", format: "chat-completions", levels: [] },
+  // docs.volcengine.com: Doubao turns thinking off at none, and runs at low, medium or high.
+  { id: "doubao", label: "Volcengine Doubao (Ark)", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", format: "chat-completions", levels: ["none", "low", "medium", "high"] },
+  // console.groq.com/docs/reasoning: Qwen takes none to high, GPT-OSS low to high.
+  { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", format: "chat-completions", levels: ["none", "low", "medium", "high"] },
+  // docs.mistral.ai: none or high.
+  { id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", format: "chat-completions", levels: ["none", "high"] },
+  // docs.x.ai: reasoning cannot be turned off.
+  { id: "xai", label: "xAI", baseUrl: "https://api.x.ai/v1", format: "chat-completions", levels: ["low", "medium", "high", "xhigh"] },
+  // Thinking is thinking.type adaptive; reasoning_effort only for one model.
+  { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimax.chat/v1", format: "chat-completions", levels: [] },
+  // platform.stepfun.com: low, medium or high.
+  { id: "stepfun", label: "StepFun", baseUrl: "https://api.stepfun.com/v1", format: "chat-completions", levels: ["low", "medium", "high"] },
+  // Each model family has its own control.
+  { id: "together", label: "Together AI", baseUrl: "https://api.together.xyz/v1", format: "chat-completions", levels: [] },
+  // A local model's levels are its own, so the provider lists them.
+  { id: "ollama", label: "Ollama (local)", baseUrl: "http://localhost:11434/v1", format: "chat-completions", ownUrl: true, ownLevels: true, levels: [] },
+  { id: "lm-studio", label: "LM Studio (local)", baseUrl: "http://localhost:1234/v1", format: "chat-completions", ownUrl: true, ownLevels: true, levels: [] },
+  { id: "custom", label: "Other OpenAI-compatible service", format: "chat-completions", ownUrl: true, ownFormat: true, ownLevels: true, levels: [] },
 ];
 
 const CUSTOM = PROVIDER_KINDS.find((kind) => kind.id === "custom")!;
@@ -69,6 +101,8 @@ export interface Provider {
   baseUrl: string;
   /** For a kind that takes its own format: that format. Ignored otherwise. */
   format: ProviderFormat;
+  /** For a kind that takes its own levels: the reasoning levels the service documents. Ignored otherwise. */
+  levels: ReasoningLevel[];
   /** A SecretStorage identifier, never the key itself; empty for a local service without authentication. */
   apiKey: string;
 }
@@ -84,6 +118,12 @@ export function formatOf(provider: Provider): ProviderFormat {
   return kind.ownFormat ? provider.format : kind.format;
 }
 
+/** The reasoning levels a request to the provider may name: its kind's, or its own for a local or another service. */
+export function levelsOf(provider: Provider): readonly ReasoningLevel[] {
+  const kind = kindOf(provider);
+  return kind.ownLevels ? provider.levels : kind.levels;
+}
+
 /** The model the agent uses: a provider's name and one of its model ids. */
 export interface ModelChoice {
   provider: string;
@@ -93,15 +133,11 @@ export interface ModelChoice {
 /** A provider's detected models, or why they could not be listed. */
 export type Detected = { models: string[] } | { error: string };
 
-/** The reasoning levels a model accepts, or why they could not be detected. */
-export type DetectedLevels = { levels: readonly ReasoningLevel[] } | { error: string };
-
-/** The sidebar's reasoning choice: the level chosen, and what is known of the levels the model in use accepts. */
+/** The sidebar's reasoning choice: the level chosen, and the levels of the provider in use. */
 export interface ReasoningChoices {
   chosen: ReasoningChoice;
-  /** Absent while no model is chosen, or when the levels could not be detected. */
+  /** Absent while no model is chosen. */
   levels?: readonly ReasoningLevel[];
-  error?: string;
 }
 
 export interface ModelGroup {
@@ -139,16 +175,18 @@ export async function listModels(provider: Provider, apiKey: string, get: GetJso
   return modelIds(await get(modelsUrl(provider), apiKey, MODELS_TIMEOUT_MS));
 }
 
-/** The valid providers of stored settings, each name once, and whether anything else was there. */
+/** The valid providers of stored settings, each name once, and whether anything else was there. A provider without levels lists none. */
 export function storedProviders(value: unknown): { providers: Provider[]; dropped: boolean } {
   if (!Array.isArray(value)) return { providers: [], dropped: value !== undefined };
   const providers: Provider[] = [];
   for (const item of value) {
     const entry = item as Partial<Provider> | null;
+    const levels = entry?.levels ?? [];
     if (!entry || typeof entry.name !== "string" || !entry.name.trim() || !PROVIDER_KINDS.some((kind) => kind.id === entry.kind)
       || typeof entry.baseUrl !== "string" || typeof entry.apiKey !== "string"
-      || !PROVIDER_FORMATS.includes(entry.format as ProviderFormat) || providers.some((provider) => provider.name === entry.name)) continue;
-    providers.push({ name: entry.name, kind: entry.kind!, baseUrl: entry.baseUrl, format: entry.format as ProviderFormat, apiKey: entry.apiKey });
+      || !PROVIDER_FORMATS.includes(entry.format as ProviderFormat) || !Array.isArray(levels) || !levels.every(isReasoningLevel)
+      || providers.some((provider) => provider.name === entry.name)) continue;
+    providers.push({ name: entry.name, kind: entry.kind!, baseUrl: entry.baseUrl, format: entry.format as ProviderFormat, levels: [...levels], apiKey: entry.apiKey });
   }
   return { providers, dropped: providers.length !== value.length };
 }
@@ -162,87 +200,33 @@ export function newProviderName(providers: readonly Provider[], stem: string): s
   return `${stem}-${index}`;
 }
 
-/** The reasoning levels one of a provider's models accepts, as detected. */
-export interface ModelLevels {
-  provider: string;
-  model: string;
-  levels: ReasoningLevel[];
-}
-
-/** The stored detected levels that name known levels, each provider's model once; anything else is detected again. */
-export function storedLevels(value: unknown): ModelLevels[] {
-  if (!Array.isArray(value)) return [];
-  const stored: ModelLevels[] = [];
-  for (const item of value) {
-    const entry = item as Partial<ModelLevels> | null;
-    if (!entry || typeof entry.provider !== "string" || typeof entry.model !== "string" || !Array.isArray(entry.levels)
-      || !entry.levels.every(isReasoningLevel) || stored.some((other) => other.provider === entry.provider && other.model === entry.model)) continue;
-    stored.push({ provider: entry.provider, model: entry.model, levels: [...entry.levels] });
-  }
-  return stored;
-}
-
-/** Levels asked at the same time: GLM's free models refused more than four requests at once with HTTP 429 (2026-10-15). */
-const PROBES_AT_ONCE = 2;
-
 const OK_TOOL: ToolSpec = { type: "function", function: { name: "ok", description: "Report that the connection works.", parameters: { type: "object", properties: {} } } };
 
-/** A level the model accepted: how long its answer took, and whether it called the tool as the agent's jobs need. */
-export interface LevelAnswer {
-  level: ReasoningLevel;
-  seconds: number;
-  tool: boolean;
-}
-
-/** The levels a model accepted, in order, and the first refusal of one it did not. */
-export interface LevelProbe {
-  answers: LevelAnswer[];
-  refusal: string;
-}
-
 /**
- * Ask the model at each reasoning level, two at a time, with one short
- * request of the kind the agent sends: a forced tool call. A level the service
- * refuses with HTTP 400 or 422 is one the model does not accept; any other
- * failure, such as a wrong key or an exhausted balance, ends the detection.
+ * One short request of the kind the agent sends: a forced tool call at the
+ * level judgments use, the lowest the service documents. The result says
+ * whether the model answered, how fast, and whether it called the tool as the
+ * agent's jobs need.
  */
-export async function probeLevels(complete: (request: ChatRequest) => Promise<ChatReply>): Promise<LevelProbe> {
-  const answers: Array<LevelAnswer | undefined> = [];
-  let refusal = "";
-  let failure: Error | undefined;
-  let next = 0;
-  const ask = async (): Promise<void> => {
-    while (!failure && next < REASONING_LEVELS.length) {
-      const index = next++;
-      const level = REASONING_LEVELS[index]!;
-      const started = performance.now();
-      try {
-        const reply = await complete({
-          messages: [{ role: "user", content: "Call the ok tool." }],
-          tools: [OK_TOOL],
-          tool_choice: { type: "function", function: { name: "ok" } },
-          reasoning_effort: level,
-        });
-        const tool = reply.message.tool_calls?.some((call) => call.function.name === "ok") ?? false;
-        answers[index] = { level, seconds: (performance.now() - started) / 1000, tool };
-      } catch (error) {
-        if (error instanceof ApiError && (error.status === 400 || error.status === 422)) refusal ||= error.message;
-        else failure ??= error instanceof Error ? error : new Error(String(error));
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: PROBES_AT_ONCE }, ask));
-  if (failure) throw failure;
-  return { answers: answers.filter((answer): answer is LevelAnswer => answer !== undefined), refusal };
-}
-
-/** The connection test's result: the levels the model accepts, and its answer at the level that judgments use. */
-export function connectionReport(model: string, probe: LevelProbe): string {
-  const levels = probe.answers.map((answer) => answer.level);
-  const fast = probe.answers.find((answer) => answer.level === sentLevel("none", levels));
-  if (!fast) return `${model} refused the agent's kind of request at every reasoning level: ${probe.refusal}`;
-  return `Connected: ${model} accepts reasoning ${levels.join(", ")}. At reasoning ${fast.level} it answered in ${fast.seconds.toFixed(1)} s `
-    + `${fast.tool ? "with the tool call the agent needs" : "but without the tool call the agent needs"}.`;
+export async function connectionTest(complete: (request: ChatRequest) => Promise<ChatReply>, model: string,
+  levels: readonly ReasoningLevel[]): Promise<string> {
+  const level = sentLevel("none", levels);
+  const started = performance.now();
+  try {
+    const reply = await complete({
+      messages: [{ role: "user", content: "Call the ok tool." }],
+      tools: [OK_TOOL],
+      tool_choice: { type: "function", function: { name: "ok" } },
+      ...(level ? { reasoning_effort: level } : {}),
+    });
+    const seconds = ((performance.now() - started) / 1000).toFixed(1);
+    const at = level ? ` at reasoning ${level}` : "";
+    return reply.message.tool_calls?.some((call) => call.function.name === "ok")
+      ? `Connected: ${model} answered${at} in ${seconds} s with the tool call the agent needs.`
+      : `Connected: ${model} answered${at} in ${seconds} s, but without the tool call the agent needs.`;
+  } catch (error) {
+    return `${model} did not answer: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 /**

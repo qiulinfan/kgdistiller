@@ -169,22 +169,31 @@ It never imports OMP credentials or role aliases. Existing installations must
 configure the new API endpoints, actual model ID and secret references.
 
 Each job asks for its own reasoning level: none to judge a selection and
-answer a question, low to capture and find sources. Models accept different
-levels: deepseek-flash accepted all eight a request can name (`none`,
-`minimal`, `low`, `medium`, `high`, `xhigh`, `ultra`, `max`), while GLM-5.3
-Flash, which always thinks, refused every `reasoning_effort` but `low`, `high`
-and `max` with HTTP 400 (2026-10-15). So the plugin detects them, asking the
-model once at each level with one short forced tool call of the kind the
-agent sends, two at a time since GLM's free models refused more than four
-requests at once. A level the service refuses with HTTP 400 or 422 is one the
-model does not accept; any other failure, such as a wrong key or an exhausted
-balance, leaves the levels undetected for the session, and requests then go
-at their own level. The levels detected are stored with the vault's settings
-for that provider's model. Detection runs when the sidebar first shows a
-model and again with the sidebar's detect button or the provider's **Test**;
-changing the provider's service, name, base URL or key forgets them. A
-service that accepts any value, as Zhipu's GLM-4.5 Flash does, shows every
-level, although only thinking on or off may then make a difference.
+answer a question, low to capture and find sources. Services document
+different levels, and several map many names onto a few: DeepSeek runs
+`minimal` and `low` at low, `medium` to `xhigh` at high and `max` at max, with
+thinking off as the fourth. So each service kind declares the levels its
+vendor documents as distinct for what a request sends (read 2026-10-15), and
+the sidebar lists them at once, without asking the model:
+
+| Service | Levels |
+|---|---|
+| DeepSeek, Zhipu (GLM), Zhipu GLM Coding Plan | none, low, high, max |
+| OpenAI | none, minimal, low, medium, high, xhigh, max |
+| Volcengine Doubao (Ark), Groq | none, low, medium, high |
+| Mistral | none, high |
+| xAI | low, medium, high, xhigh |
+| StepFun | low, medium, high |
+| OpenRouter, SiliconFlow, Moonshot (Kimi), Alibaba Qwen, MiniMax, Together AI | none declared |
+
+A service declares none when its models each take their own levels or it
+controls thinking through another parameter (OpenRouter's `reasoning`
+object, Qwen's `enable_thinking`); a request to it carries no level and the
+service decides. Ollama, LM Studio and another OpenAI-compatible service take
+the levels their provider lists in settings. A model may still take fewer
+levels than its service documents: GLM-5.3 always thinks and refuses `none`
+at Zhipu's general address, and OpenAI's models each take some of its values;
+such a request fails with the service's own explanation.
 
 The desktop HTTP client reuses connections, limits JSON responses to 8 MiB,
 and cancels requests after 120 seconds for a model or 60 seconds for search.
@@ -360,14 +369,22 @@ and adds nothing until both are set and the name is free. A provider has:
 
 - **Service**: its kind. A hosted service gives the base URL and the request
   format, so neither is typed: DeepSeek (`https://api.deepseek.com`), OpenAI,
-  OpenRouter, SiliconFlow, Moonshot (Kimi), Zhipu (GLM), Alibaba Qwen
-  (DashScope), Volcengine Doubao (Ark), Groq, Mistral, xAI, MiniMax, StepFun
-  and Together AI, each of whose `/models` and `/chat/completions` answered on
-  2026-10-15. DeepSeek and Zhipu take the thinking switch, the others Chat
-  Completions. Ollama and LM Studio run locally and take their default address
-  unless **Base URL** gives another; **Other OpenAI-compatible service** takes
-  its own **Base URL** (the URL that `/chat/completions` and `/models` follow)
-  and **API format**. Changing the service keeps the provider's name.
+  OpenRouter, SiliconFlow, Moonshot (Kimi), Zhipu (GLM), Zhipu GLM Coding Plan
+  (`https://open.bigmodel.cn/api/coding/paas/v4`), Alibaba Qwen (DashScope),
+  Volcengine Doubao (Ark), Groq, Mistral, xAI, MiniMax, StepFun and Together
+  AI, each of whose `/models` and `/chat/completions` answered on 2026-10-15.
+  A GLM Coding Plan's quota is spent only through its own address: with the
+  same key, Zhipu (GLM)'s general address bills the account balance and
+  answered 429 with code 1113 when that was empty, while the plan's address
+  answered. DeepSeek and both Zhipu services take the thinking switch, the
+  others Chat Completions. Ollama and LM Studio run locally and take their
+  default address unless **Base URL** gives another; **Other OpenAI-compatible
+  service** takes its own **Base URL** (the URL that `/chat/completions` and
+  `/models` follow) and **API format**. Changing the service keeps the
+  provider's name.
+- **Reasoning levels**, only for Ollama, LM Studio and another service: the
+  levels the service documents as distinct, separated by commas, such as
+  `none, low, high`. Empty, requests carry no level.
 - **Name**: shown in the sidebar's model list. No two providers share a name;
   a rename the sidebar's choice used follows the provider, and **Remove**
   deletes the provider, clearing the choice when it was in use.
@@ -381,23 +398,23 @@ and adds nothing until both are set and the name is free. A provider has:
   a `models` list or a bare list. They are detected when the settings or the
   sidebar open, again with **Detect**, and after the service, base URL or key
   changes; a provider that lists none says why.
-- **Connection**: **Test** detects the models again and asks the model in use
-  there, or the first one listed, at each reasoning level. It lists the
-  levels the model accepts, which the sidebar then offers, and says in how
-  many seconds it answered at the level judgments use and whether it made the
-  tool call the agent's jobs need, so a wrong key, a busy service, an
-  exhausted balance or a model that rejects tools shows here first.
+- **Connection**: **Test** detects the models again and sends the model in
+  use there, or the first one listed, one short request of the kind the agent
+  sends: a forced tool call at the level judgments use. It says whether the
+  model answered, in how many seconds, and whether it made the tool call the
+  agent's jobs need, so a wrong key, a busy service, an exhausted balance or a
+  model that rejects the level or tools shows here first.
 
 The model the agent uses is chosen at the top of the lookup sidebar, from a
 list of every provider's detected models grouped under the provider's name.
 Beside it, the reasoning list (marked with a brain) offers **auto** and the
-levels that model accepts. Auto sends each job at its own level, moved to the
-next level up the model accepts, else to the highest it accepts; a level
-chosen there goes with every request. Choosing another model sets the list
-back to auto, since models accept different levels, and a model that accepts
-no level gets requests without one. The button beside the lists detects every provider's models and
-the chosen model's levels again. Both choices are stored with the vault's
-settings. Until a model is chosen, or while its provider is gone, the agent is
+levels the provider's service documents. Auto sends each job at its own
+level, moved to the next level up the service documents, else to the highest
+it documents; a level chosen there goes with every request. Choosing a model
+of another provider sets the list back to auto unless that service documents
+the level too, and a service that documents no level gets requests without
+one. The button beside the lists detects every provider's models again. Both
+choices are stored with the vault's settings. Until a model is chosen, or while its provider is gone, the agent is
 off and lookups show only the deterministic results.
 
 Under **Web search**:

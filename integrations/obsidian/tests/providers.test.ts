@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, type GetJson } from "../src/api";
-import { REASONING_LEVELS, type ChatReply, type ChatRequest } from "../src/model";
+import type { GetJson } from "../src/api";
+import { isReasoningLevel, type ChatReply, type ChatRequest } from "../src/model";
 import {
   baseUrlOf,
   chatUrl,
-  connectionReport,
+  connectionTest,
   formatOf,
   kindOf,
   listModels,
@@ -13,16 +13,15 @@ import {
   modelIds,
   modelsUrl,
   newProviderName,
-  probeLevels,
+  levelsOf,
   PROVIDER_KINDS,
-  storedLevels,
   storedProviders,
   type Detected,
   type Provider,
 } from "../src/providers";
 
-const deepseek: Provider = { name: "deepseek", kind: "deepseek", baseUrl: "", format: "chat-completions", apiKey: "deepseek-key" };
-const local: Provider = { name: "local", kind: "custom", baseUrl: "http://localhost:8080/v1/", format: "chat-completions", apiKey: "" };
+const deepseek: Provider = { name: "deepseek", kind: "deepseek", baseUrl: "", format: "chat-completions", levels: [], apiKey: "deepseek-key" };
+const local: Provider = { name: "local", kind: "custom", baseUrl: "http://localhost:8080/v1/", format: "chat-completions", levels: [], apiKey: "" };
 
 describe("a provider's addresses", () => {
   it("come from a hosted service's kind, whatever the provider stores", () => {
@@ -33,6 +32,9 @@ describe("a provider's addresses", () => {
     expect(chatUrl({ ...deepseek, kind: "openrouter" })).toBe("https://openrouter.ai/api/v1/chat/completions");
     // Zhipu turns thinking off as DeepSeek does: GLM-4.5 Flash ignores reasoning_effort none.
     expect(formatOf({ ...deepseek, kind: "zhipu" })).toBe("deepseek");
+    // A GLM Coding Plan is served only at its own address; the general one bills the account balance.
+    expect(chatUrl({ ...deepseek, kind: "zhipu-coding" })).toBe("https://open.bigmodel.cn/api/coding/paas/v4/chat/completions");
+    expect(formatOf({ ...deepseek, kind: "zhipu-coding" })).toBe("deepseek");
   });
 
   it("are a local server's or another service's own, with a local server's default", () => {
@@ -79,6 +81,9 @@ describe("stored providers", () => {
     expect(storedProviders([deepseek, { ...deepseek, baseUrl: "x" }, { ...local, format: "anthropic" }, { ...local, name: " " },
       { ...local, name: "other", kind: "gemini" }, { name: "old", baseUrl: "https://api.deepseek.com", format: "deepseek", apiKey: "" }, null, local]))
       .toEqual({ providers: [deepseek, local], dropped: true });
+    // A provider stored without levels lists none; an unknown level drops it.
+    const { levels: _, ...unlisted } = local;
+    expect(storedProviders([unlisted, { ...deepseek, levels: ["turbo"] }])).toEqual({ providers: [local], dropped: true });
     expect(storedProviders(undefined)).toEqual({ providers: [], dropped: false });
     expect(storedProviders({ name: "deepseek" })).toEqual({ providers: [], dropped: true });
   });
@@ -106,57 +111,36 @@ describe("the sidebar's model choices", () => {
   });
 });
 
-describe("reasoning level detection", () => {
+describe("reasoning levels", () => {
+  it("are a hosted service's documented ones, or another service's own", () => {
+    // DeepSeek maps minimal and low to low, medium, high and xhigh to high, and max to max; none turns thinking off.
+    expect(levelsOf(deepseek)).toEqual(["none", "low", "high", "max"]);
+    expect(levelsOf({ ...deepseek, levels: ["xhigh"] })).toEqual(["none", "low", "high", "max"]);
+    expect(levelsOf({ ...local, levels: ["none", "low"] })).toEqual(["none", "low"]);
+    expect(levelsOf({ ...local, kind: "ollama", levels: ["low"] })).toEqual(["low"]);
+    for (const kind of PROVIDER_KINDS) expect(kind.levels.every(isReasoningLevel)).toBe(true);
+  });
+});
+
+describe("the connection test", () => {
   const reply = (calls: string[]): ChatReply => ({
     model: "m", finish_reason: "tool_calls", usage: { prompt_tokens: 1, completion_tokens: 1 },
     message: { content: null, tool_calls: calls.map((name, index) => ({ id: String(index), type: "function", function: { name, arguments: "{}" } })) },
   });
-  const refusal = (status: number, level: string) => new ApiError(`API request failed (HTTP ${status}): ${level} is not supported.`, status);
 
-  it("asks the agent's kind of request at each level, two at a time, and keeps the levels the service did not refuse", async () => {
+  it("sends one forced tool call at the lowest documented level", async () => {
     const requests: ChatRequest[] = [];
-    let running = 0;
-    let most = 0;
-    const probe = await probeLevels(async (request) => {
-      requests.push(request);
-      most = Math.max(most, ++running);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      running--;
-      const level = request.reasoning_effort!;
-      if (level === "minimal") throw refusal(422, level);
-      if (!["low", "high", "max"].includes(level)) throw refusal(400, level);
-      return reply(level === "max" ? [] : ["ok"]);
-    });
-    expect(requests.map((request) => request.reasoning_effort)).toEqual([...REASONING_LEVELS]);
-    expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "ok" } } });
-    expect(requests[0]!.tools!.map((tool) => tool.function.name)).toEqual(["ok"]);
-    expect(most).toBe(2);
-    expect(probe.answers.map(({ level, tool }) => ({ level, tool })))
-      .toEqual([{ level: "low", tool: true }, { level: "high", tool: true }, { level: "max", tool: false }]);
-    expect(probe.refusal).toBe("API request failed (HTTP 400): none is not supported.");
+    const result = await connectionTest(async (request) => { requests.push(request); return reply(["ok"]); }, "glm-5.3-flash", ["low", "high", "max"]);
+    expect(result).toMatch(/^Connected: glm-5\.3-flash answered at reasoning low in \d+\.\d s with the tool call the agent needs\.$/);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "ok" } }, reasoning_effort: "low" });
+    await connectionTest(async (request) => { requests.push(request); return reply(["ok"]); }, "m", []);
+    expect(requests[1]).not.toHaveProperty("reasoning_effort");
   });
 
-  it("stops at the first failure that is not a refusal", async () => {
-    const denied = new ApiError("API request failed (HTTP 401). Check the API key and access permissions.", 401);
-    const complete = vi.fn(async (): Promise<ChatReply> => { throw denied; });
-    await expect(probeLevels(complete)).rejects.toBe(denied);
-    expect(complete).toHaveBeenCalledTimes(2);
-  });
-
-  it("is reported with the accepted levels and the answer at the level judgments use", () => {
-    expect(connectionReport("glm-5.3-flash", { answers: [{ level: "low", seconds: 1.04, tool: true }, { level: "high", seconds: 2, tool: true }], refusal: "" }))
-      .toBe("Connected: glm-5.3-flash accepts reasoning low, high. At reasoning low it answered in 1.0 s with the tool call the agent needs.");
-    expect(connectionReport("m", { answers: [{ level: "none", seconds: 0.5, tool: false }], refusal: "" }))
-      .toBe("Connected: m accepts reasoning none. At reasoning none it answered in 0.5 s but without the tool call the agent needs.");
-    expect(connectionReport("m", { answers: [], refusal: "API request failed (HTTP 400): model not found." }))
-      .toBe("m refused the agent's kind of request at every reasoning level: API request failed (HTTP 400): model not found.");
-  });
-
-  it("is stored for each provider's model once, with known levels only", () => {
-    const glm = { provider: "glm", model: "glm-5.3-flash", levels: ["low", "high", "max"] };
-    const none = { provider: "glm", model: "glm-4.5-flash", levels: [] };
-    expect(storedLevels([glm, { ...glm, levels: ["low"] }, { ...glm, model: "x", levels: ["turbo"] }, { provider: 1, model: "y", levels: [] }, null, none]))
-      .toEqual([glm, none]);
-    expect(storedLevels({ glm })).toEqual([]);
+  it("says when the model answered without the tool call, or did not answer", async () => {
+    await expect(connectionTest(async () => reply([]), "m", ["none"])).resolves.toContain("but without the tool call the agent needs");
+    await expect(connectionTest(async () => { throw new Error("API request failed (HTTP 401). Check the API key and access permissions."); }, "m", ["none"]))
+      .resolves.toBe("m did not answer: API request failed (HTTP 401). Check the API key and access permissions.");
   });
 });

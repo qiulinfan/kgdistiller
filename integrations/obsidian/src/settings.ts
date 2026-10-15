@@ -1,7 +1,7 @@
 import { App, Modal, Plugin, PluginSettingTab, SecretComponent, Setting, type TextComponent } from "obsidian";
 
-import { isReasoningLevel, type ReasoningChoice } from "./model";
-import { kindOf, newProviderName, PROVIDER_KINDS, storedLevels, storedProviders, type Detected, type ModelLevels, type Provider } from "./providers";
+import { isReasoningLevel, REASONING_LEVELS, type ReasoningChoice, type ReasoningLevel } from "./model";
+import { kindOf, newProviderName, PROVIDER_KINDS, storedProviders, type Detected, type Provider } from "./providers";
 import { KNOWLEDGE_DIRECTORY } from "./records";
 import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
 
@@ -18,8 +18,6 @@ export interface KgdistillerSettings {
   model: string;
   /** The reasoning level chosen in the sidebar for every request; empty gives each job its own. */
   reasoning: ReasoningChoice;
-  /** The reasoning levels each provider's models accept, as detected. */
-  reasoningLevels: ModelLevels[];
   /** A SecretStorage identifier, never a key; empty searches the web at Exa's free rate limits. */
   exaKey: string;
 }
@@ -32,11 +30,11 @@ export const DEFAULT_SETTINGS: Readonly<KgdistillerSettings> = {
   provider: "",
   model: "",
   reasoning: "",
-  reasoningLevels: [],
   exaKey: "",
 };
 
 const NOT_LISTED = "Not listed yet; press Detect.";
+const LEVELS_HINT = "The reasoning levels the service documents as distinct, separated by commas, such as none, low, high. Empty, requests set none, and the service decides.";
 const NAME_HINT = "Shown in the sidebar's model list; no two providers share a name.";
 
 /**
@@ -44,17 +42,17 @@ const NAME_HINT = "Shown in the sidebar's model list; no two providers share a n
  * matches the default, the providers that are complete and a known reasoning
  * level. Unknown keys are ignored; wrongly typed known keys, a provider list
  * with anything else in it and an unknown level are returned so the caller can
- * report them. Detected reasoning levels that are not valid are detected again.
+ * report them.
  */
 export function mergeStoredSettings(stored: unknown): { settings: KgdistillerSettings; rejected: string[] } {
-  const settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [], reasoningLevels: [] };
+  const settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [] };
   const rejected: string[] = [];
   if (stored === null || stored === undefined) return { settings, rejected };
   if (typeof stored !== "object" || Array.isArray(stored)) return { settings, rejected: ["(all)"] };
   const record = stored as Record<string, unknown>;
   const target = settings as unknown as Record<string, unknown>;
   for (const [key, fallback] of Object.entries(DEFAULT_SETTINGS)) {
-    if (key === "providers" || key === "reasoningLevels" || !(key in record)) continue;
+    if (key === "providers" || !(key in record)) continue;
     if (typeof record[key] === typeof fallback) target[key] = record[key];
     else rejected.push(key);
   }
@@ -65,7 +63,6 @@ export function mergeStoredSettings(stored: unknown): { settings: KgdistillerSet
   const { providers, dropped } = storedProviders(record.providers);
   settings.providers = providers;
   if (dropped) rejected.push("providers");
-  settings.reasoningLevels = storedLevels(record.reasoningLevels);
   return { settings, rejected };
 }
 
@@ -80,7 +77,7 @@ export interface SettingsHost {
   agentSettingsChanged(): void;
   /** Each provider's detected models, detecting those not yet known. */
   modelCatalog(): Promise<ReadonlyMap<string, Detected>>;
-  /** Forget a provider's detected models and their reasoning levels, after its settings change or to detect them again. */
+  /** Forget a provider's detected models after its settings change. */
   forgetModels(name: string): void;
   /** Ask a model of the provider at each reasoning level with the agent's kind of request, and say how it went. */
   testProvider(provider: Provider): Promise<string>;
@@ -122,7 +119,7 @@ class AddProviderModal extends Modal {
           return;
         }
         this.close();
-        await this.add({ name, kind: kind.id, baseUrl: "", format: kind.format, apiKey: "" });
+        await this.add({ name, kind: kind.id, baseUrl: "", format: kind.format, levels: [], apiKey: "" });
       }))
       .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()));
   }
@@ -273,6 +270,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           provider.kind = next.id;
           provider.baseUrl = "";
           provider.format = next.format;
+          provider.levels = [];
           await this.host.savePluginSettings();
           this.host.agentSettingsChanged();
           this.display();
@@ -315,6 +313,20 @@ export class KgdistillerSettingTab extends PluginSettingTab {
             await changed(false);
           }));
     }
+    if (kind.ownLevels) {
+      const levels = new Setting(containerEl).setName("Reasoning levels").setDesc(LEVELS_HINT);
+      levels.addText((text) => text.setPlaceholder("none, low, high").setValue(provider.levels.join(", ")).onChange(async (value) => {
+        const names = value.split(/[\s,]+/).filter(Boolean);
+        const unknown = names.filter((name) => !isReasoningLevel(name));
+        if (unknown.length) {
+          levels.setDesc(`Not a level: ${unknown.join(", ")}. The levels are ${REASONING_LEVELS.join(", ")}.`);
+          return;
+        }
+        levels.setDesc(LEVELS_HINT);
+        provider.levels = REASONING_LEVELS.filter((level): level is ReasoningLevel => names.includes(level));
+        await changed(false);
+      }));
+    }
     const key = new Setting(containerEl).setName("API key")
       .setDesc(kind.ownUrl && kind.baseUrl ? "A local server usually needs none; otherwise choose or add the secret holding its key."
         : "Choose a secret in Obsidian's SecretStorage, or add one holding the service's key; the plugin stores only the secret's name.");
@@ -328,7 +340,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
         await this.showModels(provider, models);
       }));
     const connection = new Setting(containerEl).setName("Connection")
-      .setDesc("Ask the model in use, or the first one listed, at each reasoning level with one short request of the kind the agent sends; the sidebar then lists the levels it accepts.")
+      .setDesc("Send one short request of the kind the agent sends, to the model in use or the first one listed.")
       .addButton((button) => button.setButtonText("Test").onClick(async () => {
         button.setDisabled(true);
         connection.setDesc("Testing…");

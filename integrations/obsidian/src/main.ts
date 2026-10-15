@@ -8,14 +8,12 @@ import { ModelClient, type ReasoningChoice } from "./model";
 import { ApiClient } from "./api";
 import {
   chatUrl,
-  connectionReport,
+  connectionTest,
   formatOf,
   listModels,
   modelGroups,
-  probeLevels,
+  levelsOf,
   type Detected,
-  type DetectedLevels,
-  type LevelProbe,
   type ModelChoice,
   type ModelGroup,
   type Provider,
@@ -44,7 +42,7 @@ import {
 const READING_BLOCKS = "p, li, td, th, blockquote, h1, h2, h3, h4, h5, h6";
 
 export default class KgdistillerPlugin extends Plugin {
-  settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [], reasoningLevels: [] };
+  settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [] };
   hiddenKnowledgeStatus: HiddenKnowledgeStatus = { state: "disabled" };
   private hiddenKnowledgeIndexer?: HiddenKnowledgeIndexer;
   private settingsTab?: KgdistillerSettingTab;
@@ -67,16 +65,11 @@ export default class KgdistillerPlugin extends Plugin {
       endpoint: provider ? chatUrl(provider) : "", model,
       protocol: provider ? formatOf(provider) : "chat-completions", apiKey: provider ? this.secret(provider.apiKey) : "",
       reasoning: this.settings.reasoning,
-      levels: async () => {
-        const found = provider && model ? await this.modelLevels(provider, model) : undefined;
-        return found && "levels" in found ? found.levels : undefined;
-      },
+      levels: provider ? levelsOf(provider) : [],
     };
   }, this.api.post);
   /** Each provider's detected models, or why they could not be listed, by provider name. */
   private readonly detected = new Map<string, Detected>();
-  /** This session's detections of a model's reasoning levels, under way or failed, by provider name and model id. */
-  private readonly probing = new Map<string, Promise<LevelProbe>>();
 
   private secret(id: string): string {
     return id ? this.app.secretStorage.getSecret(id) ?? "" : "";
@@ -330,8 +323,6 @@ export default class KgdistillerPlugin extends Plugin {
 
   agentSettingsChanged(): void {
     this.api.cancel();
-    // Detections cancelled here, or failed under the old settings, are made again.
-    this.probing.clear();
     for (const view of this.lookupViews()) void view.showModels();
   }
 
@@ -348,68 +339,23 @@ export default class KgdistillerPlugin extends Plugin {
     return this.detected;
   }
 
-  /** Forget a provider's detected models and their reasoning levels; they are detected again when next needed. */
+  /** Forget a provider's detected models after its settings change. */
   forgetModels(name: string): void {
     this.detected.delete(name);
-    this.settings.reasoningLevels = this.settings.reasoningLevels.filter((entry) => entry.provider !== name);
-    // A provider's name holds no line break, so the key's first line is the provider.
-    for (const key of [...this.probing.keys()]) if (key.startsWith(`${name}\n`)) this.probing.delete(key);
   }
 
-  /**
-   * Ask a provider's model at each reasoning level and store the levels it
-   * accepts. A detection that a settings change or a refresh replaced while
-   * it ran stores nothing.
-   */
-  private detectLevels(provider: Provider, model: string): Promise<LevelProbe> {
-    const key = `${provider.name}\n${model}`;
-    const client = new ModelClient(() => ({
-      endpoint: chatUrl(provider), model, protocol: formatOf(provider), apiKey: this.secret(provider.apiKey),
-    }), this.api.post);
-    const detection: Promise<LevelProbe> = probeLevels((request) => client.complete(request)).then(async (probe) => {
-      if (this.probing.get(key) !== detection) return probe;
-      const levels = probe.answers.map((answer) => answer.level);
-      this.settings.reasoningLevels = [
-        ...this.settings.reasoningLevels.filter((entry) => entry.provider !== provider.name || entry.model !== model),
-        { provider: provider.name, model, levels },
-      ];
-      await this.savePluginSettings();
-      return probe;
-    });
-    this.probing.set(key, detection);
-    return detection;
-  }
-
-  /** The reasoning levels a provider's model accepts, as stored or detected now; `refresh` detects them again. */
-  private async modelLevels(provider: Provider, model: string, refresh = false): Promise<DetectedLevels> {
-    const stored = this.settings.reasoningLevels.find((entry) => entry.provider === provider.name && entry.model === model);
-    if (stored && !refresh) return { levels: stored.levels };
-    try {
-      const probe = await ((!refresh && this.probing.get(`${provider.name}\n${model}`)) || this.detectLevels(provider, model));
-      return { levels: probe.answers.map((answer) => answer.level) };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  }
-
-  /**
-   * Detect the provider's models again, then ask the model in use there, or
-   * the first one it lists, at each reasoning level; the sidebars then show
-   * the levels it accepts.
-   */
+  /** Detect the provider's models again, then test the model in use there, or the first one it lists. */
   async testProvider(provider: Provider): Promise<string> {
     this.forgetModels(provider.name);
     const entry = (await this.modelCatalog()).get(provider.name);
     if (!entry || "error" in entry) return `Could not list models: ${entry && "error" in entry ? entry.error : "no answer"}`;
     const model = this.settings.provider === provider.name && this.settings.model ? this.settings.model : entry.models[0];
     if (!model) return "The service lists no models.";
-    try {
-      return connectionReport(model, await this.detectLevels(provider, model));
-    } catch (error) {
-      return `${model} did not answer: ${error instanceof Error ? error.message : String(error)}`;
-    } finally {
-      for (const view of this.lookupViews()) void view.showModels();
-    }
+    const levels = levelsOf(provider);
+    const client = new ModelClient(() => ({
+      endpoint: chatUrl(provider), model, protocol: formatOf(provider), apiKey: this.secret(provider.apiKey), levels,
+    }), this.api.post);
+    return connectionTest((request) => client.complete(request), model, levels);
   }
 
   /** The sidebar's model choices, grouped by provider, and the model in use. */
@@ -419,19 +365,20 @@ export default class KgdistillerPlugin extends Plugin {
     return { groups: modelGroups(this.settings.providers, detected, chosen), chosen };
   }
 
-  /** The level chosen in the sidebar and the levels the model in use accepts, detected when not yet known or with `refresh`. */
-  async reasoningChoices(refresh = false): Promise<ReasoningChoices> {
+  /** The level chosen in the sidebar and the levels the provider in use documents. */
+  reasoningChoices(): ReasoningChoices {
     const chosen = this.settings.reasoning;
     const provider = this.chosenProvider();
-    if (!provider || !this.settings.model) return { chosen };
-    return { chosen, ...await this.modelLevels(provider, this.settings.model, refresh) };
+    return provider && this.settings.model ? { chosen, levels: levelsOf(provider) } : { chosen };
   }
 
   /** Use another model from now on, at each job's own reasoning level, since models accept different levels; the open sidebars show it. */
   async chooseModel(choice: ModelChoice): Promise<void> {
     this.settings.provider = choice.provider;
     this.settings.model = choice.model;
-    this.settings.reasoning = "";
+    // A level the new provider does not document goes back to each job's own.
+    const provider = this.chosenProvider();
+    if (this.settings.reasoning && !(provider && levelsOf(provider).includes(this.settings.reasoning))) this.settings.reasoning = "";
     await this.savePluginSettings();
     for (const view of this.lookupViews()) void view.showModels();
   }

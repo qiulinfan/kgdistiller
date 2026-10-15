@@ -62,7 +62,7 @@ const LEGEND: ReadonlyArray<readonly [string, string]> = [
   ["dangling", "Red: a missing record"],
 ];
 const AUTO_REASONING = "Reasoning effort. Auto: none to judge selections and answer questions, low to capture and find sources, "
-  + "or the next level up that the model accepts.";
+  + "or the next level up that the service documents.";
 
 export interface LookupHost extends AgentHost {
   app: App;
@@ -71,8 +71,8 @@ export interface LookupHost extends AgentHost {
   /** Every provider's detected models and the model in use; `refresh` detects them all again. */
   modelChoices(refresh?: boolean): Promise<{ groups: ModelGroup[]; chosen: ModelChoice }>;
   chooseModel(choice: ModelChoice): Promise<void>;
-  /** The reasoning levels the model in use accepts and the level chosen; `refresh` detects the levels again. */
-  reasoningChoices(refresh?: boolean): Promise<ReasoningChoices>;
+  /** The reasoning levels the provider in use documents and the level chosen. */
+  reasoningChoices(): ReasoningChoices;
   chooseReasoning(choice: ReasoningChoice): Promise<void>;
 }
 
@@ -85,7 +85,6 @@ export class KgdistillerLookupView extends ItemView {
   private modelEl: HTMLSelectElement | null = null;
   private modelsRequest = 0;
   private reasoningEl: HTMLSelectElement | null = null;
-  private levelsRequest = 0;
   private searchEl: HTMLInputElement | null = null;
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
@@ -145,7 +144,7 @@ export class KgdistillerLookupView extends ItemView {
     setIcon(picker.createSpan({ cls: "kgd-lookup-reasoning-icon", attr: { "aria-hidden": "true" } }), "brain");
     const reasoning = picker.createEl("select", { cls: "dropdown kgd-lookup-reasoning", attr: { "aria-label": "Reasoning effort" } });
     reasoning.addEventListener("change", () => void this.host.chooseReasoning(reasoning.value as ReasoningChoice));
-    const detect = picker.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Detect the models and their reasoning levels again" } });
+    const detect = picker.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Detect the providers' models again" } });
     setIcon(detect, "refresh-cw");
     detect.addEventListener("click", () => void this.showModels(true));
     this.modelEl = select;
@@ -227,13 +226,10 @@ export class KgdistillerLookupView extends ItemView {
     this.renderResults();
   }
 
-  /**
-   * Fill the model list: every provider's detected models under the
-   * provider's name, the model in use selected. `refresh` detects them again.
-   */
-  /** Show every provider's models and the reasoning levels of the model in use; `refresh` detects them again. */
+  /** Show every provider's models, `refresh` detecting them again, and the reasoning levels of the provider in use. */
   async showModels(refresh = false): Promise<void> {
-    await Promise.all([this.listModels(refresh), this.listLevels(refresh)]);
+    this.listLevels();
+    await this.listModels(refresh);
   }
 
   private async listModels(refresh: boolean): Promise<void> {
@@ -262,27 +258,19 @@ export class KgdistillerLookupView extends ItemView {
     }
   }
 
-  /** Auto and each level the model in use accepts, with the level chosen even when it is not among them. */
-  private async listLevels(refresh: boolean): Promise<void> {
+  /** Auto and each level the provider in use documents, with the level chosen even when it is not among them. */
+  private listLevels(): void {
     const select = this.reasoningEl;
     if (!select) return;
-    const request = ++this.levelsRequest;
-    // Stored levels arrive before the next paint, so only a detection shows this.
-    select.empty();
-    select.createEl("option", { text: "detecting…", value: "" });
-    select.disabled = true;
-    select.title = "Detecting the reasoning levels the model accepts…";
-    const { chosen, levels, error } = await this.host.reasoningChoices(refresh);
-    if (request !== this.levelsRequest) return;
+    const { chosen, levels } = this.host.reasoningChoices();
     select.empty();
     select.createEl("option", { text: "auto", value: "" });
     for (const level of levels ?? []) select.createEl("option", { text: level, value: level });
     if (chosen && !levels?.includes(chosen)) select.createEl("option", { text: chosen, value: chosen });
     select.value = chosen;
     select.disabled = select.options.length < 2;
-    select.title = error ? `Reasoning levels not detected: ${error}`
-      : !levels ? "Choose a model to see the reasoning levels it accepts."
-      : levels.length === 0 ? "The model accepts no reasoning level, so its service decides."
+    select.title = !levels ? "Choose a model to see the reasoning levels its service documents."
+      : levels.length === 0 ? "The service documents no reasoning level, so it decides."
       : AUTO_REASONING;
   }
 
