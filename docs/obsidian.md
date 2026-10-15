@@ -3,13 +3,14 @@
 A base is normally one Obsidian vault, and its knowledge lives in the vault's
 hidden `.knowledge/` folder: accepted records in `entries/`, proposed records in
 `drafts/` and generated def/pending sheets in `sheets/`. Obsidian itself is the
-editor. The kgdistiller plugin adds two things: it lets Obsidian index the
-hidden folder, and, once a kgd executable is configured, one sidebar looks
+editor. The kgdistiller plugin adds three things: it lets Obsidian index the
+hidden folder; once a kgd executable is configured, the lookup sidebar looks
 knowledge up in every registered base, for a selection, a typed query or the
 file open in the editor, with the record in focus and a typed graph of its
-neighbours. Its optional agent runs inside the plugin and calls model and
-search APIs directly. `kgd check` stays the validator; Capture writes only
-drafts admitted by `kgd accept`.
+neighbours; and the Capture view lists the drafts waiting for the owner. Its
+optional agent runs inside the plugin and calls model and search APIs
+directly. `kgd check` stays the validator; Capture only drafts, and a draft
+becomes knowledge when the owner accepts it with `kgd accept`.
 
 ## Native-first editing
 
@@ -34,7 +35,7 @@ filesystem adapter.
 
 ## Lookup
 
-The **kgdistiller Lookup** view is the plugin's one sidebar; the ribbon icon
+The **kgdistiller Lookup** view is the plugin's lookup sidebar; the ribbon icon
 **Open kgdistiller** opens it with the cursor in its search box. Select text
 in any view and hold the command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s,
 run **Look up selection**, or type into the search box at the top of the view
@@ -133,7 +134,8 @@ knowledge.
 A small agent built into the plugin adds four things to the lookup sidebar:
 a judgment of the selection, **Capture**, **Find sources**, and an answer to
 whatever is typed into the search box. Nothing is written until the owner
-presses Capture or runs **Capture selection**.
+presses Capture or runs **Capture selection**, and then only a draft, which
+becomes knowledge when the owner accepts it in the Capture view.
 
 The harness runs inside the plugin (`agent.ts`). Model requests go directly
 from `model.ts` to the Chat Completions API of the model chosen in the
@@ -212,17 +214,20 @@ record that only mentions the selection is related, not the same. A matched
 record is put in focus unless the owner has focused another one. With the
 model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
 
-**Capture** files the selection as one record by the rules of
-[the knowledge model](model.md) that the capture-kgdistiller Skill follows:
+**Capture** drafts the selection as one record by the rules of
+[the knowledge model](model.md) that the capture-kgdistiller Skill follows,
+and never accepts it. Pressing it hands the selection to the
+[Capture view](#capture-view), where the agent drafts it in the background
+while the owner keeps reading:
 
 - The selection comes with its source lines: from the editor directly, and in
   reading view by finding its text in the source as reading view shows it,
   inside the selection's block when the text occurs more than once.
 - The plugin prepares everything deterministic: `kgd sheet SOURCE --json` for
-  the document type, the records already citing the source and the base, the
-  numbered paragraph around the selection with the nearest heading, the first
-  `kg_search` results for the selection, and `kg_resolve` of the
-  Latin-script names in it.
+  the document type, the records and drafts already citing the source and the
+  base, the numbered paragraph around the selection with the nearest heading,
+  the first `kg_search` results for the selection, and `kg_resolve` and
+  `kg_drafts` of the Latin-script names in it.
 - The model may call `lookup` once for other names and phrases, then calls
   `submit` with what it takes the item to be, the decision (new, unchanged,
   superseding, conflicting, or borrowed for a concept the source only uses or
@@ -230,9 +235,16 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
   statement and evidence quotes with their lines.
 - The plugin refuses kinds and roles the type lacks, links to records the
   model was not shown, and values that are neither links nor terms. It looks
-  up every name the record would write (label, aliases and plain terms) and
-  returns any recorded concept the model had not seen, so a term is looked up
-  before it is written as pending. It drops a relation's aliases.
+  up every name the record would write (label, aliases and plain terms) among
+  the records and the drafts, and returns any the model had not seen, so a
+  term is looked up before it is written as pending. It drops a relation's
+  aliases.
+- Drafts are not knowledge yet, but the model sees the source's drafts and
+  those that share a name. A value may link a draft of the same base, which
+  is then accepted together with it. When the selection is a draft's item the
+  decision is unchanged, and the Capture view opens that draft. A draft is
+  never superseded or contradicted: the owner edits it instead. A draft of
+  another base cannot be linked, since foreign links target accepted records.
 - Evidence holds only the source's text. A quote is kept when it is verbatim
   in its lines after collapsing whitespace, as `kgd check` compares; moved to
   its only occurrence in the source when the lines were wrong; and replaced
@@ -244,19 +256,21 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
   character whose Python `str.casefold` differs from its lowercase mapping,
   and the Python suite checks it against `unicodedata`.
 - A new record is written as a draft with every frontmatter value a quoted
-  string, admitted with `kgd accept` and indexed with `kgd index --no-embed`;
-  `kgd accept`'s refusal returns to the model. Unchanged and borrowed write
-  nothing. Superseding and conflicting show the proposed record beside the
-  recorded one and write nothing yet: the in-place overwrite of a more general
-  or corrected definition, relocation, and the linking of pending uses remain
-  the capture Skill's.
-- The sidebar reports the decision, the record and one line from the agent,
-  with a notice when the capture ends. Capture asks for low reasoning: on
-  eleven test selections from the test papers and notes it decided every one
-  as expected in two runs, with a median of about 6 s and the slowest near
-  20 s on DeepSeek V4 Flash, usually in one model call. Without reasoning the
-  median was 4 s, but a concept the paper credits to earlier work was filed as
-  its own.
+  string. It stays only when `kg_drafts` reports that `kgd accept` would take
+  it with the drafts it links; otherwise it is removed and the refusal
+  returns to the model. Nothing is accepted or indexed. Unchanged and borrowed
+  write nothing. Superseding and conflicting show the proposed record and
+  write nothing yet: the in-place overwrite of a more general or corrected
+  definition, relocation, and the linking of pending uses remain the capture
+  Skill's.
+- Capture asks for low reasoning: on eleven test selections from the test
+  papers and notes it decided every one as expected in two runs, with a
+  median of about 6 s and the slowest near 20 s on DeepSeek V4 Flash, usually
+  in one model call. Without reasoning the median was 4 s, but a concept the
+  paper credits to earlier work was filed as its own. Drafting rather than
+  accepting matters: on 2026-10-15 the same thirteen selections, drafted three
+  times, gave different labels, kinds and ownership decisions between runs,
+  and about eight of ten drafts needed an edit before they were worth keeping.
 
 **Find sources**, for an unrecorded or borrowed term, finds the work that
 introduced it and the Wikipedia article that explains it. The sidebar lists at
@@ -402,12 +416,50 @@ it cites) and the records and web results the agent reads; web searches send
 their queries to Exa. Capture's drafts and `kgd` runs
 stay on this machine.
 
+## Capture view
+
+**kgdistiller Capture** lists the agent's captures and every draft waiting
+for the owner, in every registered base. It opens below the lookup sidebar
+the first time a capture starts, without taking focus, and **Show drafts**
+opens it at any time. Nothing in it is accepted until the owner presses
+Accept.
+
+- A capture shows **Drafting** with its selection and the seconds so far.
+  Several captures can run at once; on 2026-10-15 three at a time drafted
+  thirteen selections in 49 s against 102 s one by one. A new draft replaces
+  its line and opens in full. A capture that wrote nothing stays as one line
+  with the agent's reason: already recorded, already a draft (that draft
+  opens), borrowed (the lookup sidebar then finds where it comes from, as
+  Find sources does), or the proposed record of a superseding or conflicting
+  passage.
+- Each draft shows what `kg_drafts` reads from its file: its label, node or
+  relation and kind, its source and lines (a click opens the source at the
+  first line), its other names, its statement and Evidence rendered as in the
+  editor, its epistemic label and understanding, and each role's values and
+  its prerequisites. A value reads as the record it links (named with its base
+  when that is another one), a draft, a missing record, or a concept not
+  recorded anywhere. Ids and uids are never shown. A draft the agent wrote in
+  this session also shows what the agent took the selection to be and its
+  report.
+- Every draft says whether `kgd accept` would take it, together with the
+  drafts it links, and otherwise lists `kgd accept`'s refusals. The view lists
+  the drafts again whenever a draft file of this vault is saved, so an edit
+  made in the editor is checked as soon as it is saved.
+- **Accept** runs `kgd accept` on the draft and the drafts it links, then
+  `kgd index --no-embed`; the record can be looked up at once. On 2026-10-15
+  checking, accepting, indexing and finding a new record took about 0.1 s.
+  **Open draft** opens the draft file in a split beside the source for any
+  edit. **Discard** asks first, then deletes the draft; nothing remembers it,
+  and a draft that linked it cannot be accepted until that link is edited.
+
 ## Not yet built
 
 Later owner-scheduled frontend work: editing commands, jump links from md/tex
-sources to records, a shipped `.base` file and a Bases view. For the agent:
-the in-place overwrite of superseded records and relocation, linking pending
-uses after a capture, and compiling a whole source.
+sources to records, a shipped `.base` file and a Bases view. For the Capture
+view: editing a draft's fields on its card, asking the agent to revise a
+draft, and looking a draft's concepts up in the lookup sidebar. For the
+agent: the in-place overwrite of superseded records and relocation, linking
+pending uses after a capture, and compiling a whole source.
 
 ## Installation
 

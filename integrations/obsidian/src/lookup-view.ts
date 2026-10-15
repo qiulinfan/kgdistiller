@@ -14,7 +14,7 @@
  */
 
 import cytoscape, { type Core, type EventObject } from "cytoscape";
-import { Component, ItemView, MarkdownRenderer, Notice, normalizePath, setIcon, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Notice, setIcon, type App, type WorkspaceLeaf } from "obsidian";
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
@@ -43,6 +43,7 @@ import {
 } from "./lookup-model";
 import type { ReasoningChoice } from "./model";
 import type { ModelChoice, ModelGroup, ReasoningChoices } from "./providers";
+import { openInBase } from "./open";
 import { entryPath, firstLine } from "./records";
 
 export const VIEW_TYPE_KGDISTILLER_LOOKUP = "kgdistiller-lookup-view";
@@ -283,6 +284,11 @@ export class KgdistillerLookupView extends ItemView {
       : !levels ? "Choose a model to see the reasoning levels it accepts."
       : levels.length === 0 ? "The model accepts no reasoning level, so its service decides."
       : AUTO_REASONING;
+  }
+
+  /** A capture found this selection borrowed: show where it comes from, as Find sources does. */
+  async sourcesFor(selection: Selection): Promise<void> {
+    await this.agent?.sourcesFor(selection);
   }
 
   /** Put the cursor in the search box, as the Search knowledge command does. */
@@ -649,34 +655,8 @@ export class KgdistillerLookupView extends ItemView {
     await MarkdownRenderer.render(this.app, quotes, body.createDiv({ cls: "kgd-evidence" }), "", component);
   }
 
-  /**
-   * Open a base-relative path: in this vault when the record's base is this
-   * vault, otherwise through an obsidian:// link to the file in its own vault.
-   * `line` is 1-based. (Not named `open`: that would replace Obsidian's
-   * internal `View.open`, and the view would never be mounted.)
-   */
-  private async openInBase(base: string, path: string, line?: number): Promise<void> {
-    let roots: Map<string, string>;
-    try {
-      roots = await this.host.kgd.baseRoots();
-    } catch (error) {
-      new Notice(`kgdistiller cannot list the bases: ${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
-    const root = roots.get(base);
-    if (root === undefined) {
-      new Notice(`kgdistiller does not know base ${base}.`);
-      return;
-    }
-    if (root === this.host.vaultRoot()) {
-      const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-      if (!(file instanceof TFile)) {
-        new Notice(`kgdistiller cannot open ${path}: it is not in the vault index.`);
-        return;
-      }
-      await this.app.workspace.getLeaf(false).openFile(file, line === undefined ? undefined : { eState: { line: line - 1 } });
-      return;
-    }
-    window.open(`obsidian://open?path=${encodeURIComponent(`${root}/${path}`)}`);
+  /** Open a base-relative path of a record's base. (Not named `open`: that would replace Obsidian's internal `View.open`.) */
+  private openInBase(base: string, path: string, line?: number): Promise<void> {
+    return openInBase(this.app, this.host.kgd, this.host.vaultRoot(), base, path, { line });
   }
 }

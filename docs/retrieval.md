@@ -512,7 +512,7 @@ instead packs both nodes and appends that relation as shared, with no gaps.
 ## MCP server: `kgd mcp`
 
 `kgd mcp` takes no arguments. It is a read-only stdio server over the whole
-home with six tools that mirror the CLI and return the same JSON. Its stdin
+home with seven tools that mirror the CLI and return the same JSON. Its stdin
 and stdout, like every `kgd` command's output, are UTF-8 whatever the locale
 or Windows code page. A `query` that is empty after trimming is refused, as in
 `kgd search`.
@@ -525,18 +525,20 @@ or Windows code page. A `query` that is empty after trimming is refused, as in
 | `kg_neighbors` | `uids` (required, 1–128), `role` (array), `dir` (`out`, `in` or `both`, default `out`), `depth` (1–32, default 1), the filters |
 | `kg_browse` | `handle` (optional), the filters |
 | `kg_pack` | `uids` (required, 1–128), `budget` (1–4194304, default 60000), `requires_depth` (0–32, default 1), the filters |
+| `kg_drafts` | `base`, `source` (path prefixes) and `names` (arrays); the JSON of `kgd drafts` ([model.md](model.md#kgd-drafts---base-b---source-prefix---name-name)) |
 
-Inputs are bounded and unknown arguments are rejected. Each call opens a fresh
-read-only connection, so it sees every `kgd index` that committed since the
-previous call. The embedding model loads lazily on the first dense search and
+Inputs are bounded and unknown arguments are rejected. Each retrieval call
+opens a fresh read-only connection, so it sees every `kgd index` that
+committed since the previous call; `kg_drafts` reads the draft files instead,
+which the database never holds, and takes no lock. The embedding model loads lazily on the first dense search and
 stays resident; it is reloaded only when `meta.embedding` changes. On the
 535-record base the first `kg_search` took 6.2 s and the next one 0.03 s.
 `no_dense` skips the dense lane, as `--no-dense` does. A missing database is a
 tool error that says to run `kgd index`. Responses are capped at 8 MiB; the
 `budget` maximum of 4 MiB keeps a packet and its gaps under that cap. Only
 `kg_search`'s dense lane loads the model; `kg_resolve`, `kg_get`,
-`kg_neighbors`, `kg_browse` and `kg_pack` load none and leave a resident model
-in place. There are no write tools; Skills write through the CLI.
+`kg_neighbors`, `kg_browse`, `kg_pack` and `kg_drafts` load none and leave a
+resident model in place. There are no write tools; Skills write through the CLI.
 
 ## Evaluation
 

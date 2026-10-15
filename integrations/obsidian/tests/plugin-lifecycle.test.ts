@@ -4,6 +4,7 @@ const controls = vi.hoisted(() => ({
   headings: [] as string[], stored: null as Record<string, unknown> | null,
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
   lookup: vi.fn(), capture: vi.fn(), showModels: vi.fn(), listModels: vi.fn(), probeLevels: vi.fn(), post: vi.fn(),
+  drafted: vi.fn(), relist: vi.fn(), sourcesFor: vi.fn(),
   ribbons: [] as Array<{ icon: string; title: string }>,
   domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
   secrets: new Map<string, string>(),
@@ -105,9 +106,15 @@ vi.mock("../src/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/api")>(),
   ApiClient: class { post = controls.post; get = vi.fn(); postText = vi.fn(); cancel(): void {} close(): void {} },
 }));
+vi.mock("../src/capture-view", () => ({ VIEW_TYPE_KGDISTILLER_CAPTURE: "kgdistiller-capture",
+  KgdistillerCaptureView: class {
+    startCapture(selection: { text: string }): Promise<void> { controls.drafted(selection.text); return Promise.resolve(); }
+    listDrafts(): Promise<void> { controls.relist(); return Promise.resolve(); }
+  } }));
 vi.mock("../src/lookup-view", () => ({ VIEW_TYPE_KGDISTILLER_LOOKUP: "kgdistiller-lookup", LOOKUP_ICON: "scan-search",
   KgdistillerLookupView: class {
     showModels(): Promise<void> { controls.showModels(); return Promise.resolve(); }
+    sourcesFor(selection: { text: string }): Promise<void> { controls.sourcesFor(selection.text); return Promise.resolve(); }
     lookup(selection: { text: string }, options?: { capture?: boolean }): Promise<void> {
       if (options?.capture) controls.capture(selection.text);
       else controls.lookup(selection.text);
@@ -122,6 +129,7 @@ vi.stubGlobal("activeWindow", { getSelection: () => ({ toString: () => domSelect
 import KgdistillerPlugin from "../src/main";
 import { DEFAULT_SETTINGS, KgdistillerSettingTab } from "../src/settings";
 import { HOLD_MS } from "../src/hold";
+import { KgdistillerCaptureView } from "../src/capture-view";
 import { KgdistillerLookupView } from "../src/lookup-view";
 
 type Handler = (...args: unknown[]) => void;
@@ -138,9 +146,21 @@ function harness(): Harness {
     return { key };
   });
   const lookupLeaves = [{ view: new KgdistillerLookupView(undefined as never, undefined as never) }];
+  // A split below the lookup leaf becomes the Capture view once its view state is set.
+  const captureLeaves: Array<{ view: unknown }> = [];
+  const split = (): { view: unknown; setViewState(): Promise<void> } => {
+    const leaf = { view: undefined as unknown, setViewState: async () => {
+      leaf.view = new KgdistillerCaptureView(undefined as never, undefined as never);
+      captureLeaves.push(leaf);
+    } };
+    return leaf;
+  };
+  const readingLeaf = { view: "the note being read" };
   const plugin = new KgdistillerPlugin({
     workspace: {
-      getLeavesOfType: vi.fn((type: string) => (type === "kgdistiller-lookup" ? lookupLeaves : [])),
+      getLeavesOfType: vi.fn((type: string) => (type === "kgdistiller-lookup" ? lookupLeaves : type === "kgdistiller-capture" ? captureLeaves : [])),
+      createLeafBySplit: vi.fn(split),
+      getMostRecentLeaf: vi.fn(() => readingLeaf), setActiveLeaf: vi.fn(),
       detachLeavesOfType: vi.fn(), on: on("workspace"), revealLeaf: vi.fn(async () => undefined), activeEditor: null,
       getActiveViewOfType: vi.fn(() => null),
     },
@@ -181,13 +201,31 @@ describe("community lifecycle conventions", () => {
     showSettings(pluginFixture());
     expect(controls.headings).toEqual(["Hidden knowledge folder", "Lookup", "Model providers", "Web search"]);
   });
-  it("registers one sidebar, opened from the ribbon, and no graph view or its commands", async () => {
+  it("registers the lookup sidebar, opened from the ribbon, and the Capture view, and no graph view or its commands", async () => {
     const plugin = pluginFixture(); await plugin.onload();
-    expect(controls.registerView).toHaveBeenCalledExactlyOnceWith("kgdistiller-lookup", expect.any(Function));
+    expect(controls.registerView.mock.calls).toEqual([["kgdistiller-lookup", expect.any(Function)], ["kgdistiller-capture", expect.any(Function)]]);
     expect(controls.ribbons).toEqual([{ icon: "scan-search", title: "Open kgdistiller" }]);
     expect(controls.commands.map((command) => command.id)).toEqual([
-      "rescan-hidden-knowledge-folder", "look-up-selection", "capture-selection", "search-knowledge",
+      "rescan-hidden-knowledge-folder", "look-up-selection", "capture-selection", "search-knowledge", "show-drafts",
     ]);
+  });
+
+  it("drafts captures in one Capture view below the lookup sidebar, and finds sources for a borrowed one", async () => {
+    const { plugin } = harness(); await plugin.onload();
+    const selection = { text: "masked autoencoder", context: "", source: { path: "/vault/a.md", from: 1, to: 1 } };
+    plugin.capture(selection);
+    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledWith("masked autoencoder"));
+    plugin.capture({ ...selection, text: "mask token" });
+    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledWith("mask token"));
+    const workspace = plugin.app.workspace as unknown as {
+      createLeafBySplit: ReturnType<typeof vi.fn>; setActiveLeaf: ReturnType<typeof vi.fn>; getMostRecentLeaf(): unknown; getLeavesOfType(type: string): unknown[];
+    };
+    expect(workspace.createLeafBySplit).toHaveBeenCalledExactlyOnceWith(workspace.getLeavesOfType("kgdistiller-lookup")[0], "horizontal");
+    expect(workspace.setActiveLeaf).toHaveBeenCalledExactlyOnceWith(workspace.getMostRecentLeaf(), { focus: true });
+    plugin.borrowed(selection);
+    expect(controls.sourcesFor).toHaveBeenCalledExactlyOnceWith("masked autoencoder");
+    controls.commands.find((command) => command.id === "show-drafts")!.callback();
+    await vi.waitFor(() => expect(controls.relist).toHaveBeenCalledOnce());
   });
 });
 
@@ -209,7 +247,7 @@ describe("hidden knowledge lifecycle", () => {
     expect(controls.registerView).not.toHaveBeenCalled();
     finish({ state: "enabled" }); await loading;
     expect(plugin.hiddenKnowledgeStatus.state).toBe("enabled");
-    expect(controls.registerView).toHaveBeenCalledOnce();
+    expect(controls.registerView).toHaveBeenCalledTimes(2);
     expect(controls.commands.map((command) => command.id)).toContain("rescan-hidden-knowledge-folder");
   });
   it("does not finish UI registration after unloading while indexing", async () => {
@@ -272,7 +310,7 @@ describe("hidden knowledge lifecycle", () => {
     controls.configure.mockRejectedValueOnce(new Error("Unsupported adapter"));
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.hiddenKnowledgeStatus).toMatchObject({ state: "error", message: "Unsupported adapter" });
-    expect(controls.registerView).toHaveBeenCalledOnce();
+    expect(controls.registerView).toHaveBeenCalledTimes(2);
   });
 });
 

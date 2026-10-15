@@ -14,6 +14,7 @@ import {
   type CaptureKgd,
   type Sheet,
 } from "../src/capture";
+import type { Draft } from "../src/drafts";
 import type { ChatReply, ChatRequest } from "../src/model";
 import type { RecordSummary } from "../src/lookup-model";
 
@@ -39,6 +40,7 @@ const sheet: Sheet = {
   guidance: "Nodes are noun-like objects.",
   line_count: lines.length,
   records: [{ uid: "papers:masked-autoencoder", label: "Masked autoencoder", kind: "architecture", class: "node", lines: "3", gloss: "MAE." }],
+  drafts: [],
 };
 
 const summary = (uid: string, label: string, kind = "algorithm"): RecordSummary =>
@@ -53,13 +55,24 @@ interface World {
   written: Map<string, string>;
   commands: string[][];
   resolved: string[][];
+  /** The kg_drafts calls, by their arguments. */
+  listed: Array<Record<string, unknown>>;
 }
 
-/** kgd and the file system for one capture: `senses` names the records kg_resolve reports for a term. */
-function world(senses: Record<string, RecordSummary[]> = {}, refuse = 0): World {
+const draft = (uid: string, label: string, extra: Partial<Draft> = {}): Draft => ({
+  uid, base: uid.split(":")[0]!, id: uid.split(":")[1]!, path: `/vaults/${uid.replace(":", "/.knowledge/drafts/")}.md`, label,
+  class: "node", kind: "algorithm", lines: "5", with: [], linked_by: [], problems: [], ...extra,
+});
+
+/**
+ * kgd and the file system for one capture: `senses` names the records kg_resolve reports for a term,
+ * `named` the drafts kg_drafts finds by name, and the first `refuse` drafts written get a problem.
+ */
+function world(senses: Record<string, RecordSummary[]> = {}, refuse = 0, named: Draft[] = [], source: Partial<Sheet> = {}): World {
   const written = new Map<string, string>([[SOURCE, lines.join("\n")]]);
   const commands: string[][] = [];
   const resolved: string[][] = [];
+  const listed: Array<Record<string, unknown>> = [];
   let refusals = refuse;
   const kgd: CaptureKgd = {
     async call<T>(tool: string, args: Record<string, unknown>): Promise<T> {
@@ -69,15 +82,21 @@ function world(senses: Record<string, RecordSummary[]> = {}, refuse = 0): World 
         resolved.push(terms);
         return { terms: terms.map((term) => ({ term, key: term, senses: senses[term] ?? [], mentions: [], pending: [] })), lag: {} } as T;
       }
+      if (tool === "kg_drafts") {
+        listed.push(args);
+        if (args.names) return { drafts: named.filter((found) => (args.names as string[]).includes(found.label!)), unavailable_bases: [] } as T;
+        // Listing the source's drafts after a write: every written draft, the first ones refused.
+        const drafts = [...written.keys()].filter((path) => path.includes("/drafts/")).map((path) => {
+          const id = path.split("/").pop()!.replace(/\.md$/, "");
+          return draft(`papers:${id}`, id, { path, problems: refusals-- > 0 ? ["candidate[0]: unknown link"] : [] });
+        });
+        return { drafts, unavailable_bases: [] } as T;
+      }
       throw new Error(`unexpected tool ${tool}`);
     },
     async command(args: string[]) {
       commands.push(args);
-      if (args[0] === "sheet") return { report: sheet as unknown as Record<string, unknown>, failed: false };
-      if (args[0] === "accept") {
-        if (refusals-- > 0) return { report: { refused: [{ path: args[1], message: "candidate[0]: unknown link" }] }, failed: true };
-        return { report: { created: ["papers:x"] }, failed: false };
-      }
+      if (args[0] === "sheet") return { report: { ...sheet, ...source } as unknown as Record<string, unknown>, failed: false };
       return { report: {}, failed: false };
     },
     async baseRoots() {
@@ -93,7 +112,7 @@ function world(senses: Record<string, RecordSummary[]> = {}, refuse = 0): World 
     },
     remove: async (path) => { written.delete(path); },
   };
-  return { kgd, files, written, commands, resolved };
+  return { kgd, files, written, commands, resolved, listed };
 }
 
 /** A model that submits each argument object in turn. */
@@ -187,13 +206,13 @@ describe("ids and names", () => {
 });
 
 describe("capturing a selection", () => {
-  it("writes a checked draft, accepts it and indexes without embeddings", async () => {
-    const { kgd, files, written, commands } = world();
+  it("writes a draft that kgd accept would take, and accepts nothing", async () => {
+    const { kgd, files, written, commands, listed } = world();
     const { complete, requests } = model(comparison);
     const result = await captureSelection(complete, kgd, files, input);
     expect(result).toEqual({
       item: "Random sampling is best for MAE.", decision: "new", uid: "papers:random-sampling-is-best-for-mae-2",
-      label: "Random sampling is best for MAE", report: "已收录。", turns: 1,
+      label: "Random sampling is best for MAE", draft: true, report: "已收录。", turns: 1,
     });
     expect(written.get("/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md")).toBe([
       "---", "label: \"Random sampling is best for MAE\"", "kind: \"compares\"",
@@ -201,11 +220,8 @@ describe("capturing a selection", () => {
       "candidate:", "  - \"[[random-patch-sampling]]\"", "baseline:", "  - \"block-wise masking\"", "setting:", "  - \"[[masked-autoencoder]]\"",
       "---", "简单的 random sampling 对 MAE 最好。", "", "## Evidence", "", "> 简单的 random sampling 对 MAE 最好", "",
     ].join("\n"));
-    expect(commands).toEqual([
-      ["sheet", SOURCE, "--json"],
-      ["accept", "/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md"],
-      ["index", "--no-embed"],
-    ]);
+    expect(commands).toEqual([["sheet", SOURCE, "--json"]]);
+    expect(listed.at(-1)).toEqual({ base: ["papers"], source: ["papers/mae/mae_ch.md"] });
     expect(requests[0]).toMatchObject({ tool_choice: "required", reasoning_effort: "low" });
     const user = requests[0]!.messages[1]!.content as string;
     expect(user).toContain("Selected, lines 5:\n简单的 random sampling 对 MAE 最好");
@@ -223,20 +239,59 @@ describe("capturing a selection", () => {
     const result = await captureSelection(complete, kgd, files, input);
     expect(result.turns).toBe(2);
     const bounce = requests[1]!.messages.at(-1)!.content as string;
-    expect(bounce).toMatch(/^Not filed yet\. These names belong to records you had not seen:/);
+    expect(bounce).toMatch(/^Not filed yet\. These names belong to records or drafts you had not seen:/);
     expect(bounce).toContain("[notes:block-wise-masking] Block-wise masking");
     const draft = [...written.entries()].find(([path]) => path.includes("/drafts/"))![1];
     expect(draft).toContain("baseline:\n  - \"[[notes:block-wise-masking]]\"");
   });
 
-  it("returns kgd accept's refusal and removes the refused draft", async () => {
-    const { kgd, files, written, commands } = world({}, 1);
+  it("returns what kgd accept would refuse and removes the refused draft", async () => {
+    const { kgd, files, written } = world({}, 1);
     const { complete, requests } = model(comparison, comparison);
     await captureSelection(complete, kgd, files, input);
     expect(requests[1]!.messages.at(-1)!.content).toBe(
-      "error: kgd accept refused the record: candidate[0]: unknown link. Correct it and call submit again.");
-    expect(commands.filter((command) => command[0] === "accept")).toHaveLength(2);
+      "error: kgd accept would refuse the record: candidate[0]: unknown link. Correct it and call submit again.");
     expect([...written.keys()].filter((path) => path.includes("/drafts/"))).toHaveLength(1);
+  });
+
+  it("shows the source's drafts, which a value may link like a record", async () => {
+    const { kgd, files, written } = world({}, 0, [], { drafts: [{ id: "random-sampling", label: "Random sampling", kind: "algorithm", class: "node", lines: "4" }] });
+    const linked = { ...comparison, roles: { ...comparison.roles, candidate: ["[[papers:random-sampling]]"] } };
+    const { complete, requests } = model(linked);
+    await captureSelection(complete, kgd, files, input);
+    expect(requests[0]!.messages[1]!.content).toContain(
+      "Drafts of this source awaiting the owner's review:\n[papers:random-sampling] Random sampling · algorithm node · papers L4 — a draft awaiting the owner's review");
+    const written_ = [...written.entries()].find(([path]) => path.includes("/drafts/"))![1];
+    expect(written_).toContain("candidate:\n  - \"[[random-sampling]]\"");
+  });
+
+  it("matches a draft as unchanged but never overwrites one, and links no draft of another base", async () => {
+    const elsewhere = draft("notes:block-wise-masking", "block-wise masking");
+    const unchanged = { item: "i", decision: "unchanged", record: "notes:block-wise-masking", report: "已是草稿。" };
+    const { kgd, files } = world({}, 0, [elsewhere]);
+    await expect(captureSelection(model({ names: ["block-wise masking"], phrases: [] }, unchanged).complete, kgd, files, input))
+      .resolves.toEqual({ item: "i", decision: "unchanged", uid: "notes:block-wise-masking", label: "block-wise masking", draft: true, report: "已是草稿。", turns: 2 });
+    const overwrite = { ...comparison, decision: "superseding", record: "notes:block-wise-masking" };
+    const crossing = { ...comparison, roles: { ...comparison.roles, baseline: ["[[notes:block-wise-masking]]"] } };
+    const second = world({}, 0, [elsewhere]);
+    const { complete, requests } = model({ names: ["block-wise masking"], phrases: [] }, overwrite, crossing, comparison);
+    await captureSelection(complete, second.kgd, second.files, input);
+    const refusals = requests.slice(2).map((request) => request.messages.at(-1)!.content as string);
+    expect(refusals[0]).toBe("error: [[notes:block-wise-masking]] is a draft awaiting the owner, not knowledge yet; decide unchanged when the item is that draft's item, or new");
+    expect(refusals[1]).toBe("error: [[notes:block-wise-masking]] is a draft of another base, which only an accepted record can be linked across; write a plain term");
+  });
+
+  it("looks a name up among the drafts before writing it", async () => {
+    const { kgd, files, written } = world({}, 0, [draft("papers:block-wise-masking", "block-wise masking")]);
+    const linked = { ...comparison, roles: { ...comparison.roles, baseline: ["[[papers:block-wise-masking]]"] } };
+    const { complete, requests } = model(comparison, linked);
+    const result = await captureSelection(complete, kgd, files, input);
+    expect(result.turns).toBe(2);
+    const bounce = requests[1]!.messages.at(-1)!.content as string;
+    expect(bounce).toMatch(/^Not filed yet\. These names belong to records or drafts you had not seen:/);
+    expect(bounce).toContain("Drafts named so:\n  - [papers:block-wise-masking] block-wise masking");
+    const written_ = [...written.entries()].find(([path]) => path.includes("/drafts/"))![1];
+    expect(written_).toContain("baseline:\n  - \"[[block-wise-masking]]\"");
   });
 
   it("refuses links to records it never showed, kinds the type lacks and quotes the source lacks", async () => {

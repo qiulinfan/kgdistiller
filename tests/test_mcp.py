@@ -87,8 +87,8 @@ class MCPTest(unittest.TestCase):
                     found[str(path)] = (path.read_bytes(), path.stat().st_mtime_ns)
         return found
 
-    def test_tool_surface_is_exactly_the_six_read_tools(self) -> None:
-        self.assertEqual(["kg_search", "kg_resolve", "kg_get", "kg_neighbors", "kg_browse", "kg_pack"],
+    def test_tool_surface_is_exactly_the_seven_read_tools(self) -> None:
+        self.assertEqual(["kg_search", "kg_resolve", "kg_get", "kg_neighbors", "kg_browse", "kg_pack", "kg_drafts"],
                          [tool["name"] for tool in TOOL_DEFINITIONS])
         filters = {"base", "kind", "class", "source", "understanding"}
         properties = {tool["name"]: set(tool["inputSchema"]["properties"]) for tool in TOOL_DEFINITIONS}
@@ -99,6 +99,7 @@ class MCPTest(unittest.TestCase):
             "kg_neighbors": {"uids", "role", "dir", "depth", *filters},
             "kg_browse": {"handle", *filters},
             "kg_pack": {"uids", "budget", "requires_depth", *filters},
+            "kg_drafts": {"base", "source", "names"},
         })
         for tool in TOOL_DEFINITIONS:
             self.assertFalse(tool["inputSchema"]["additionalProperties"])

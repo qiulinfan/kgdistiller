@@ -4,6 +4,23 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Capture in the Obsidian plugin only drafts; the owner accepts. The agent
+  writes a draft and stops, and the new **kgdistiller Capture** view, opened
+  below the lookup sidebar, shows the captures being drafted and every draft
+  in full: its label, kind, source lines, statement, Evidence, each value as
+  a record, a draft or a concept not yet recorded, and whether `kgd accept`
+  would take it. **Accept** admits a draft with the drafts it links and
+  indexes it in about 0.1 s, **Open draft** opens the file beside the source,
+  and **Discard** deletes it after asking. The view checks a draft again
+  whenever its file is saved. Captures run in the background, several at a
+  time, and later captures see and may link earlier drafts. On 2026-10-15 the
+  same selections drafted three times gave different labels, kinds and
+  ownership decisions between runs, which is why nothing is accepted
+  unseen. **Show drafts** opens the view.
+- `kgd drafts` and the MCP tool `kg_drafts` list the drafts from their files,
+  with each value's target, the drafts each must be accepted with, the drafts
+  linking it and exactly what `kgd accept` would refuse, writing nothing and
+  taking no lock. `kgd accept` and `kgd drafts` share one validation.
 - Choose the Obsidian agent's reasoning level in the lookup sidebar, beside
   the model, from the levels that model accepts. The plugin detects them by
   asking the model once at each level a request can name (`none` through

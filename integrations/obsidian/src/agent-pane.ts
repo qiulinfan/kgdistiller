@@ -2,13 +2,14 @@
  * The agent's part of the lookup sidebar: the judgment of a selection, the
  * Capture action, the sources of an unrecorded term, and the answer to a
  * question typed into the search box. The deterministic results below it
- * appear first; the agent's part follows, and nothing is written until the
- * owner presses Capture.
+ * appear first; the agent's part follows. Capture hands the selection to the
+ * Capture view, which drafts it; nothing is accepted until the owner accepts
+ * the draft there.
  */
 
 import { Notice } from "obsidian";
 
-import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
+import type { CaptureFiles } from "./capture";
 import type { ModelClient } from "./model";
 import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
@@ -36,15 +37,9 @@ export interface AgentHost {
   webSearch(query: string): Promise<WebSource[]>;
   /** The registered source in the active editor or reading view, if any. */
   reading(): Promise<Reading | undefined>;
+  /** Draft the selection in the Capture view. */
+  capture(selection: Selection): void;
 }
-
-const DECISIONS: Record<CaptureResult["decision"], string> = {
-  new: "Captured",
-  unchanged: "Already recorded",
-  superseding: "Would overwrite (not written)",
-  conflicting: "Conflicts with a record (not written)",
-  borrowed: "Belongs to other work (not written)",
-};
 
 export class AgentPane {
   private selection: Selection | undefined;
@@ -52,7 +47,6 @@ export class AgentPane {
   private readonly verdictEl: HTMLElement;
   private readonly answerEl: HTMLElement;
   private readonly actionsEl: HTMLElement;
-  private readonly captureEl: HTMLElement;
   private readonly sourcesEl: HTMLElement;
 
   constructor(
@@ -66,7 +60,6 @@ export class AgentPane {
     this.verdictEl = container.createDiv({ cls: "kgd-lookup-verdict" });
     this.answerEl = container.createDiv({ cls: "kgd-lookup-answer" });
     this.actionsEl = container.createDiv({ cls: "kgd-lookup-actions" });
-    this.captureEl = container.createDiv({ cls: "kgd-lookup-capture" });
     this.sourcesEl = container.createDiv({ cls: "kgd-lookup-sources" });
   }
 
@@ -74,7 +67,7 @@ export class AgentPane {
   reset(selection: Selection | undefined, question = false): void {
     this.selection = selection;
     this.request++;
-    for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.captureEl, this.sourcesEl]) element.empty();
+    for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.sourcesEl]) element.empty();
     if (!selection || !this.host.model.configured() || question) return;
     if (selection.source) this.button("Capture", true, (button) => this.capture(button));
     this.button("Find sources", false, (button) => this.sources(button));
@@ -203,51 +196,19 @@ export class AgentPane {
     if (button && !button.disabled) await this.capture(button);
   }
 
+  /** Hand the selection to the Capture view, once per lookup. */
   private async capture(button: HTMLButtonElement): Promise<void> {
     const selection = this.selection;
     if (!selection?.source) return;
-    const request = this.request;
     button.disabled = true;
-    this.captureEl.empty();
-    const status = this.captureEl.createDiv({ cls: "kgd-lookup-hint", text: "Capturing…" });
-    const started = performance.now();
-    try {
-      const result = await captureSelection((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles,
-        { ...selection.source, selection: selection.text });
-      const ms = performance.now() - started;
-      new Notice(`kgdistiller: ${DECISIONS[result.decision]}${result.label ? `: ${result.label}` : ""}`);
-      if (request !== this.request) return;
-      status.remove();
-      this.renderCapture(result, ms);
-      if (result.decision === "borrowed" && this.sourcesEl.childElementCount === 0) await this.sources();
-    } catch (error) {
-      new Notice(`kgdistiller could not capture: ${message(error)}`);
-      if (request !== this.request) return;
-      status.remove();
-      this.captureEl.createDiv({ cls: "kgd-lookup-error", text: `The agent could not capture: ${message(error)}` });
-      button.disabled = false;
-    }
+    button.setText("Drafting in Capture");
+    this.host.capture(selection);
   }
 
-  private renderCapture(result: CaptureResult, ms: number): void {
-    const element = this.captureEl;
-    const line = element.createDiv({ cls: `kgd-lookup-capture-line is-${result.decision}` });
-    line.createSpan({ cls: "kgd-lookup-verdict-head", text: `${DECISIONS[result.decision]}${result.uid ? ": " : ""}` });
-    if (result.uid) {
-      const uid = result.uid;
-      const link = line.createEl("a", { text: result.label ?? uid, href: "#" });
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        this.show(uid);
-      });
-    }
-    line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${seconds(ms)}` });
-    if (result.report) element.createDiv({ cls: "kgd-lookup-explanation", text: result.report });
-    if (result.proposal) {
-      const details = element.createEl("details", { cls: "kgd-lookup-proposal" });
-      details.createEl("summary", { text: "The record this passage proposes" });
-      details.createEl("pre", { text: result.proposal });
-    }
+  /** The capture of this selection found it borrowed: find where it comes from, unless that is already shown. */
+  async sourcesFor(selection: Selection): Promise<void> {
+    if (selection !== this.selection || this.sourcesEl.childElementCount > 0) return;
+    await this.sources();
   }
 
   /**

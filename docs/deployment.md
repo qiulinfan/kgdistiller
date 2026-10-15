@@ -273,10 +273,10 @@ commit or remote synchronization happened.
 ## MCP server
 
 `kgd mcp` is a read-only stdio server over the whole home with the tools
-`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and
-`kg_pack` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)). It takes no
-arguments, opens a fresh read-only connection for every call and reports lag
-like the CLI. The embedding model loads lazily on the first dense search and
+`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`
+and `kg_drafts` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)). It takes no
+arguments, opens a fresh read-only connection for every retrieval call and
+reports lag like the CLI; `kg_drafts` reads the draft files. The embedding model loads lazily on the first dense search and
 stays resident until `meta.embedding` changes, so repeated searches avoid the
 cold load a CLI `kgd search` pays; `kg_search` takes `no_dense` to skip the
 dense lane, and the other tools load no model. Register it in an agent runtime as the command `kgd` with the argument `mcp`,

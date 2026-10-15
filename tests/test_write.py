@@ -1,4 +1,4 @@
-"""The write path: ``accept``, ``sheet`` (file and JSON) and ``harvest``."""
+"""The write path: ``drafts``, ``accept``, ``sheet`` (file and JSON) and ``harvest``."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from kgdistiller import write
 from kgdistiller.home import KnowledgeError, LockConflict, lock
-from kgdistiller.write import accept, harvest, sheet, sheet_json
+from kgdistiller.write import accept, drafts, harvest, sheet, sheet_json
 from tests.knowledge_fixture import make_record_home
 
 SOURCE = "notes/a.txt"
@@ -152,6 +152,76 @@ class AcceptTest(WriteTestCase):
         with lock(), self.assertRaises(LockConflict):
             accept([draft])
         self.assertTrue(draft.exists())
+
+
+class DraftsTest(WriteTestCase):
+    def test_lists_a_draft_with_its_fields_values_and_acceptance(self) -> None:
+        path = self.draft("dimension", node("Dimension", "6", extra='aliases: [维数]\nrequires: ["[[subspace]]", vector space]'))
+        self.assertEqual({"drafts": [{
+            "uid": "kb:dimension", "base": "kb", "id": "dimension", "path": str(path),
+            "class": "node", "kind": "definition", "label": "Dimension", "aliases": ["维数"],
+            "source": SOURCE, "lines": "6-6", "understanding": "unknown", "epistemic": None,
+            "gloss": "Text.", "body": "Text.", "search_terms": "", "evidence": ["Unique sentence about dimension."],
+            "out": [
+                {"role": "requires", "pos": 0, "uid": "kb:subspace", "state": "accepted", "label": "Subspace",
+                 "understanding": "understood"},
+                {"role": "requires", "pos": 1, "term": "vector space"},
+            ],
+            "with": [], "linked_by": [], "problems": [],
+        }], "unavailable_bases": []}, drafts())
+
+    def test_linked_drafts_name_what_they_are_accepted_with(self) -> None:
+        first = self.draft("first", node("First", "6", kind="implies", extra='premise: ["[[second]]"]'))
+        second = self.draft("second", node("Second", "6", kind="implies", extra='premise: ["[[third]]"]'))
+        third = self.draft("third", node("Third", "6"))
+        listed = {item["id"]: item for item in drafts()["drafts"]}
+        self.assertEqual((["kb:second", "kb:third"], [], []), (listed["first"]["with"], listed["first"]["linked_by"], listed["first"]["problems"]))
+        self.assertEqual((["kb:third"], ["kb:first"]), (listed["second"]["with"], listed["second"]["linked_by"]))
+        self.assertEqual(([], ["kb:second"]), (listed["third"]["with"], listed["third"]["linked_by"]))
+        self.assertEqual({"role": "premise", "pos": 0, "uid": "kb:second", "state": "draft", "label": "Second"}, listed["first"]["out"][0])
+        self.assertEqual(["would_create"], list(accept([first, second, third], dry_run=True)))
+
+    def test_problems_are_what_accept_refuses(self) -> None:
+        self.draft("stale", node("Stale", "1"), quote="Not in the source.")
+        self.draft("dangling", node("Dangling", "6", kind="implies", extra='premise: ["[[nowhere]]"]'))
+        self.draft("taken", node("Taken", "6"))
+        self.kb.write_record("taken", node("Taken", "6"), "Other.", ["Unique sentence about dimension."])
+        listed = {item["id"]: item for item in drafts()["drafts"]}
+        for item in listed.values():
+            with self.subTest(item["id"]):
+                refused = accept([item["path"]], dry_run=True)["refused"]
+                self.assertEqual([entry["message"] for entry in refused], item["problems"])
+        self.assertIn("evidence is stale", listed["stale"]["problems"][0])
+        self.assertEqual({"role": "premise", "pos": 0, "uid": "kb:nowhere", "state": "missing", "label": None},
+                         listed["dangling"]["out"][0])
+
+    def test_an_unreadable_draft_is_listed_with_its_problem_unless_the_listing_is_narrowed(self) -> None:
+        (self.kb.root / ".knowledge/drafts").mkdir(parents=True, exist_ok=True)
+        (self.kb.root / ".knowledge/drafts/broken.md").write_text("---\nlabel: [x\n---\nText.\n", encoding="utf-8")
+        [item] = drafts()["drafts"]
+        self.assertEqual(("kb:broken", None, []), (item["uid"], item["label"], item["with"]))
+        self.assertIn("invalid YAML", item["problems"][0])
+        self.assertEqual([], drafts(sources=["notes"])["drafts"])
+        self.assertEqual([], drafts(names=["broken"])["drafts"])
+
+    def test_narrows_by_base_source_and_name_and_writes_nothing(self) -> None:
+        self.draft("dimension", node("Dimension", "6", extra="aliases: [维数]"))
+        self.kb.write_source(SOURCE, "\n".join(LINES) + "\n", base="notes")
+        self.kb.write_record("rank", node("Rank", "6"), "R.", ["Unique sentence about dimension."], folder="drafts", base="notes")
+        before = self.snapshot()
+        uids = lambda listed: [item["uid"] for item in listed["drafts"]]
+        self.assertEqual(["kb:dimension", "notes:rank"], uids(drafts()))
+        self.assertEqual(["notes:rank"], uids(drafts(bases=["notes"])))
+        self.assertEqual(["kb:dimension"], uids(drafts(names=["维数"])))
+        self.assertEqual([], uids(drafts(names=["length"])))
+        self.assertEqual([], uids(drafts(sources=["notes/b"])))
+        self.assertEqual(["kb:dimension", "notes:rank"], uids(drafts(sources=["notes/a"])))
+        self.assertEqual(before, self.snapshot())
+
+    def test_takes_no_lock(self) -> None:
+        self.draft("dimension", node("Dimension", "6"))
+        with lock():
+            self.assertEqual(["kb:dimension"], [item["uid"] for item in drafts()["drafts"]])
 
 
 EXPECTED_SHEET = """<!-- generated by kgd sheet; only draft checkboxes are read back -->

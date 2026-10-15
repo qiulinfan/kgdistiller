@@ -172,10 +172,12 @@
   desktop only (`isDesktopOnly`), desktop-capability guarded and scoped to the
   whole `.knowledge` subtree (the folder is the product constant, not a
   setting) with no exclusion list; do not enable competing hidden-folder
-  indexers. The plugin has one sidebar and draws no graph of the whole base:
-  it shows the neighbourhood of the record in focus, for a selection, a typed
-  query or the file open in the editor. It reads knowledge only through a
-  resident `kgd mcp`, off until the vault's settings name a kgd executable,
+  indexers. The plugin has a lookup sidebar and a Capture view, and draws no
+  graph of the whole base: the lookup sidebar shows the neighbourhood of the
+  record in focus, for a selection, a typed query or the file open in the
+  editor, and the Capture view lists the drafts waiting for the owner. It reads
+  knowledge and drafts only through a resident `kgd mcp` (`kg_drafts` for
+  drafts), off until the vault's settings name a kgd executable,
   covering every base, and runs `kgd base list` and `kgd index` with the
   configured executable and `KGDISTILLER_HOME`; the plugin never parses
   records, and never opens the home or the database itself. Capture's ids
@@ -190,9 +192,10 @@
   unless the owner adds an Exa key), and stores API keys only through
   Obsidian SecretStorage. It depends on no external
   agent runtime, owns its prompts and
-  checks every model answer and citation, and writes knowledge only as a draft
-  admitted by `kgd accept` and `kgd index --no-embed`, under the same rules as
-  the capture Skill. Preserve the complete upstream MIT notice and pinned source
+  checks every model answer and citation, and writes knowledge only as a
+  draft, under the same rules as the capture Skill; the agent never accepts,
+  and a draft becomes knowledge when the owner accepts it in the Capture view
+  (`kgd accept`, then `kgd index --no-embed`). Preserve the complete upstream MIT notice and pinned source
   revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by

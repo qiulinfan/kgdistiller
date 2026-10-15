@@ -28,6 +28,7 @@ import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-kno
 import { HoldTrigger } from "./hold";
 import { KgdServer } from "./kgd";
 import { lookupQuery } from "./lookup-model";
+import { KgdistillerCaptureView, VIEW_TYPE_KGDISTILLER_CAPTURE } from "./capture-view";
 import { KgdistillerLookupView, LOOKUP_ICON, VIEW_TYPE_KGDISTILLER_LOOKUP } from "./lookup-view";
 import { fold } from "./records";
 import { fetchError, USER_AGENT, type Fetch } from "./sources";
@@ -147,6 +148,7 @@ export default class KgdistillerPlugin extends Plugin {
       VIEW_TYPE_KGDISTILLER_LOOKUP,
       (leaf) => new KgdistillerLookupView(leaf, this),
     );
+    this.registerView(VIEW_TYPE_KGDISTILLER_CAPTURE, (leaf) => new KgdistillerCaptureView(leaf, this));
     this.addRibbonIcon(LOOKUP_ICON, "Open kgdistiller", () => void this.lookupView().then((view) => view?.focusSearch()));
     this.addCommand({
       id: "look-up-selection",
@@ -162,6 +164,11 @@ export default class KgdistillerPlugin extends Plugin {
       id: "search-knowledge",
       name: "Search knowledge",
       callback: () => void this.lookupView().then((view) => view?.focusSearch()),
+    });
+    this.addCommand({
+      id: "show-drafts",
+      name: "Show drafts",
+      callback: () => void this.captureView().then((view) => view?.listDrafts()),
     });
     this.watchHold(document);
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, popout) => this.watchHold(popout.document)));
@@ -214,7 +221,7 @@ export default class KgdistillerPlugin extends Plugin {
     await view?.lookup(selection);
   }
 
-  /** Look the selection up, then capture it from the lookup sidebar. */
+  /** Look the selection up, and draft it in the Capture view. */
   async captureSelection(): Promise<void> {
     if (!this.model.configured() || !this.kgd.configured()) {
       new Notice("Set the kgd executable and add a model provider in the kgdistiller settings, and choose a model in the sidebar, to capture knowledge.");
@@ -275,6 +282,35 @@ export default class KgdistillerPlugin extends Plugin {
     }
     await this.app.workspace.revealLeaf(leaf);
     return leaf.view instanceof KgdistillerLookupView ? leaf.view : undefined;
+  }
+
+  /** Draft a selection in the Capture view, opened below the lookup sidebar; the owner keeps reading meanwhile. */
+  capture(selection: Selection): void {
+    void this.captureView().then((view) => view?.startCapture(selection));
+  }
+
+  /** A capture found the selection borrowed: the lookup sidebar still showing it finds where it comes from. */
+  borrowed(selection: Selection): void {
+    for (const view of this.lookupViews()) void view.sourcesFor(selection);
+  }
+
+  /** The Capture view, opened below the lookup sidebar, or in the right sidebar without one, leaving focus on the note being read. */
+  private async captureView(): Promise<KgdistillerCaptureView | undefined> {
+    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_CAPTURE)[0];
+    if (!leaf) {
+      const lookup = this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_LOOKUP)[0];
+      const reading = this.app.workspace.getMostRecentLeaf();
+      leaf = (lookup ? this.app.workspace.createLeafBySplit(lookup, "horizontal") : this.app.workspace.getRightLeaf(false)) ?? undefined;
+      // A split makes the new leaf active; give focus back to the note being read.
+      if (lookup && reading) this.app.workspace.setActiveLeaf(reading, { focus: true });
+      if (!leaf) {
+        new Notice("Could not create a workspace leaf for the kgdistiller Capture view.");
+        return undefined;
+      }
+      await leaf.setViewState({ type: VIEW_TYPE_KGDISTILLER_CAPTURE, active: false });
+    }
+    await this.app.workspace.revealLeaf(leaf);
+    return leaf.view instanceof KgdistillerCaptureView ? leaf.view : undefined;
   }
 
   /** The real path of the vault root, which `kgd base list` reports for its base. */

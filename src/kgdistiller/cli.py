@@ -119,6 +119,18 @@ def parse_args() -> argparse.Namespace:
     sheet.add_argument("source", type=Path, help="a registered source file")
     sheet.add_argument("--json", action="store_true", help="print the extraction profile and inventory; write nothing")
 
+    drafts = commands.add_parser(
+        "drafts", help="list the drafts with their links and what accept would refuse; reads files, writes nothing"
+    )
+    drafts.add_argument("--base", action="append", default=[], metavar="B", help="list only this base (repeatable)")
+    drafts.add_argument(
+        "--source", action="append", default=[], metavar="PREFIX", help="base-relative source path prefix (repeatable)"
+    )
+    drafts.add_argument(
+        "--name", action="append", default=[], metavar="NAME",
+        help="list only drafts whose label or an alias has this name (repeatable)",
+    )
+
     accept = commands.add_parser("accept", help="promote drafts to accepted records, all or nothing")
     accept.add_argument("drafts", nargs="+", type=Path, metavar="DRAFT")
     accept.add_argument("--dry-run", action="store_true")
@@ -316,6 +328,10 @@ def _command(args: argparse.Namespace) -> int:
 
         source = _cwd_path(args.source)
         return _print(sheet_json(source) if args.json else sheet(source))
+    if args.command == "drafts":
+        from .write import drafts
+
+        return _print(drafts(args.base, args.source, args.name))
     if args.command in {"accept", "harvest"}:
         from .write import accept, harvest
 

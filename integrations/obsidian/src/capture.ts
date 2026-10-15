@@ -1,19 +1,21 @@
 /**
- * The agent's capture job: file the passage the owner selected while reading
+ * The agent's capture job: draft the passage the owner selected while reading
  * as one record, by the rules of docs/model.md that the capture-kgdistiller
  * Skill follows. The plugin prepares everything deterministic: the source's
- * document type, the numbered passage, the records already citing the source
- * and the records a search finds for the selection. The model then decides in
- * as few calls as it can: an optional batched lookup, then a submission. The
- * plugin checks the submission, looks up every name it would write before
- * writing it, places each evidence quote in the source, writes the draft and
- * admits it with `kgd accept` and `kgd index --no-embed`. Each refusal goes
- * back to the model as the tool's result.
+ * document type, the numbered passage, the records and drafts already citing
+ * the source and the records a search finds for the selection. The model then
+ * decides in as few calls as it can: an optional batched lookup, then a
+ * submission. The plugin checks the submission, looks up every name it would
+ * write before writing it, places each evidence quote in the source, and
+ * writes the draft only when `kg_drafts` reports that `kgd accept` would take
+ * it. Each refusal goes back to the model as the tool's result. The job never
+ * accepts: the draft waits in the Capture view for the owner.
  */
 
 import { runJob, type Complete, type Tool } from "./agent";
 import { mergeRanges, normalizeSpace, parseRanges, placeQuote, rangesText, type Range } from "./evidence";
 import type { ToolSpec } from "./model";
+import type { DraftsResult } from "./drafts";
 import type { RecordSummary, ResolveResult, SearchResult } from "./lookup-model";
 import { fold } from "./records";
 
@@ -28,6 +30,7 @@ export interface Sheet {
   guidance: string;
   line_count: number;
   records: Array<{ uid: string; label: string; kind: string; class: string; lines: string; gloss: string }>;
+  drafts: Array<{ id: string; label: string; kind: string; class: string; lines: string }>;
 }
 
 export interface CaptureInput {
@@ -45,9 +48,11 @@ export interface CaptureResult {
   /** What the agent took the selection to name or state. */
   item: string;
   decision: CaptureDecision;
-  /** The created record, or the recorded one this passage matches, generalizes or contradicts. */
+  /** For new, the draft written; otherwise the record or draft this passage matches, generalizes or contradicts. */
   uid?: string;
   label?: string;
+  /** The uid names a draft awaiting the owner, not an accepted record. */
+  draft?: boolean;
   /** For superseding and conflicting: the record this passage proposes, as a file. */
   proposal?: string;
   report: string;
@@ -87,6 +92,7 @@ The knowledge model:
 - Every other statement that can be true or false, such as a result, comparison, finding or limitation, is a relation: it binds its participants to the roles of its kind, and its evidence itself states it.
 - Each concept has exactly one record, owned by the source that defines or originates it. A concept this source only uses, or credits to other work (a citation, "proposed by", "as in", "earlier work used"), is never a node of this source, even when the passage explains it.
 - A value is a link "[[uid]]" to a record shown in this conversation, or else a plain term, which marks a concept no base records yet. A value names a concept that could have its own record, such as a method, model, dataset, task or metric. Configurations, quantities and conditions, such as "fine-tune one block" or "75% masking", are never values: they stay in the statement and the evidence.
+- A draft awaits the owner's review and is not knowledge yet. A value may still link a draft shown to you of this source's base, and when the item is a draft's item, decide unchanged with that draft's uid.
 - Record only what the cited text states. A connection you would infer across passages or sources is not knowledge of this source.
 
 Decide by comparing meanings with the records shown; a shared name does not make the same concept:
@@ -344,8 +350,10 @@ export function recordFile(draft: Draft, source: string, lines: Range[], quotes:
 
 /** The state of one capture job: what the model has seen and looked up. */
 class CaptureState {
-  /** Every record shown to the model, by uid; only these may be linked. */
+  /** Every record and draft shown to the model, by uid; only these may be linked. */
   readonly shown = new Map<string, { uid: string; label: string; kind: string; class?: string; base?: string; lines?: string; gloss?: string }>();
+  /** The shown uids that are drafts. */
+  readonly drafts = new Set<string>();
   /** Folded names already looked up. */
   readonly looked = new Set<string>();
 
@@ -367,14 +375,23 @@ export async function captureSelection(complete: Complete, kgd: CaptureKgd, file
   const searched = await kgd.call<SearchResult>("kg_search", { query: input.selection.slice(0, 500), limit: SEARCH_LIMIT });
   const state = new CaptureState(sheet, root, lines);
   state.show(sheet.records.map((record) => ({ ...record, base: sheet.base })));
+  // The source's drafts, which no search finds, may be linked or be the item itself.
+  const sourceDrafts = sheet.drafts.map((draft) => ({ ...draft, uid: `${sheet.base}:${draft.id}`, base: sheet.base, gloss: DRAFT_GLOSS }));
+  for (const draft of sourceDrafts) state.drafts.add(draft.uid);
+  state.show(sourceDrafts);
   state.show(searched.results);
   const names = selectionNames(input.selection);
-  const named = names.length ? resolvedText(state, await kgd.call<ResolveResult>("kg_resolve", { terms: names })) : [];
+  const named = names.length
+    ? [...resolvedText(state, await kgd.call<ResolveResult>("kg_resolve", { terms: names })), ...(await namedDrafts(kgd, state, names)).lines]
+    : [];
   const lookup: Tool<CaptureResult> = { spec: LOOKUP_TOOL, run: (args) => lookUp(kgd, state, args) };
   const submit: Tool<CaptureResult> = { spec: SUBMIT_TOOL, run: (args) => file(kgd, files, state, args) };
   const result = await runJob(complete, {
     system: `${CAPTURE_SYSTEM}\n\n${typeText(sheet)}`,
-    user: captureUser(input, sheet, lines, searched.results.filter((hit) => !sheet.records.some((record) => record.uid === hit.uid)), named),
+    user: [
+      captureUser(input, sheet, lines, searched.results.filter((hit) => !sheet.records.some((record) => record.uid === hit.uid)), named),
+      ...(sourceDrafts.length ? [`Drafts of this source awaiting the owner's review:\n${sourceDrafts.map(summaryLine).join("\n")}`] : []),
+    ].join("\n\n"),
     tools: [lookup, submit],
     turns: 4,
     // Low reasoning filed all eleven test captures right in two runs (median 6 s, slowest 20 s);
@@ -390,7 +407,7 @@ async function lookUp(kgd: CaptureKgd, state: CaptureState, args: Record<string,
   const parts: string[] = [];
   if (names.length) {
     const resolved = await kgd.call<ResolveResult>("kg_resolve", { terms: names });
-    parts.push(...resolvedText(state, resolved));
+    parts.push(...resolvedText(state, resolved), ...(await namedDrafts(kgd, state, names)).lines);
   }
   for (const phrase of phrases) {
     const searched = await kgd.call<SearchResult>("kg_search", { query: phrase, limit: LOOKUP_SEARCH_LIMIT });
@@ -398,6 +415,19 @@ async function lookUp(kgd: CaptureKgd, state: CaptureState, args: Record<string,
     parts.push(`Search "${phrase}":`, ...(searched.results.length ? searched.results.map((hit) => `- ${summaryLine(hit)}`) : ["- no record"]));
   }
   return parts.join("\n") || "Nothing to look up.";
+}
+
+const DRAFT_GLOSS = "a draft awaiting the owner's review";
+
+/** The drafts named so in every base, marked shown; `unseen` says whether any was not shown before. */
+async function namedDrafts(kgd: CaptureKgd, state: CaptureState, names: string[]): Promise<{ lines: string[]; unseen: boolean }> {
+  const found = await kgd.call<DraftsResult>("kg_drafts", { names });
+  const drafts = found.drafts.filter((draft) => draft.label !== null);
+  const unseen = drafts.some((draft) => !state.shown.has(draft.uid));
+  const shown = drafts.map((draft) => ({ uid: draft.uid, label: draft.label!, kind: draft.kind ?? "", class: draft.class, base: draft.base, lines: draft.lines, gloss: DRAFT_GLOSS }));
+  for (const draft of shown) state.drafts.add(draft.uid);
+  state.show(shown);
+  return { lines: shown.length ? ["Drafts named so:", ...shown.map((draft) => `  - ${summaryLine(draft)}`)] : [], unseen };
 }
 
 /** Each resolved term's senses and pending uses, marking them shown and the term looked up. */
@@ -424,48 +454,51 @@ async function file(kgd: CaptureKgd, files: CaptureFiles, state: CaptureState, a
   if (decision === "borrowed") return { done: { item, decision, report } };
   const recorded = typeof args.record === "string" ? args.record.trim().replace(/^\[\[|\]\]$/g, "") : "";
   if (decision !== "new" && !state.shown.has(recorded)) return `error: record must be the uid of a record shown to you for ${decision}`;
+  const draft = state.drafts.has(recorded);
   if (decision === "unchanged") {
-    return { done: { item, decision, uid: recorded, label: state.shown.get(recorded)?.label, report } };
+    return { done: { item, decision, uid: recorded, label: state.shown.get(recorded)?.label, ...(draft ? { draft } : {}), report } };
   }
+  if (draft) return `error: [[${recorded}]] is a draft awaiting the owner, not knowledge yet; decide unchanged when the item is that draft's item, or new`;
   const drafted = draftOf(state, args);
   if (typeof drafted === "string") return drafted;
-  const { draft, values } = drafted;
+  const { draft: record, values } = drafted;
   // Look up every name the record would write before writing it (docs/model.md, "Look up before every write").
-  const unlooked = [draft.label, ...draft.aliases, ...values.filter((value) => !value.startsWith("[["))]
-    .filter((name) => !state.looked.has(fold(name)));
+  const unlooked = [...new Set([record.label, ...record.aliases, ...values.filter((value) => !value.startsWith("[["))]
+    .filter((name) => !state.looked.has(fold(name))))];
   if (unlooked.length) {
     const before = new Set(state.shown.keys());
-    const resolved = await kgd.call<ResolveResult>("kg_resolve", { terms: [...new Set(unlooked)] });
+    const resolved = await kgd.call<ResolveResult>("kg_resolve", { terms: unlooked });
     const lines = resolvedText(state, resolved);
-    const unseen = resolved.terms.some((term) => term.senses.some((record) => !before.has(record.uid)));
+    const drafts = await namedDrafts(kgd, state, unlooked);
+    const unseen = drafts.unseen || resolved.terms.some((term) => term.senses.some((found) => !before.has(found.uid)));
     if (unseen) {
       return [
-        "Not filed yet. These names belong to records you had not seen:",
+        "Not filed yet. These names belong to records or drafts you had not seen:",
         ...lines,
-        "Link a value as \"[[uid]]\" when it is the same concept and keep the plain term otherwise. If the item itself is one of these records, decide unchanged, superseding or conflicting instead of new. Then call submit again.",
+        ...drafts.lines,
+        "Link a value as \"[[uid]]\" when it is the same concept and keep the plain term otherwise. If the item itself is one of these records, decide unchanged, superseding or conflicting instead of new, and unchanged when it is one of these drafts. Then call submit again.",
       ].join("\n");
     }
   }
-  const placed = placeEvidence(draft, state.lines);
+  const placed = placeEvidence(record, state.lines);
   if (typeof placed === "string") return placed;
   if (decision !== "new") {
-    const proposal = recordFile(draft, state.sheet.source, placed.ranges, placed.quotes);
+    const proposal = recordFile(record, state.sheet.source, placed.ranges, placed.quotes);
     return { done: { item, decision, uid: recorded, label: state.shown.get(recorded)?.label, proposal, report } };
   }
-  const id = freeId(draft.label, await files.ids(state.root));
+  const id = freeId(record.label, await files.ids(state.root));
   if (!id) return "error: the label gives an empty id; use a label with letters or digits";
   const path = `${state.root}/.knowledge/drafts/${id}.md`;
-  await files.create(path, recordFile(draft, state.sheet.source, placed.ranges, placed.quotes));
-  const accepted = await kgd.command(["accept", path]);
-  const refused = (accepted.report.refused as Array<{ message?: string }> | undefined) ?? [];
-  if (accepted.failed || refused.length) {
-    await files.remove(path);
-    const reasons = refused.map((item) => item.message).filter(Boolean).join("; ") || kgdMessage(accepted.report) || "kgd accept refused the draft";
-    return `error: kgd accept refused the record: ${reasons}. Correct it and call submit again.`;
-  }
-  const indexed = await kgd.command(["index", "--no-embed"]);
   const uid = `${state.sheet.base}:${id}`;
-  return { done: { item, decision, uid, label: draft.label, report: indexed.failed ? `${report} (kgd index reported problems)` : report } };
+  await files.create(path, recordFile(record, state.sheet.source, placed.ranges, placed.quotes));
+  // The draft stays only when kgd accept would take it, with the drafts it links.
+  const listed = await kgd.call<DraftsResult>("kg_drafts", { base: [state.sheet.base], source: [state.sheet.source] });
+  const problems = listed.drafts.find((found) => found.uid === uid)?.problems ?? ["kg_drafts did not list the draft"];
+  if (problems.length) {
+    await files.remove(path);
+    return `error: kgd accept would refuse the record: ${problems.join("; ")}. Correct it and call submit again.`;
+  }
+  return { done: { item, decision, uid, label: record.label, draft: true, report } };
 }
 
 /** The submitted draft checked against the source's type, with link values rewritten to kgd's link form. */
@@ -501,6 +534,10 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): { draft: D
       return undefined;
     }
     const [base, id] = splitUid(uid);
+    if (state.drafts.has(uid) && base !== sheet.base) {
+      errors.push(`[[${uid}]] is a draft of another base, which only an accepted record can be linked across; write a plain term`);
+      return undefined;
+    }
     return base === sheet.base ? `[[${id}]]` : `[[${base}:${id}]]`;
   };
   const convert = (items: unknown): string[] => strings(items).map(link).filter((value): value is string => value !== undefined);

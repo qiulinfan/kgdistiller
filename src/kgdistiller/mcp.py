@@ -1,12 +1,14 @@
-"""Read-only MCP JSON-RPC server over stdio with six tools.
+"""Read-only MCP JSON-RPC server over stdio with seven tools.
 
 The tools are ``kg_search``, ``kg_resolve``, ``kg_get``, ``kg_neighbors``,
-``kg_browse`` and ``kg_pack``. The server is read-only and serves the whole
-home. Every tool call goes through ``retrieve``, which opens a fresh read-only
-connection to the derived database, so a call sees the latest ``kgd index``
-and never writes anything. Only ``kg_search``'s dense lane loads the embedding
-model: it loads lazily on the first dense search and stays resident until
-``meta.embedding`` changes. The other tools load no model.
+``kg_browse``, ``kg_pack`` and ``kg_drafts``. The server is read-only and
+serves the whole home. Every retrieval call goes through ``retrieve``, which
+opens a fresh read-only connection to the derived database, so a call sees the
+latest ``kgd index`` and never writes anything; ``kg_drafts`` reads the draft
+files instead, as ``kgd accept`` would validate them, and takes no lock. Only
+``kg_search``'s dense lane loads the embedding model: it loads lazily on the
+first dense search and stays resident until ``meta.embedding`` changes. The
+other tools load no model.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from .retrieve import (
     resolve,
     search,
 )
+from .write import drafts
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
@@ -50,7 +53,8 @@ INSTRUCTIONS = (
     "the retrieval extra missing, repeat it with no_dense. kg_neighbors follows links (dependency closure with "
     "role requires, claims citing a record with dir in), kg_browse lists bases, source trees, a source's records "
     "by kind or every record of a kind, and kg_pack returns whole records within a byte budget with shared "
-    "relations and typed gaps."
+    "relations and typed gaps. kg_drafts lists the drafts awaiting acceptance, read from their files; drafts "
+    "are not knowledge and no other tool returns them."
 )
 
 
@@ -147,6 +151,15 @@ TOOL_DEFINITIONS = [
             "requires_depth": {"type": "integer", "minimum": 0, "maximum": MAX_DEPTH, "default": 1},
             **FILTER_PROPERTIES,
         }, ["uids"]),
+    ),
+    _tool(
+        "kg_drafts", "List Knowledge Drafts",
+        "List the drafts awaiting acceptance, read from their files, not the index: each draft's fields, every "
+        "value's target (an accepted record, a draft of its base, a missing record or a pending term), the drafts "
+        "it must be accepted with, the drafts linking it, and the problems kgd accept would refuse, empty when it "
+        "would accept them. base and source (path prefixes) narrow the listing; names keeps the drafts whose label "
+        "or an alias has one of those names.",
+        _object_schema({"base": _strings(64, 32), "source": _strings(4096, 32), "names": _strings(4096, 128)}, []),
     ),
 ]
 TOOL_SCHEMAS = {tool["name"]: tool["inputSchema"] for tool in TOOL_DEFINITIONS}
@@ -308,6 +321,8 @@ def call_tool(name: str, raw_arguments: Any) -> dict[str, Any]:
             arguments["uids"], budget=arguments.get("budget", PACK_BUDGET),
             requires_depth=arguments.get("requires_depth", 1), filters=_filters(arguments),
         )
+    if name == "kg_drafts":
+        return drafts(arguments.get("base", ()), arguments.get("source", ()), arguments.get("names", ()))
     return get(arguments["uids"], source_lines=arguments.get("source_lines"))
 
 

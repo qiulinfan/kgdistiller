@@ -372,7 +372,8 @@ same knowledge point overwrites its record in place and keeps the id (see
   acceptance are what is accepted. Deleting a draft rejects it, and nothing
   remembers the rejection: there is no rejection list, so a later compile may
   propose the same record again.
-- Drafts are validated by `kgd check` and never indexed.
+- Drafts are validated by `kgd check` and never indexed. `kgd drafts` lists
+  them with what `kgd accept` would make of each.
 
 ## Sheets
 
@@ -505,6 +506,42 @@ not fixed:
 `harvest`, `check --fix-lines`, `base add` and `base rm`; a second writer fails
 at once. No data file is ever locked or truncated. `kgd index` relies on
 SQLite's own locking.
+
+### `kgd drafts [--base B]... [--source PREFIX]... [--name NAME]...`
+
+Lists the drafts of the available bases, read from files: it writes nothing,
+takes no lock and opens no database. Each draft has its record fields as
+`kgd get` gives them (without `in`), plus:
+
+- `path`: the draft file;
+- `out`: every value, as a pending `term` or as a link with the `state` of its
+  target: `accepted` (with the record's `label` and `understanding`), `draft`
+  (a draft of the same base) or `missing`;
+- `with`: the drafts of its base that it links, directly or through other
+  drafts, which `kgd accept` must be given with it;
+- `linked_by`: the drafts that link it;
+- `problems`: what `kgd accept` would refuse when given the draft and its
+  `with`, empty when it would accept them.
+
+```json
+{"drafts": [{"uid": "notes:direct-sum-criterion", "base": "notes", "id": "direct-sum-criterion",
+   "path": "/abs/root/.knowledge/drafts/direct-sum-criterion.md", "class": "relation", "kind": "implies",
+   "label": "Direct sum criterion", "aliases": [], "source": "…", "lines": "37-41", "understanding": "unknown",
+   "epistemic": null, "gloss": "…", "body": "…", "search_terms": "", "evidence": ["…"],
+   "out": [{"role": "premise", "pos": 0, "uid": "notes:direct-sum", "state": "draft", "label": "Direct sum"},
+           {"role": "conclusion", "pos": 0, "uid": "notes:subspace", "state": "accepted", "label": "Subspace",
+            "understanding": "understood"},
+           {"role": "requires", "pos": 0, "term": "vector space"}],
+   "with": ["notes:direct-sum"], "linked_by": [], "problems": []}],
+ "unavailable_bases": []}
+```
+
+Drafts sort by base, source, first line and id. `--base` and `--source` (a
+base-relative source path prefix) narrow the listing, and `--name` keeps the
+drafts whose label or an alias has that name key; each option repeats, ORed
+within itself. A draft that cannot be read or parsed is listed with
+`label: null` and its problem, unless `--source` or `--name` narrows the
+listing. The MCP tool `kg_drafts` returns the same JSON.
 
 ### `kgd accept DRAFT... [--dry-run]`
 
