@@ -4,6 +4,11 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Model and search errors show the service's own explanation, read from a
+  JSON error body on one line of at most 300 characters with the request's key
+  replaced by `[key]`, instead of only the HTTP status. A 429 that persists
+  after the retries is reported in the service's words, since it also means
+  an exhausted balance, such as Zhipu's code 1113.
 - Configure several model providers for the Obsidian agent and switch models
   in the sidebar. A provider is a service, a name and an API key in
   SecretStorage: fourteen hosted services (DeepSeek, OpenAI, OpenRouter,

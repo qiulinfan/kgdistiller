@@ -75,8 +75,11 @@ export class ModelClient {
         if (!(error instanceof ApiError) || (error.status !== 503 && error.status !== 429)) throw error;
         const delay = BUSY_RETRY_DELAYS_MS[attempt];
         if (delay === undefined) {
-          throw new Error(`The model service is busy (HTTP ${error.status}): it refused the request and ${BUSY_RETRY_DELAYS_MS.length} retries. `
-            + "Try again in a moment, or set another Chat Completions service in the kgdistiller settings.");
+          // 429 also means an exhausted balance or plan, which only the service's own words tell apart.
+          throw new Error(error.detail
+            ? `The model service refused the request and ${BUSY_RETRY_DELAYS_MS.length} retries (HTTP ${error.status}): ${error.detail}`
+            : `The model service is busy (HTTP ${error.status}): it refused the request and ${BUSY_RETRY_DELAYS_MS.length} retries. `
+              + "Try again in a moment, or choose another model in the sidebar.");
         }
         await this.pause(delay);
       }

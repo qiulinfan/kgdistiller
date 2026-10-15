@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { afterEach, describe, expect, it } from "vitest";
-import { ApiClient, ApiError, apiUrl } from "../src/api";
+import { ApiClient, ApiError, apiUrl, errorDetail } from "../src/api";
 import { ModelClient } from "../src/model";
 import { EXA_MCP_URL, webSearch } from "../src/web";
 import { searchKnowledge, type SearchKgd } from "../src/search";
@@ -46,6 +46,35 @@ describe("the plugin's HTTP transport", () => {
     const url = await server((_req, res) => { requests++; res.writeHead(302, { Location: "/elsewhere" }); res.end("synthetic-secret"); });
     await expect(client().post(url, "synthetic-secret", {}, 1000)).rejects.toThrow("HTTP 302");
     expect(requests).toBe(1);
+  });
+
+  it("reports the service's own explanation of a failure, with the request's key replaced", async () => {
+    const url = await server((req, res) => {
+      res.writeHead(req.url === "/echo" ? 401 : 400, { "Content-Type": "application/json" });
+      const key = req.headers.authorization?.replace("Bearer ", "") ?? req.headers["x-api-key"];
+      if (req.url === "/echo") res.end(JSON.stringify({ error: { message: `Incorrect API key provided: ${key}` } }));
+      else if (req.url === "/large") res.end(JSON.stringify({ error: { message: "y".repeat(70 * 1024) } }));
+      else res.end(JSON.stringify({ error: { code: "1210", message: "该模型始终思考，\n 不支持关闭思考；请使用 low、high 或 max。" } }));
+    });
+    const api = client();
+    const failure = await api.post(url, "synthetic-test-key", {}, 1000).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 400, detail: "该模型始终思考， 不支持关闭思考；请使用 low、high 或 max。",
+      message: "API request failed (HTTP 400): 该模型始终思考， 不支持关闭思考；请使用 low、high 或 max。" });
+    await expect(api.post(`${url}/echo`, "synthetic-test-key", {}, 1000))
+      .rejects.toThrow("API request failed (HTTP 401): Incorrect API key provided: [key]. Check the API key and access permissions.");
+    await expect(api.postText(`${url}/echo`, { "x-api-key": "synthetic-test-key" }, {}, 1000))
+      .rejects.toThrow("API request failed (HTTP 401): Incorrect API key provided: [key].");
+    await expect(api.post(`${url}/large`, "", {}, 1000)).rejects.toThrow(/^API request failed \(HTTP 400\)\.$/);
+  });
+
+  it("explains a failure only by a JSON body's error message, error, message or detail, on one line of at most 300 characters", () => {
+    expect(errorDetail(JSON.stringify({ error: "model not found" }), [])).toBe("model not found");
+    expect(errorDetail(JSON.stringify({ message: "busy" }), [])).toBe("busy");
+    expect(errorDetail(JSON.stringify({ detail: "Not Found" }), [])).toBe("Not Found");
+    expect(errorDetail("<html>bad gateway</html>", [])).toBe("");
+    expect(errorDetail(JSON.stringify({ error: { message: "x".repeat(400) } }), [])).toBe(`${"x".repeat(300)}…`);
+    expect(errorDetail(JSON.stringify({ error: { message: "sk-12345678 refused, ab kept" } }), ["sk-12345678", "ab"])).toBe("[key] refused, ab kept");
   });
 
   it("reports invalid JSON and authentication errors", async () => {

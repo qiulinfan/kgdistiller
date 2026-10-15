@@ -145,11 +145,14 @@ engine through its resident MCP server and admission commands.
 
 A model request that the service answers with HTTP 503 (busy) or 429 (too
 many requests) is sent again after 1 s and then after 2 s, each time with the
-current settings. When the third attempt is refused too, the sidebar says the
-model service is busy, gives the status, and suggests trying again or setting
-another Chat Completions service. Any other failure, a timeout included, is
-reported at once. On 2026-10-14 DeepSeek answered 503 "Service is too busy"
-to some requests and left most of ten others unanswered for over a minute.
+current settings. When the third attempt is refused too, the sidebar gives
+the status with the service's own explanation when it sent one, since a 429
+also means an exhausted balance or plan: Zhipu then answers code 1113,
+"余额不足或无可用资源包,请充值。" Without an explanation it says the model
+service is busy and suggests trying again or choosing another model. Any
+other failure, a timeout included, is reported at once. On 2026-10-14
+DeepSeek answered 503 "Service is too busy" to some requests and left most of
+ten others unanswered for over a minute.
 
 The plugin owns prompts, tool execution, concurrent read-only calls, bounded
 turns and answer validation. Standard Chat Completions requests carry
@@ -166,8 +169,11 @@ The desktop HTTP client reuses connections, limits JSON responses to 8 MiB,
 and cancels requests after 120 seconds for a model or 60 seconds for search.
 Changing API settings cancels pending API requests; unloading closes the
 client. HTTPS is required except for loopback HTTP services. Redirects are
-not followed and error response bodies are not displayed, so credentials
-stay with the configured endpoint. API requests are not retried implicitly.
+not followed, so credentials stay with the configured endpoint. A failed
+request shows the service's own explanation from a JSON error body
+(`error.message`, an `error` string, `message` or `detail`) on one line of at
+most 300 characters, with the request's key replaced by `[key]`; any other
+error body is not displayed. API requests are not retried implicitly.
 Missing search configuration is reported as a tool error; local knowledge
 queries remain available.
 

@@ -8,11 +8,43 @@ export type PostText = (url: string, headers: Record<string, string>, body: Reco
 /** GET with a bearer key and parse the JSON reply. */
 export type GetJson = (url: string, key: string, timeout: number) => Promise<unknown>;
 
-/** A failed API request; `status` is the HTTP status when the service answered. */
+/** A failed API request; `status` is the HTTP status when the service answered, `detail` its own explanation. */
 export class ApiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly detail = "") {
     super(message);
   }
+}
+
+/** The most of an error body read for its explanation. */
+const ERROR_BODY_BYTES = 64 * 1024;
+
+/**
+ * The service's own explanation in a JSON error body (`error.message`, an
+ * `error` string, `message` or `detail`), on one line, at most 300 characters
+ * and with every key the request carried replaced by [key]. Any other body
+ * is never shown.
+ */
+export function errorDetail(body: string, secrets: readonly string[]): string {
+  let value: unknown;
+  try { value = JSON.parse(body); } catch { return ""; }
+  const reply = value as { error?: unknown; message?: unknown; detail?: unknown } | null;
+  const error = reply?.error as { message?: unknown } | string | null | undefined;
+  const raw = typeof error === "string" ? error
+    : typeof error?.message === "string" ? error.message
+    : typeof reply?.message === "string" ? reply.message
+    : typeof reply?.detail === "string" ? reply.detail : "";
+  let detail = raw.split(/\s+/).filter(Boolean).join(" ");
+  for (const secret of secrets) if (secret.length >= 8) detail = detail.split(secret).join("[key]");
+  return detail.length > 300 ? `${detail.slice(0, 300)}…` : detail;
+}
+
+/** The keys a request carries in its headers, to keep them out of error messages. */
+function secretsOf(headers: Record<string, string>): string[] {
+  return Object.entries(headers).flatMap(([name, value]) => {
+    const lower = name.toLowerCase();
+    if (lower === "authorization") return [value.replace(/^Bearer\s+/i, "").trim()];
+    return lower === "x-api-key" ? [value.trim()] : [];
+  });
 }
 
 const bearer = (key: string): Record<string, string> => (key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {});
@@ -71,8 +103,19 @@ export class ApiClient {
       request.on("response", (response) => {
         const status = response.statusCode ?? 0;
         if (status < 200 || status >= 300) {
-          finish(new ApiError(`API request failed (HTTP ${status}).${status === 401 || status === 403 ? " Check the API key and access permissions." : ""}`, status));
-          response.destroy();
+          // Read a bounded error body for the service's own explanation; redirects are never followed.
+          const failed = (detail: string): ApiError => new ApiError(`API request failed (HTTP ${status})`
+            + `${detail ? `: ${detail}${/[.!?。！？…]$/.test(detail) ? "" : "."}` : "."}`
+            + `${status === 401 || status === 403 ? " Check the API key and access permissions." : ""}`, status, detail);
+          const parts: Buffer[] = [];
+          let size = 0;
+          response.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size <= ERROR_BODY_BYTES) parts.push(chunk);
+            else { finish(failed("")); response.destroy(); }
+          });
+          response.on("error", () => finish(failed("")));
+          response.on("end", () => finish(failed(errorDetail(Buffer.concat(parts).toString("utf8"), secretsOf(headers)))));
           return;
         }
         const chunks: Buffer[] = [];

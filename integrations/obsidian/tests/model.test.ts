@@ -87,6 +87,12 @@ describe("a busy model service", () => {
       .complete({ messages: [] })).rejects.toThrow("The model service is busy (HTTP 429)");
   });
 
+  it("is reported in its own words when it gave them, since 429 also means an exhausted balance", async () => {
+    const refusal = new ApiError("API request failed (HTTP 429): 余额不足或无可用资源包,请充值。", 429, "余额不足或无可用资源包,请充值。");
+    await expect(new ModelClient(() => settings, vi.fn<PostJson>().mockRejectedValue(refusal), async () => undefined).complete({ messages: [] }))
+      .rejects.toThrow("The model service refused the request and 2 retries (HTTP 429): 余额不足或无可用资源包,请充值。");
+  });
+
   it("is not asked again after any other failure", async () => {
     for (const error of [busy(500), busy(401), new ApiError("API request timed out after 120 s."), new Error("The model API returned no message.")]) {
       const post = vi.fn<PostJson>().mockRejectedValue(error);
