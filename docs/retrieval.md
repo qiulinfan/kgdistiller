@@ -264,6 +264,14 @@ encoded one at a time and truncated to the model's limit.
 `BAAI/bge-m3 int8`, so vectors of another precision count as another model:
 the first `kgd index` after the switch re-embeds every record.
 
+`kgd embedding` shows the model, the precision, what the stored vectors were
+computed with and how many records await a re-embed; `kgd embedding set
+MODEL` downloads the model into the Hugging Face cache, checks that
+kgdistiller can run it (its configuration first, so another architecture is
+refused before its weights download) and then writes it into `config.json`
+under the home lock; `kgd embedding off` writes `null`. Neither re-embeds:
+the next plain `kgd index` embeds every record with the new model.
+
 Measured on 2026-10-15 with `BAAI/bge-m3` on Apple silicon, against its
 float32 vectors on a 2635-record base with 210 questions: int8 kept 96.8% of
 each question's dense top 10 and every float32 first hit within the top 10,

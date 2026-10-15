@@ -24,8 +24,8 @@ import { webSearch, type WebSource } from "./web";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
 import { HoldTrigger } from "./hold";
-import { Indexer } from "./indexing";
-import { KgdServer } from "./kgd";
+import { Indexer, type EmbeddingStatus } from "./indexing";
+import { INDEX_TIMEOUT_MS, KgdServer } from "./kgd";
 import { lookupQuery } from "./lookup-model";
 import { KgdistillerCaptureView, VIEW_TYPE_KGDISTILLER_CAPTURE } from "./capture-view";
 import { KgdistillerLookupView, LOOKUP_ICON, VIEW_TYPE_KGDISTILLER_LOOKUP } from "./lookup-view";
@@ -367,6 +367,29 @@ export default class KgdistillerPlugin extends Plugin {
   /** Forget a provider's detected models after its settings change. */
   forgetModels(name: string): void {
     this.detected.delete(name);
+  }
+
+  /** The home's embedding model and its vectors, from `kgd embedding`; Re-embed in the sidebar follows it. */
+  async embeddingStatus(): Promise<EmbeddingStatus> {
+    return this.embedding(["embedding"]);
+  }
+
+  /**
+   * Make `model` the home's embedding model, or turn the dense lane off with
+   * null. `kgd embedding set` downloads the model into the Hugging Face cache
+   * when it is not there yet and checks that kgdistiller can run it, so it
+   * runs online and may take minutes; nothing is re-embedded.
+   */
+  async setEmbedding(model: string | null): Promise<EmbeddingStatus> {
+    return this.embedding(model === null ? ["embedding", "off"] : ["embedding", "set", model], model !== null);
+  }
+
+  private async embedding(args: string[], online = false): Promise<EmbeddingStatus> {
+    const { report, failed } = await this.kgd.command(args, online ? INDEX_TIMEOUT_MS : undefined, online);
+    if (failed) throw new Error(typeof report.message === "string" ? report.message : `kgd ${args.join(" ")} failed`);
+    const status = report as unknown as EmbeddingStatus;
+    this.indexer.observeStatus(status);
+    return status;
   }
 
   /** Detect the provider's models again, then test the model in use there, or the first one it lists. */

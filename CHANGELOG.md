@@ -4,6 +4,15 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- `kgd embedding` shows the home's embedding model, its precision, what the
+  stored vectors were computed with and how many records await a re-embed;
+  `kgd embedding set MODEL` downloads a model into the Hugging Face cache,
+  checks that kgdistiller can run it, reading its configuration first so that
+  another architecture is refused before its weights download, and writes it
+  into `config.json`; `kgd embedding off` turns the dense lane off. Neither
+  re-embeds. The Obsidian plugin's new **Embedding** settings show the home's
+  model and change it through these commands; the model still runs only on
+  this computer.
 - At most one embedding model is in memory per user, at about a third of its
   former size. Every `kgd` process, every `kgd mcp` of every Obsidian window
   and agent included, now sends texts to one shared embedding process instead

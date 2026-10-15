@@ -422,6 +422,17 @@ def remove_base(name: str) -> dict[str, Any]:
     return {"home": str(home), "removed": {"name": name, "path": removed.path, "root": str(removed.root)}}
 
 
+def set_embedding(model: str | None) -> None:
+    """Write ``embedding`` into config.json under the home lock; the caller has checked the model."""
+    home = home_directory()
+    load_home(home)
+    with lock():
+        payload = _read_config(home)
+        payload["embedding"] = model
+        _parse_config(home, payload, _load_types(home))
+        atomic_write_text(home / CONFIG_FILENAME, _render_config(payload))
+
+
 def list_bases() -> dict[str, Any]:
     home = load_home(home_directory(), types=False)
     return {

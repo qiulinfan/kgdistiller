@@ -114,6 +114,7 @@ search for a `.knowledge` directory.
   device chosen automatically. It runs with int8 weights in about 1 GB
   ([retrieval.md](retrieval.md#the-embedding-process)). `null` means search runs only the lexical and
   name lanes. Changing the id re-embeds every record on the next `kgd index`.
+  Change it with `kgd embedding` rather than by hand (below).
 - `path` is stored as `~/…` (forward slashes) when the root lies under the
   user's home, otherwise as an absolute path.
 - No base root may be equal to, an ancestor of or a descendant of another, and
@@ -125,6 +126,24 @@ search for a `.knowledge` directory.
   relative, use `/`, and contain no `..` or hidden segment.
 - Each value names a type in `types/`. Globs naming two different types for one
   file are an error, so every source has exactly one type.
+
+### Changing the embedding model
+
+`kgd embedding` shows the model, the precision, what the stored vectors were
+computed with and how many records await a re-embed; `kgd embedding set
+MODEL` downloads the model into the Hugging Face cache, checks that
+kgdistiller can run it (its configuration first, so another architecture is
+refused before its weights download) and then writes it into `config.json`
+under the home lock; `kgd embedding off` writes `null`. Neither re-embeds:
+the next plain `kgd index` embeds every record with the new model.
+
+```sh
+kgd embedding
+kgd embedding set BAAI/bge-m3
+kgd embedding off
+```
+
+The Obsidian plugin's **Embedding** settings run the same commands.
 
 ### Model cache
 

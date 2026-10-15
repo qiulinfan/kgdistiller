@@ -223,7 +223,8 @@ segment, `**` spans directories, and hidden files and directories never match.
 A file matched by globs naming two different types is an error. `embedding` is
 `null` or a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no revision pin; with `null`
 the index is lexical and name only. Changing it re-embeds every record on the
-next `kgd index`.
+next `kgd index`. `kgd embedding set MODEL` and `kgd embedding off` change it
+after checking the model ([retrieval.md](retrieval.md#the-embedding-process)).
 
 A type file's stem matches `^[a-z0-9][a-z0-9-]*$`. Its frontmatter, read with
 PyYAML `BaseLoader`, has only `node_kinds` (required, non-empty, unique slugs),

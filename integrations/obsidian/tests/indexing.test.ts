@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { Indexer, needsEmbedding } from "../src/indexing";
+import { embeddingSummary, Indexer, needsEmbedding } from "../src/indexing";
 
 const lag = (changed: number, unembedded: number, embeddingChanged = false) =>
   ({ changed_files: changed, unavailable_bases: [], unembedded, embedding_changed: embeddingChanged });
@@ -70,6 +70,24 @@ describe("Indexer", () => {
   it("reports an embedding failure and keeps the records awaiting embedding", async () => {
     const { indexer } = fixture([{ unembedded: 3, embedded: 0, embedding_error: "the retrieval extra is missing" }]);
     await expect(indexer.reembed()).rejects.toThrow("the retrieval extra is missing");
+    expect(needsEmbedding(indexer.state)).toBe(true);
+  });
+});
+
+describe("embeddingSummary", () => {
+  const base = { embedding: "BAAI/bge-m3", precision: "int8", vectors: "BAAI/bge-m3 int8", unembedded: 0, embedding_changed: false };
+
+  it("says what Re-embed would do", () => {
+    expect(embeddingSummary(base)).toBe("BAAI/bge-m3 (int8): every record's vector is current.");
+    expect(embeddingSummary({ ...base, unembedded: 2 })).toContain("2 records changed since embedding");
+    expect(embeddingSummary({ ...base, vectors: "BAAI/bge-m3", embedding_changed: true }))
+      .toBe("The index holds BAAI/bge-m3 vectors. Re-embed in the kgdistiller sidebar to embed every record with BAAI/bge-m3 (int8).");
+    expect(embeddingSummary({ ...base, embedding: null, precision: null, embedding_changed: true })).toContain("dense lane is off");
+  });
+
+  it("feeds the Re-embed button", () => {
+    const indexer = new Indexer({ configured: () => true, command: vi.fn(), index: vi.fn() }, vi.fn());
+    indexer.observeStatus({ ...base, embedding_changed: true });
     expect(needsEmbedding(indexer.state)).toBe(true);
   });
 });

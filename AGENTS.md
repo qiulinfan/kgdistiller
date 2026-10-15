@@ -162,6 +162,10 @@
   At most one model is in memory per user: every process asks the one
   embedding process (`adapters/embed_service.py`), which holds a lifetime lock,
   only encodes, never opens the database, and exits after 15 idle minutes.
+  The model is the home's (`config.json`), never a vault or plugin setting:
+  `kgd embedding set|off` checks and writes it, and the plugin's Embedding
+  settings call that command, the one kgd run the plugin lets go online.
+  Embedding never leaves the machine; no hosted embedding API is used.
 - Do not add user knowledge data, credentials, derived databases
   (`index.sqlite`), or model keys to this repository. Retrieval stays generic:
   never hardcode papers, benchmark questions or answers.

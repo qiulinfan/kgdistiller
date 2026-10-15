@@ -57,8 +57,10 @@ Edit `$KGDISTILLER_HOME/config.json` by hand:
 
 - `bases.NAME.sources`: each key is a glob relative to the base root, each
   value a type name. Every matched file has exactly one type.
-- `embedding`: recommend `"BAAI/bge-m3"`, a model id only, with no revision
-  pin; it must be an XLM-RoBERTa sentence encoder that ships
+- `embedding`: set it with `kgd embedding set BAAI/bge-m3` (the
+  recommended model; `kgd embedding off` for none) rather than by hand: it
+  downloads and checks the model before writing it. A model id only, with no
+  revision pin; it must be an XLM-RoBERTa sentence encoder that ships
   `sentencepiece.bpe.model`. It runs with int8 weights in one shared process
   of about 1 GB. The first `kgd index` downloads the weights into
   the Hugging Face cache (`~/.cache/huggingface`, several GB for this model)

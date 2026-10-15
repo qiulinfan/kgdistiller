@@ -123,7 +123,9 @@ The owner's rules for nodes, relations, examples and pending terms.
   package installed with the `retrieval` extra. The first `kgd index` downloads
   the weights into the Hugging Face cache (`~/.cache/huggingface`, or
   `$HF_HOME`); afterwards `HF_HUB_OFFLINE=1` keeps every load local. Changing
-  the id re-embeds every record on the next `kgd index`.
+  the id re-embeds every record on the next `kgd index`. `kgd embedding`
+  shows it, `kgd embedding set MODEL` downloads and checks a model and then
+  writes it, and `kgd embedding off` writes `null`.
 - Each `sources` key is a glob relative to the base root with Python glob
   semantics: `*` stays within one path segment, `**` spans directories, and
   hidden files and directories (`.knowledge/`, `.obsidian/`, `.git/`) never

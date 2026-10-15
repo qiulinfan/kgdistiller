@@ -109,6 +109,20 @@ def parse_args() -> argparse.Namespace:
     base_rm.add_argument("name")
     base_commands.add_parser("list", help="list the registered bases with record, draft and index counts")
 
+    embedding = commands.add_parser(
+        "embedding",
+        help="show or change the home's embedding model",
+        description="Show the embedding model in $KGDISTILLER_HOME/config.json and the stored vectors, or change it. "
+        "The model runs on this computer; `set` downloads it into the Hugging Face cache and checks that kgdistiller "
+        "can run it. A change re-embeds nothing: the next plain `kgd index` embeds every record with the new model.",
+    )
+    embedding_commands = embedding.add_subparsers(dest="embedding_command")
+    embedding_set = embedding_commands.add_parser(
+        "set", help="download and check a model, then make it the home's embedding model"
+    )
+    embedding_set.add_argument("model", help="a Hugging Face model id, such as BAAI/bge-m3")
+    embedding_commands.add_parser("off", help="turn the dense lane off (embedding null)")
+
     check = commands.add_parser(
         "check", help="validate the home, records and drafts and report moved or stale evidence"
     )
@@ -267,6 +281,24 @@ def _base(args: argparse.Namespace) -> int:
     return _print(result)
 
 
+def _embedding(args: argparse.Namespace) -> int:
+    from .home import home_directory, load_home, set_embedding
+    from .index import embedding_status
+
+    if args.embedding_command == "set":
+        from .adapters.embedding import describe
+
+        model = args.model.strip()
+        if not model:
+            raise KnowledgeError("the model id must not be empty")
+        checked = describe(model).report()
+        set_embedding(model)
+        return _print({**embedding_status(load_home(home_directory(), types=False)), "checked": checked})
+    if args.embedding_command == "off":
+        set_embedding(None)
+    return _print(embedding_status(load_home(home_directory(), types=False)))
+
+
 def _runtime_product(args: argparse.Namespace) -> int:
     if args.command == "codex":
         from .codex_product import CodexProductError, doctor_product, link_product
@@ -317,6 +349,8 @@ def _command(args: argparse.Namespace) -> int:
         return _runtime_product(args)
     if args.command == "obsidian":
         return _obsidian(args)
+    if args.command == "embedding":
+        return _embedding(args)
     if args.command == "check":
         from .records import check, fix_lines
 

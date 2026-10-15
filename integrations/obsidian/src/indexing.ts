@@ -24,6 +24,31 @@ interface IndexCommands {
   index(): Promise<{ report: Record<string, unknown>; failed: boolean }>;
 }
 
+/** `kgd embedding`: the home's model, what the stored vectors were computed with, and what a re-embed would do. */
+export interface EmbeddingStatus {
+  embedding: string | null;
+  precision: string | null;
+  vectors: string | null;
+  unembedded: number;
+  embedding_changed: boolean;
+}
+
+/** One sentence about the home's embedding model for the settings. */
+export function embeddingSummary(status: EmbeddingStatus): string {
+  if (!status.embedding) {
+    return "The dense lane is off: search uses keywords and names. Name a model to turn it on.";
+  }
+  const using = `${status.embedding} (${status.precision ?? "int8"})`;
+  if (status.embedding_changed) {
+    return `The index holds ${status.vectors ? `${status.vectors} vectors` : "no vectors"}. `
+      + `Re-embed in the kgdistiller sidebar to embed every record with ${using}.`;
+  }
+  if (status.unembedded > 0) {
+    return `${using}: ${status.unembedded} record${status.unembedded === 1 ? "" : "s"} changed since embedding; Re-embed in the kgdistiller sidebar.`;
+  }
+  return `${using}: every record's vector is current.`;
+}
+
 /** Whether Re-embed has work: a record without a current vector, or a model change. */
 export function needsEmbedding(state: EmbeddingState | undefined): boolean {
   return state !== undefined && (state.unembedded > 0 || state.embeddingChanged);
@@ -57,6 +82,11 @@ export class Indexer {
   observe(lag: Lag): void {
     this.set({ unembedded: lag.unembedded, embeddingChanged: lag.embedding_changed });
     if (lag.changed_files > 0 && !this.refreshing) void this.refresh();
+  }
+
+  /** What `kgd embedding` reported. */
+  observeStatus(status: EmbeddingStatus): void {
+    this.set({ unembedded: status.unembedded, embeddingChanged: status.embedding_changed });
   }
 
   /** The report of an index run, such as the one `kgd accept` ends with. */

@@ -197,7 +197,7 @@ describe("community lifecycle conventions", () => {
   });
   it("settings use Obsidian headings without writing HTML headings", () => {
     showSettings(pluginFixture());
-    expect(controls.headings).toEqual(["Hidden knowledge folder", "Lookup", "Model providers", "Web search"]);
+    expect(controls.headings).toEqual(["Hidden knowledge folder", "Lookup", "Embedding", "Model providers", "Web search"]);
   });
   it("registers the lookup sidebar, opened from the ribbon, and the Capture view, and no graph view or its commands", async () => {
     const plugin = pluginFixture(); await plugin.onload();
@@ -366,7 +366,8 @@ describe("hidden knowledge settings", () => {
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
-      "Lookup", "kgd executable", "Knowledge home", "Model providers", "Provider", "Web search", "Exa API key",
+      "Lookup", "kgd executable", "Knowledge home", "Embedding", "Vectors", "Embedding model",
+      "Model providers", "Provider", "Web search", "Exa API key",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
@@ -437,6 +438,50 @@ describe("selection lookup", () => {
     expect(stop).toHaveBeenCalledTimes(2);
     plugin.onunload();
     expect(stop).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("embedding settings", () => {
+  const find = (name: string) => controls.settings.find((setting) => setting.name === name)!;
+  const click = (name: string, text: string) => find(name).buttons!.find((item) => item.text === text)!.click!();
+  const status = { embedding: "BAAI/bge-m3", precision: "int8", vectors: "BAAI/bge-m3 int8", unembedded: 0, embedding_changed: false };
+
+  it("asks for the kgd executable before it can show the home's model", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    const read = vi.spyOn(plugin, "embeddingStatus");
+    showSettings(plugin);
+    expect(find("Vectors").description).toContain("Set the kgd executable");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("shows the home's model, uses a named one and turns the dense lane off through kgd", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    plugin.settings.kgdCommand = "/bin/kgd";
+    vi.spyOn(plugin, "embeddingStatus").mockResolvedValue(status);
+    const set = vi.spyOn(plugin, "setEmbedding")
+      .mockResolvedValueOnce({ ...status, embedding: "intfloat/multilingual-e5-large", embedding_changed: true })
+      .mockResolvedValueOnce({ ...status, embedding: null, precision: null, embedding_changed: true });
+    showSettings(plugin);
+    await vi.waitFor(() => expect(find("Embedding model").textValue).toBe("BAAI/bge-m3"));
+    expect(find("Vectors").description).toBe("BAAI/bge-m3 (int8): every record's vector is current.");
+    await find("Embedding model").textChange!(" intfloat/multilingual-e5-large ");
+    await click("Embedding model", "Use");
+    await vi.waitFor(() => expect(find("Vectors").description).toContain("Re-embed in the kgdistiller sidebar to embed every record with intfloat/multilingual-e5-large (int8)"));
+    expect(set).toHaveBeenLastCalledWith("intfloat/multilingual-e5-large");
+    await click("Embedding model", "Turn off");
+    await vi.waitFor(() => expect(find("Vectors").description).toContain("The dense lane is off"));
+    expect(set).toHaveBeenLastCalledWith(null);
+  });
+
+  it("shows why kgd refused a model", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    plugin.settings.kgdCommand = "/bin/kgd";
+    vi.spyOn(plugin, "embeddingStatus").mockResolvedValue(status);
+    vi.spyOn(plugin, "setEmbedding").mockRejectedValue(new Error("google-bert/bert-base-uncased is a bert model"));
+    showSettings(plugin);
+    await find("Embedding model").textChange!("google-bert/bert-base-uncased");
+    await click("Embedding model", "Use");
+    await vi.waitFor(() => expect(find("Vectors").description).toBe("google-bert/bert-base-uncased is a bert model"));
   });
 });
 

@@ -571,6 +571,24 @@ def lag(connection: sqlite3.Connection, home: Home) -> dict[str, Any]:
     }
 
 
+def embedding_status(home: Home) -> dict[str, Any]:
+    """The home's embedding model, what the stored vectors were computed with, and what a re-embed would do."""
+    connection = open_read_only() if database_path().is_file() else None
+    try:
+        recorded = meta_embedding(connection)
+        return {
+            "home": str(home.directory),
+            "embedding": home.embedding,
+            "precision": embedding_adapter.PRECISION if home.embedding else None,
+            "vectors": recorded or None,
+            "unembedded": _unembedded(connection),
+            "embedding_changed": wanted_embedding(home) != recorded,
+        }
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def base_status(home: Home) -> dict[str, dict[str, Any]]:
     """Per registered base: indexed row count and that base's lag; a missing database counts as empty."""
     connection = open_read_only() if database_path().is_file() else None

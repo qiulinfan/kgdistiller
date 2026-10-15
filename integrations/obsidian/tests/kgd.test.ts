@@ -67,6 +67,9 @@ describe("the kgd environment", () => {
   it("keeps the inherited environment, works offline and sets the home only when configured", () => {
     expect(kgdEnvironment("", { PATH: "/usr/bin" })).toEqual({ PATH: "/usr/bin", HF_HUB_OFFLINE: "1" });
     expect(kgdEnvironment(" /tmp/home ", {})).toEqual({ HF_HUB_OFFLINE: "1", KGDISTILLER_HOME: "/tmp/home" });
+    // Only the download of a model the owner chose runs online; an offline setting the owner made stays.
+    expect(kgdEnvironment("/tmp/home", { PATH: "/usr/bin" }, true)).toEqual({ PATH: "/usr/bin", KGDISTILLER_HOME: "/tmp/home" });
+    expect(kgdEnvironment("", { HF_HUB_OFFLINE: "1" }, true)).toEqual({ HF_HUB_OFFLINE: "1" });
   });
 });
 

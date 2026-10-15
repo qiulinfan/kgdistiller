@@ -1,9 +1,10 @@
-import { App, Modal, Plugin, PluginSettingTab, SecretComponent, Setting, type TextComponent } from "obsidian";
+import { App, Modal, Plugin, PluginSettingTab, SecretComponent, Setting, type ButtonComponent, type TextComponent } from "obsidian";
 
 import { isReasoningLevel, REASONING_LEVELS, type ReasoningChoice, type ReasoningLevel } from "./model";
 import { kindOf, newProviderName, PROVIDER_KINDS, storedProviders, type Detected, type Provider } from "./providers";
 import { KNOWLEDGE_DIRECTORY } from "./records";
 import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
+import { embeddingSummary, type EmbeddingStatus } from "./indexing";
 
 export interface KgdistillerSettings {
   hiddenKnowledgeEnabled: boolean;
@@ -79,6 +80,10 @@ export interface SettingsHost {
   modelCatalog(): Promise<ReadonlyMap<string, Detected>>;
   /** Forget a provider's detected models after its settings change. */
   forgetModels(name: string): void;
+  /** The home's embedding model and its vectors. */
+  embeddingStatus(): Promise<EmbeddingStatus>;
+  /** Make a model the home's embedding model, downloading it if needed, or turn the dense lane off with null. */
+  setEmbedding(model: string | null): Promise<EmbeddingStatus>;
   /** Ask a model of the provider at each reasoning level with the agent's kind of request, and say how it went. */
   testProvider(provider: Provider): Promise<string>;
 }
@@ -194,6 +199,8 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           }),
       );
 
+    this.embeddingSettings();
+
     new Setting(containerEl).setName("Model providers").setHeading()
       .setDesc("The services the agent's models come from. The agent judges lookups, captures selections, finds sources and answers searches "
         + "with the model chosen at the top of the kgdistiller sidebar, which lists every provider's models. Pick a provider here to change it.");
@@ -243,6 +250,57 @@ export class KgdistillerSettingTab extends PluginSettingTab {
       await this.host.savePluginSettings();
       this.host.agentSettingsChanged();
     });
+  }
+
+  /** The home's embedding model, shown and changed through `kgd embedding`; it is not a vault setting. */
+  private embeddingSettings(): void {
+    const { containerEl } = this;
+    new Setting(containerEl).setName("Embedding").setHeading()
+      .setDesc("The model behind the dense search lane. It belongs to the knowledge home, so every vault, terminal and agent "
+        + "using that home shares it, and it runs on this computer with int8 weights in one shared process of about 1 GB: "
+        + "record text never leaves the machine.");
+    const status = new Setting(containerEl).setName("Vectors");
+    let model = "";
+    let field: TextComponent | undefined;
+    const buttons: ButtonComponent[] = [];
+    const show = (described: EmbeddingStatus): void => {
+      model = described.embedding ?? "";
+      field?.setValue(model);
+      status.setDesc(embeddingSummary(described));
+    };
+    const apply = async (next: string | null): Promise<void> => {
+      if (next === "") {
+        status.setDesc("Name a model, such as BAAI/bge-m3, or turn the dense lane off.");
+        return;
+      }
+      for (const button of buttons) button.setDisabled(true);
+      status.setDesc(next === null ? "Turning the dense lane off…"
+        : `Downloading and checking ${next}… A first download of BAAI/bge-m3 is about 2.3 GB.`);
+      try {
+        show(await this.host.setEmbedding(next));
+      } catch (error) {
+        status.setDesc(error instanceof Error ? error.message : String(error));
+      } finally {
+        for (const button of buttons) button.setDisabled(false);
+      }
+    };
+    new Setting(containerEl)
+      .setName("Embedding model")
+      .setDesc("A Hugging Face id of an XLM-RoBERTa sentence encoder that ships sentencepiece.bpe.model, such as BAAI/bge-m3. "
+        + "Use downloads it into the Hugging Face cache and checks it; Re-embed in the sidebar then embeds every record with it.")
+      .addText((text) => {
+        field = text;
+        text.setPlaceholder("BAAI/bge-m3").onChange((value) => { model = value.trim(); });
+      })
+      .addButton((button) => { buttons.push(button); button.setButtonText("Use").setCta().onClick(() => void apply(model)); })
+      .addButton((button) => { buttons.push(button); button.setButtonText("Turn off").onClick(() => void apply(null)); });
+    if (!this.host.settings.kgdCommand.trim()) {
+      status.setDesc("Set the kgd executable above to see and change the embedding model.");
+      for (const button of buttons) button.setDisabled(true);
+      return;
+    }
+    status.setDesc("Reading the knowledge home…");
+    this.host.embeddingStatus().then(show, (error: unknown) => status.setDesc(error instanceof Error ? error.message : String(error)));
   }
 
   /** The settings of the provider being changed; returns the row that shows its models. */

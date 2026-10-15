@@ -27,10 +27,11 @@ const MCP_PROTOCOL_VERSION = "2025-06-18";
  * The environment of every kgd run: the inherited one, the configured home,
  * and an offline Hugging Face cache. Vectors exist only after a local
  * `kgd index` loaded the model, so the model is cached whenever dense search
- * can run.
+ * can run. Only `kgd embedding set`, which downloads a model the owner chose,
+ * runs `online`.
  */
-export function kgdEnvironment(home: string, inherited: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { ...inherited, HF_HUB_OFFLINE: "1" };
+export function kgdEnvironment(home: string, inherited: NodeJS.ProcessEnv = process.env, online = false): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = online ? { ...inherited } : { ...inherited, HF_HUB_OFFLINE: "1" };
   if (home.trim()) environment.KGDISTILLER_HOME = home.trim();
   return environment;
 }
@@ -116,8 +117,8 @@ export class KgdServer {
   }
 
   /** Run one kgd command that prints a JSON report, such as `sheet --json`, `accept` or `index --no-embed`. */
-  async command(args: string[], timeout = REQUEST_TIMEOUT_MS): Promise<{ report: Record<string, unknown>; failed: boolean }> {
-    const { stdout, failed } = await this.run(args, timeout);
+  async command(args: string[], timeout = REQUEST_TIMEOUT_MS, online = false): Promise<{ report: Record<string, unknown>; failed: boolean }> {
+    const { stdout, failed } = await this.run(args, timeout, online);
     let report: unknown;
     try {
       report = JSON.parse(stdout);
@@ -136,10 +137,10 @@ export class KgdServer {
     child?.kill();
   }
 
-  private run(args: string[], timeout: number): Promise<{ stdout: string; failed: boolean }> {
+  private run(args: string[], timeout: number, online = false): Promise<{ stdout: string; failed: boolean }> {
     const { command, home } = this.settings();
     if (!command.trim()) return Promise.reject(new KgdError("Set the kgd executable in the kgdistiller settings."));
-    return this.runProcess(command.trim(), args, kgdEnvironment(home), timeout);
+    return this.runProcess(command.trim(), args, kgdEnvironment(home, process.env, online), timeout);
   }
 
   private start(): Promise<void> {

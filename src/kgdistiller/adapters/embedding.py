@@ -28,8 +28,10 @@ a client of the one embedding process per user (``embed_service``).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -106,6 +108,62 @@ class _Weights:
         return self.prefix + name in self.keys
 
 
+@dataclass(frozen=True)
+class Description:
+    """What a model's files say about it, checked; nothing is loaded."""
+
+    model: str
+    files: dict[str, Path | None]
+    weights: Path
+    cls: bool
+    prompts: dict[str, str]
+    limit: int | None
+
+    def report(self) -> dict[str, Any]:
+        return {"model": self.model, "pooling": "cls" if self.cls else "mean", "weights": self.weights.name,
+                "precision": PRECISION}
+
+
+def describe(model: str) -> Description:
+    """Fetch a model's configuration, tokenizer and weights into the Hugging Face cache and check that kgdistiller can run it.
+
+    Network access follows ``HF_HUB_OFFLINE``; with it set, only the cache is read.
+    """
+    if not all(importlib.util.find_spec(name) for name in ("numpy", "torch", "transformers", "sentencepiece")):
+        raise RetrievalExtraMissing("install kgdistiller[retrieval]")
+
+    def fetch(name: str, required: bool = True) -> Path | None:
+        try:
+            return _download(model, name, required)
+        except Exception as error:
+            raise EmbeddingError(f"cannot load embedding model {model}: {error}") from error
+
+    # The configuration first, so that a model kgdistiller cannot run is refused before its weights download.
+    files: dict[str, Path | None] = {"config.json": fetch("config.json")}
+    settings = json.loads(files["config.json"].read_text(encoding="utf-8"))
+    if settings.get("model_type") != "xlm-roberta":
+        raise EmbeddingError(
+            f"{model} is a {settings.get('model_type')} model; kgdistiller embeds with XLM-RoBERTa "
+            "sentence encoders that ship sentencepiece.bpe.model, such as BAAI/bge-m3"
+        )
+    files.update({name: fetch(name) for name in CONFIG_FILES[1:]})
+    files.update({name: fetch(name, required=False) for name in OPTIONAL_FILES})
+    pooling = json.loads(files["1_Pooling/config.json"].read_text(encoding="utf-8"))
+    modes = [mode for mode in ("cls_token", "mean_tokens") if pooling.get(f"pooling_mode_{mode}")]
+    others = [key for key, value in pooling.items() if key.startswith("pooling_mode_") and value
+              and key not in ("pooling_mode_cls_token", "pooling_mode_mean_tokens")]
+    if len(modes) != 1 or others:
+        raise EmbeddingError(f"{model} pools with {pooling}; kgdistiller supports CLS or mean pooling")
+    weights = next((path for name in WEIGHT_FILES if (path := fetch(name, required=False))), None)
+    if weights is None:
+        raise EmbeddingError(f"cannot load embedding model {model}: it has no {' or '.join(WEIGHT_FILES)}")
+    sentence = files["config_sentence_transformers.json"]
+    prompts: dict[str, str] = (json.loads(sentence.read_text(encoding="utf-8")).get("prompts") or {}) if sentence else {}
+    bert = files["sentence_bert_config.json"]
+    limit = json.loads(bert.read_text(encoding="utf-8")).get("max_seq_length") if bert else None
+    return Description(model, files, weights, modes[0] == "cls_token", prompts, limit)
+
+
 class Encoder:
     """One loaded model, addressed by its id."""
 
@@ -119,37 +177,15 @@ class Encoder:
             from transformers import XLMRobertaConfig, XLMRobertaModel
         except ImportError as error:
             raise RetrievalExtraMissing("install kgdistiller[retrieval]") from error
-        try:
-            files = {name: _download(model, name) for name in CONFIG_FILES}
-            files.update({name: _download(model, name, required=False) for name in OPTIONAL_FILES})
-            weights = next(path for name in WEIGHT_FILES if (path := _download(model, name, required=False)))
-        except StopIteration:
-            raise EmbeddingError(f"cannot load embedding model {model}: it has no {' or '.join(WEIGHT_FILES)}") from None
-        except Exception as error:
-            raise EmbeddingError(f"cannot load embedding model {model}: {error}") from error
-        settings = json.loads(files["config.json"].read_text(encoding="utf-8"))
-        if settings.get("model_type") != "xlm-roberta":
-            raise EmbeddingError(
-                f"{model} is a {settings.get('model_type')} model; kgdistiller embeds with XLM-RoBERTa "
-                "sentence encoders that ship sentencepiece.bpe.model, such as BAAI/bge-m3"
-            )
-        pooling = json.loads(files["1_Pooling/config.json"].read_text(encoding="utf-8"))
-        modes = [mode for mode in ("cls_token", "mean_tokens") if pooling.get(f"pooling_mode_{mode}")]
-        others = [key for key, value in pooling.items() if key.startswith("pooling_mode_") and value
-                  and key not in ("pooling_mode_cls_token", "pooling_mode_mean_tokens")]
-        if len(modes) != 1 or others:
-            raise EmbeddingError(f"{model} pools with {pooling}; kgdistiller supports CLS or mean pooling")
-        sentence = files["config_sentence_transformers.json"]
-        prompts: dict[str, str] = (json.loads(sentence.read_text(encoding="utf-8")).get("prompts") or {}) if sentence else {}
-        bert = files["sentence_bert_config.json"]
-        limit = json.loads(bert.read_text(encoding="utf-8")).get("max_seq_length") if bert else None
+        described = describe(model)
+        files, weights, prompts, limit = described.files, described.weights, described.prompts, described.limit
         config = XLMRobertaConfig.from_pretrained(files["config.json"].parent)
 
         self.model = model
         self.max_tokens: int = min(limit or config.max_position_embeddings - 2, config.max_position_embeddings - 2)
         self._numpy = numpy
         self._torch = torch
-        self._cls = modes[0] == "cls_token"
+        self._cls = described.cls
         self._document_prompt = next((prompts[name] for name in DOCUMENT_PROMPTS if name in prompts), "")
         self._query_prompt = prompts.get(QUERY_PROMPT, "")
         self._pieces = sentencepiece.SentencePieceProcessor(model_file=str(files["sentencepiece.bpe.model"]))

@@ -144,6 +144,27 @@ class EncoderTest(unittest.TestCase):
         with self.assertRaisesRegex(EmbeddingError, "XLM-RoBERTa"):
             Encoder("tiny/model")
 
+    def test_describe_checks_a_model_without_loading_it(self) -> None:
+        self.assertEqual({"model": "tiny/model", "pooling": "cls", "weights": "model.safetensors", "precision": "int8"},
+                         embedding.describe("tiny/model").report())
+
+    def test_another_architecture_is_refused_before_its_weights_download(self) -> None:
+        config = json.loads((self.directory / "config.json").read_text(encoding="utf-8"))
+        original = dict(config)
+        config["model_type"] = "bert"
+        (self.directory / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        self.addCleanup((self.directory / "config.json").write_text, json.dumps(original), "utf-8")
+        fetched: list[str] = []
+        download = embedding._download
+
+        def counting(model: str, name: str, required: bool = True) -> Path | None:
+            fetched.append(name)
+            return download(model, name, required)
+
+        with patch.object(embedding, "_download", counting), self.assertRaisesRegex(EmbeddingError, "XLM-RoBERTa"):
+            embedding.describe("tiny/model")
+        self.assertEqual(["config.json"], fetched)
+
     def test_unsupported_pooling_is_refused(self) -> None:
         (self.directory / "1_Pooling/config.json").write_text(json.dumps({"pooling_mode_max_tokens": True}),
                                                                encoding="utf-8")

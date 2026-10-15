@@ -117,6 +117,18 @@ knowledge.
   changed, and grey otherwise; an edited record is never re-embedded
   unasked (docs/retrieval.md, "When records are embedded").
 
+Settings, under **Embedding**, show and change the knowledge home's
+embedding model, which every vault, terminal and agent using that home
+shares; it is not a vault setting. **Vectors** says what `kgd embedding`
+reports: the model and its precision, and whether records await Re-embed.
+**Embedding model** takes a model id: **Use** runs `kgd embedding set`, the
+one kgd run allowed to go online, which downloads the model into the Hugging
+Face cache when it is missing (about 2.3 GB for `BAAI/bge-m3`) and refuses a
+model kgdistiller cannot run with kgd's reason; **Turn off** runs
+`kgd embedding off`. Neither re-embeds: Re-embed in the sidebar turns solid
+and embeds every record with the new model when clicked. The model runs on
+this computer only.
+
 Settings, under **Lookup**:
 
 - **kgd executable**: the absolute path of `kgd`, since Obsidian started from
@@ -132,8 +144,9 @@ other window and agent: it loads once (about 2 s for `BAAI/bge-m3` on Apple
 silicon) and later searches take tens of milliseconds. It stops the server after 15 minutes
 without a lookup, when either setting changes and when the plugin unloads. It
 also runs `kgd base list` once per server to locate the bases, and `kgd index`
-only from the button. Every run gets `HF_HUB_OFFLINE=1`: vectors exist only
-after a local `kgd index` loaded the model, so the model is in the local cache.
+only from the button. Every run but `kgd embedding set` gets
+`HF_HUB_OFFLINE=1`: vectors exist only after a local `kgd index` loaded the
+model, so the model is in the local cache.
 These processes read the home, the database and the registered bases; the
 plugin itself opens neither the home nor the database, and lookups write no
 knowledge.
