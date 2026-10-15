@@ -18,7 +18,7 @@
 - 定义、结论以及它们之间的关系都存成 Markdown 记录，和所引用的论文、笔记放在一起。每条记录带原文引文和行号范围。
 - 一条关系可以按 role 绑定任意多个参与者。kind 和 role 由你按 document type 自己声明。
 - 通过一个 SQLite 索引同时搜索所有已注册的 vault；`kgd search` 融合全文检索、dense embedding 检索（例如 BGE-M3）和名称匹配三路结果。
-- 在 Obsidian 里审阅、修改记录，有 typed graph 视图；coding agent 通过 Skills 和 MCP server 来记录、编译和查询知识。
+- 在 Obsidian 里选中文字即可查询知识，看到记录周围的类型化邻居图；内置 agent 把选中内容起草成草稿，你在入库侧栏里确认入库；coding agent 通过 Skills 和 MCP server 来记录、编译和查询知识。
 
 本仓库包含 Obsidian 插件和 Python 核心，二者都是 **1.0.0**，即第一个正式版本。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
 
@@ -46,24 +46,29 @@ kgd get research:sigma-algebra --source-lines 20
 
 记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。按[安装](#安装)装好 CLI 后，`kgd obsidian install` 会把随包附带的 1.0.0 插件复制进 vault，并一起打开这个设置。如果社区页面或 release 页面提供的仍是更早的版本，就用这条命令安装。它具体改动哪些文件，见 [docs/obsidian.md](docs/obsidian.md#installation)。
 
-运行 **kgdistiller: Open typed graph**，图谱会在右侧栏打开。它画出 node、按 role 绑定的 relation、草稿和 pending term；可以只看当前记录、source 或 sheet 周围一到两层，也可以看全图，并按 kind、class、understanding 和 source 路径筛选。详情面板显示记录的 role、正文和 evidence，还有按钮打开记录本身、跳到 source 中被引用的那一行，或打开该 source 的 sheet。在 Obsidian 里改记录时视图会跟着更新。改记录用 Properties 面板，改完运行 `kgd check` 和 `kgd index`；插件本身从不写任何知识文件。完整说明见 [docs/obsidian.md](docs/obsidian.md)。
+在 **Settings → kgdistiller → kgd executable** 填好 `kgd` 的路径后：
 
-多对一关系显示为一个菱形，每个参与项都有标明 role 的连边。例如 `premise: [A, B]`、`conclusion: [C]` 是连接三条记录的一条关系。作为另一条关系参与项的 relation 也保留菱形；不需要独立关系节点时，二元关系可以显示成一条带类型的边。
+- **检索侧栏**：选中文字后按住 ⌘（其他系统是 Ctrl）0.3 秒，或运行 **Look up selection**，或在侧栏的搜索框里输入（ribbon 图标 **Open kgdistiller** 打开它）。它在所有已注册的 base 里查询，显示同名记录、把它当 pending term 用的记录、当前聚焦的记录及其 3 步以内的类型化邻居图，以及相关记录。在编辑器里打开一条记录或一个 source，侧栏也会跟着聚焦。搜索框下面的 **Re-embed** 按钮在有记录等着重算向量时是实的，并显示条数。
+- **Agent**（可选）：在 **Model providers** 里配好模型服务后，侧栏能判断选中的内容是否已入库，结合知识库、论文和网页回答问题，查一个术语的出处（**Find sources**），并把选中内容起草成草稿（**Capture**）。
+- **入库侧栏**：草稿在检索侧栏下方的 **kgdistiller Capture** 视图里等你确认，每条都完整显示，并标明 `kgd accept` 能否接受。**Accept** 把草稿连同它链接的草稿一起入库，并建索引、算向量；**Open draft** 打开文件修改；**Discard** 确认后删除。不点 Accept，什么都不会进入知识库。
+- **Embedding 设置**：**Settings → kgdistiller → Embedding** 显示 home 的 embedding 模型，并通过 `kgd embedding` 修改。
+
+改记录用 Properties 面板；保存后关键词索引会自动刷新，改过的记录在你点 Re-embed 时才重算向量。完整说明见 [docs/obsidian.md](docs/obsidian.md)。
 
 ## 隐私与数据边界
 
-插件从 Obsidian 的 metadata cache 读取 `.knowledge/entries/` 和 `.knowledge/drafts/` 的 frontmatter，选中某条记录时才读取该文件。它不发网络请求，不收集遥测，不需要账号，不读 vault 以外的文件，也不安装或更新任何东西。它唯一写的文件是自己的 `data.json`。为了索引隐藏目录，插件 patch 了 Obsidian 内部未公开的 file-adapter 方法，并用 Node 的文件系统 API 检查 vault 中 `.knowledge/` 下的路径，所以只支持桌面端。这样做也会让 `.knowledge/` 对 Obsidian 搜索和同一 vault 的其他插件可见。如果启用了 Hidden Folders Access 插件，kgdistiller 会报告冲突，并关闭自己的隐藏目录索引。
+插件通过你配置的 `kgd` 读取知识，自己从不打开 home 或数据库。它写自己的 `data.json`（API key 存在 Obsidian 的 SecretStorage 里，`data.json` 只存它们的名字）；你起草、入库或丢弃时，它会写 `.knowledge/drafts/` 下的草稿，并替你运行 `kgd accept` 和 `kgd index`。它不收集遥测，不需要账号，也不安装或更新任何东西。不用 agent 时，查询不发任何网络请求。agent 会把选中的文字、上下文和它读到的记录发给你选的模型服务；网页和论文搜索发往 Exa（`mcp.exa.ai`）；**Find sources** 还会读 Wikipedia 和 arXiv。为了索引隐藏目录，插件 patch 了 Obsidian 内部未公开的 file-adapter 方法，并用 Node 的文件系统 API 检查 vault 中 `.knowledge/` 下的路径，所以只支持桌面端。这样做也会让 `.knowledge/` 对 Obsidian 搜索和同一 vault 的其他插件可见。如果启用了 Hidden Folders Access 插件，kgdistiller 会报告冲突，并关闭自己的隐藏目录索引。
 
 CLI 和 MCP server 都在本地运行。它们读取 home 中的 `config.json` 和 `types/`、各 base 的记录和草稿，以及已注册的 source 文件（用于核对 evidence 和 `kgd get --source-lines`）。它们只写这些位置：
 
-- home：`kgd base add`/`rm` 修改的 `config.json`，第一次 `kgd base add` 创建的 `types/` 目录和 `.gitignore`，以及 `index.sqlite*` 和 `lock`；
+- home：`kgd base add`/`rm` 和 `kgd embedding` 修改的 `config.json`，第一次 `kgd base add` 创建的 `types/` 目录和 `.gitignore`，以及 `index.sqlite*` 和 `lock`；
 - base 的 `.knowledge/` 下的 `entries/`、`drafts/` 和 `sheets/` 目录；
 - vault `.obsidian/` 中的插件目录、`community-plugins.json` 和插件的 `data.json`，由 `kgd obsidian install` 写入；
 - 各 agent runtime 的 home，由 `kgd claude link` 和 `kgd codex link` 写入。
 
 MCP server 只走 stdio，没有写工具。
 
-只有 sentence-transformers 加载 embedding 模型时才会联网。首次使用时它把模型下载到 Hugging Face 缓存（`BAAI/bge-m3` 有好几 GB）；之后如果没有设置 `HF_HUB_OFFLINE=1`，加载时仍可能访问 Hugging Face Hub。下载完成后设置这个变量，以后每次加载就都只用本地文件。不发送 token，也不运行远程代码。kgdistiller 不会替你 commit 或 push，每个 vault 和 home 请放在你自己的 Git 仓库里管理。
+核心唯一的联网是从 Hugging Face Hub 下载 embedding 模型：`kgd embedding set` 把它下载到 Hugging Face 缓存（`BAAI/bge-m3` 约 2.3 GB）；之后如果没有设置 `HF_HUB_OFFLINE=1`，加载时仍可能访问 Hub，插件对其余所有调用都会设置它。不发送 token，也不运行远程代码。模型在你的电脑上、在一个共享进程里运行，记录原文不会为了算向量离开本机。kgdistiller 不会替你 commit 或 push，每个 vault 和 home 请放在你自己的 Git 仓库里管理。
 
 ## 开源许可
 
@@ -91,7 +96,7 @@ kgdistiller 面向学术研究：读的论文、写的论文、自己的研究�
     └── sheets/<source path>.md    # 生成的 def/pending sheet
 ```
 
-数据库里有 FTS5 全文索引行和 float32 向量，向量用 NumPy 精确扫描。`kgd search` 用 reciprocal rank 融合三路：lexical、dense，以及对 label 和 alias 的名称匹配。如果上次 `kgd index` 之后记录文件有改动，每次读取都会在输出里报告 `lag`。知识本身是记录文件，数据库随时可以从它们重建。
+数据库里有 FTS5 全文索引行和 float32 向量，向量用 NumPy 精确扫描。embedding 模型以 int8 权重运行，每个用户只有一个共享进程，`BAAI/bge-m3` 约占 1 GB，空闲 15 分钟后退出。`kgd search` 用 reciprocal rank 融合三路：lexical、dense，以及对 label 和 alias 的名称匹配。如果上次 `kgd index` 之后记录文件有改动，每次读取都会在输出里报告 `lag`。知识本身是记录文件，数据库随时可以从它们重建。
 
 ## 安装
 
@@ -105,7 +110,7 @@ uv tool install '.[retrieval]'
 uv tool update-shell
 ```
 
-这会在 Windows、macOS 和 Linux 上装好 `kgd` 和 `kgdistiller` 两个命令（同一个程序）。如果 `kgd` 还不在 `PATH` 上，重开一个 shell。`retrieval` extra 带来 dense 检索所需的 sentence-transformers 和 NumPy。不装它（`uv tool install .`）时，home 配置里保持 `"embedding": null`，搜索只用 lexical 和名称两路。
+这会在 Windows、macOS 和 Linux 上装好 `kgd` 和 `kgdistiller` 两个命令（同一个程序）。如果 `kgd` 还不在 `PATH` 上，重开一个 shell。`retrieval` extra 带来 dense 检索所需的 PyTorch、transformers、sentencepiece 和 NumPy。不装它（`uv tool install .`）时，home 配置里保持 `"embedding": null`，搜索只用 lexical 和名称两路。
 
 ## 快速开始
 
@@ -130,7 +135,7 @@ relation only when the text states it. Record an unexplained term as a pending
 term.
 ```
 
-在 `~/.knowledge/config.json` 里把 base 的 source 映射到这个 type，并选择 embedding 模型（不要 dense 检索就写 `null`）：
+在 `~/.knowledge/config.json` 里把 base 的 source 映射到这个 type：
 
 ```json
 {
@@ -142,8 +147,14 @@ term.
       }
     }
   },
-  "embedding": "BAAI/bge-m3"
+  "embedding": null
 }
+```
+
+然后选择 embedding 模型。`kgd embedding set` 会下载它并检查 kgdistiller 能否运行；它必须是自带 `sentencepiece.bpe.model` 的 XLM-RoBERTa 句向量模型，例如 `BAAI/bge-m3`。不设置就只用关键词和名称检索：
+
+```sh
+kgd embedding set BAAI/bge-m3
 ```
 
 然后添加记录。可以让装好 Skills 的 agent 记录一个定义，或编译一整篇笔记。手动添加时，先用 `kgd sheet --json` 打印 source 的 type profile，再在 `~/research/.knowledge/drafts/` 里写一份草稿（格式见[记录格式](#记录格式)），然后检查、接受并建索引：
@@ -153,11 +164,10 @@ cd ~/research
 kgd sheet notes/measure.md --json
 kgd check
 kgd accept .knowledge/drafts/sigma-algebra.md
-kgd index
 kgd search "sigma algebra"
 ```
 
-`kgd sheet --json` 打印该 source 的 type profile 和已有记录。`kgd check` 校验 home、记录和草稿，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把草稿移进 `entries/`，要么全部成功，要么什么都不改。`kgd index` 更新数据库；第一次 dense 运行会下载模型，之后请设置 `HF_HUB_OFFLINE=1`。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
+`kgd sheet --json` 打印该 source 的 type profile 和已有记录。`kgd check` 校验 home、记录和草稿，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把草稿移进 `entries/`，要么全部成功，要么什么都不改，然后为它们建索引、为新记录算向量。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
 
 ## 文档类型与起始模板
 
@@ -229,18 +239,20 @@ A measure space is defined over a sigma-algebra.
 - 正文依次是说明文字、可选的 `## Search terms` 小节，最后是 `## Evidence` 小节，内容是从被引用行逐字摘出的引文。
 - 例子和应用也是 relation，kind 由你注册，比如 `example: [uses, setting]`。
 
-已接受的记录直接原地修改，改完运行 `kgd check` 和 `kgd index`。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
+已接受的记录直接原地修改，改完运行 `kgd check` 和 `kgd index --no-embed`（插件会自动刷新关键词索引）；改过的记录保留旧向量，直到你用 `kgd index` 重算。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
 | `kgd base add PATH [--name N]`、`base rm NAME`、`base list` | 注册、注销和列出 base，附带记录数、草稿数和索引数。 |
+| `kgd embedding`、`embedding set MODEL`、`embedding off` | 显示 home 的 embedding 模型和向量状态；下载、检查并启用一个模型；或关闭 dense 检索。 |
 | `kgd check [--base B] [--fix-lines]` | 校验 home、记录和草稿，报告移动或过期的 evidence。 |
 | `kgd sheet SOURCE [--json]` | 写出某个 source 的 sheet（记录、pending term、草稿），或打印它的 profile。 |
-| `kgd accept [--dry-run] DRAFT...` | 把草稿转为已接受的记录，全部成功或全部不改。 |
+| `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | 列出草稿、它们的链接，以及 `kgd accept` 会拒绝的原因；不写任何东西。 |
+| `kgd accept [--dry-run] DRAFT...` | 把草稿转为已接受的记录，全部成功或全部不改，然后建索引并为新记录算向量。 |
 | `kgd harvest [--dry-run] SHEET` | 接受 sheet 中勾选的草稿，并重新生成 sheet。 |
-| `kgd index [--rebuild] [--no-embed]` | 让数据库与记录文件同步。 |
+| `kgd index [--rebuild] [--no-embed]` | 让数据库与记录文件同步；`--no-embed` 只刷新关键词索引。 |
 | `kgd search QUERY [--limit N] [--no-dense]` | 按 lexical、dense、名称三路给记录排序。 |
 | `kgd resolve TERM...` | 列出 term 的各个义项和提及，以及把它当作 pending term 使用的记录。 |
 | `kgd get UID... [--source-lines N]` | 读取完整记录及其链接，可附带 source 中当前的被引用行。 |
@@ -266,10 +278,9 @@ sheet 是单个 source 的审阅页。`kgd sheet notes/measure.md` 会写出 `.k
 
 ```sh
 kgd harvest .knowledge/sheets/notes/measure.md.md
-kgd index
 ```
 
-harvest 一次性接受所有勾选的草稿，并重新生成 sheet。如果某条勾选的 relation 链接到一条没勾选的草稿，harvest 会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的草稿，直接删掉文件即可。
+harvest 一次性接受所有勾选的草稿，为它们建索引、算向量，并重新生成 sheet。如果某条勾选的 relation 链接到一条没勾选的草稿，harvest 会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的草稿，直接删掉文件即可。
 
 ## Agent 集成
 
@@ -279,11 +290,11 @@ harvest 一次性接受所有勾选的草稿，并重新生成 sheet。如果某
 |---|---|
 | `capture-kgdistiller` | 边读边保存或更新一条记录（node、relation 或例子），带上引文和 pending term。 |
 | `compile-knowledge-sheets` | 按 document type 从已注册 source 的一部分或全部抽取草稿，并写出 sheet。不会改动已接受的记录。 |
-| `harvest-kgdistiller` | 对你勾选的草稿运行 `kgd harvest`，再运行 `kgd index`。 |
+| `harvest-kgdistiller` | 对你勾选的草稿运行 `kgd harvest`，它会建索引并算向量。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |
 | `deploy-kgdistiller` | 安装 kgdistiller，注册 base、source、document type 和模型，然后检查、建索引、安装插件、链接 runtime。 |
 
-所有写知识的 Skill 最后都会运行 `kgd index`。按你用的 runtime 安装：
+入库时会建索引并为新记录算向量；改完记录后，Skill 只刷新关键词索引（`kgd index --no-embed`），重算向量由你决定。按你用的 runtime 安装：
 
 ```sh
 kgd claude link
@@ -297,7 +308,7 @@ kgd codex doctor
 
 `link` 把 Skills、`kgdistiller-query-reviewer` preset 和 workflow manifest 装到 `~/.claude` 或 `~/.codex`（遵循 `CLAUDE_CONFIG_DIR` 和 `CODEX_HOME`），不会修改 `CLAUDE.md`、`settings.json`、`AGENTS.md` 或 `config.toml`。OpenCode 和 OMP 只装 Skills，在 checkout 里运行 `./scripts/link-skills.sh opencode` 或 `./scripts/link-skills.sh omp`（PowerShell 7：`./scripts/link-skills.ps1 -Runtime opencode`）。
 
-MCP server 提供 `kg_search`、`kg_resolve`、`kg_get`、`kg_neighbors`、`kg_browse` 和 `kg_pack`，JSON 与 CLI 相同。模型在多次调用之间常驻内存，只有第一次 dense 搜索需要等加载。注册命令是 `kgd mcp`：
+MCP server 提供 `kg_search`、`kg_resolve`、`kg_get`、`kg_neighbors`、`kg_browse`、`kg_pack` 和 `kg_drafts`，JSON 与 CLI 相同。它自己不加载模型：dense 检索交给共享的 embedding 进程，只有空闲 15 分钟后的第一次 dense 搜索需要等模型加载。注册命令是 `kgd mcp`：
 
 ```sh
 claude mcp add kgdistiller -s user -e HF_HUB_OFFLINE=1 -- kgd mcp
@@ -312,7 +323,7 @@ OMP 原生从 `.mcp.json`、`.omp/mcp.json` 或 `~/.omp/agent/mcp.json` 加载 s
 
 1. clone 仓库，运行 `npm run build`、`uv tool install '.[retrieval]'` 和 `uv tool update-shell`，确认 `kgd --help` 能运行。
 2. 链接自己的 runtime：先运行 `kgd claude link` 再运行 `kgd claude doctor`，或先 `kgd codex link` 再 `kgd codex doctor`；OpenCode 或 OMP 用 `./scripts/link-skills.sh opencode|omp`。完成后开一个新 session。
-3. 按 `deploy-kgdistiller` Skill 操作：为每个 vault 运行 `kgd base add`，把 source glob、document type 和 `embedding` 写进 `~/.knowledge/config.json` 与 `~/.knowledge/types/`，再运行 `kgd check`、`kgd index`；在 Obsidian 中打开过的 vault 还要运行 `kgd obsidian install`。
+3. 按 `deploy-kgdistiller` Skill 操作：为每个 vault 运行 `kgd base add`，把 source glob 和 document type 写进 `~/.knowledge/config.json` 与 `~/.knowledge/types/`，用 `kgd embedding set BAAI/bge-m3` 设置模型，再运行 `kgd check`、`kgd index`；在 Obsidian 中打开过的 vault 还要运行 `kgd obsidian install`。
 4. 用 `kgd base list` 和 `kgd search "KNOWN NAME" --base NAME` 做冒烟测试。
 
 之后，“把这个定义记进我的 kgd 知识库”或“在知识库里搜 measure space”这类请求就会交给对应的 Skill。
@@ -326,7 +337,7 @@ kgd check
 kgd index
 ```
 
-数据库缺失或损坏时，`kgd index` 会从记录文件重建它，并重新 embed 所有记录。事先删除数据库（`rm -f ~/.knowledge/index.sqlite*`）不是必需的。在 Apple silicon 上用 `BAAI/bge-m3` 恢复一个 535 条记录的 base 用了 115 秒。`kgd index --rebuild` 重新生成所有行，但不重新 embed。
+数据库缺失或损坏时，`kgd index` 会从记录文件重建它，并重新 embed 所有记录。事先删除数据库（`rm -f ~/.knowledge/index.sqlite*`）不是必需的。embedding 进程在 Apple silicon 上用 `BAAI/bge-m3` 每秒约编码 14 条，所以 535 条记录的 base 大约要 40 秒。`kgd index --rebuild` 重新生成所有行，但不重新 embed。
 
 ## 开发
 

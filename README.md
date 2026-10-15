@@ -22,8 +22,10 @@
   you declare per document type.
 - Search every registered vault at once through one SQLite index; `kgd search`
   fuses full-text, dense-embedding (for example BGE-M3) and name matches.
-- Review and edit records in Obsidian, with a typed graph view, and let coding
-  agents capture, compile and query them through Skills and an MCP server.
+- Look knowledge up from a selection in Obsidian, see a record's typed
+  neighbourhood, capture drafts with a built-in agent and accept them in a
+  Capture view; coding agents capture, compile and query through Skills and
+  an MCP server.
 
 This repository holds the Obsidian plugin and the Python core, both at
 **1.0.0**, the first stable release. They are versioned and tagged separately: plugin tags are bare
@@ -70,29 +72,45 @@ this setting on in one step; use it if the community listing or the release
 page still offers an earlier version.
 [docs/obsidian.md](docs/obsidian.md#installation) lists what it changes.
 
-Run **kgdistiller: Open typed graph** to open the graph in the right sidebar.
-It draws nodes, role-bound relations, drafts and pending terms, either around
-the active record, source or sheet (depth 1 or 2) or as the full graph, with
-filters for kind, class, understanding and source path. The details pane shows
-a record's roles, body and evidence, with buttons to open the record, its source
-at the cited line, and the source's sheet. The view updates as you edit records
-in Obsidian. Use the Properties panel to edit them, then run `kgd check` and
-`kgd index`; the plugin itself never writes a knowledge file. The full
-description is in [docs/obsidian.md](docs/obsidian.md).
+With the path of `kgd` set in **Settings → kgdistiller → kgd executable**:
 
-A many-to-one relation appears as a diamond with one labelled edge per
-participant: for example, `premise: [A, B]` and `conclusion: [C]` are one
-relation connecting all three records. Relations that participate in another
-relation also keep their diamond. A binary relation can be drawn as a single
-typed edge when its own relation node is not needed.
+- **Lookup sidebar.** Select text and hold ⌘ (Ctrl elsewhere) for 0.3 s, run
+  **Look up selection**, or type into the sidebar's search box (the ribbon
+  icon **Open kgdistiller** opens it). It looks the text up in every
+  registered base and shows the records of the same name, the records that
+  use it as a pending term, the record in focus with a typed graph of its
+  neighbours within 3 steps, and the related records. Opening a record or a
+  source in the editor focuses it there too. **Re-embed** below the search box
+  is solid, with a count, while records await embedding.
+- **Agent** (optional). With a model provider configured under **Model
+  providers**, the sidebar judges whether the selection is already recorded,
+  answers questions from the knowledge base and from papers and the web,
+  finds where a term comes from (**Find sources**) and captures a selection
+  as a draft (**Capture**).
+- **Capture view.** Drafts wait in the **kgdistiller Capture** view below the
+  sidebar, each shown in full with whether `kgd accept` would take it.
+  **Accept** admits a draft with the drafts it links, indexes and embeds it;
+  **Open draft** opens the file for editing; **Discard** deletes it after
+  asking. Nothing enters the knowledge base until you accept it.
+- **Embedding settings.** **Settings → kgdistiller → Embedding** shows the
+  home's embedding model and changes it through `kgd embedding`.
+
+Edit records with the Properties panel; the keyword index follows saved
+record files by itself, and an edited record is re-embedded when you press
+Re-embed. The full description is in [docs/obsidian.md](docs/obsidian.md).
 
 ## Privacy and data boundaries
 
-The Obsidian plugin reads the frontmatter of `.knowledge/entries/` and
-`.knowledge/drafts/` from Obsidian's metadata cache, and reads a record file
-when you select it. It makes no network requests, collects no telemetry, needs
-no account, reads no file outside the vault and installs or updates nothing.
-Its only write is its own `data.json`. Hidden-folder indexing patches internal,
+The Obsidian plugin reads knowledge through the `kgd` engine you configure
+and never opens the home or the database itself. It writes its own
+`data.json` (API keys stay in Obsidian's SecretStorage; `data.json` holds only
+their names), and, when you capture, accept or discard, drafts under
+`.knowledge/drafts/` and the commands `kgd accept` and `kgd index` run for
+you. It collects no telemetry, needs no account and installs or updates
+nothing. Lookup without the agent makes no network request. The agent sends
+the selection, its context and the records it reads to the model provider you
+choose; web and paper searches go to Exa (`mcp.exa.ai`); **Find sources**
+also reads Wikipedia and arXiv. Hidden-folder indexing patches internal,
 undocumented Obsidian file-adapter methods and uses Node's file system API to
 check paths under the vault's `.knowledge/` folder, which is why the plugin is
 desktop only. It also exposes `.knowledge/` to Obsidian search and to other
@@ -103,7 +121,7 @@ The CLI and MCP server run locally. They read the home's `config.json` and
 `types/`, the records and drafts, and the registered source files (to check
 evidence and for `kgd get --source-lines`). They write only:
 
-- the home: `config.json` through `kgd base add`/`rm`, the `types/` folder and
+- the home: `config.json` through `kgd base add`/`rm` and `kgd embedding`, the `types/` folder and
   `.gitignore` that the first `kgd base add` creates, `index.sqlite*` and
   `lock`;
 - the `entries/`, `drafts/` and `sheets/` folders under a base's `.knowledge/`;
@@ -113,13 +131,14 @@ evidence and for `kgd get --source-lines`). They write only:
 
 The MCP server speaks stdio only and has no write tools.
 
-Network access happens only when sentence-transformers loads the embedding
-model. It downloads the model into the Hugging Face cache on first use (several
-GB for `BAAI/bge-m3`), and later loads may still contact the Hugging Face Hub
-unless `HF_HUB_OFFLINE=1` is set. Set it after the first download and every
-load stays local. No token is sent and no remote code runs. Nothing is
-committed or pushed for you: keep each vault and the home in your own Git
-repositories.
+The core's only network access is downloading the embedding model from the
+Hugging Face Hub: `kgd embedding set` fetches it into the Hugging Face cache
+(about 2.3 GB for `BAAI/bge-m3`), and later loads may still contact the Hub
+unless `HF_HUB_OFFLINE=1` is set; the plugin sets it for every other run. No
+token is sent and no remote code runs. The model runs on your computer in one
+shared process, and record text never leaves the machine for embedding.
+Nothing is committed or pushed for you: keep each vault and the home in your
+own Git repositories.
 
 ## License
 
@@ -164,7 +183,9 @@ derived database `index.sqlite`:
 ```
 
 The database holds FTS5 full-text rows and float32 vectors, searched by an
-exact NumPy scan. `kgd search` fuses three lanes (lexical, dense and name
+exact NumPy scan. The embedding model runs with int8 weights in one shared
+process per user, about 1 GB for `BAAI/bge-m3`, which exits after 15 idle
+minutes. `kgd search` fuses three lanes (lexical, dense and name
 matches on labels and aliases) by reciprocal rank. Every read reports `lag`
 when record files changed after the last `kgd index`. The record files are the
 knowledge; the database can always be rebuilt from them.
@@ -185,9 +206,9 @@ uv tool update-shell
 
 This creates the `kgd` and `kgdistiller` commands (the same program) on
 Windows, macOS and Linux; restart the shell if `kgd` is not yet on `PATH`. The
-`retrieval` extra adds sentence-transformers and NumPy for the dense lane.
-Without it (`uv tool install .`), keep `"embedding": null` in the home config
-and search uses only the lexical and name lanes.
+`retrieval` extra adds PyTorch, transformers, sentencepiece and NumPy for the
+dense lane. Without it (`uv tool install .`), keep `"embedding": null` in the
+home config and search uses only the lexical and name lanes.
 
 ## Quick start
 
@@ -219,8 +240,7 @@ relation only when the text states it. Record an unexplained term as a pending
 term.
 ```
 
-Map the base's sources to that type and choose an embedding model in
-`~/.knowledge/config.json` (use `null` for no dense lane):
+Map the base's sources to that type in `~/.knowledge/config.json`:
 
 ```json
 {
@@ -232,8 +252,17 @@ Map the base's sources to that type and choose an embedding model in
       }
     }
   },
-  "embedding": "BAAI/bge-m3"
+  "embedding": null
 }
+```
+
+Then choose the embedding model. `kgd embedding set` downloads it and checks
+that kgdistiller can run it; it must be an XLM-RoBERTa sentence encoder that
+ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`. Skip it to search by
+keywords and names only:
+
+```sh
+kgd embedding set BAAI/bge-m3
 ```
 
 Then add records. Ask an agent with the Skills installed to capture a
@@ -247,15 +276,14 @@ cd ~/research
 kgd sheet notes/measure.md --json
 kgd check
 kgd accept .knowledge/drafts/sigma-algebra.md
-kgd index
 kgd search "sigma algebra"
 ```
 
 `kgd sheet --json` prints the type profile and the records a source already
 has. `kgd check` validates the home, records and drafts, and reports evidence
 that moved or no longer matches its source. `kgd accept` moves drafts into
-`entries/`, all or nothing. `kgd index` updates the database, and its first
-dense run downloads the model; set `HF_HUB_OFFLINE=1` afterwards. Every
+`entries/`, all or nothing, then indexes them and embeds the new records.
+Every
 command prints JSON and exits 0 on success, 1 on findings or a refusal, and 2
 on a usage error.
 
@@ -347,7 +375,9 @@ A measure space is defined over a sigma-algebra.
 - Examples and applications are relations of a kind you register, such as
   `example: [uses, setting]`.
 
-Edit accepted records in place, then run `kgd check` and `kgd index`. When a
+Edit accepted records in place, then run `kgd check` and `kgd index --no-embed`
+(the plugin refreshes the keyword index by itself); an edited record keeps
+its old vector until you re-embed with `kgd index`. When a
 source edit shifts the cited lines, `kgd check --fix-lines` rewrites the
 `lines:` of each record whose quotes it finds exactly once elsewhere in the
 source. [docs/model.md](docs/model.md) has the full grammar and validation
@@ -358,11 +388,13 @@ rules.
 | Command | Purpose |
 |---|---|
 | `kgd base add PATH [--name N]`, `base rm NAME`, `base list` | Register, unregister and list bases with record, draft and index counts. |
+| `kgd embedding`, `embedding set MODEL`, `embedding off` | Show the home's embedding model and its vectors, download and check a model and use it, or turn the dense lane off. |
 | `kgd check [--base B] [--fix-lines]` | Validate the home, records and drafts; report moved or stale evidence. |
 | `kgd sheet SOURCE [--json]` | Write a source's sheet of records, pending terms and drafts, or print its profile. |
-| `kgd accept [--dry-run] DRAFT...` | Promote drafts to accepted records, all or nothing. |
+| `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | List the drafts with their links and what `kgd accept` would refuse; writes nothing. |
+| `kgd accept [--dry-run] DRAFT...` | Promote drafts to accepted records, all or nothing, then index them and embed the new records. |
 | `kgd harvest [--dry-run] SHEET` | Accept the ticked drafts of a sheet and regenerate it. |
-| `kgd index [--rebuild] [--no-embed]` | Bring the database up to date with the record files. |
+| `kgd index [--rebuild] [--no-embed]` | Bring the database up to date with the record files; `--no-embed` refreshes only the keyword index. |
 | `kgd search QUERY [--limit N] [--no-dense]` | Rank records by the lexical, dense and name lanes. |
 | `kgd resolve TERM...` | List the senses and mentions of terms, and the records that use each as a pending term. |
 | `kgd get UID... [--source-lines N]` | Read complete records with their links and, optionally, the live cited source lines. |
@@ -396,11 +428,10 @@ understand it. Then:
 
 ```sh
 kgd harvest .knowledge/sheets/notes/measure.md.md
-kgd index
 ```
 
-Harvest accepts exactly the ticked drafts in one step and regenerates the
-sheet. If a ticked relation links a draft you did not tick, it refuses and
+Harvest accepts exactly the ticked drafts in one step, indexes and embeds
+them, and regenerates the sheet. If a ticked relation links a draft you did not tick, it refuses and
 changes nothing, with a message such as `select [[measure-space]] too`. To
 reject a draft, delete its file.
 
@@ -412,11 +443,13 @@ Five Skills cover the write and read workflows:
 |---|---|
 | `capture-kgdistiller` | Saves or updates one record while you read: a node, a relation or an example, with its quote and pending terms. |
 | `compile-knowledge-sheets` | Extracts drafts from part or all of a registered source, following its document type, and writes the sheet. It never changes accepted records. |
-| `harvest-kgdistiller` | Runs `kgd harvest` on the drafts you ticked, then `kgd index`. |
+| `harvest-kgdistiller` | Runs `kgd harvest` on the drafts you ticked, which indexes and embeds them. |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |
 | `deploy-kgdistiller` | Installs, registers bases, sources, types and the model, then checks, indexes, installs the plugin and links the runtimes. |
 
-Every Skill that writes knowledge ends with `kgd index`. Install them for your
+Accepting indexes and embeds the new records; after editing records, the
+Skills refresh only the keyword index (`kgd index --no-embed`) and leave
+re-embedding to you. Install them for your
 runtime:
 
 ```sh
@@ -437,8 +470,9 @@ and `CODEX_HOME`) and never edits `CLAUDE.md`, `settings.json`, `AGENTS.md` or
 (PowerShell 7: `./scripts/link-skills.ps1 -Runtime opencode`).
 
 The MCP server exposes `kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`,
-`kg_browse` and `kg_pack`, with the same JSON as the CLI. It keeps the model
-loaded between calls, so only the first dense search pays the load time.
+`kg_browse`, `kg_pack` and `kg_drafts`, with the same JSON as the CLI. It
+loads no model: the dense lane asks the shared embedding process, so only the
+first dense search after 15 idle minutes waits for the model.
 Register it as the command `kgd mcp`:
 
 ```sh
@@ -462,8 +496,9 @@ When asked to install kgdistiller from this repository, an agent should:
    `kgd codex link` then `kgd codex doctor`; for OpenCode or OMP,
    `./scripts/link-skills.sh opencode|omp`. Start a new session afterwards.
 3. Follow the `deploy-kgdistiller` Skill: `kgd base add` for each vault, write
-   the source globs, document types and `embedding` into
-   `~/.knowledge/config.json` and `~/.knowledge/types/`, then run `kgd check`,
+   the source globs and document types into `~/.knowledge/config.json` and
+   `~/.knowledge/types/`, set the model with `kgd embedding set BAAI/bge-m3`,
+   then run `kgd check`,
    `kgd index` and, for a vault opened in Obsidian, `kgd obsidian install`.
 4. Smoke-test with `kgd base list` and `kgd search "KNOWN NAME" --base NAME`.
 
@@ -485,8 +520,9 @@ kgd index
 
 `kgd index` recreates a missing or damaged database from the record files and
 re-embeds every record. Deleting the database first
-(`rm -f ~/.knowledge/index.sqlite*`) is optional. With `BAAI/bge-m3` on Apple
-silicon, restoring a 535-record base took 115 s.
+(`rm -f ~/.knowledge/index.sqlite*`) is optional. The embedding process
+encodes about 14 records a second with `BAAI/bge-m3` on Apple silicon, so a
+535-record base takes about 40 s.
 `kgd index --rebuild` re-derives every row without re-embedding.
 
 ## Development

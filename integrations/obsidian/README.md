@@ -1,22 +1,23 @@
 # kgdistiller for Obsidian
 
-This plugin shows the kgdistiller records of a vault as a typed graph in a
-separate `kgdistiller Graph` view, and lets Obsidian index the vault's hidden
-`.knowledge/` folder so records open and edit like any other note. It
-complements Obsidian's own tools:
+This plugin brings a kgdistiller knowledge base into Obsidian. It lets
+Obsidian index the vault's hidden `.knowledge/` folder, so records open and
+edit like any other note, and, once the path of the `kgd` CLI is set, it adds:
 
-- The native editor, Properties panel, backlinks and graph treat records as
-  ordinary notes with wikilinks. You edit records there.
-- The kgdistiller view draws nodes, role-bound relations, `requires` links,
-  drafts and pending terms, and its details pane shows the selected record's
-  body and evidence.
+- the **kgdistiller Lookup** sidebar, which looks a selection, a typed query
+  or the open file up in every registered base and shows the record in focus
+  with a typed graph of its neighbours;
+- an optional agent that judges whether a selection is already recorded,
+  answers questions, finds where a term comes from and captures a selection
+  as a draft, with the model provider you configure;
+- the **kgdistiller Capture** view, where drafts wait until you accept,
+  open or discard them.
 
-The view is live. It builds its graph from the frontmatter that Obsidian's
-metadata cache holds for `.knowledge/entries/*.md` and
-`.knowledge/drafts/*.md`, and redraws when a record changes, is deleted or is
-renamed. The plugin never reads the kgdistiller home or its database. It
-never writes knowledge files either: after an edit, run `kgd check` and
-`kgd index`.
+The plugin never opens the kgdistiller home or its database: it reads
+knowledge through `kgd mcp` and changes it only through `kgd` commands
+(`kgd accept`, `kgd index`, `kgd embedding`) and the draft files a capture
+writes or a discard deletes. Edit records with Obsidian's editor and
+Properties panel; the keyword index follows saved record files by itself.
 
 ## Install
 
@@ -34,15 +35,18 @@ https://github.com/qiulinfan/kgdistiller/releases into
 `<vault>/.obsidian/plugins/kgdistiller/`. Reload Obsidian, enable the plugin,
 and switch on **Index hidden knowledge folder** in its settings.
 
-Viewing records needs no Python and no server. The plugin makes no network
-requests, has no telemetry, needs no account and reads nothing outside the
-vault. It uses Node's `fs` only to check paths under the vault's `.knowledge`
-folder for hidden-folder indexing (symlink checks and, on case-insensitive file
-systems, the exact-case name in the parent directory), and the only file it
-writes is its own `data.json`. It neither runs the CLI nor installs or updates
-software. Checking, accepting and indexing records, and installing the plugin
-from the command line, use the separate kgdistiller CLI, which needs Python
-3.11 or newer.
+Hidden-folder indexing alone needs no Python and no server. Lookup, capture
+and the Capture view run the separate kgdistiller CLI, which needs Python 3.11
+or newer. The plugin has no telemetry, needs no account and installs or updates
+nothing. Lookup without the agent makes no network request. The agent sends
+the selection, its context and the records it reads to the model provider you
+choose; web and paper searches go to Exa (`mcp.exa.ai`), and **Find sources**
+also reads Wikipedia and arXiv. API keys stay in Obsidian's SecretStorage, and
+`data.json` holds only their names. `kgd embedding set`, run from the
+Embedding settings, is the one `kgd` run allowed to download (the embedding
+model, from the Hugging Face Hub); the model runs on this computer. The
+plugin uses Node's `fs` to check paths under the vault's `.knowledge` folder
+for hidden-folder indexing and to write and delete draft files.
 
 Original code is MIT. The bundle embeds Cytoscape.js, cytoscape-fcose,
 cose-base and layout-base, all MIT, and the hidden-folder indexer is adapted
@@ -85,16 +89,28 @@ one JSON object whose `status` is `installed`, `updated` or `current`; when
 
 ## Settings
 
-Under **Graph view**, **Show drafts** (on by default) draws proposed records
-from `.knowledge/drafts`. The toolbar can change it for an open view.
-
-Under **Hidden knowledge folder**, **Index hidden knowledge folder** (off by
-default, turned on by `kgd obsidian install`) adds the whole `.knowledge`
-subtree to Obsidian's vault, metadata cache, search, links and backlinks.
-Nothing else is indexed, and the folder name is fixed. **Indexing status**
-reports the result and has a **Rescan** button; use it after creating
-`.knowledge`, or run **Rescan hidden knowledge folder** from the command
-palette.
+- **Hidden knowledge folder.** **Index hidden knowledge folder** (off by
+  default, turned on by `kgd obsidian install`) adds the whole `.knowledge`
+  subtree to Obsidian's vault, metadata cache, search, links and backlinks.
+  Nothing else is indexed, and the folder name is fixed. **Indexing status**
+  reports the result and has a **Rescan** button; use it after creating
+  `.knowledge`, or run **Rescan hidden knowledge folder** from the command
+  palette.
+- **Lookup.** **kgd executable** is the absolute path of `kgd` (Obsidian
+  started from the Dock does not see the shell's `PATH`); empty turns lookup,
+  capture and the Capture view off. **Knowledge home** is the
+  `KGDISTILLER_HOME` to use; empty keeps `~/.knowledge`.
+- **Embedding.** Shows the knowledge home's embedding model and whether
+  records await Re-embed, and changes it with **Use** (`kgd embedding set`,
+  which downloads and checks the model) or **Turn off**. The model belongs to
+  the home, not to the vault, and nothing is re-embedded until you press
+  Re-embed in the sidebar.
+- **Model providers.** The services the agent's models come from: a service,
+  a name and an API key per provider, one provider shown at a time, with
+  model detection and a connection **Test**. The model and reasoning level
+  are chosen at the top of the sidebar.
+- **Web search.** An optional Exa API key; without one, search uses Exa's
+  free rate limits.
 
 Hidden indexing relies on private Obsidian file-system APIs, because the public
 API has no way to include a hidden folder. If a later Obsidian release
@@ -103,41 +119,32 @@ changes them, the status reports indexing as unsupported. A symlinked
 enabled, kgdistiller reports the conflict and leaves its own indexer off.
 Indexing makes `.knowledge/` visible to Obsidian search and to the vault's
 other plugins. Switching the setting off hides the folder again and never
-deletes files on disk.
+deletes files on disk. A stored setting of the wrong type falls back to its
+default with a notice, and unknown keys are ignored.
 
-Only these two settings are stored. A stored value of the wrong type falls
-back to its default with a notice, and unknown keys are ignored.
+## Using it
 
-## Graph controls
+- **Look up.** Select text and hold ⌘ (Ctrl elsewhere) for 0.3 s, run **Look
+  up selection**, or type into the sidebar's search box (**Open kgdistiller**
+  in the ribbon or **Search knowledge** puts the cursor there). The sidebar
+  shows the records of the same name, those that use the name as a pending
+  term, the record in focus with its neighbours within 3 steps (relations as
+  edges, the wheel zooming the graph, a collapsible legend), and the related
+  records. Opening a record or a source in the editor focuses it too.
+- **Re-embed**, below the search box, is solid with a count while records'
+  texts changed since their vectors were computed, or the embedding model
+  changed, and runs `kgd index` when pressed.
+- **Agent.** With a model chosen in the sidebar, a lookup also says whether
+  the selection is already recorded; **Find sources** finds the paper or
+  article a term comes from; a typed question gets an answer citing records,
+  papers and the web; **Capture** or **Capture selection** drafts a record.
+- **Capture view.** Captures appear there while they draft, several at a
+  time, then as full drafts saying whether `kgd accept` would take them.
+  **Accept** admits a draft with the drafts it links and indexes and embeds
+  it; **Open draft** opens the file; **Discard** deletes it after asking.
+  **Show drafts** opens the view.
 
-Open the view with the ribbon icon or **kgdistiller: Open typed graph**. It
-opens in the right sidebar.
-
-- **Neighbourhood** (default) draws the records within **Depth** 1 or 2 hops of
-  the active file: a record, the records citing an open source, or the records
-  of an open sheet. **Full graph** draws every record that passes the filters.
-- Filters: **Kind**, **Class** (nodes or relations), **Understanding**
-  (`unknown`, `not-yet-understood` or `understood`) and **Source** (a path
-  prefix). **Show drafts** and **Show pending terms** add those elements, and
-  the icon button with the tooltip **Fit graph** zooms to fit the whole graph.
-  None of these are stored.
-- Nodes are circles coloured by kind, with a border for understanding. A
-  relation is drawn as one edge labelled with its kind when its roles hold
-  exactly two link values, it has no `requires` link and no record links to
-  it. While pending terms are shown, a relation that has a pending term is a
-  diamond instead. Every other relation is a diamond with one edge per role
-  value. `requires` links are dashed arrows, drafts are dashed and translucent,
-  links into other bases end at grey stubs and links to missing records are
-  red. The legend in the details pane lists every style.
-- Selecting an element shows its record: label, kind, class, epistemic label,
-  understanding, source and lines, roles and `requires`, then the body and the
-  `## Evidence` section rendered as Markdown. **Open record**, **Open source
-  at line N** (when the source is in the vault) and **Open sheet** (when
-  `.knowledge/sheets/<source>.md` exists) jump to the files.
-- **Reload typed graph** re-reads every record from the metadata cache.
-
-The full rendering and model rules are in
-[docs/obsidian.md](../../docs/obsidian.md).
+The full description is in [docs/obsidian.md](../../docs/obsidian.md).
 
 ## Develop the plugin
 
@@ -163,7 +170,10 @@ vault.
 - [x] Publish through the monorepo's guarded root metadata and
   version-checked GitHub release assets. The canonical plugin sources and the
   bundle that `kgd obsidian install` copies remain in this directory.
-- [ ] Editing commands, and commands that run `kgd`.
-- [ ] Jump links from source documents to records, and "new record from
-  selection".
+- [x] Commands that run `kgd`: lookup, capture, accept, index and the
+  embedding model.
+- [x] A new record from a selection: **Capture** drafts it for the Capture
+  view.
+- [ ] Editing a draft's fields on its card and asking the agent to revise it.
+- [ ] Jump links from source documents to records.
 - [ ] A shipped `.base` file and a Bases view.
