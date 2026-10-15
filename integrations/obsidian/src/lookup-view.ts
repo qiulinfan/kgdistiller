@@ -41,7 +41,8 @@ import {
   type SearchResult,
   type SourceBrowse,
 } from "./lookup-model";
-import type { ModelChoice, ModelGroup } from "./providers";
+import type { ReasoningChoice } from "./model";
+import type { ModelChoice, ModelGroup, ReasoningChoices } from "./providers";
 import { entryPath, firstLine } from "./records";
 
 export const VIEW_TYPE_KGDISTILLER_LOOKUP = "kgdistiller-lookup-view";
@@ -59,6 +60,8 @@ const LEGEND: ReadonlyArray<readonly [string, string]> = [
   ["requires", "Dashed arrow: requires"],
   ["dangling", "Red: a missing record"],
 ];
+const AUTO_REASONING = "Reasoning effort. Auto: none to judge selections and answer questions, low to capture and find sources, "
+  + "or the next level up that the model accepts.";
 
 export interface LookupHost extends AgentHost {
   app: App;
@@ -67,6 +70,9 @@ export interface LookupHost extends AgentHost {
   /** Every provider's detected models and the model in use; `refresh` detects them all again. */
   modelChoices(refresh?: boolean): Promise<{ groups: ModelGroup[]; chosen: ModelChoice }>;
   chooseModel(choice: ModelChoice): Promise<void>;
+  /** The reasoning levels the model in use accepts and the level chosen; `refresh` detects the levels again. */
+  reasoningChoices(refresh?: boolean): Promise<ReasoningChoices>;
+  chooseReasoning(choice: ReasoningChoice): Promise<void>;
 }
 
 type Settled<T> = { value: T; error?: undefined } | { value?: undefined; error: string };
@@ -77,6 +83,8 @@ const settle = <T>(promise: Promise<T>): Promise<Settled<T>> =>
 export class KgdistillerLookupView extends ItemView {
   private modelEl: HTMLSelectElement | null = null;
   private modelsRequest = 0;
+  private reasoningEl: HTMLSelectElement | null = null;
+  private levelsRequest = 0;
   private searchEl: HTMLInputElement | null = null;
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
@@ -133,10 +141,14 @@ export class KgdistillerLookupView extends ItemView {
       const [provider, model] = JSON.parse(select.value) as [string, string];
       void this.host.chooseModel({ provider, model });
     });
-    const detect = picker.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Detect the providers' models again" } });
+    setIcon(picker.createSpan({ cls: "kgd-lookup-reasoning-icon", attr: { "aria-hidden": "true" } }), "brain");
+    const reasoning = picker.createEl("select", { cls: "dropdown kgd-lookup-reasoning", attr: { "aria-label": "Reasoning effort" } });
+    reasoning.addEventListener("change", () => void this.host.chooseReasoning(reasoning.value as ReasoningChoice));
+    const detect = picker.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Detect the models and their reasoning levels again" } });
     setIcon(detect, "refresh-cw");
     detect.addEventListener("click", () => void this.showModels(true));
     this.modelEl = select;
+    this.reasoningEl = reasoning;
     void this.showModels();
     const search = this.contentEl.createEl("input", {
       cls: "kgd-lookup-search",
@@ -218,7 +230,12 @@ export class KgdistillerLookupView extends ItemView {
    * Fill the model list: every provider's detected models under the
    * provider's name, the model in use selected. `refresh` detects them again.
    */
+  /** Show every provider's models and the reasoning levels of the model in use; `refresh` detects them again. */
   async showModels(refresh = false): Promise<void> {
+    await Promise.all([this.listModels(refresh), this.listLevels(refresh)]);
+  }
+
+  private async listModels(refresh: boolean): Promise<void> {
     const select = this.modelEl;
     if (!select) return;
     const request = ++this.modelsRequest;
@@ -242,6 +259,30 @@ export class KgdistillerLookupView extends ItemView {
         if (group.provider === chosen.provider && model === chosen.model) option.selected = true;
       }
     }
+  }
+
+  /** Auto and each level the model in use accepts, with the level chosen even when it is not among them. */
+  private async listLevels(refresh: boolean): Promise<void> {
+    const select = this.reasoningEl;
+    if (!select) return;
+    const request = ++this.levelsRequest;
+    // Stored levels arrive before the next paint, so only a detection shows this.
+    select.empty();
+    select.createEl("option", { text: "detecting…", value: "" });
+    select.disabled = true;
+    select.title = "Detecting the reasoning levels the model accepts…";
+    const { chosen, levels, error } = await this.host.reasoningChoices(refresh);
+    if (request !== this.levelsRequest) return;
+    select.empty();
+    select.createEl("option", { text: "auto", value: "" });
+    for (const level of levels ?? []) select.createEl("option", { text: level, value: level });
+    if (chosen && !levels?.includes(chosen)) select.createEl("option", { text: chosen, value: chosen });
+    select.value = chosen;
+    select.disabled = select.options.length < 2;
+    select.title = error ? `Reasoning levels not detected: ${error}`
+      : !levels ? "Choose a model to see the reasoning levels it accepts."
+      : levels.length === 0 ? "The model accepts no reasoning level, so its service decides."
+      : AUTO_REASONING;
   }
 
   /** Put the cursor in the search box, as the Search knowledge command does. */

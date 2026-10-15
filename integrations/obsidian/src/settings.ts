@@ -1,6 +1,7 @@
 import { App, Modal, Plugin, PluginSettingTab, SecretComponent, Setting, type TextComponent } from "obsidian";
 
-import { kindOf, newProviderName, PROVIDER_KINDS, storedProviders, type Detected, type Provider } from "./providers";
+import { isReasoningLevel, type ReasoningChoice } from "./model";
+import { kindOf, newProviderName, PROVIDER_KINDS, storedLevels, storedProviders, type Detected, type ModelLevels, type Provider } from "./providers";
 import { KNOWLEDGE_DIRECTORY } from "./records";
 import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
 
@@ -15,6 +16,10 @@ export interface KgdistillerSettings {
   /** The provider and model the agent uses, chosen in the sidebar; empty turns the agent off. */
   provider: string;
   model: string;
+  /** The reasoning level chosen in the sidebar for every request; empty gives each job its own. */
+  reasoning: ReasoningChoice;
+  /** The reasoning levels each provider's models accept, as detected. */
+  reasoningLevels: ModelLevels[];
   /** A SecretStorage identifier, never a key; empty searches the web at Exa's free rate limits. */
   exaKey: string;
 }
@@ -26,6 +31,8 @@ export const DEFAULT_SETTINGS: Readonly<KgdistillerSettings> = {
   providers: [],
   provider: "",
   model: "",
+  reasoning: "",
+  reasoningLevels: [],
   exaKey: "",
 };
 
@@ -34,25 +41,31 @@ const NAME_HINT = "Shown in the sidebar's model list; no two providers share a n
 
 /**
  * Overlay stored plugin data on the defaults, keeping only values whose type
- * matches the default and the providers that are complete. Unknown keys are
- * ignored; wrongly typed known keys, and a provider list with anything else
- * in it, are returned so the caller can report them.
+ * matches the default, the providers that are complete and a known reasoning
+ * level. Unknown keys are ignored; wrongly typed known keys, a provider list
+ * with anything else in it and an unknown level are returned so the caller can
+ * report them. Detected reasoning levels that are not valid are detected again.
  */
 export function mergeStoredSettings(stored: unknown): { settings: KgdistillerSettings; rejected: string[] } {
-  const settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [] };
+  const settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [], reasoningLevels: [] };
   const rejected: string[] = [];
   if (stored === null || stored === undefined) return { settings, rejected };
   if (typeof stored !== "object" || Array.isArray(stored)) return { settings, rejected: ["(all)"] };
   const record = stored as Record<string, unknown>;
   const target = settings as unknown as Record<string, unknown>;
   for (const [key, fallback] of Object.entries(DEFAULT_SETTINGS)) {
-    if (key === "providers" || !(key in record)) continue;
+    if (key === "providers" || key === "reasoningLevels" || !(key in record)) continue;
     if (typeof record[key] === typeof fallback) target[key] = record[key];
     else rejected.push(key);
+  }
+  if (settings.reasoning && !isReasoningLevel(settings.reasoning)) {
+    settings.reasoning = "";
+    rejected.push("reasoning");
   }
   const { providers, dropped } = storedProviders(record.providers);
   settings.providers = providers;
   if (dropped) rejected.push("providers");
+  settings.reasoningLevels = storedLevels(record.reasoningLevels);
   return { settings, rejected };
 }
 
@@ -67,9 +80,9 @@ export interface SettingsHost {
   agentSettingsChanged(): void;
   /** Each provider's detected models, detecting those not yet known. */
   modelCatalog(): Promise<ReadonlyMap<string, Detected>>;
-  /** Forget a provider's detected models after its settings change. */
+  /** Forget a provider's detected models and their reasoning levels, after its settings change or to detect them again. */
   forgetModels(name: string): void;
-  /** Send the provider one short request of the kind the agent sends, and say how it went. */
+  /** Ask a model of the provider at each reasoning level with the agent's kind of request, and say how it went. */
   testProvider(provider: Provider): Promise<string>;
 }
 
@@ -315,7 +328,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
         await this.showModels(provider, models);
       }));
     const connection = new Setting(containerEl).setName("Connection")
-      .setDesc("Send one short request of the kind the agent sends, to the model in use or the first one listed.")
+      .setDesc("Ask the model in use, or the first one listed, at each reasoning level with one short request of the kind the agent sends; the sidebar then lists the levels it accepts.")
       .addButton((button) => button.setButtonText("Test").onClick(async () => {
         button.setDisabled(true);
         connection.setDesc("Testing…");

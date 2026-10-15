@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { GetJson } from "../src/api";
-import type { ChatReply, ChatRequest } from "../src/model";
+import { ApiError, type GetJson } from "../src/api";
+import { REASONING_LEVELS, type ChatReply, type ChatRequest } from "../src/model";
 import {
   baseUrlOf,
   chatUrl,
-  connectionTest,
+  connectionReport,
   formatOf,
   kindOf,
   listModels,
@@ -13,7 +13,9 @@ import {
   modelIds,
   modelsUrl,
   newProviderName,
+  probeLevels,
   PROVIDER_KINDS,
+  storedLevels,
   storedProviders,
   type Detected,
   type Provider,
@@ -104,23 +106,57 @@ describe("the sidebar's model choices", () => {
   });
 });
 
-describe("the connection test", () => {
+describe("reasoning level detection", () => {
   const reply = (calls: string[]): ChatReply => ({
     model: "m", finish_reason: "tool_calls", usage: { prompt_tokens: 1, completion_tokens: 1 },
     message: { content: null, tool_calls: calls.map((name, index) => ({ id: String(index), type: "function", function: { name, arguments: "{}" } })) },
   });
+  const refusal = (status: number, level: string) => new ApiError(`API request failed (HTTP ${status}): ${level} is not supported.`, status);
 
-  it("sends the agent's kind of request: a forced tool call with reasoning off", async () => {
+  it("asks the agent's kind of request at each level, two at a time, and keeps the levels the service did not refuse", async () => {
     const requests: ChatRequest[] = [];
-    const result = await connectionTest(async (request) => { requests.push(request); return reply(["ok"]); }, "deepseek-flash");
-    expect(result).toMatch(/^Connected: deepseek-flash answered in \d+\.\d s with a tool call, as the agent needs\.$/);
-    expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "ok" } }, reasoning_effort: "none" });
+    let running = 0;
+    let most = 0;
+    const probe = await probeLevels(async (request) => {
+      requests.push(request);
+      most = Math.max(most, ++running);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      running--;
+      const level = request.reasoning_effort!;
+      if (level === "minimal") throw refusal(422, level);
+      if (!["low", "high", "max"].includes(level)) throw refusal(400, level);
+      return reply(level === "max" ? [] : ["ok"]);
+    });
+    expect(requests.map((request) => request.reasoning_effort)).toEqual([...REASONING_LEVELS]);
+    expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "ok" } } });
     expect(requests[0]!.tools!.map((tool) => tool.function.name)).toEqual(["ok"]);
+    expect(most).toBe(2);
+    expect(probe.answers.map(({ level, tool }) => ({ level, tool })))
+      .toEqual([{ level: "low", tool: true }, { level: "high", tool: true }, { level: "max", tool: false }]);
+    expect(probe.refusal).toBe("API request failed (HTTP 400): none is not supported.");
   });
 
-  it("says when the model answered without the tool call, or did not answer", async () => {
-    await expect(connectionTest(async () => reply([]), "m")).resolves.toContain("but without the tool call the agent needs");
-    await expect(connectionTest(async () => { throw new Error("API request failed (HTTP 401). Check the API key and access permissions."); }, "m"))
-      .resolves.toBe("m did not answer: API request failed (HTTP 401). Check the API key and access permissions.");
+  it("stops at the first failure that is not a refusal", async () => {
+    const denied = new ApiError("API request failed (HTTP 401). Check the API key and access permissions.", 401);
+    const complete = vi.fn(async (): Promise<ChatReply> => { throw denied; });
+    await expect(probeLevels(complete)).rejects.toBe(denied);
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("is reported with the accepted levels and the answer at the level judgments use", () => {
+    expect(connectionReport("glm-5.3-flash", { answers: [{ level: "low", seconds: 1.04, tool: true }, { level: "high", seconds: 2, tool: true }], refusal: "" }))
+      .toBe("Connected: glm-5.3-flash accepts reasoning low, high. At reasoning low it answered in 1.0 s with the tool call the agent needs.");
+    expect(connectionReport("m", { answers: [{ level: "none", seconds: 0.5, tool: false }], refusal: "" }))
+      .toBe("Connected: m accepts reasoning none. At reasoning none it answered in 0.5 s but without the tool call the agent needs.");
+    expect(connectionReport("m", { answers: [], refusal: "API request failed (HTTP 400): model not found." }))
+      .toBe("m refused the agent's kind of request at every reasoning level: API request failed (HTTP 400): model not found.");
+  });
+
+  it("is stored for each provider's model once, with known levels only", () => {
+    const glm = { provider: "glm", model: "glm-5.3-flash", levels: ["low", "high", "max"] };
+    const none = { provider: "glm", model: "glm-4.5-flash", levels: [] };
+    expect(storedLevels([glm, { ...glm, levels: ["low"] }, { ...glm, model: "x", levels: ["turbo"] }, { provider: 1, model: "y", levels: [] }, null, none]))
+      .toEqual([glm, none]);
+    expect(storedLevels({ glm })).toEqual([]);
   });
 });

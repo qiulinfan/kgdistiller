@@ -1,12 +1,39 @@
 /** The plugin's direct Chat Completions client. No external agent runtime is involved. */
 import { ApiError, apiUrl, type PostJson } from "./api";
 
+/**
+ * The reasoning levels a request can name, from none to the most, as
+ * DeepSeek lists them; OpenAI and Zhipu accept some of them. Which ones a
+ * model accepts is detected by asking it (providers.ts).
+ */
+export const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"] as const;
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+/** A level for every request, or empty for each request's own. */
+export type ReasoningChoice = ReasoningLevel | "";
+
+export const isReasoningLevel = (value: unknown): value is ReasoningLevel => REASONING_LEVELS.includes(value as ReasoningLevel);
+
+/**
+ * The level a request goes at when the model accepts `levels`: the wanted one,
+ * else the next one up, else the highest; none at all when the model accepts
+ * no level, and the wanted one while the levels are not known.
+ */
+export function sentLevel(wanted: ReasoningLevel | undefined, levels: readonly ReasoningLevel[] | undefined): ReasoningLevel | undefined {
+  if (!wanted || !levels || levels.includes(wanted)) return wanted;
+  const rank = REASONING_LEVELS.indexOf(wanted);
+  return levels.find((level) => REASONING_LEVELS.indexOf(level) > rank) ?? levels.at(-1);
+}
+
 export interface ModelSettings {
   endpoint: string;
   apiKey: string;
   model: string;
   /** "deepseek" turns thinking on and off as DeepSeek and Zhipu do; "chat-completions" sends reasoning_effort alone. */
   protocol: "chat-completions" | "deepseek";
+  /** The owner's level for every request; absent or empty leaves each request its own. */
+  reasoning?: ReasoningChoice;
+  /** The levels the model accepts, once detected; a request's own level is moved to one of them. */
+  levels?: () => Promise<readonly ReasoningLevel[] | undefined>;
 }
 
 export const MODEL_TIMEOUT_MS = 120 * 1000;
@@ -37,9 +64,8 @@ export interface ChatRequest {
   tools?: ToolSpec[];
   /** "required" makes the model call some tool; a named tool forces that one. */
   tool_choice?: "auto" | "required" | { type: "function"; function: { name: string } };
-  /** "none" keeps the model's reasoning off; a level turns it on. */
-  reasoning_effort?: "none" | "low" | "medium" | "high";
-  max_tokens?: number;
+  /** "none" keeps the model's reasoning off; another level turns it on. Absent, the service decides. */
+  reasoning_effort?: ReasoningLevel;
 }
 
 export interface Usage {
@@ -91,12 +117,13 @@ export class ModelClient {
     const settings = this.settings();
     if (!this.configured()) throw new Error("Add a model provider in the kgdistiller settings and choose a model in the sidebar.");
     apiUrl(settings.endpoint);
-    const { reasoning_effort, ...chat } = request;
+    const { reasoning_effort: wanted, ...chat } = request;
+    const effort = settings.reasoning || sentLevel(wanted, await settings.levels?.());
     const body: Record<string, unknown> = { ...chat, model: settings.model.trim(), stream: false };
-    if (settings.protocol === "deepseek") {
-      body.thinking = { type: reasoning_effort && reasoning_effort !== "none" ? "enabled" : "disabled" };
-      if (reasoning_effort && reasoning_effort !== "none") {
-        body.reasoning_effort = reasoning_effort;
+    if (effort && settings.protocol === "deepseek") {
+      body.thinking = { type: effort !== "none" ? "enabled" : "disabled" };
+      if (effort !== "none") {
+        body.reasoning_effort = effort;
         // DeepSeek thinking mode rejects required/named tool_choice. Offer only
         // the named tool when forced; the harness checks it and retries plain text.
         if (request.tool_choice && request.tool_choice !== "auto") {
@@ -107,8 +134,8 @@ export class ModelClient {
           }
         }
       }
-    } else if (reasoning_effort) {
-      body.reasoning_effort = reasoning_effort;
+    } else if (effort) {
+      body.reasoning_effort = effort;
     }
     return chatReply(await this.post(settings.endpoint, settings.apiKey, body, MODEL_TIMEOUT_MS));
   }

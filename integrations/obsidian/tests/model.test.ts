@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chatReply, ModelClient, type ModelSettings } from "../src/model";
+import { chatReply, ModelClient, sentLevel, type ModelSettings, type ReasoningLevel } from "../src/model";
 import { ApiError, type PostJson } from "../src/api";
 import { runJob } from "../src/agent";
 
@@ -44,7 +44,7 @@ describe("direct model requests", () => {
       .mockResolvedValueOnce({ choices: [{ message: { content: null, tool_calls: [
         { id: "2", type: "function", function: { name: "answer", arguments: "{}" } },
       ] } }] })
-      .mockResolvedValueOnce(answer());
+      .mockResolvedValue(answer());
     const model = new ModelClient(() => ({ ...settings, protocol: "deepseek" }), post);
     const spec = (name: string) => ({ type: "function" as const, function: { name, description: "", parameters: {} } });
     await expect(runJob((request) => model.complete(request), {
@@ -60,6 +60,43 @@ describe("direct model requests", () => {
     await model.complete({ messages: [], reasoning_effort: "none" });
     expect(post.mock.calls[2]![2]).toMatchObject({ thinking: { type: "disabled" } });
     expect(post.mock.calls[2]![2]).not.toHaveProperty("reasoning_effort");
+    await model.complete({ messages: [] });
+    expect(post.mock.calls[3]![2]).not.toHaveProperty("thinking");
+  });
+});
+
+describe("reasoning levels", () => {
+  it("move a level the model does not accept to the next one up, else to the highest", () => {
+    const glm: ReasoningLevel[] = ["low", "high", "max"];
+    expect(sentLevel("none", glm)).toBe("low");
+    expect(sentLevel("medium", glm)).toBe("high");
+    expect(sentLevel("high", glm)).toBe("high");
+    expect(sentLevel("xhigh", ["none", "low", "medium"])).toBe("medium");
+    expect(sentLevel("none", [])).toBeUndefined();
+    expect(sentLevel("none", undefined)).toBe("none");
+    expect(sentLevel(undefined, glm)).toBeUndefined();
+  });
+
+  it("send each request's own level moved to one the model accepts, or the owner's level for every request", async () => {
+    const post = vi.fn<PostJson>().mockResolvedValue(answer());
+    const levels = vi.fn(async (): Promise<readonly ReasoningLevel[]> => ["low", "high", "max"]);
+    const current: ModelSettings = { ...settings, protocol: "deepseek", levels };
+    const model = new ModelClient(() => current, post);
+    await model.complete({ messages: [], reasoning_effort: "none" });
+    expect(post.mock.calls[0]![2]).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "low" });
+    current.reasoning = "max";
+    await model.complete({ messages: [], reasoning_effort: "none" });
+    expect(post.mock.calls[1]![2]).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "max" });
+    expect(levels).toHaveBeenCalledOnce();
+  });
+
+  it("leave reasoning to the service for a model that accepts no level", async () => {
+    for (const protocol of ["chat-completions", "deepseek"] as const) {
+      const post = vi.fn<PostJson>().mockResolvedValue(answer());
+      await new ModelClient(() => ({ ...settings, protocol, levels: async () => [] }), post).complete({ messages: [], reasoning_effort: "none" });
+      expect(post.mock.calls[0]![2]).not.toHaveProperty("thinking");
+      expect(post.mock.calls[0]![2]).not.toHaveProperty("reasoning_effort");
+    }
   });
 });
 

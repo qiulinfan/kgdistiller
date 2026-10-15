@@ -4,6 +4,16 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Choose the Obsidian agent's reasoning level in the lookup sidebar, beside
+  the model, from the levels that model accepts. The plugin detects them by
+  asking the model once at each level a request can name (`none` through
+  `max`) with the agent's kind of request, keeps those the service did not
+  refuse with HTTP 400 or 422, and stores them with the vault's settings.
+  **auto** keeps each job's own level, moved to the next one up that the
+  model accepts, so a model that refuses `none`, as GLM-5.3 Flash refused
+  `reasoning_effort: none` with HTTP 400, is asked at a level it accepts; a
+  chosen level goes with every request, and choosing another model returns
+  to auto. **Test** now lists the levels a model accepts.
 - Zhipu providers use the thinking switch that DeepSeek providers use:
   reasoning `none` now sends `thinking: disabled` instead of
   `reasoning_effort: none`, which GLM-4.5 Flash ignored and kept thinking;

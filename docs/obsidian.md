@@ -166,6 +166,24 @@ from `app.secretStorage`; plugin `data.json` stores only secret identifiers.
 It never imports OMP credentials or role aliases. Existing installations must
 configure the new API endpoints, actual model ID and secret references.
 
+Each job asks for its own reasoning level: none to judge a selection and
+answer a question, low to capture and find sources. Models accept different
+levels: deepseek-flash accepted all eight a request can name (`none`,
+`minimal`, `low`, `medium`, `high`, `xhigh`, `ultra`, `max`), while GLM-5.3
+Flash, which always thinks, refused every `reasoning_effort` but `low`, `high`
+and `max` with HTTP 400 (2026-10-15). So the plugin detects them, asking the
+model once at each level with one short forced tool call of the kind the
+agent sends, two at a time since GLM's free models refused more than four
+requests at once. A level the service refuses with HTTP 400 or 422 is one the
+model does not accept; any other failure, such as a wrong key or an exhausted
+balance, leaves the levels undetected for the session, and requests then go
+at their own level. The levels detected are stored with the vault's settings
+for that provider's model. Detection runs when the sidebar first shows a
+model and again with the sidebar's detect button or the provider's **Test**;
+changing the provider's service, name, base URL or key forgets them. A
+service that accepts any value, as Zhipu's GLM-4.5 Flash does, shows every
+level, although only thinking on or off may then make a difference.
+
 The desktop HTTP client reuses connections, limits JSON responses to 8 MiB,
 and cancels requests after 120 seconds for a model or 60 seconds for search.
 Changing API settings cancels pending API requests; unloading closes the
@@ -339,11 +357,9 @@ and adds nothing until both are set and the name is free. A provider has:
 - **Name**: shown in the sidebar's model list. No two providers share a name;
   a rename the sidebar's choice used follows the provider, and **Remove**
   deletes the provider, clearing the choice when it was in use.
-- **API format**, only for another service: **Chat Completions** for a
-  service accepting `reasoning_effort` (`none` and `low`), or **Thinking
-  switch (DeepSeek, Zhipu)**, which also turns thinking on or off, with
-  DeepSeek's tool-choice rules. Every hosted service but DeepSeek and Zhipu
-  uses Chat Completions, so it too must accept `reasoning_effort`.
+- **API format**, only for another service: **Chat Completions** sends
+  `reasoning_effort` alone; **Thinking switch (DeepSeek, Zhipu)** also turns
+  thinking on or off, with DeepSeek's tool-choice rules.
 - **API key**: select or add a secret in Obsidian SecretStorage. A local
   server usually needs none.
 - **Models**: the models the provider lists at `GET <base URL>/models`, sent
@@ -351,18 +367,24 @@ and adds nothing until both are set and the name is free. A provider has:
   a `models` list or a bare list. They are detected when the settings or the
   sidebar open, again with **Detect**, and after the service, base URL or key
   changes; a provider that lists none says why.
-- **Connection**: **Test** detects the models again and sends the model in
-  use there, or the first one listed, one short request of the kind the
-  agent sends: a forced tool call with the model's reasoning off. It says
-  whether the model answered, in how many seconds, and whether it made the
-  tool call the agent's jobs need, so a wrong key, a busy service or a model
-  that rejects `reasoning_effort` or tools shows here first.
+- **Connection**: **Test** detects the models again and asks the model in use
+  there, or the first one listed, at each reasoning level. It lists the
+  levels the model accepts, which the sidebar then offers, and says in how
+  many seconds it answered at the level judgments use and whether it made the
+  tool call the agent's jobs need, so a wrong key, a busy service, an
+  exhausted balance or a model that rejects tools shows here first.
 
 The model the agent uses is chosen at the top of the lookup sidebar, from a
-list of every provider's detected models grouped under the provider's name;
-the button beside it detects them all again. The choice is stored with the
-vault's settings. Until a model is chosen, or while its provider is gone, the
-agent is off and lookups show only the deterministic results.
+list of every provider's detected models grouped under the provider's name.
+Beside it, the reasoning list (marked with a brain) offers **auto** and the
+levels that model accepts. Auto sends each job at its own level, moved to the
+next level up the model accepts, else to the highest it accepts; a level
+chosen there goes with every request. Choosing another model sets the list
+back to auto, since models accept different levels, and a model that accepts
+no level gets requests without one. The button beside the lists detects every provider's models and
+the chosen model's levels again. Both choices are stored with the vault's
+settings. Until a model is chosen, or while its provider is gone, the agent is
+off and lookups show only the deterministic results.
 
 Under **Web search**:
 

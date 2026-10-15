@@ -135,6 +135,15 @@ SOFTWARE.
   min-width: 0;
 }
 
+.kgd-lookup-model select.kgd-lookup-reasoning {
+  flex: none;
+}
+
+.kgd-lookup-reasoning-icon {
+  color: var(--text-muted);
+  display: flex;
+}
+
 .kgd-lookup-search {
   margin-bottom: 8px;
   width: 100%;

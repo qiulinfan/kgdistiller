@@ -3,10 +3,20 @@
  * a known kind, with its key in Obsidian's SecretStorage. A kind gives the
  * base URL and request format of a hosted service; a local server or another
  * OpenAI-compatible service takes its own. A provider's models are detected
- * at `GET <base URL>/models`, and the sidebar lists them grouped by provider.
+ * at `GET <base URL>/models`, and the sidebar lists them grouped by provider;
+ * the reasoning levels a model accepts are detected by asking it at each.
  */
-import type { GetJson } from "./api";
-import type { ChatReply, ChatRequest } from "./model";
+import { ApiError, type GetJson } from "./api";
+import {
+  isReasoningLevel,
+  REASONING_LEVELS,
+  sentLevel,
+  type ChatReply,
+  type ChatRequest,
+  type ReasoningChoice,
+  type ReasoningLevel,
+  type ToolSpec,
+} from "./model";
 
 export const PROVIDER_FORMATS = ["chat-completions", "deepseek"] as const;
 export type ProviderFormat = (typeof PROVIDER_FORMATS)[number];
@@ -83,6 +93,17 @@ export interface ModelChoice {
 /** A provider's detected models, or why they could not be listed. */
 export type Detected = { models: string[] } | { error: string };
 
+/** The reasoning levels a model accepts, or why they could not be detected. */
+export type DetectedLevels = { levels: readonly ReasoningLevel[] } | { error: string };
+
+/** The sidebar's reasoning choice: the level chosen, and what is known of the levels the model in use accepts. */
+export interface ReasoningChoices {
+  chosen: ReasoningChoice;
+  /** Absent while no model is chosen, or when the levels could not be detected. */
+  levels?: readonly ReasoningLevel[];
+  error?: string;
+}
+
 export interface ModelGroup {
   provider: string;
   models: string[];
@@ -141,28 +162,87 @@ export function newProviderName(providers: readonly Provider[], stem: string): s
   return `${stem}-${index}`;
 }
 
-/**
- * One short request of the kind the agent sends: a forced tool call with the
- * model's reasoning off. The result says whether the model answered, how
- * fast, and whether it called the tool as the agent's jobs need.
- */
-export async function connectionTest(complete: (request: ChatRequest) => Promise<ChatReply>, model: string): Promise<string> {
-  const started = performance.now();
-  try {
-    const reply = await complete({
-      messages: [{ role: "user", content: "Call the ok tool." }],
-      tools: [{ type: "function", function: { name: "ok", description: "Report that the connection works.", parameters: { type: "object", properties: {} } } }],
-      tool_choice: { type: "function", function: { name: "ok" } },
-      reasoning_effort: "none",
-      max_tokens: 20,
-    });
-    const seconds = ((performance.now() - started) / 1000).toFixed(1);
-    return reply.message.tool_calls?.some((call) => call.function.name === "ok")
-      ? `Connected: ${model} answered in ${seconds} s with a tool call, as the agent needs.`
-      : `Connected: ${model} answered in ${seconds} s, but without the tool call the agent needs.`;
-  } catch (error) {
-    return `${model} did not answer: ${error instanceof Error ? error.message : String(error)}`;
+/** The reasoning levels one of a provider's models accepts, as detected. */
+export interface ModelLevels {
+  provider: string;
+  model: string;
+  levels: ReasoningLevel[];
+}
+
+/** The stored detected levels that name known levels, each provider's model once; anything else is detected again. */
+export function storedLevels(value: unknown): ModelLevels[] {
+  if (!Array.isArray(value)) return [];
+  const stored: ModelLevels[] = [];
+  for (const item of value) {
+    const entry = item as Partial<ModelLevels> | null;
+    if (!entry || typeof entry.provider !== "string" || typeof entry.model !== "string" || !Array.isArray(entry.levels)
+      || !entry.levels.every(isReasoningLevel) || stored.some((other) => other.provider === entry.provider && other.model === entry.model)) continue;
+    stored.push({ provider: entry.provider, model: entry.model, levels: [...entry.levels] });
   }
+  return stored;
+}
+
+/** Levels asked at the same time: GLM's free models refused more than four requests at once with HTTP 429 (2026-10-15). */
+const PROBES_AT_ONCE = 2;
+
+const OK_TOOL: ToolSpec = { type: "function", function: { name: "ok", description: "Report that the connection works.", parameters: { type: "object", properties: {} } } };
+
+/** A level the model accepted: how long its answer took, and whether it called the tool as the agent's jobs need. */
+export interface LevelAnswer {
+  level: ReasoningLevel;
+  seconds: number;
+  tool: boolean;
+}
+
+/** The levels a model accepted, in order, and the first refusal of one it did not. */
+export interface LevelProbe {
+  answers: LevelAnswer[];
+  refusal: string;
+}
+
+/**
+ * Ask the model at each reasoning level, two at a time, with one short
+ * request of the kind the agent sends: a forced tool call. A level the service
+ * refuses with HTTP 400 or 422 is one the model does not accept; any other
+ * failure, such as a wrong key or an exhausted balance, ends the detection.
+ */
+export async function probeLevels(complete: (request: ChatRequest) => Promise<ChatReply>): Promise<LevelProbe> {
+  const answers: Array<LevelAnswer | undefined> = [];
+  let refusal = "";
+  let failure: Error | undefined;
+  let next = 0;
+  const ask = async (): Promise<void> => {
+    while (!failure && next < REASONING_LEVELS.length) {
+      const index = next++;
+      const level = REASONING_LEVELS[index]!;
+      const started = performance.now();
+      try {
+        const reply = await complete({
+          messages: [{ role: "user", content: "Call the ok tool." }],
+          tools: [OK_TOOL],
+          tool_choice: { type: "function", function: { name: "ok" } },
+          reasoning_effort: level,
+        });
+        const tool = reply.message.tool_calls?.some((call) => call.function.name === "ok") ?? false;
+        answers[index] = { level, seconds: (performance.now() - started) / 1000, tool };
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 400 || error.status === 422)) refusal ||= error.message;
+        else failure ??= error instanceof Error ? error : new Error(String(error));
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: PROBES_AT_ONCE }, ask));
+  if (failure) throw failure;
+  return { answers: answers.filter((answer): answer is LevelAnswer => answer !== undefined), refusal };
+}
+
+/** The connection test's result: the levels the model accepts, and its answer at the level that judgments use. */
+export function connectionReport(model: string, probe: LevelProbe): string {
+  const levels = probe.answers.map((answer) => answer.level);
+  const fast = probe.answers.find((answer) => answer.level === sentLevel("none", levels));
+  if (!fast) return `${model} refused the agent's kind of request at every reasoning level: ${probe.refusal}`;
+  return `Connected: ${model} accepts reasoning ${levels.join(", ")}. At reasoning ${fast.level} it answered in ${fast.seconds.toFixed(1)} s `
+    + `${fast.tool ? "with the tool call the agent needs" : "but without the tool call the agent needs"}.`;
 }
 
 /**
