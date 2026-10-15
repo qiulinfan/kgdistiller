@@ -490,7 +490,7 @@ export class KgdistillerLookupView extends ItemView {
     const record = got.value?.records[0];
     if (!record) {
       // Uids are addresses for programs, never shown.
-      pane.createDiv({ cls: "kgd-lookup-error", text: got.error ?? "This record is not in the index yet; run kgd index to add it." });
+      pane.createDiv({ cls: "kgd-lookup-error", text: got.error ?? "This record is not in the keyword index yet; it appears once the index refreshes, which the plugin does when records are saved." });
       return;
     }
     this.renderRecord(pane, record, chain, around);
@@ -589,7 +589,7 @@ export class KgdistillerLookupView extends ItemView {
       elements: graph.elements,
       layout: FCOSE_LAYOUT,
       style: graphStylesheet(this.contentEl),
-      // Over the graph the wheel zooms, as in the graph view; elsewhere it scrolls the panel.
+      // Over the graph the wheel zooms; elsewhere it scrolls the panel.
       wheelSensitivity: 0.22,
       minZoom: 0.15,
       maxZoom: 3,

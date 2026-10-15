@@ -22,7 +22,10 @@ Run from a clean engine worktree. Root `npm run build` comes first: the
 package and its editable build include the gitignored
 `integrations/obsidian/main.js`, so every `uv run` and `uv build` in a fresh
 checkout fails without it. The unit environment needs NumPy, which the `dev`
-dependency group provides; the model itself is replaced by a fake encoder.
+dependency group provides; the model itself is replaced by a fake encoder. The
+int8 encoder tests (`tests/test_embedding_adapter.py`) need the `retrieval`
+extra: they are skipped in CI, so run the suite once locally with an
+interpreter that has it.
 
 ```sh
 npm run build
@@ -47,7 +50,7 @@ Then verify that:
 - wheel and sdist contain the Python modules, every product Skill, both
   workflow manifests, the workflow guide and every `workflow_resources`
   document of both manifests, the `.codex/agents` and `.claude/agents`
-  presets, the linkers, the editable document-type starter templates, and the
+  presets, the editable document-type starter templates, and the
   three-file Obsidian plugin bundle;
 - an isolated environment installs the wheel and runs
   `scripts/smoke_installed_runtime.py` with `KGDISTILLER_HOME` and `HOME` set to
@@ -92,11 +95,11 @@ Then verify that:
   packed participants, reports every gap reason, and its `bytes` equals the
   UTF-8 length of the compact JSON of its records; `resolve` separates
   homonyms within and across bases from mentions; and the MCP server exposes
-  exactly the six read-only tools;
+  exactly the seven read-only tools;
 - the embedding adapter takes a model id only and has no reranker, default
   model or revision pin; at most one embedding process runs per user;
-- the home lock serializes `accept`, `harvest`, `check --fix-lines` and
-  `base add|rm`: a held lock makes each fail without writing, `accept` never
+- the home lock serializes `accept`, `harvest`, `check --fix-lines`,
+  `base add|rm` and `embedding set|off`: a held lock makes each fail without writing, `accept` never
   overwrites a record and refuses without writing anything, and
   `--fix-lines` skips a file that changed during the run;
 - sources of any extension are read as text, and no command parses source
@@ -104,12 +107,14 @@ Then verify that:
 - `check` reports every error and every moved or stale record and exits 1 for
   any of them; staleness never hides a record from retrieval;
 - the Obsidian plugin (version 1.0.1, `isDesktopOnly: true`) passes its
-  vitest suites, including the mocked-metadata-cache cases (binary, n-ary,
-  self, relation-as-participant, draft, foreign and pending) and the
-  `link-grammar.json` and `name-key.json` parity fixtures shared with the
-  Python tests (which also check the plugin's `case-folding.json` against
-  `unicodedata`), type checking and a production bundle build; CI runs root
-  `npm run build` and `npm test` on Linux, macOS and Windows;
+  vitest suites (the `kgd` client and its MCP session, the lookup model, the
+  keyword refresh on record saves, capture, drafts, evidence, the agent, its
+  judgment, providers, web search and sources, records with every entry of
+  `case-folding.json`, hidden indexing, the manifest and the plugin
+  lifecycle), type checking and a production bundle build; the
+  `link-grammar.json` and `name-key.json` fixtures belong to the Python tests,
+  which also check the plugin's `case-folding.json` against `unicodedata`; CI
+  runs root `npm run build` and `npm test` on Linux, macOS and Windows;
 - every materially updated Skill passes the active `skill-creator` validator,
   both product doctors, and an isolated Agent evaluation;
 - POSIX and Windows copy/link doctor tests preserve unrelated Codex and Claude
@@ -124,7 +129,7 @@ a clean tagged commit into an empty distribution directory, inspect wheel and
 sdist contents, and smoke-install the wheel in an isolated environment. Use
 short-lived or trusted publishing credentials and never commit tokens. Tag only
 after all gates pass; tag the Python core as `core-x.y.z` (for example
-`core-1.0.0`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
+`core-1.0.1`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
 and starts its release workflow. Do not move a published tag. Keep the previous release
 available. 1.0 data and APIs are intentionally incompatible with every 0.x
 release.
@@ -153,9 +158,6 @@ The version-checked release workflow builds from the tagged checkout, tests
 metadata and the plugin, and publishes the three assets as a GitHub release. Do
 not replace a published version's tag or assets; increment the plugin version
 in both manifests, packages and compatibility maps before a new release.
-
-Version 1.0.0 sets `isDesktopOnly`, so Obsidian on mobile offers no update to
-installs of 0.1.4, which stay on that version.
 
 Original project code uses MIT. The embedded MIT licenses of Cytoscape.js,
 cytoscape-fcose, cose-base and layout-base, and the other upstream notices, must

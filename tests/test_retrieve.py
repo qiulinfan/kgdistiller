@@ -447,7 +447,7 @@ class GetTest(RetrieveTestCase):
         self.assertEqual(["nothing"], get(["nothing"])["missing"])
 
 
-# ---------------------------------------------------------------- graph and navigation
+# ---------------------------------------------------------------- links, browse and pack
 
 GRAPH_LINES = [
     "Graph fixture",

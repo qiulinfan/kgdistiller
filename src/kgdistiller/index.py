@@ -14,8 +14,10 @@ model. ``index`` runs in two phases:
   changed row gets ``vec = NULL``. ``--rebuild`` re-derives every row in place
   inside the same transaction, with every current vector in the pool; the
   database file is never swapped.
-- The embedding phase, after that commit, encodes the rows whose ``vec`` is
-  NULL in batches ordered by rowid. The model loads only when such rows exist.
+- The embedding phase, after that commit, asks the shared embedding process
+  to encode the rows whose ``vec`` is NULL (with ``only``, just those uids, as
+  ``accept`` passes the records it created) in batches ordered by rowid, and
+  only when such rows exist.
   Each batch commits with an UPDATE guarded by the row's text and by
   ``meta.embedding``, so a concurrent text or model change makes the write a
   no-op and the row is picked up next run.
@@ -492,7 +494,7 @@ def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any], o
         except RetrievalExtraMissing as error:
             raise KnowledgeError(
                 f"embedding is set to {name} but the retrieval extra is missing: "
-                "install kgdistiller[retrieval] or set embedding to null"
+                "install kgdistiller[retrieval] or run `kgd embedding off`"
             ) from error
         except EmbeddingError as error:
             raise KnowledgeError(f"{error}; rerun `kgd index`") from error

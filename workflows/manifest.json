@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-workflows-v1",
   "product": "kgdistiller",
-  "version": 5,
+  "version": 6,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -12,16 +12,6 @@
     "docs/retrieval.md",
     "docs/obsidian.md",
     "docs/deployment.md"
-  ],
-  "linkers": [
-    {
-      "platform": "posix",
-      "path": "scripts/link-codex-product.sh"
-    },
-    {
-      "platform": "windows",
-      "path": "scripts/link-codex-product.ps1"
-    }
   ],
   "skills": [
     {

@@ -228,7 +228,7 @@ export interface SearchOptions {
 export const paperQuery = (query: string): string => `${query} site:arxiv.org`;
 
 export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: SearchWeb, question: string,
-  { reading, onStep = () => undefined }: SearchOptions = {}): Promise<SearchAnswer & { turns: number }> {
+  { reading, onStep = () => undefined }: SearchOptions = {}): Promise<SearchAnswer> {
   const state = new SearchState();
   const names = selectionNames(question);
   const [first, named] = await Promise.all([
@@ -317,7 +317,7 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
     return { done: accepted };
   };
   tools.push({ spec: TOOLS.answer!, run: (args) => answer(typeof args.answer === "string" ? args.answer : "") });
-  const result = await runJob(complete, {
+  return runJob(complete, {
     system: SEARCH_SYSTEM,
     user: searchUser(question, first, named, reading),
     tools,
@@ -326,7 +326,6 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
     // A model that writes its answer as text instead of calling answer has still answered.
     onText: answer,
   });
-  return { ...result.value, turns: result.turns };
 }
 
 /** Number new sources after those the search has already seen, and list them for the model. */

@@ -1,4 +1,4 @@
-"""Exercise the installed wheel end to end: base, records, drafts, check, index, retrieval and navigation."""
+"""Exercise the installed wheel end to end: base, records, drafts, check, index, retrieval, link following, browse and pack."""
 
 from __future__ import annotations
 
@@ -136,12 +136,25 @@ def register(runtime: Runtime, root: Path, outside: Path) -> None:
     (runtime.home / "types/smoke-notes.md").write_text(TYPE, encoding="utf-8")
 
 
+def embedding(runtime: Runtime, outside: Path) -> None:
+    """Show the home's embedding model and turn it off; neither downloads a model."""
+    expected = {"home": str(runtime.home), "embedding": None, "precision": None, "vectors": None, "unembedded": 0,
+                "embedding_changed": False}
+    shown = runtime.object("embedding", cwd=outside)
+    require(shown == expected, f"embedding status mismatch: {shown}")
+    off = runtime.object("embedding", "off", cwd=outside)
+    require(off == expected, f"embedding off status mismatch: {off}")
+    config = json.loads((runtime.home / "config.json").read_text(encoding="utf-8"))
+    require(config.get("embedding") is None, f"embedding off left a model in config.json: {config}")
+    require(not (runtime.home / "index.sqlite").exists(), "embedding created the index")
+
+
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
 
-def navigate(runtime: Runtime, root: Path, outside: Path) -> None:
+def follow_links(runtime: Runtime, root: Path, outside: Path) -> None:
     """neighbors, browse and pack over the indexed smoke base."""
     relation = "smoke:measure-space-implies-countable-additivity"
     cited = runtime.object("neighbors", "measure-space", "--dir", "in", cwd=outside)
@@ -189,11 +202,11 @@ def obsidian(runtime: Runtime, root: Path, outside: Path) -> None:
     require(read(settings) == {"hiddenKnowledgeEnabled": True}, "hidden indexing was not enabled")
     require(plugin.get("warnings") == [], f"unexpected Obsidian install warnings: {plugin.get('warnings')}")
 
-    settings.write_text(json.dumps({"hiddenKnowledgeEnabled": False, "showDrafts": False}), encoding="utf-8")
+    settings.write_text(json.dumps({"hiddenKnowledgeEnabled": False, "note": False}), encoding="utf-8")
     (root / ".obsidian/app.json").write_text(json.dumps({"newLinkFormat": "relative"}), encoding="utf-8")
     again = runtime.object("obsidian", "install", cwd=root)
     require(again.get("status") == "current", f"Obsidian plugin reinstall status mismatch: {again}")
-    require(read(settings) == {"hiddenKnowledgeEnabled": True, "showDrafts": False},
+    require(read(settings) == {"hiddenKnowledgeEnabled": True, "note": False},
             "plugin settings were not merged")
     warnings = again.get("warnings")
     require(isinstance(warnings, list) and len(warnings) == 1 and "newLinkFormat" in warnings[0],
@@ -213,6 +226,7 @@ def main() -> int:
         require("kgd base add" in refused, f"missing home was not reported: {refused}")
         require(not runtime.home.exists(), "a read created the home")
         register(runtime, root, outside)
+        embedding(runtime, outside)
         (root / ".obsidian").mkdir()
         source = root / "notes/measure.txt"
         write(source, SOURCE)
@@ -229,10 +243,16 @@ def main() -> int:
         require(written == {"sheet": str(sheet)} and sheet.is_file(), f"sheet was not written: {written}")
         require("- [ ] [[.knowledge/drafts/measure-theory|测度论]]" in sheet.read_text(encoding="utf-8"),
                 "sheet does not list the draft")
+        listed = runtime.object("drafts", cwd=outside)
+        require([(item["uid"], item["problems"], item["with"]) for item in listed["drafts"]]
+                == [("smoke:measure-theory", [], [])] and listed["unavailable_bases"] == [],
+                f"drafts listing mismatch: {listed}")
         receipt = runtime.object("accept", ".knowledge/drafts/measure-theory.md", cwd=root)
         indexed = receipt.pop("index", None) or {}
         require(receipt == {"created": ["smoke:measure-theory"], "understanding_set": []}, f"accept receipt: {receipt}")
         require(indexed.get("created") and indexed["bases"]["smoke"]["parsed"] == 3, f"accept index report: {indexed}")
+        remaining = runtime.object("drafts", cwd=outside)
+        require(remaining == {"drafts": [], "unavailable_bases": []}, f"drafts after accept: {remaining}")
 
         require(runtime.object("check", cwd=outside) == CLEAN, "fresh records did not check clean")
         write(source, "Preface\n\n" + SOURCE)
@@ -269,7 +289,7 @@ def main() -> int:
         require(record["source_text"] is not None and record["source_text"].startswith("3\t"),
                 f"get --source-lines failed: {record.get('source_text')}")
         require([link["role"] for link in record["in"]] == ["premise"], "get in-links mismatch")
-        navigate(runtime, root, outside)
+        follow_links(runtime, root, outside)
 
         obsidian(runtime, root, outside)
 
@@ -277,8 +297,8 @@ def main() -> int:
         require(not (runtime.user / ".knowledge").exists(), "the runtime wrote to the default user home")
 
     print(
-        "installed command, base add, sheet and accept, check --fix-lines, index, search (including CJK), "
-        "resolve, get, neighbors, browse, pack and Obsidian plugin install (hidden indexing and the "
+        "installed command, base add, embedding show and off, sheet, drafts and accept, check --fix-lines, index, "
+        "search (including CJK), resolve, get, neighbors, browse, pack and Obsidian plugin install (hidden indexing and the "
         "newLinkFormat warning) smoke passed"
     )
     return 0

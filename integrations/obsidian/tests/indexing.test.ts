@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { embeddingSummary, Indexer, needsEmbedding } from "../src/indexing";
 
 const lag = (changed: number, unembedded: number, embeddingChanged = false) =>
-  ({ changed_files: changed, unavailable_bases: [], unembedded, embedding_changed: embeddingChanged });
+  ({ changed_files: changed, unembedded, embedding_changed: embeddingChanged });
 
 function fixture(reports: Array<Record<string, unknown>> = [{ unembedded: 0 }]) {
   let release: () => void = () => undefined;

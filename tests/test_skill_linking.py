@@ -51,9 +51,8 @@ class SkillLinkingTests(unittest.TestCase):
         repo = base / "product checkout"
         scripts = repo / "scripts"
         scripts.mkdir(parents=True)
-        for stem in ("link-skills", "link-claude-skills"):
-            for suffix in ("sh", "ps1"):
-                shutil.copy2(ROOT / "scripts" / f"{stem}.{suffix}", scripts)
+        for suffix in ("sh", "ps1"):
+            shutil.copy2(ROOT / "scripts" / f"link-skills.{suffix}", scripts)
         self.skill(repo / "skills/alpha")
         self.skill(repo / "skills/zeta")
         homes = {runtime: base / "homes" / runtime for runtime in RUNTIMES}
@@ -70,12 +69,10 @@ class SkillLinkingTests(unittest.TestCase):
         (directory / "SKILL.md").write_text(
             f"---\nname: {directory.name}\ndescription: Fixture.\n---\nOriginal.\n")
 
-    def run_linker(self, kind, repo, env, runtime, claude_only=False, success=True):
-        stem = "link-claude-skills" if claude_only else "link-skills"
-        command = (["sh", str(repo / "scripts" / f"{stem}.sh")] if kind == "sh" else
-                   ["pwsh", "-NoLogo", "-NoProfile", "-File", str(repo / "scripts" / f"{stem}.ps1")])
-        if not claude_only:
-            command += [runtime] if kind == "sh" else ["-Runtime", runtime]
+    def run_linker(self, kind, repo, env, runtime, success=True):
+        command = (["sh", str(repo / "scripts" / "link-skills.sh"), runtime] if kind == "sh" else
+                   ["pwsh", "-NoLogo", "-NoProfile", "-File", str(repo / "scripts" / "link-skills.ps1"),
+                    "-Runtime", runtime])
         result = subprocess.run(command, cwd=repo, env=env, text=True,
                                 check=False, capture_output=True, timeout=30)
         if success:
@@ -83,7 +80,7 @@ class SkillLinkingTests(unittest.TestCase):
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_four_native_homes_updates_and_claude_only_entry(self):
+    def test_four_native_homes_and_updates(self):
         for kind in self.linkers:
             with self.subTest(linker=kind), tempfile.TemporaryDirectory() as tmp:
                 repo, homes, env = self.fixture(Path(tmp))
@@ -95,7 +92,6 @@ class SkillLinkingTests(unittest.TestCase):
                     self.assertEqual((home / "skills/alpha").resolve(), (repo / "skills/alpha").resolve())
                     if os.name == "nt" and hasattr(Path, "is_junction"):
                         self.assertTrue((home / "skills/alpha").is_junction())
-                self.run_linker(kind, repo, env, "claude", claude_only=True)
                 manifest = repo / "skills/alpha/SKILL.md"
                 manifest.write_text(manifest.read_text().replace("Original", "Updated"))
                 for home in homes.values():

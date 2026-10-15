@@ -20,7 +20,14 @@ classifiers = [
 dependencies = ["pyyaml>=6"]
 
 [project.optional-dependencies]
-retrieval = ["torch>=2.6", "transformers==5.19.0", "sentencepiece==0.2.2", "numpy>=2"]
+retrieval = [
+  "torch>=2.6",
+  "transformers==5.19.0",
+  "sentencepiece==0.2.2",
+  "huggingface-hub>=1.33,<2",
+  "safetensors>=0.8,<0.9",
+  "numpy>=2",
+]
 
 [dependency-groups]
 dev = ["numpy>=2", "ruff==0.16.10"]
@@ -48,10 +55,6 @@ packages = ["src/kgdistiller"]
 "docs/retrieval.md" = "kgdistiller/product/docs/retrieval.md"
 "docs/obsidian.md" = "kgdistiller/product/docs/obsidian.md"
 "docs/deployment.md" = "kgdistiller/product/docs/deployment.md"
-"scripts/link-codex-product.sh" = "kgdistiller/product/scripts/link-codex-product.sh"
-"scripts/link-codex-product.ps1" = "kgdistiller/product/scripts/link-codex-product.ps1"
-"scripts/link-claude-product.sh" = "kgdistiller/product/scripts/link-claude-product.sh"
-"scripts/link-claude-product.ps1" = "kgdistiller/product/scripts/link-claude-product.ps1"
 "integrations/obsidian/main.js" = "kgdistiller/obsidian_plugin/main.js"
 "integrations/obsidian/manifest.json" = "kgdistiller/obsidian_plugin/manifest.json"
 "integrations/obsidian/styles.css" = "kgdistiller/obsidian_plugin/styles.css"
@@ -69,10 +72,6 @@ include = [
   "docs/retrieval.md",
   "docs/obsidian.md",
   "docs/deployment.md",
-  "scripts/link-codex-product.sh",
-  "scripts/link-codex-product.ps1",
-  "scripts/link-claude-product.sh",
-  "scripts/link-claude-product.ps1",
   "integrations/obsidian/main.js",
   "integrations/obsidian/manifest.json",
   "integrations/obsidian/styles.css",

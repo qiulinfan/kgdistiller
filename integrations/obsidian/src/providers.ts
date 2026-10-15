@@ -175,18 +175,17 @@ export async function listModels(provider: Provider, apiKey: string, get: GetJso
   return modelIds(await get(modelsUrl(provider), apiKey, MODELS_TIMEOUT_MS));
 }
 
-/** The valid providers of stored settings, each name once, and whether anything else was there. A provider without levels lists none. */
+/** The valid providers of stored settings, each name once, and whether anything else was there. */
 export function storedProviders(value: unknown): { providers: Provider[]; dropped: boolean } {
   if (!Array.isArray(value)) return { providers: [], dropped: value !== undefined };
   const providers: Provider[] = [];
   for (const item of value) {
     const entry = item as Partial<Provider> | null;
-    const levels = entry?.levels ?? [];
     if (!entry || typeof entry.name !== "string" || !entry.name.trim() || !PROVIDER_KINDS.some((kind) => kind.id === entry.kind)
       || typeof entry.baseUrl !== "string" || typeof entry.apiKey !== "string"
-      || !PROVIDER_FORMATS.includes(entry.format as ProviderFormat) || !Array.isArray(levels) || !levels.every(isReasoningLevel)
+      || !PROVIDER_FORMATS.includes(entry.format as ProviderFormat) || !Array.isArray(entry.levels) || !entry.levels.every(isReasoningLevel)
       || providers.some((provider) => provider.name === entry.name)) continue;
-    providers.push({ name: entry.name, kind: entry.kind!, baseUrl: entry.baseUrl, format: entry.format as ProviderFormat, levels: [...levels], apiKey: entry.apiKey });
+    providers.push({ name: entry.name, kind: entry.kind!, baseUrl: entry.baseUrl, format: entry.format as ProviderFormat, levels: [...entry.levels], apiKey: entry.apiKey });
   }
   return { providers, dropped: providers.length !== value.length };
 }

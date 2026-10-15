@@ -13,7 +13,7 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    files (`<root>/.knowledge/entries/*.md` for accepted knowledge and
    `<root>/.knowledge/drafts/*.md` for proposals) and the home files
    (`$KGDISTILLER_HOME/config.json` and `$KGDISTILLER_HOME/types/*.md`). The
-   database, the sheets and the Obsidian graph are derived; a sheet also
+   database and the sheets are derived; a sheet also
    carries the checkbox state of its draft rows, and nothing else.
 2. **One file format for every knowledge object.** Nodes and n-ary relations
    differ only by whether role properties are present. Applications and
@@ -222,8 +222,9 @@ relative to the base root, expanded with Python's
 segment, `**` spans directories, and hidden files and directories never match.
 A file matched by globs naming two different types is an error. `embedding` is
 `null` or a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no revision pin; with `null`
-the index is lexical and name only. Changing it re-embeds every record on the
-next `kgd index`. `kgd embedding set MODEL` and `kgd embedding off` change it
+the index is lexical and name only. After a change, the next index run of any
+kind drops the old vectors, and a plain `kgd index` embeds every record with
+the new model. `kgd embedding set MODEL` and `kgd embedding off` change it
 after checking the model ([retrieval.md](retrieval.md#the-embedding-process)).
 
 A type file's stem matches `^[a-z0-9][a-z0-9-]*$`. Its frontmatter, read with
@@ -504,7 +505,8 @@ not fixed:
 
 `$KGDISTILLER_HOME/lock` is a dedicated lock file taken without waiting
 (`fcntl.flock`, or `msvcrt.locking` on Windows). It is held by `accept`,
-`harvest`, `check --fix-lines`, `base add` and `base rm`; a second writer fails
+`harvest`, `check --fix-lines`, `base add`, `base rm`, `embedding set` and
+`embedding off`; a second writer fails
 at once. No data file is ever locked or truncated. `kgd index` relies on
 SQLite's own locking.
 
@@ -612,7 +614,7 @@ this section is how such a change is written.
 - **Update.** Edit `entries/<id>.md` in place with an editing tool that refuses
   when the file changed since it was read (Claude Code `Edit`, Codex
   `apply_patch`); never rewrite a whole record from an earlier read. Then run
-  `kgd check --base B` and `kgd index`. The owner reviews agent edits with
+  `kgd check --base B` and `kgd index --no-embed`. The owner reviews agent edits with
   `git diff`. Accept only creates, and the editor guards the window between
   read and write. A better name goes into `label` or `aliases`; the id stays.
 - **Delete.** Remove the file. `kgd check` then lists every inbound link left
@@ -620,20 +622,20 @@ this section is how such a change is written.
   pending term that keeps its wording: `"[[id|wording]]"` becomes
   `"wording"` and `"[[id]]"` the deleted record's label. Body-prose wikilinks
   to it, which `kgd check` does not validate, become plain text the same way.
-  Run `kgd check` and `kgd index`.
+  Run `kgd check` and `kgd index --no-embed`.
 - **Relocation.** Within one base, the overwrite edits `source`, `lines` and
   the Evidence in place. Into another base, write the record as a draft there
   with the same id (another id only when that base already uses it for another
   concept), adjust its links to the new base and `kgd accept` it. Then rewrite
   every link to the old uid, in every base, to the new one: a link in the new
   base becomes local `"[[id]]"`, any other one `"[[base:id]]"`. Finally delete
-  the old file and run `kgd check` and `kgd index`.
+  the old file and run `kgd check` and `kgd index --no-embed`.
 - **Identity change.** Ids are permanent, so a changed identity is a one-time
   link rewrite, never a rename. Merging true duplicates keeps one record;
   splitting a record that conflated two meanings creates new records for them.
   Repoint every inbound link by meaning, including body-prose wikilinks that
   `kgd check` does not validate, then delete the superseded record and run
-  `kgd check --base B` and `kgd index`.
+  `kgd check --base B` and `kgd index --no-embed`.
 
 ### Base registration
 

@@ -6,7 +6,6 @@
   "license": "MIT",
   "scripts": {
     "build": "node scripts/build-obsidian-plugin.mjs",
-    "check:metadata": "node scripts/build-obsidian-plugin.mjs --verify-only",
     "test": "npm --prefix integrations/obsidian test"
   }
 }

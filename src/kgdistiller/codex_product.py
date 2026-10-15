@@ -35,7 +35,7 @@ FORBIDDEN_TEXT_RE = re.compile(
 )
 
 
-class CodexProductError(ValueError):
+class ProductError(ValueError):
     """Raised when product assets or their installation fail closed."""
 
 
@@ -70,27 +70,27 @@ def _canonical_json(value: Any) -> str:
 
 def _load_json(path: Path) -> dict[str, Any]:
     def reject_constant(value: str) -> None:
-        raise CodexProductError(f"non-finite JSON constant in {path}: {value}")
+        raise ProductError(f"non-finite JSON constant in {path}: {value}")
 
     try:
         value = json.loads(
             path.read_text(encoding="utf-8"), parse_constant=reject_constant
         )
-    except CodexProductError:
+    except ProductError:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise CodexProductError(f"cannot read product JSON: {path}") from error
+        raise ProductError(f"cannot read product JSON: {path}") from error
     if not isinstance(value, dict):
-        raise CodexProductError(f"product JSON must be an object: {path}")
+        raise ProductError(f"product JSON must be an object: {path}")
     return value
 
 
 def _safe_relative(value: Any, label: str) -> PurePosixPath:
     if not isinstance(value, str) or not value:
-        raise CodexProductError(f"{label} must be a non-empty relative path")
+        raise ProductError(f"{label} must be a non-empty relative path")
     path = PurePosixPath(value)
     if path.is_absolute() or ".." in path.parts or "." in path.parts or "\\" in value:
-        raise CodexProductError(f"{label} is not a portable relative path: {value!r}")
+        raise ProductError(f"{label} is not a portable relative path: {value!r}")
     return path
 
 
@@ -100,22 +100,22 @@ def _join(root: Path, relative: PurePosixPath) -> Path:
 
 def _workflow_resources(root: Path, value: Any) -> list[Path]:
     if not isinstance(value, list):
-        raise CodexProductError("workflow resources must be an array of relative files")
+        raise ProductError("workflow resources must be an array of relative files")
     resources: list[Path] = []
     seen: set[PurePosixPath] = set()
     for item in value:
         relative = _safe_relative(item, "workflow resource")
         if relative in seen:
-            raise CodexProductError(f"duplicate workflow resource: {relative}")
+            raise ProductError(f"duplicate workflow resource: {relative}")
         path = _join(root, relative)
         try:
             path.resolve().relative_to(root.resolve())
         except ValueError as error:
-            raise CodexProductError(
+            raise ProductError(
                 f"workflow resource escapes the product root: {relative}"
             ) from error
         if not path.is_file():
-            raise CodexProductError(f"workflow resource is missing: {relative}")
+            raise ProductError(f"workflow resource is missing: {relative}")
         seen.add(relative)
         resources.append(path)
     return resources
@@ -129,7 +129,7 @@ def product_root(
     if explicit is not None:
         root = explicit.resolve()
         if not _join(root, manifest_relative).is_file():
-            raise CodexProductError(f"product manifest is missing below {root}")
+            raise ProductError(f"product manifest is missing below {root}")
         return root
     checkout = Path(__file__).resolve().parents[2]
     if _join(checkout, manifest_relative).is_file():
@@ -137,7 +137,7 @@ def product_root(
     installed = Path(__file__).resolve().parent / "product"
     if _join(installed, manifest_relative).is_file():
         return installed
-    raise CodexProductError(
+    raise ProductError(
         "kgdistiller product assets are missing from this installation"
     )
 
@@ -145,21 +145,21 @@ def product_root(
 def _frontmatter_name(text: str, path: Path) -> str:
     lines = text.splitlines()
     if not lines or lines[0] != "---":
-        raise CodexProductError(f"Skill has no YAML frontmatter: {path}")
+        raise ProductError(f"Skill has no YAML frontmatter: {path}")
     try:
         end = lines.index("---", 1)
     except ValueError as error:
-        raise CodexProductError(f"Skill frontmatter is not closed: {path}") from error
+        raise ProductError(f"Skill frontmatter is not closed: {path}") from error
     fields: dict[str, str] = {}
     for line in lines[1:end]:
         if ":" in line:
             key, value = line.split(":", 1)
             fields[key.strip()] = value.strip()
     if not fields.get("description"):
-        raise CodexProductError(f"Skill has no frontmatter description: {path}")
+        raise ProductError(f"Skill has no frontmatter description: {path}")
     name = fields.get("name", "")
     if SKILL_NAME_RE.fullmatch(name) is None:
-        raise CodexProductError(f"Skill has an invalid frontmatter name: {path}")
+        raise ProductError(f"Skill has an invalid frontmatter name: {path}")
     return name
 
 
@@ -168,13 +168,13 @@ def _validate_skill_markdown(root: Path, declared_name: str) -> None:
     try:
         text = skill_file.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        raise CodexProductError(f"Skill is incomplete: {root}") from error
+        raise ProductError(f"Skill is incomplete: {root}") from error
     if _frontmatter_name(text, skill_file) != declared_name:
-        raise CodexProductError(
+        raise ProductError(
             f"Skill name does not match its manifest entry: {declared_name}"
         )
     if FORBIDDEN_TEXT_RE.search(text):
-        raise CodexProductError(
+        raise ProductError(
             f"Skill contains a host or machine-specific path: {declared_name}"
         )
     for raw_link in LINK_RE.findall(text):
@@ -186,11 +186,11 @@ def _validate_skill_markdown(root: Path, declared_name: str) -> None:
         try:
             linked.relative_to(root.resolve())
         except ValueError as error:
-            raise CodexProductError(
+            raise ProductError(
                 f"Skill link escapes its directory: {declared_name}"
             ) from error
         if not linked.is_file():
-            raise CodexProductError(f"Skill link is missing: {declared_name}/{target}")
+            raise ProductError(f"Skill link is missing: {declared_name}/{target}")
 
 
 def _validate_skill(root: Path, declared_name: str) -> None:
@@ -199,26 +199,26 @@ def _validate_skill(root: Path, declared_name: str) -> None:
     try:
         agent_text = agent_file.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        raise CodexProductError(f"Skill is incomplete: {root}") from error
+        raise ProductError(f"Skill is incomplete: {root}") from error
     if FORBIDDEN_TEXT_RE.search(agent_text):
-        raise CodexProductError(
+        raise ProductError(
             f"Skill contains a host or machine-specific path: {declared_name}"
         )
     if "interface:" not in agent_text or "default_prompt:" not in agent_text:
-        raise CodexProductError(
+        raise ProductError(
             f"Skill has invalid agents/openai.yaml: {declared_name}"
         )
     if f"${declared_name}" not in agent_text:
-        raise CodexProductError(f"Skill default prompt does not name ${declared_name}")
+        raise ProductError(f"Skill default prompt does not name ${declared_name}")
 
 
 def _validate_agent(path: Path, declared_name: str) -> None:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        raise CodexProductError(f"cannot read Codex agent preset: {path}") from error
+        raise ProductError(f"cannot read Codex agent preset: {path}") from error
     if FORBIDDEN_TEXT_RE.search(text):
-        raise CodexProductError(f"agent preset is host-specific: {declared_name}")
+        raise ProductError(f"agent preset is host-specific: {declared_name}")
     required = {
         "name": re.compile(r'^name\s*=\s*"[^"\r\n]+"\s*$', re.MULTILINE),
         "description": re.compile(r'^description\s*=\s*"[^"\r\n]+"\s*$', re.MULTILINE),
@@ -229,53 +229,9 @@ def _validate_agent(path: Path, declared_name: str) -> None:
     }
     missing = [key for key, pattern in required.items() if pattern.search(text) is None]
     if missing:
-        raise CodexProductError(
+        raise ProductError(
             f"agent preset {declared_name} is missing required fields: {', '.join(missing)}"
         )
-
-
-def _validate_linkers(
-    root: Path,
-    value: Any,
-    *,
-    expected: dict[str, PurePosixPath],
-    required_command: str,
-) -> None:
-    if not isinstance(value, list) or len(value) != 2:
-        raise CodexProductError(
-            "workflow manifest must declare POSIX and Windows linkers"
-        )
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, dict) or set(item) != {"platform", "path"}:
-            raise CodexProductError("workflow manifest has an invalid linker record")
-        platform = item.get("platform")
-        if platform not in expected or platform in seen:
-            raise CodexProductError(
-                f"workflow manifest has an invalid linker platform: {platform!r}"
-            )
-        relative = _safe_relative(item.get("path"), f"{platform} linker path")
-        if relative != expected[str(platform)]:
-            raise CodexProductError(
-                f"workflow manifest has an unexpected {platform} linker path"
-            )
-        path = _join(root, relative)
-        try:
-            content = path.read_bytes()
-            text = content.decode("utf-8")
-        except (OSError, UnicodeError) as error:
-            raise CodexProductError(f"cannot read {platform} linker: {path}") from error
-        if b"\x00" in content or FORBIDDEN_TEXT_RE.search(text):
-            raise CodexProductError(f"{platform} linker is not portable")
-        if required_command not in text:
-            raise CodexProductError(f"{platform} linker does not call the product CLI")
-        if platform == "posix" and (
-            not content.startswith(b"#!/usr/bin/env sh\n") or b"\r" in content
-        ):
-            raise CodexProductError(
-                "POSIX linker must use an LF-only portable sh shebang"
-            )
-        seen.add(str(platform))
 
 
 def _validate_manifest_skills(
@@ -284,23 +240,23 @@ def _validate_manifest_skills(
     validator: Callable[[Path, str], None],
 ) -> set[str]:
     if not isinstance(value, list) or not value:
-        raise CodexProductError("workflow manifest skills must be a non-empty array")
+        raise ProductError("workflow manifest skills must be a non-empty array")
     skill_names: set[str] = set()
     for item in value:
         if not isinstance(item, dict) or set(item) != {"name", "path"}:
-            raise CodexProductError("workflow manifest has an invalid Skill record")
+            raise ProductError("workflow manifest has an invalid Skill record")
         name = item.get("name")
         if (
             not isinstance(name, str)
             or SKILL_NAME_RE.fullmatch(name) is None
             or name in skill_names
         ):
-            raise CodexProductError(
+            raise ProductError(
                 f"workflow manifest has an invalid Skill name: {name!r}"
             )
         relative = _safe_relative(item.get("path"), f"Skill path for {name}")
         if relative != PurePosixPath("skills", name):
-            raise CodexProductError(f"Skill path must be skills/{name}")
+            raise ProductError(f"Skill path must be skills/{name}")
         skill_names.add(name)
         validator(_join(root, relative), name)
     return skill_names
@@ -315,12 +271,12 @@ def _validate_manifest_agents(
     validator: Callable[[Path, str], None],
 ) -> set[str]:
     if not isinstance(value, list) or not value:
-        raise CodexProductError("workflow manifest agents must be a non-empty array")
+        raise ProductError("workflow manifest agents must be a non-empty array")
     agent_names: set[str] = set()
     install_names: set[str] = set()
     for item in value:
         if not isinstance(item, dict) or set(item) != {"name", "path", "install_as"}:
-            raise CodexProductError("workflow manifest has an invalid agent record")
+            raise ProductError("workflow manifest has an invalid agent record")
         name = item.get("name")
         install_as = item.get("install_as")
         if (
@@ -328,7 +284,7 @@ def _validate_manifest_agents(
             or AGENT_NAME_RE.fullmatch(name) is None
             or name in agent_names
         ):
-            raise CodexProductError(
+            raise ProductError(
                 f"workflow manifest has an invalid agent name: {name!r}"
             )
         if (
@@ -336,12 +292,12 @@ def _validate_manifest_agents(
             or install_as != f"kgdistiller-{name}{suffix}"
             or install_as in install_names
         ):
-            raise CodexProductError(
+            raise ProductError(
                 f"agent install name is outside the kgdistiller scope: {name}"
             )
         relative = _safe_relative(item.get("path"), f"agent path for {name}")
         if relative != source_dir / f"{name}{suffix}":
-            raise CodexProductError(f"agent path must be {source_dir}/{name}{suffix}")
+            raise ProductError(f"agent path must be {source_dir}/{name}{suffix}")
         agent_names.add(name)
         install_names.add(install_as)
         validator(_join(root, relative), name)
@@ -352,7 +308,7 @@ def _validate_workflows(
     value: Any, skill_names: set[str], agent_names: set[str]
 ) -> None:
     if not isinstance(value, list) or not value:
-        raise CodexProductError("workflow manifest workflows must be a non-empty array")
+        raise ProductError("workflow manifest workflows must be a non-empty array")
     workflow_ids: set[str] = set()
     used_skills: set[str] = set()
     used_agents: set[str] = set()
@@ -362,24 +318,24 @@ def _validate_workflows(
             "description",
             "steps",
         }:
-            raise CodexProductError("workflow manifest has an invalid workflow record")
+            raise ProductError("workflow manifest has an invalid workflow record")
         workflow_id = workflow.get("id")
         if (
             not isinstance(workflow_id, str)
             or SKILL_NAME_RE.fullmatch(workflow_id) is None
             or workflow_id in workflow_ids
         ):
-            raise CodexProductError(
+            raise ProductError(
                 f"workflow manifest has an invalid workflow id: {workflow_id!r}"
             )
         if (
             not isinstance(workflow.get("description"), str)
             or not workflow["description"]
         ):
-            raise CodexProductError(f"workflow {workflow_id} has no description")
+            raise ProductError(f"workflow {workflow_id} has no description")
         steps = workflow.get("steps")
         if not isinstance(steps, list) or not steps:
-            raise CodexProductError(f"workflow {workflow_id} has no steps")
+            raise ProductError(f"workflow {workflow_id} has no steps")
         step_ids: set[str] = set()
         for step in steps:
             if not isinstance(step, dict) or set(step) != {
@@ -388,7 +344,7 @@ def _validate_workflows(
                 "agent",
                 "mode",
             }:
-                raise CodexProductError(f"workflow {workflow_id} has an invalid step")
+                raise ProductError(f"workflow {workflow_id} has an invalid step")
             step_id = step.get("id")
             skill = step.get("skill")
             agent = step.get("agent")
@@ -397,7 +353,7 @@ def _validate_workflows(
                 or SKILL_NAME_RE.fullmatch(step_id) is None
                 or step_id in step_ids
             ):
-                raise CodexProductError(
+                raise ProductError(
                     f"workflow {workflow_id} has an invalid step id"
                 )
             # A thin command runs in the current agent without a product preset.
@@ -409,11 +365,11 @@ def _validate_workflows(
                     and (not isinstance(agent, str) or agent not in agent_names)
                 )
             ):
-                raise CodexProductError(
+                raise ProductError(
                     f"workflow {workflow_id} references an unknown product asset"
                 )
             if step.get("mode") not in {"read-only", "write"}:
-                raise CodexProductError(
+                raise ProductError(
                     f"workflow {workflow_id} has an invalid step mode"
                 )
             step_ids.add(step_id)
@@ -422,9 +378,9 @@ def _validate_workflows(
                 used_agents.add(agent)
         workflow_ids.add(workflow_id)
     if used_skills != skill_names:
-        raise CodexProductError("every shipped Skill must occur in a product workflow")
+        raise ProductError("every shipped Skill must occur in a product workflow")
     if used_agents != agent_names:
-        raise CodexProductError("every shipped agent must occur in a product workflow")
+        raise ProductError("every shipped agent must occur in a product workflow")
 
 
 def load_manifest(explicit_root: Path | None = None) -> tuple[Path, dict[str, Any]]:
@@ -436,21 +392,20 @@ def load_manifest(explicit_root: Path | None = None) -> tuple[Path, dict[str, An
         "version",
         "installation",
         "workflow_guide",
-        "linkers",
         "skills",
         "agents",
         "workflows",
     }:
-        raise CodexProductError("workflow manifest has unsupported top-level fields")
+        raise ProductError("workflow manifest has unsupported top-level fields")
     if (
         manifest.get("schema") != MANIFEST_SCHEMA
         or manifest.get("product") != "kgdistiller"
     ):
-        raise CodexProductError(
+        raise ProductError(
             "workflow manifest has an unsupported schema or product"
         )
     if not isinstance(manifest.get("version"), int) or manifest["version"] < 1:
-        raise CodexProductError("workflow manifest version is invalid")
+        raise ProductError("workflow manifest version is invalid")
     installation = manifest.get("installation")
     if (
         not isinstance(installation, dict)
@@ -458,28 +413,19 @@ def load_manifest(explicit_root: Path | None = None) -> tuple[Path, dict[str, An
         or installation.get("product_root") != "workflow-products/kgdistiller"
         or installation.get("state") != STATE_NAME
     ):
-        raise CodexProductError("workflow manifest installation scope is invalid")
+        raise ProductError("workflow manifest installation scope is invalid")
     workflow_guide = _safe_relative(manifest.get("workflow_guide"), "workflow guide")
     if workflow_guide != PurePosixPath("docs", "product-workflows.md"):
-        raise CodexProductError("workflow manifest guide path is invalid")
+        raise ProductError("workflow manifest guide path is invalid")
     try:
         guide_text = _join(root, workflow_guide).read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        raise CodexProductError("workflow guide is missing or unreadable") from error
+        raise ProductError("workflow guide is missing or unreadable") from error
     if FORBIDDEN_TEXT_RE.search(guide_text):
-        raise CodexProductError(
+        raise ProductError(
             "workflow guide contains a host or machine-specific path"
         )
     _workflow_resources(root, manifest.get("workflow_resources", []))
-    _validate_linkers(
-        root,
-        manifest.get("linkers"),
-        expected={
-            "posix": PurePosixPath("scripts", "link-codex-product.sh"),
-            "windows": PurePosixPath("scripts", "link-codex-product.ps1"),
-        },
-        required_command="kgdistiller codex link",
-    )
     skill_names = _validate_manifest_skills(
         root, manifest.get("skills"), _validate_skill
     )
@@ -518,11 +464,11 @@ def _tree_files(path: Path) -> dict[str, Path]:
     if path.is_file():
         return {"": path}
     if not path.is_dir():
-        raise CodexProductError(f"managed asset is missing: {path}")
+        raise ProductError(f"managed asset is missing: {path}")
     files: dict[str, Path] = {}
     for child in path.rglob("*"):
         if child.is_symlink():
-            raise CodexProductError(f"managed asset contains a symbolic link: {child}")
+            raise ProductError(f"managed asset contains a symbolic link: {child}")
         if child.is_file():
             files[child.relative_to(path).as_posix()] = child
     return files
@@ -559,9 +505,9 @@ def _runtime_home(explicit: Path | None, profile: RuntimeProfile) -> Path:
     else:
         home = Path(os.path.abspath(Path.home() / profile.home_default))
     if home == Path(home.anchor):
-        raise CodexProductError(f"{profile.label} home cannot be a filesystem root")
+        raise ProductError(f"{profile.label} home cannot be a filesystem root")
     if home.exists() and not home.is_dir():
-        raise CodexProductError(f"{profile.label} home is not a directory: {home}")
+        raise ProductError(f"{profile.label} home is not a directory: {home}")
     return home
 
 
@@ -586,11 +532,11 @@ def _validate_destination(home: Path, profile: RuntimeProfile) -> None:
         try:
             metadata = os.lstat(current)
         except OSError as error:
-            raise CodexProductError(
+            raise ProductError(
                 f"cannot inspect {profile.label} destination parent: {current}"
             ) from error
         if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(current):
-            raise CodexProductError(
+            raise ProductError(
                 f"{profile.label} destination parents must be ordinary, non-reparse "
                 f"directories: {current}"
             )
@@ -606,11 +552,11 @@ def _validate_destination(home: Path, profile: RuntimeProfile) -> None:
         try:
             metadata = os.lstat(path)
         except OSError as error:
-            raise CodexProductError(
+            raise ProductError(
                 f"cannot inspect {profile.label} product scope parent: {path}"
             ) from error
         if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(path):
-            raise CodexProductError(
+            raise ProductError(
                 f"{profile.label} product scope parents must be ordinary, "
                 f"non-reparse directories: {path}"
             )
@@ -625,13 +571,11 @@ def _product_inventory_files(
         files.update(path for path in skill_root.rglob("*") if path.is_file())
     for item in manifest["agents"]:
         files.add(_join(root, _safe_relative(item["path"], "agent path")))
-    for item in manifest["linkers"]:
-        files.add(_join(root, _safe_relative(item["path"], "linker path")))
     files.add(_join(root, _safe_relative(manifest["workflow_guide"], "workflow guide")))
     files.update(_workflow_resources(root, manifest.get("workflow_resources", [])))
     missing = [path for path in files if not path.is_file()]
     if missing:
-        raise CodexProductError(f"product inventory contains missing files: {missing}")
+        raise ProductError(f"product inventory contains missing files: {missing}")
     return sorted(files, key=lambda path: path.relative_to(root).as_posix())
 
 
@@ -684,34 +628,30 @@ def _load_state(path: Path, profile: RuntimeProfile) -> dict[str, Any]:
     try:
         metadata = os.lstat(path)
     except OSError as error:
-        raise CodexProductError(f"cannot inspect managed-link state: {path}") from error
+        raise ProductError(f"cannot inspect managed-link state: {path}") from error
     if (
         not stat.S_ISREG(metadata.st_mode)
         or _is_reparse_point(path)
         or metadata.st_nlink != 1
     ):
-        raise CodexProductError(
+        raise ProductError(
             f"managed-link state must be an ordinary, non-reparse file: {path}"
         )
     state = _load_json(path)
-    required = {"schema", "product", "manifest_version", "assets"}
-    fields = set(state)
-    if fields not in (required, required | {"cleanup"}):
-        raise CodexProductError(f"managed-link state has unsupported fields: {path}")
+    if set(state) != {"schema", "product", "manifest_version", "assets", "cleanup"}:
+        raise ProductError(f"managed-link state has unsupported fields: {path}")
     if (
         state.get("schema") != profile.state_schema
         or state.get("product") != "kgdistiller"
     ):
-        raise CodexProductError(f"managed-link state has an unsupported schema: {path}")
+        raise ProductError(f"managed-link state has an unsupported schema: {path}")
     if not isinstance(state.get("assets"), list):
-        raise CodexProductError(f"managed-link state assets must be an array: {path}")
-    if "cleanup" not in state:
-        state["cleanup"] = []
+        raise ProductError(f"managed-link state assets must be an array: {path}")
     if not isinstance(state.get("cleanup"), list):
-        raise CodexProductError(f"managed-link state cleanup must be an array: {path}")
+        raise ProductError(f"managed-link state cleanup must be an array: {path}")
     version = state.get("manifest_version")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
-        raise CodexProductError(
+        raise ProductError(
             f"managed-link state manifest version is invalid: {path}"
         )
     return state
@@ -762,13 +702,13 @@ def _same_path(left: Path, right: Path) -> bool:
 
 def _create_junction(source: Path, staging: Path) -> None:
     if os.name != "nt":
-        raise CodexProductError("directory junctions are available only on Windows")
+        raise ProductError("directory junctions are available only on Windows")
     for value in (str(source), str(staging)):
         if any(
             character in value
             for character in ('"', "&", "|", "<", ">", "^", "%", "\r", "\n")
         ):
-            raise CodexProductError(
+            raise ProductError(
                 "Windows junction path contains unsafe command characters"
             )
     command = f'cmd.exe /d /c mklink /J "{staging}" "{source}"'
@@ -785,18 +725,18 @@ def _create_junction(source: Path, staging: Path) -> None:
         try:
             _remove_exact(staging)
         except OSError as cleanup_error:
-            raise CodexProductError(
+            raise ProductError(
                 "Windows directory junction creation and cleanup failed"
             ) from cleanup_error
-        raise CodexProductError("Windows directory junction creation failed") from error
+        raise ProductError("Windows directory junction creation failed") from error
     if completed.returncode != 0 or not _is_junction(staging):
         try:
             _remove_exact(staging)
         except OSError as error:
-            raise CodexProductError(
+            raise ProductError(
                 "Windows directory junction creation and cleanup failed"
             ) from error
-        raise CodexProductError("Windows directory junction creation failed")
+        raise ProductError("Windows directory junction creation failed")
 
 
 def _copy_product_root(
@@ -835,7 +775,7 @@ def _stage_asset(
         except OSError as symlink_error:
             _remove_exact(staging)
             if mode == "symlink":
-                raise CodexProductError(
+                raise ProductError(
                     "symbolic link creation failed"
                 ) from symlink_error
     if mode == "auto" and source.is_dir() and os.name == "nt":
@@ -845,15 +785,15 @@ def _stage_asset(
         try:
             os.link(source, staging)
         except OSError as hardlink_error:
-            raise CodexProductError(
+            raise ProductError(
                 "live agent link unavailable; use --mode copy for an explicit non-live install"
             ) from hardlink_error
         return staging, "hardlink"
     if mode == "auto":
-        raise CodexProductError(
+        raise ProductError(
             "live product link unavailable; use --mode copy for an explicit non-live install"
         )
-    raise CodexProductError(f"unsupported link mode: {mode}")
+    raise ProductError(f"unsupported link mode: {mode}")
 
 
 def _validate_state_record(record: Any, profile: RuntimeProfile) -> dict[str, Any]:
@@ -864,7 +804,7 @@ def _validate_state_record(record: Any, profile: RuntimeProfile) -> dict[str, An
         "target",
         "mode",
     }:
-        raise CodexProductError("managed-link state contains an invalid asset record")
+        raise ProductError("managed-link state contains an invalid asset record")
     kind = record.get("kind")
     name = record.get("name")
     target = record.get("target")
@@ -885,7 +825,7 @@ def _validate_state_record(record: Any, profile: RuntimeProfile) -> dict[str, An
     else:
         allowed = False
     if not allowed:
-        raise CodexProductError(
+        raise ProductError(
             "managed-link state target escapes the kgdistiller scope"
         )
     if (
@@ -893,7 +833,7 @@ def _validate_state_record(record: Any, profile: RuntimeProfile) -> dict[str, An
         or not isinstance(record.get("source"), str)
         or not Path(record["source"]).is_absolute()
     ):
-        raise CodexProductError("managed-link state asset provenance is invalid")
+        raise ProductError("managed-link state asset provenance is invalid")
     return record
 
 
@@ -917,7 +857,7 @@ def _bind_state_source(
         expected = root
     observed = Path(record["source"])
     if not _same_path(observed.resolve(), expected.resolve()):
-        raise CodexProductError(
+        raise ProductError(
             "managed-link state source is outside the active product manifest scope: "
             f"{observed}"
         )
@@ -941,7 +881,7 @@ def _verify_managed_owner(
         if not target.is_symlink() or not _same_path(
             _normalized_link_target(target), source
         ):
-            raise CodexProductError(
+            raise ProductError(
                 f"managed symbolic link has the wrong owner: {target}"
             )
         return
@@ -949,7 +889,7 @@ def _verify_managed_owner(
         if not _is_junction(target) or not _same_path(
             _normalized_link_target(target), source
         ):
-            raise CodexProductError(f"managed junction has the wrong owner: {target}")
+            raise ProductError(f"managed junction has the wrong owner: {target}")
         return
     if mode == "hardlink":
         same = False
@@ -967,8 +907,8 @@ def _verify_managed_owner(
             and not _is_reparse_point(target)
         ):
             return
-        raise CodexProductError(f"detached managed hardlink fails closed: {target}")
-    raise CodexProductError(f"managed asset has an unsupported mode: {target}")
+        raise ProductError(f"detached managed hardlink fails closed: {target}")
+    raise ProductError(f"managed asset has an unsupported mode: {target}")
 
 
 def _write_state(path: Path, state: dict[str, Any]) -> None:
@@ -993,12 +933,12 @@ def _validate_cleanup_record(
     profile: RuntimeProfile,
 ) -> tuple[dict[str, Any], Path, Path]:
     if not isinstance(value, dict) or set(value) != {"asset", "backup"}:
-        raise CodexProductError("managed-link state has an invalid cleanup record")
+        raise ProductError("managed-link state has an invalid cleanup record")
     asset = _validate_state_record(value["asset"], profile)
     _bind_state_source(asset, root, profile=profile)
     backup_relative = _safe_relative(value["backup"], "managed cleanup backup")
     if len(backup_relative.parts) < 3:
-        raise CodexProductError("managed cleanup backup escapes its recovery scope")
+        raise ProductError("managed cleanup backup escapes its recovery scope")
     recovery_name, transaction, *remainder = backup_relative.parts
     expected = PurePosixPath(*_safe_relative(asset["target"], "cleanup target").parts)
     if (
@@ -1006,7 +946,7 @@ def _validate_cleanup_record(
         or re.fullmatch(r"[0-9a-f]{32}", transaction) is None
         or PurePosixPath(*remainder) != expected
     ):
-        raise CodexProductError("managed cleanup backup escapes its recovery scope")
+        raise ProductError("managed cleanup backup escapes its recovery scope")
     backup = _join(home, backup_relative)
     transaction_root = home / RECOVERY_ROOT_NAME / transaction
     current = home
@@ -1016,11 +956,11 @@ def _validate_cleanup_record(
             try:
                 metadata = os.lstat(current)
             except OSError as error:
-                raise CodexProductError(
+                raise ProductError(
                     f"cannot inspect managed cleanup directory: {current}"
                 ) from error
             if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(current):
-                raise CodexProductError(
+                raise ProductError(
                     "managed cleanup directories must be ordinary, non-reparse "
                     f"directories: {current}"
                 )
@@ -1053,7 +993,7 @@ def _complete_committed_cleanup(
     fail_closed: bool,
     profile: RuntimeProfile,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
-    cleanup = state.get("cleanup") or []
+    cleanup = state["cleanup"]
     validated = [
         (*_validate_cleanup_record(value, home, root, profile), value)
         for value in cleanup
@@ -1072,9 +1012,9 @@ def _complete_committed_cleanup(
             )
             _remove_exact(backup)
             _prune_empty_recovery(backup, transaction_root, home)
-        except (CodexProductError, OSError) as error:
+        except (ProductError, OSError) as error:
             if fail_closed:
-                raise CodexProductError(
+                raise ProductError(
                     f"committed managed-link cleanup remains pending: {backup}"
                 ) from error
             warnings.append(
@@ -1090,7 +1030,7 @@ def _complete_committed_cleanup(
         _write_state(state_path, cleared)
     except (OSError, UnicodeError) as error:
         if fail_closed:
-            raise CodexProductError(
+            raise ProductError(
                 "committed managed-link cleanup state could not be finalized"
             ) from error
         warnings.append(
@@ -1143,11 +1083,11 @@ def _link_runtime(
     source_root: Path | None = None,
 ) -> dict[str, Any]:
     if mode not in {"auto", "symlink", "copy"}:
-        raise CodexProductError(f"unsupported link mode: {mode}")
+        raise ProductError(f"unsupported link mode: {mode}")
     root, manifest = profile.load_manifest(source_root)
     home = _runtime_home(home, profile)
     if _paths_overlap(home, root):
-        raise CodexProductError(
+        raise ProductError(
             f"{profile.label} home and the kgdistiller product root cannot overlap"
         )
     _validate_destination(home, profile)
@@ -1170,7 +1110,7 @@ def _link_runtime(
     for item in previous.get("assets", []):
         record = _validate_state_record(item, profile)
         if record["target"] in previous_by_target:
-            raise CodexProductError("managed-link state contains a duplicate target")
+            raise ProductError("managed-link state contains a duplicate target")
         previous_by_target[record["target"]] = record
 
     assets = _managed_assets(root, manifest, home)
@@ -1189,13 +1129,13 @@ def _link_runtime(
                 adopted.append(target_relative)
         if prior is not None:
             if prior.get("kind") != asset["kind"] or prior.get("name") != asset["name"]:
-                raise CodexProductError(
+                raise ProductError(
                     f"managed-link state identity does not match {target}"
                 )
             _bind_state_source(prior, root, asset, profile=profile)
         if _path_present(target):
             if prior is None:
-                raise CodexProductError(
+                raise ProductError(
                     f"refusing to overwrite unmanaged {profile.label} asset: {target}"
                 )
             _verify_managed_owner(
@@ -1253,12 +1193,12 @@ def _link_runtime(
                 if not stat.S_ISDIR(metadata.st_mode) or _is_reparse_point(
                     recovery_root
                 ):
-                    raise CodexProductError(
+                    raise ProductError(
                         "managed cleanup root must be an ordinary, non-reparse "
                         f"directory: {recovery_root}"
                     )
             if _path_present(transaction_root):
-                raise CodexProductError(
+                raise ProductError(
                     f"managed cleanup transaction already exists: {transaction_root}"
                 )
             transaction_root.mkdir(parents=True)
@@ -1312,7 +1252,7 @@ def _link_runtime(
                     _remove_exact(staging)
 
     if state is None:
-        raise CodexProductError("managed-link transaction produced no state")
+        raise ProductError("managed-link transaction produced no state")
     cleanup_warnings: list[str] = []
     recovery_paths: list[str] = []
     if cleanup_records:
@@ -1383,7 +1323,6 @@ def _doctor_runtime(
         "manifest_version": manifest["version"],
         "skills": len(manifest["skills"]),
         "agents": len(manifest["agents"]),
-        "linkers": len(manifest["linkers"]),
         "workflows": len(manifest["workflows"]),
         "installation": "not-checked" if source_only else "linked",
     }
@@ -1392,21 +1331,21 @@ def _doctor_runtime(
 
     home = _runtime_home(home, profile)
     if _paths_overlap(home, root):
-        raise CodexProductError(
+        raise ProductError(
             f"{profile.label} home and the kgdistiller product root cannot overlap"
         )
     _validate_destination(home, profile)
     state_path = home / STATE_NAME
     if not _path_present(state_path):
-        raise CodexProductError(f"kgdistiller product is not linked below {home}")
+        raise ProductError(f"kgdistiller product is not linked below {home}")
     state = _load_state(state_path, profile)
     if state.get("manifest_version") != manifest["version"]:
-        raise CodexProductError(
+        raise ProductError(
             "managed-link state does not match the active workflow manifest version"
         )
     cleanup_warnings: list[str] = []
     recovery_paths: list[str] = []
-    for value in state.get("cleanup", []):
+    for value in state["cleanup"]:
         asset, backup, _transaction_root = _validate_cleanup_record(
             value,
             home,
@@ -1428,7 +1367,7 @@ def _doctor_runtime(
     expected_by_target = {item["target_relative"]: item for item in expected_assets}
     observed = state.get("assets", [])
     if len(observed) != len(expected_by_target):
-        raise CodexProductError(
+        raise ProductError(
             "managed-link state does not match the workflow manifest"
         )
     mode_counts: dict[str, int] = {}
@@ -1437,23 +1376,23 @@ def _doctor_runtime(
         record = _validate_state_record(record, profile)
         target_relative = record["target"]
         if target_relative in seen_targets:
-            raise CodexProductError("managed-link state contains a duplicate target")
+            raise ProductError("managed-link state contains a duplicate target")
         seen_targets.add(target_relative)
         asset = expected_by_target.get(target_relative)
         if asset is None:
-            raise CodexProductError(
+            raise ProductError(
                 f"managed-link state escapes the product scope: {target_relative}"
             )
         target = asset["target"]
         source = asset["source"]
         _bind_state_source(record, root, asset, profile=profile)
         if not _path_present(target):
-            raise CodexProductError(f"managed asset is missing: {target}")
+            raise ProductError(f"managed asset is missing: {target}")
         _verify_managed_owner(record, target, profile=profile)
         if record.get("mode") == "copy" and not _copy_matches_source(
             asset, target, root, manifest, profile
         ):
-            raise CodexProductError(
+            raise ProductError(
                 "managed copy is non-live and differs from the product source; "
                 f"run {profile.command} link again: {source}"
             )
@@ -1468,10 +1407,10 @@ def _doctor_runtime(
     canonical_manifest = _join(canonical_root, profile.manifest_relative)
     canonical_guide = canonical_root / manifest["workflow_guide"]
     if not canonical_manifest.is_file() or not canonical_guide.is_file():
-        raise CodexProductError("canonical workflow product root is incomplete")
+        raise ProductError("canonical workflow product root is incomplete")
     canonical_payload = _load_json(canonical_manifest)
     if _canonical_json(canonical_payload) != _canonical_json(manifest):
-        raise CodexProductError(
+        raise ProductError(
             "canonical workflow manifest does not match the active product"
         )
     result[profile.home_result_key] = str(home)

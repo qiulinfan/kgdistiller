@@ -80,17 +80,17 @@ function world(senses: Record<string, RecordSummary[]> = {}, refuse = 0, named: 
       if (tool === "kg_resolve") {
         const terms = args.terms as string[];
         resolved.push(terms);
-        return { terms: terms.map((term) => ({ term, key: term, senses: senses[term] ?? [], mentions: [], pending: [] })), lag: {} } as T;
+        return { terms: terms.map((term) => ({ term, senses: senses[term] ?? [], pending: [] })), lag: {} } as T;
       }
       if (tool === "kg_drafts") {
         listed.push(args);
-        if (args.names) return { drafts: named.filter((found) => (args.names as string[]).includes(found.label!)), unavailable_bases: [] } as T;
+        if (args.names) return { drafts: named.filter((found) => (args.names as string[]).includes(found.label!)) } as T;
         // Listing the source's drafts after a write: every written draft, the first ones refused.
         const drafts = [...written.keys()].filter((path) => path.includes("/drafts/")).map((path) => {
           const id = path.split("/").pop()!.replace(/\.md$/, "");
           return draft(`papers:${id}`, id, { path, problems: refusals-- > 0 ? ["candidate[0]: unknown link"] : [] });
         });
-        return { drafts, unavailable_bases: [] } as T;
+        return { drafts } as T;
       }
       throw new Error(`unexpected tool ${tool}`);
     },
@@ -126,7 +126,6 @@ function model(...submissions: Array<Record<string, unknown>>): { complete: (req
       if (!args) throw new Error("no more submissions");
       const name = "names" in args ? "lookup" : "submit";
       return {
-        model: "m", finish_reason: "tool_calls", usage: { prompt_tokens: 1, completion_tokens: 1 },
         message: { content: null, tool_calls: [{ id: `c${requests.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] },
       };
     },
@@ -212,7 +211,7 @@ describe("capturing a selection", () => {
     const result = await captureSelection(complete, kgd, files, input);
     expect(result).toEqual({
       item: "Random sampling is best for MAE.", decision: "new", uid: "papers:random-sampling-is-best-for-mae-2",
-      label: "Random sampling is best for MAE", draft: true, report: "已收录。", turns: 1,
+      label: "Random sampling is best for MAE", draft: true, report: "已收录。",
     });
     expect(written.get("/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md")).toBe([
       "---", "label: \"Random sampling is best for MAE\"", "kind: \"compares\"",
@@ -236,8 +235,8 @@ describe("capturing a selection", () => {
     const { kgd, files, written } = world({ "block-wise masking": [blockMasking] });
     const linked = { ...comparison, roles: { ...comparison.roles, baseline: ["[[notes:block-wise-masking]]"] } };
     const { complete, requests } = model(comparison, linked);
-    const result = await captureSelection(complete, kgd, files, input);
-    expect(result.turns).toBe(2);
+    await captureSelection(complete, kgd, files, input);
+    expect(requests).toHaveLength(2);
     const bounce = requests[1]!.messages.at(-1)!.content as string;
     expect(bounce).toMatch(/^Not filed yet\. These names belong to records or drafts you had not seen:/);
     expect(bounce).toContain("[notes:block-wise-masking] Block-wise masking");
@@ -270,7 +269,7 @@ describe("capturing a selection", () => {
     const unchanged = { item: "i", decision: "unchanged", record: "notes:block-wise-masking", report: "已是草稿。" };
     const { kgd, files } = world({}, 0, [elsewhere]);
     await expect(captureSelection(model({ names: ["block-wise masking"], phrases: [] }, unchanged).complete, kgd, files, input))
-      .resolves.toEqual({ item: "i", decision: "unchanged", uid: "notes:block-wise-masking", label: "block-wise masking", draft: true, report: "已是草稿。", turns: 2 });
+      .resolves.toEqual({ item: "i", decision: "unchanged", uid: "notes:block-wise-masking", label: "block-wise masking", draft: true, report: "已是草稿。" });
     const overwrite = { ...comparison, decision: "superseding", record: "notes:block-wise-masking" };
     const crossing = { ...comparison, roles: { ...comparison.roles, baseline: ["[[notes:block-wise-masking]]"] } };
     const second = world({}, 0, [elsewhere]);
@@ -285,8 +284,8 @@ describe("capturing a selection", () => {
     const { kgd, files, written } = world({}, 0, [draft("papers:block-wise-masking", "block-wise masking")]);
     const linked = { ...comparison, roles: { ...comparison.roles, baseline: ["[[papers:block-wise-masking]]"] } };
     const { complete, requests } = model(comparison, linked);
-    const result = await captureSelection(complete, kgd, files, input);
-    expect(result.turns).toBe(2);
+    await captureSelection(complete, kgd, files, input);
+    expect(requests).toHaveLength(2);
     const bounce = requests[1]!.messages.at(-1)!.content as string;
     expect(bounce).toMatch(/^Not filed yet\. These names belong to records or drafts you had not seen:/);
     expect(bounce).toContain("Drafts named so:\n  - [papers:block-wise-masking] block-wise masking");
@@ -314,8 +313,8 @@ describe("capturing a selection", () => {
   it("files nothing for unchanged and borrowed, and only proposes for superseding", async () => {
     for (const [args, expected] of [
       [{ item: "i", decision: "unchanged", record: "papers:masked-autoencoder", report: "已有。" },
-        { item: "i", decision: "unchanged", uid: "papers:masked-autoencoder", label: "Masked autoencoder", report: "已有。", turns: 1 }],
-      [{ item: "i", decision: "borrowed", report: "出自 [2]。" }, { item: "i", decision: "borrowed", report: "出自 [2]。", turns: 1 }],
+        { item: "i", decision: "unchanged", uid: "papers:masked-autoencoder", label: "Masked autoencoder", report: "已有。" }],
+      [{ item: "i", decision: "borrowed", report: "出自 [2]。" }, { item: "i", decision: "borrowed", report: "出自 [2]。" }],
     ] as const) {
       const { kgd, files, commands } = world();
       await expect(captureSelection(model(args).complete, kgd, files, input)).resolves.toEqual(expected);

@@ -74,14 +74,6 @@ def _expected_product_files() -> tuple[set[str], set[str]]:
         if path.is_file() and not _is_python_cache(path.relative_to(root))
     ]
     files.extend(_manifest_documents())
-    files.extend(
-        (
-            REPO_ROOT / "scripts" / "link-codex-product.sh",
-            REPO_ROOT / "scripts" / "link-codex-product.ps1",
-            REPO_ROOT / "scripts" / "link-claude-product.sh",
-            REPO_ROOT / "scripts" / "link-claude-product.ps1",
-        )
-    )
     for path in files:
         relative = path.relative_to(REPO_ROOT)
         relative_posix = PurePosixPath(*relative.parts).as_posix()

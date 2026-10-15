@@ -84,7 +84,7 @@ class ObsidianPluginInstallTest(unittest.TestCase):
     def test_existing_settings_are_kept_and_hidden_indexing_is_enabled(self) -> None:
         self.install()
         self.settings.write_text(
-            json.dumps({"hiddenKnowledgeEnabled": False, "showDrafts": False, "note": "测度"},
+            json.dumps({"hiddenKnowledgeEnabled": False, "layout": False, "note": "测度"},
                        ensure_ascii=False),
             encoding="utf-8",
         )
@@ -93,11 +93,11 @@ class ObsidianPluginInstallTest(unittest.TestCase):
         self.assertEqual("enabled", result["hidden_indexing"])
         self.assertTrue(result["reload_required"])
         self.assertEqual(
-            {"hiddenKnowledgeEnabled": True, "showDrafts": False, "note": "测度"},
+            {"hiddenKnowledgeEnabled": True, "layout": False, "note": "测度"},
             self.read(self.settings),
         )
         self.assertEqual(
-            ["hiddenKnowledgeEnabled", "showDrafts", "note"], list(self.read(self.settings))
+            ["hiddenKnowledgeEnabled", "layout", "note"], list(self.read(self.settings))
         )
         self.assertIn("测度", self.settings.read_text(encoding="utf-8"))
 
@@ -106,7 +106,7 @@ class ObsidianPluginInstallTest(unittest.TestCase):
         for value in (1, 1.0, "true"):
             with self.subTest(value=value):
                 self.settings.write_text(
-                    json.dumps({"showDrafts": False, "hiddenKnowledgeEnabled": value}),
+                    json.dumps({"layout": False, "hiddenKnowledgeEnabled": value}),
                     encoding="utf-8",
                 )
                 result = self.install()
@@ -114,7 +114,7 @@ class ObsidianPluginInstallTest(unittest.TestCase):
                 self.assertTrue(result["reload_required"])
                 stored = self.read(self.settings)
                 self.assertIs(True, stored["hiddenKnowledgeEnabled"])
-                self.assertEqual({"showDrafts": False, "hiddenKnowledgeEnabled": True}, stored)
+                self.assertEqual({"layout": False, "hiddenKnowledgeEnabled": True}, stored)
 
     def test_a_vault_never_opened_in_obsidian_is_refused_with_the_remedy(self) -> None:
         (self.vault / ".obsidian").rmdir()
@@ -146,14 +146,14 @@ class ObsidianPluginInstallTest(unittest.TestCase):
     def test_a_differing_bundle_is_updated(self) -> None:
         self.install()
         (self.plugin / "main.js").write_text("stale", encoding="utf-8")
-        self.settings.write_text('{"showDrafts": false, "hiddenKnowledgeEnabled": true}\n',
+        self.settings.write_text('{"layout": false, "hiddenKnowledgeEnabled": true}\n',
                                  encoding="utf-8")
         updated = self.install()
         self.assertEqual("updated", updated["status"])
         self.assertEqual("current", updated["hidden_indexing"])
         self.assertTrue(updated["reload_required"])
         self.assertNotEqual(b"stale", (self.plugin / "main.js").read_bytes())
-        self.assertEqual({"showDrafts": False, "hiddenKnowledgeEnabled": True}, self.read(self.settings))
+        self.assertEqual({"layout": False, "hiddenKnowledgeEnabled": True}, self.read(self.settings))
         self.assertEqual(
             sorted([*PLUGIN_FILES, "data.json"]), sorted(path.name for path in self.plugin.iterdir())
         )

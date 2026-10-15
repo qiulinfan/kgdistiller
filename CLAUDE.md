@@ -9,9 +9,9 @@ transactionally installs the Skills, the Claude Code agent presets from
 honoring `CLAUDE_CONFIG_DIR`); `kgdistiller claude doctor` verifies the
 installation. The `skills` and `workflows` sections of
 `workflows/claude-manifest.json` must stay identical to
-`workflows/manifest.json`. `scripts/link-claude-skills.sh` /
-`scripts/link-claude-skills.ps1` remain a skills-only development shortcut;
-the full installer adopts symlinks they created. The agent-facing install
+`workflows/manifest.json`. `scripts/link-skills.sh claude` /
+`scripts/link-skills.ps1 -Runtime claude` are a skills-only development
+shortcut; the full installer adopts the symlinks they create. The agent-facing install
 recipe is `docs/deployment.md`, which the `deploy-kgdistiller` Skill follows:
 home and base registration (`kgd base add`, the `sources` globs in
 `$KGDISTILLER_HOME/config.json`, and `types/`), `kgd check`, `kgd index` and its

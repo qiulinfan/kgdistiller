@@ -1,7 +1,8 @@
 /**
- * The knowledge tree's paths and the record fields the plugin reads itself,
- * and the case folding of kgd's ids. Everything here mirrors kgd's
- * records.py so the plugin never disagrees with `kgd check` or `kgd index`.
+ * The knowledge tree's path helpers, the first line of kgd's `lines` string,
+ * and the case folding of kgd's ids. The plugin parses no record itself;
+ * these mirror kgd's records.py so it never disagrees with `kgd check` or
+ * `kgd index`.
  */
 
 import caseFolds from "./case-folding.json";

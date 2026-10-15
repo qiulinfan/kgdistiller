@@ -67,11 +67,11 @@ Sections and rows:
 - Row grammar:
 
   ```
-  accepted: - [[.knowledge/entries/<id>|<label>]] · L<a>-<b>[ · <understanding≠unknown>][ · <role>: <v>, …]… — <gloss>
-  draft:    - [ ] [[.knowledge/drafts/<id>|<label>]] · <kind> · L<a>-<b>[ · <role>: <v>, …]… — <gloss>
+  accepted: - [[.knowledge/entries/<id>|<label>]] · L<lines>[ · <understanding≠unknown>][ · <role>: <v>, …]… — <gloss>
+  draft:    - [ ] [[.knowledge/drafts/<id>|<label>]] · <kind> · L<lines>[ · <role>: <v>, …]… — <gloss>
   ```
 
-  `<v>` is the target record's label (its id or uid when the target is
+  `<lines>` lists every cited range as `a-b`, comma-separated. `<v>` is the target record's label (its id or uid when the target is
   missing) or the pending term itself. In display text `|`, `[` and `]` become
   spaces. Links are vault-relative paths, so Obsidian resolves them exactly.
 - `## Pending` lists each pending term of this source's accepted records once,
@@ -84,5 +84,6 @@ Sections and rows:
 (`- [x] [[.knowledge/drafts/<id>|…]]`), skips rows whose draft no longer exists,
 runs one `kgd accept` on the rest and, on success, regenerates the sheet. It
 prints the accept result: `refused`, `would_create` or the receipt
-`{created, understanding_set}`. A refusal changes nothing; the usual message is
+`{created, understanding_set, index}`, where `index` is the report of the
+index run that indexes and embeds the created records. A refusal changes nothing; the usual message is
 `select [[x]] too`, meaning a ticked draft links an unticked draft.

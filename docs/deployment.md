@@ -113,8 +113,8 @@ search for a `.knowledge` directory.
   value is `"BAAI/bge-m3"`: a model id only, with no revision pin, and the
   device chosen automatically. It runs with int8 weights in about 1 GB
   ([retrieval.md](retrieval.md#the-embedding-process)). `null` means search runs only the lexical and
-  name lanes. Changing the id re-embeds every record on the next `kgd index`.
-  Change it with `kgd embedding` rather than by hand (below).
+  name lanes. After a change, the next index run of any kind drops the old
+  vectors, and the next plain `kgd index` embeds every record. Change it with `kgd embedding` rather than by hand (below).
 - `path` is stored as `~/…` (forward slashes) when the root lies under the
   user's home, otherwise as an absolute path.
 - No base root may be equal to, an ancestor of or a descendant of another, and
@@ -135,7 +135,8 @@ MODEL` downloads the model into the Hugging Face cache, checks that
 kgdistiller can run it (its configuration first, so another architecture is
 refused before its weights download) and then writes it into `config.json`
 under the home lock; `kgd embedding off` writes `null`. Neither re-embeds:
-the next plain `kgd index` embeds every record with the new model.
+the next index run of any kind drops the vectors of the old model, and the
+next plain `kgd index` embeds every record with the new model.
 
 ```sh
 kgd embedding
@@ -147,9 +148,9 @@ The Obsidian plugin's **Embedding** settings run the same commands.
 
 ### Model cache
 
-The first load downloads the model's weights into the Hugging Face cache
-(`~/.cache/huggingface`, or `$HF_HOME`) on first use, several GB for
-`BAAI/bge-m3`. Later loads may still contact the Hugging Face Hub unless
+`kgd embedding set` downloads the model's weights into the Hugging Face cache
+(`~/.cache/huggingface`, or `$HF_HOME`), about 2.3 GB for `BAAI/bge-m3`.
+Later loads may still contact the Hugging Face Hub unless
 `HF_HUB_OFFLINE=1` is set; after the first download, set it in the environment
 of `kgd` and the MCP server so every load stays local. No token is sent and no remote code runs. Offline loading by
 model id needs a complete cache entry: the snapshot and the
@@ -248,9 +249,10 @@ records they create; an edited record is re-embedded only by a plain
 existing vectors by text, so it loads no model. If `embedding` is set but the
 `retrieval` extra is missing, `kgd index` commits the lexical phase, reports
 `embedding_error` ending in `install kgdistiller[retrieval] or set embedding
-to null` and exits 1. Every Skill that writes knowledge ends with `kgd index`;
-edits made in Obsidian lag until the next run, and every read reports that
-lag.
+to null` and exits 1. After an in-place edit, Skills run
+`kgd index --no-embed`, and the Obsidian plugin runs it when the owner saves a
+record; edits made elsewhere lag until the next index run, and every read
+reports that lag.
 
 Restore after a lost or damaged database with one command:
 
@@ -261,10 +263,9 @@ kgd index
 
 A missing, unreadable or other-version database is deleted with its `-wal` and
 `-shm` files and rebuilt from the record files and `config.json`, and every
-record is re-embedded. Measured with `BAAI/bge-m3` on Apple silicon (MPS),
-offline, the restore of a 535-record notes base took 115 s and reproduced the
-same rows and vectors, while `kgd index --rebuild` on the embedded database
-took 0.26 s.
+record is re-embedded, at about 14 records a second with `BAAI/bge-m3` on
+Apple silicon. `kgd index --rebuild` re-uses the stored vectors by text and
+loads no model.
 
 ## Git synchronization
 
@@ -305,8 +306,7 @@ every `kgd` command shares; `kg_search` takes `no_dense` to skip the dense
 lane. Register it in an agent runtime as the command `kgd` with the argument `mcp`,
 with `HF_HUB_OFFLINE=1` in its environment once the model is cached.
 
-OMP loads MCP stdio servers natively; no separate OMP extension exists. It
-reads a project `.mcp.json` or `mcp.json`, a project `.omp/mcp.json`, or the
+OMP loads MCP stdio servers natively. It reads a project `.mcp.json` or `mcp.json`, a project `.omp/mcp.json`, or the
 user-level `~/.omp/agent/mcp.json`, and `/mcp add kgdistiller -- kgd mcp`
 writes such an entry:
 
@@ -347,8 +347,9 @@ first. The same command installs, updates and re-checks the plugin:
   format writes `../` links, which the record link grammar rejects; keep the
   setting unset (shortest) or `absolute`.
 
-The plugin is desktop only. It builds its graph live from the metadata cache of
-`.knowledge/entries/` and `.knowledge/drafts/`.
+The plugin is desktop only. It reads knowledge and drafts only through a
+resident `kgd mcp` and never parses records itself
+([obsidian.md](obsidian.md)).
 
 ## Agent runtime integration
 

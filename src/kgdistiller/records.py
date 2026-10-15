@@ -543,13 +543,11 @@ class Files:
                 self._records[path] = None
         return self._records[path]
 
-    def label(self, uid: str, *, drafts: bool = False) -> str | None:
+    def label(self, uid: str) -> str | None:
         name, identifier = uid.split(":", 1)
         if not self.available(name):
             return None
-        found = self.record(name, ENTRIES, identifier)
-        if found is None and drafts:
-            found = self.record(name, DRAFTS, identifier)
+        found = self.record(name, ENTRIES, identifier) or self.record(name, DRAFTS, identifier)
         return found.label if found else None
 
     def sources(self, base: Base) -> tuple[dict[str, str], dict[str, list[str]]]:
@@ -783,9 +781,9 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
     return report, moved_texts
 
 
-def check(home: Path | None = None, bases: Iterable[str] | None = None) -> dict[str, Any]:
+def check(bases: Iterable[str] | None = None) -> dict[str, Any]:
     """Validate the home and the records of the selected bases (default: all), reading files only."""
-    report, _ = _check(home_directory() if home is None else home, bases)
+    report, _ = _check(home_directory(), bases)
     return report
 
 
@@ -829,9 +827,9 @@ def _rewrite_lines(raw: str, proposed: Ranges) -> str | None:
     return "".join(text + ending for text, ending in zip(texts, endings, strict=True))
 
 
-def fix_lines(home: Path | None = None, bases: Iterable[str] | None = None) -> dict[str, Any]:
+def fix_lines(bases: Iterable[str] | None = None) -> dict[str, Any]:
     """Check, then rewrite the ``lines:`` of every moved file that did not change meanwhile."""
-    home_dir = home_directory() if home is None else home
+    home_dir = home_directory()
     if not (home_dir / CONFIG_FILENAME).is_file():
         report, _ = _check(home_dir, bases)
         return {**report, "fixed": [], "skipped": []}

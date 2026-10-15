@@ -148,6 +148,20 @@ class EncoderTest(unittest.TestCase):
         self.assertEqual({"model": "tiny/model", "pooling": "cls", "weights": "model.safetensors", "precision": "int8"},
                          embedding.describe("tiny/model").report())
 
+    def test_a_pytorch_checkpoint_loads_without_safetensors(self) -> None:
+        import torch
+
+        safetensors = self.directory / "model.safetensors"
+        moved = self.directory / "model.safetensors.moved"
+        checkpoint = self.directory / "pytorch_model.bin"
+        safetensors.rename(moved)
+        self.addCleanup(moved.rename, safetensors)
+        torch.save(self.reference.state_dict(), checkpoint)
+        self.addCleanup(checkpoint.unlink)
+        self.assertEqual("pytorch_model.bin", embedding.describe("tiny/model").report()["weights"])
+        encoder = Encoder("tiny/model")
+        self.assert_close(self.reference_vector(CORPUS[0]), self.vector(encoder.encode_query(CORPUS[0])))
+
     def test_another_architecture_is_refused_before_its_weights_download(self) -> None:
         config = json.loads((self.directory / "config.json").read_text(encoding="utf-8"))
         original = dict(config)

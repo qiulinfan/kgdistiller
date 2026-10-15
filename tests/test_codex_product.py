@@ -13,7 +13,7 @@ import kgdistiller.codex_product as codex_product_module
 from kgdistiller.codex_product import (
     RECOVERY_ROOT_NAME,
     STATE_NAME,
-    CodexProductError,
+    ProductError,
     doctor_product,
     link_product,
     load_manifest,
@@ -43,12 +43,11 @@ def copy_product_root(destination: Path) -> Path:
     for item in manifest["skills"]:
         source = REPO_ROOT / item["path"]
         shutil.copytree(source, destination / item["path"])
-    for group in ("agents", "linkers"):
-        for item in manifest[group]:
-            source = REPO_ROOT / item["path"]
-            target = destination / item["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+    for item in manifest["agents"]:
+        source = REPO_ROOT / item["path"]
+        target = destination / item["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     for relative in [manifest["workflow_guide"], *manifest.get("workflow_resources", [])]:
         (destination / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / relative, destination / relative)
@@ -78,7 +77,6 @@ class CodexProductTests(unittest.TestCase):
             {item["name"] for item in manifest["skills"]},
         )
         self.assertEqual(2, len(manifest["agents"]))
-        self.assertEqual(2, len(manifest["linkers"]))
         self.assertEqual(
             len({item["id"] for item in manifest["workflows"]}),
             len(manifest["workflows"]),
@@ -86,22 +84,6 @@ class CodexProductTests(unittest.TestCase):
         result = doctor_product(source_only=True, source_root=REPO_ROOT)
         self.assertEqual("ok", result["status"])
         self.assertEqual("not-checked", result["installation"])
-
-    def test_posix_linker_is_lf_only_and_git_attributes_enforce_it(self) -> None:
-        linker = REPO_ROOT / "scripts" / "link-codex-product.sh"
-        content = linker.read_bytes()
-        self.assertTrue(content.startswith(b"#!/usr/bin/env sh\n"))
-        self.assertNotIn(b"\r", content)
-        completed = subprocess.run(
-            ["git", "check-attr", "text", "eol", "--", "scripts/link-codex-product.sh"],
-            cwd=REPO_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("text: set", completed.stdout)
-        self.assertIn("eol: lf", completed.stdout)
 
     def test_copy_link_and_doctor_preserve_global_configuration(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-codex-") as temporary:
@@ -179,13 +161,13 @@ class CodexProductTests(unittest.TestCase):
             unselected.write_text("Unselected edit.\n", encoding="utf-8")
             self.assertEqual("ok", doctor_product(codex_home=home, source_root=source)["status"])
             (source / selected).write_text("Updated reference.\n", encoding="utf-8")
-            with self.assertRaisesRegex(CodexProductError, "differs from the product source"):
+            with self.assertRaisesRegex(ProductError, "differs from the product source"):
                 doctor_product(codex_home=home, source_root=source)
             link_product(codex_home=home, mode="copy", source_root=source)
             self.assertEqual((source / selected).read_bytes(), (installed / selected).read_bytes())
             self.assertEqual("ok", doctor_product(codex_home=home, source_root=source)["status"])
             (installed / selected).write_text("Local edit.\n", encoding="utf-8")
-            with self.assertRaisesRegex(CodexProductError, "differs from the product source"):
+            with self.assertRaisesRegex(ProductError, "differs from the product source"):
                 doctor_product(codex_home=home, source_root=source)
             # Recorded copies are product-owned: relinking replaces local edits.
             link_product(codex_home=home, mode="copy", source_root=source)
@@ -229,7 +211,7 @@ class CodexProductTests(unittest.TestCase):
                 manifest["workflow_resources"] = resources
                 manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
                 home = root / "codex-home"
-                with self.assertRaisesRegex(CodexProductError, "workflow resource"):
+                with self.assertRaisesRegex(ProductError, "workflow resource"):
                     link_product(codex_home=home, mode="copy", source_root=source)
                 self.assertFalse(home.exists())
 
@@ -242,7 +224,7 @@ class CodexProductTests(unittest.TestCase):
             before = {path.name for path in ancestor.iterdir()}
             with (
                 patch.dict(os.environ, {"CODEX_HOME": str(ancestor)}),
-                self.assertRaisesRegex(CodexProductError, "cannot overlap"),
+                self.assertRaisesRegex(ProductError, "cannot overlap"),
             ):
                 link_product(source_root=source)
             self.assertEqual(before, {path.name for path in ancestor.iterdir()})
@@ -258,7 +240,7 @@ class CodexProductTests(unittest.TestCase):
             home = root / "codex-home"
             state = home / STATE_NAME
             state.mkdir(parents=True)
-            with self.assertRaisesRegex(CodexProductError, "ordinary, non-reparse"):
+            with self.assertRaisesRegex(ProductError, "ordinary, non-reparse"):
                 link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             self.assertFalse((home / "skills").exists())
             self.assertFalse((home / "agents").exists())
@@ -270,7 +252,7 @@ class CodexProductTests(unittest.TestCase):
             link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             state = home / STATE_NAME
             os.link(state, home / "state-hardlink-alias.json")
-            with self.assertRaisesRegex(CodexProductError, "ordinary, non-reparse"):
+            with self.assertRaisesRegex(ProductError, "ordinary, non-reparse"):
                 doctor_product(codex_home=home, source_root=REPO_ROOT)
 
     def test_reparse_destination_parents_fail_before_any_product_write(self) -> None:
@@ -292,7 +274,7 @@ class CodexProductTests(unittest.TestCase):
                 create_directory_link(external, linked_parent)
                 try:
                     with self.assertRaisesRegex(
-                        CodexProductError, "ordinary, non-reparse"
+                        ProductError, "ordinary, non-reparse"
                     ):
                         link_product(
                             codex_home=home,
@@ -322,7 +304,7 @@ class CodexProductTests(unittest.TestCase):
             linked_home = root / "codex-home"
             create_directory_link(external, linked_home)
             try:
-                with self.assertRaisesRegex(CodexProductError, "ordinary, non-reparse"):
+                with self.assertRaisesRegex(ProductError, "ordinary, non-reparse"):
                     link_product(
                         codex_home=linked_home,
                         mode="copy",
@@ -352,7 +334,7 @@ class CodexProductTests(unittest.TestCase):
                 json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(CodexProductError, "manifest scope"):
+            with self.assertRaisesRegex(ProductError, "manifest scope"):
                 link_product(codex_home=home, mode="copy", source_root=source)
             self.assertEqual(before, target.read_bytes())
 
@@ -365,7 +347,7 @@ class CodexProductTests(unittest.TestCase):
             collision.mkdir(parents=True)
             sentinel = collision / "SKILL.md"
             sentinel.write_text("unmanaged\n", encoding="utf-8")
-            with self.assertRaisesRegex(CodexProductError, "unmanaged Codex asset"):
+            with self.assertRaisesRegex(ProductError, "unmanaged Codex asset"):
                 link_product(codex_home=home, mode="copy", source_root=REPO_ROOT)
             self.assertEqual("unmanaged\n", sentinel.read_text(encoding="utf-8"))
             self.assertFalse((home / STATE_NAME).exists())
@@ -380,7 +362,7 @@ class CodexProductTests(unittest.TestCase):
             target.write_text(
                 target.read_text(encoding="utf-8") + "modified\n", encoding="utf-8"
             )
-            with self.assertRaisesRegex(CodexProductError, "differs from the product source"):
+            with self.assertRaisesRegex(ProductError, "differs from the product source"):
                 doctor_product(codex_home=home, source_root=REPO_ROOT)
 
     def test_symbolic_link_mode_and_doctor_when_platform_allows_it(self) -> None:
@@ -473,7 +455,7 @@ class CodexProductTests(unittest.TestCase):
                     "kgdistiller.codex_product.subprocess.run",
                     side_effect=fail_after_staging,
                 ) as run,
-                self.assertRaisesRegex(CodexProductError, "junction creation failed"),
+                self.assertRaisesRegex(ProductError, "junction creation failed"),
             ):
                 codex_product_module._create_junction(source, staging)
             self.assertFalse(staging.exists())
@@ -648,7 +630,7 @@ class CodexProductTests(unittest.TestCase):
             os.replace(replacement, source_path)
             target = home / agent["target"]
             before = target.read_bytes()
-            with self.assertRaisesRegex(CodexProductError, "detached managed hardlink"):
+            with self.assertRaisesRegex(ProductError, "detached managed hardlink"):
                 doctor_product(codex_home=home, source_root=source)
             self.assertEqual(before, target.read_bytes())
 
@@ -728,7 +710,7 @@ class CodexProductTests(unittest.TestCase):
             target = home / agent["target"]
             target.write_text("foreign owner content\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(CodexProductError, "detached managed hardlink"):
+            with self.assertRaisesRegex(ProductError, "detached managed hardlink"):
                 doctor_product(codex_home=home, source_root=source)
             linked = link_product(codex_home=home, mode="auto", source_root=source)
             self.assertTrue(linked["committed"])

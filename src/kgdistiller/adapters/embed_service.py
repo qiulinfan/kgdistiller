@@ -43,6 +43,7 @@ RESTART_SECONDS = 1.0
 KEY_FILENAME = "embed.key"
 LOCK_FILENAME = "embed.lock"
 LOG_FILENAME = "embed.log"
+# Keeps the Popen handles referenced so Python does not warn about a running child.
 _started: list[subprocess.Popen[bytes]] = []
 
 

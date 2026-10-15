@@ -14,7 +14,6 @@ export interface DraftValue {
   /** For a link: an accepted record, a draft of the same base, or a record that does not exist. */
   state?: "accepted" | "draft" | "missing";
   label?: string | null;
-  understanding?: string;
 }
 
 export interface Draft {
@@ -32,9 +31,7 @@ export interface Draft {
   lines?: string;
   understanding?: string;
   epistemic?: string | null;
-  gloss?: string;
   body?: string;
-  search_terms?: string;
   evidence?: string[];
   out?: DraftValue[];
   /** The drafts it links, directly or through other drafts, which are accepted with it. */
@@ -46,7 +43,6 @@ export interface Draft {
 
 export interface DraftsResult {
   drafts: Draft[];
-  unavailable_bases: string[];
 }
 
 /** The drafts accepted together: the draft first, then those it links; undefined while one of them is not listed. */

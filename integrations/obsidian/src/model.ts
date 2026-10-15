@@ -67,18 +67,9 @@ export interface ChatRequest {
   reasoning_effort?: ReasoningLevel;
 }
 
-export interface Usage {
-  prompt_tokens: number;
-  completion_tokens: number;
-}
-
 export interface ChatReply {
-  model: string;
   message: { content: string | null; tool_calls?: ToolCall[]; reasoning_content?: string };
-  finish_reason: string;
-  usage: Usage;
 }
-
 
 export class ModelClient {
   constructor(private readonly settings: () => ModelSettings, private readonly post: PostJson, private readonly pause: Wait = wait) {}
@@ -124,7 +115,9 @@ export class ModelClient {
       if (effort !== "none") {
         body.reasoning_effort = effort;
         // DeepSeek thinking mode rejects required/named tool_choice. Offer only
-        // the named tool when forced; the harness checks it and retries plain text.
+        // the named tool when forced; the harness refuses any other tool on that
+        // turn, and a plain-text reply is taken as the job's text answer when it
+        // has one, otherwise answered with a reminder to call a tool.
         if (request.tool_choice && request.tool_choice !== "auto") {
           body.tool_choice = "auto";
           if (typeof request.tool_choice === "object") {
@@ -142,7 +135,7 @@ export class ModelClient {
 
 /** Validate the tool-call envelope before the internal harness executes anything. */
 export function chatReply(value: unknown): ChatReply {
-  const body = value as { model?: unknown; choices?: Array<{ message?: unknown; finish_reason?: unknown }>; usage?: Partial<Usage> } | null;
+  const body = value as { choices?: Array<{ message?: unknown }> } | null;
   const choice = Array.isArray(body?.choices) ? body.choices[0] : undefined;
   const message = choice?.message as { content?: unknown; tool_calls?: unknown; reasoning_content?: unknown } | undefined;
   if (!message || typeof message !== "object") throw new Error("The model API returned no message.");
@@ -161,15 +154,11 @@ export function chatReply(value: unknown): ChatReply {
       return { id: item.id, type: "function", function: { name: item.function.name, arguments: item.function.arguments } };
     });
   }
-  const count = (n: unknown): number => typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0;
   return {
-    model: typeof body?.model === "string" ? body.model : "",
     message: {
       content: typeof message.content === "string" ? message.content : null,
       ...(calls ? { tool_calls: calls } : {}),
       ...(typeof message.reasoning_content === "string" ? { reasoning_content: message.reasoning_content } : {}),
     },
-    finish_reason: typeof choice?.finish_reason === "string" ? choice.finish_reason : "",
-    usage: { prompt_tokens: count(body?.usage?.prompt_tokens), completion_tokens: count(body?.usage?.completion_tokens) },
   };
 }

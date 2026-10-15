@@ -223,6 +223,50 @@ class CheckJsonTest(unittest.TestCase):
         self.assertIn("unknown base 'nope'", report["errors"][0]["message"])
 
 
+class SymlinkedTreeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.kb = make_record_home(self)
+        self.root = self.kb.root
+        self.kb.write_source("notes/a.txt", "Title\nA measure space is a triple.\n")
+        frontmatter = "label: Measure space\nkind: definition\nsource: notes/a.txt\nlines: 2"
+        self.kb.write_record("measure-space", frontmatter, "A triple.", ["A measure space"])
+        self.kb.write_record("measure", frontmatter.replace("Measure space", "Measure"), "A set function.",
+                             ["A measure"], folder="drafts")
+
+    @unittest.skipIf(os.name == "nt", "directory symlinks need extra privileges on Windows")
+    def test_cli_rejects_a_symlinked_tree_before_any_command(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "outside"
+            (self.root / ".knowledge").rename(target)
+            (self.root / ".knowledge").symlink_to(target, target_is_directory=True)
+            before = sorted(path.relative_to(target) for path in target.rglob("*"))
+            for arguments, names_the_symlink in (
+                (("check", "--base", "kb"), True),
+                (("check", "--base", "kb", "--fix-lines"), True),
+                (("sheet", "notes/a.txt"), True),
+                (("sheet", "notes/a.txt", "--json"), True),
+                (("accept", ".knowledge/drafts/measure.md"), False),
+                (("index",), True),
+                (("obsidian", "install"), True),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = kgdistiller(*arguments, cwd=self.root)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    if names_the_symlink:
+                        self.assertIn("must not be a symlink", result.stdout + result.stderr)
+                    else:
+                        self.assertIn("refused", json.loads(result.stdout))
+            self.assertFalse((self.kb.home / "index.sqlite").exists())
+            other = self.root.parent / "other"
+            other.mkdir()
+            (other / ".knowledge").symlink_to(target, target_is_directory=True)
+            added = kgdistiller("base", "add", str(other), cwd=self.root.parent)
+            self.assertEqual(added.returncode, 1, added.stdout)
+            self.assertIn("must not be a symlink", added.stderr)
+            self.assertNotIn("other", kgdistiller("base", "list", cwd=self.root.parent).stdout)
+            self.assertEqual(sorted(path.relative_to(target) for path in target.rglob("*")), before)
+
+
 class EndToEndTest(unittest.TestCase):
     def test_check_accept_index_and_every_read(self) -> None:
         kb = make_record_home(self)

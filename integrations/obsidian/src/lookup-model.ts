@@ -11,7 +11,6 @@ import { entryId, KNOWLEDGE_DIRECTORY, sourceOfSheet } from "./records";
 
 export interface Lag {
   changed_files: number;
-  unavailable_bases: string[];
   unembedded: number;
   embedding_changed: boolean;
 }
@@ -34,12 +33,11 @@ export interface PendingUse {
 }
 
 export interface ResolveResult {
-  terms: Array<{ term: string; key: string; senses: RecordSummary[]; mentions: RecordSummary[]; pending: PendingUse[] }>;
+  terms: Array<{ term: string; senses: RecordSummary[]; pending: PendingUse[] }>;
   lag: Lag;
 }
 
 export interface SearchHit extends RecordSummary {
-  understanding: string;
   epistemic: string | null;
   ranks: Record<string, number | null>;
 }
@@ -130,7 +128,6 @@ export const MAX_QUERY_LENGTH = 500;
 export function lookupQuery(selection: string): string {
   return selection.split(/\s+/).filter(Boolean).join(" ").slice(0, MAX_QUERY_LENGTH);
 }
-
 
 /** A search hit's lane ranks, such as "lexical 3 · dense 1 · name –", in the order the lanes ran. */
 export function rankText(lanes: readonly string[], ranks: Record<string, number | null>): string {
@@ -233,14 +230,13 @@ export type GraphElementKind = "node" | "relation" | "dangling" | "relation-edge
 
 export interface GraphElementData {
   id: string;
-  label: string;
+  /** The edge caption. */
+  label?: string;
   /** The node caption. */
   display?: string;
   element: GraphElementKind;
   /** The record behind a node, a diamond or a relation edge. */
   uid?: string;
-  kind?: string;
-  role?: string;
   color?: string;
   source?: string;
   target?: string;
@@ -353,17 +349,15 @@ export function neighbourGraph(
     const data: GraphElementData = {
       id: uid,
       uid,
-      label: info(uid)?.label ?? "",
       display: info(uid)?.label ?? "(missing)",
       element: missing(uid) ? "dangling" : relation ? "relation" : "node",
-      kind: info(uid)?.kind ?? undefined,
       color: color(uid),
     };
     const all = [missing(uid) ? "kgd-dangling" : relation ? "kgd-relation" : "", ...classes];
     elements.push({ group: "nodes", data, classes: all.filter(Boolean).join(" ") });
   };
   const edge = (id: string, source: string, target: string, role: string, classes: string[], extra: Partial<GraphElementData> = {}): void => {
-    const data: GraphElementData = { id, label: role === "requires" ? "" : role, element: role === "requires" ? "requires" : "role", role, source, target, ...extra };
+    const data: GraphElementData = { id, label: role === "requires" ? "" : role, element: role === "requires" ? "requires" : "role", source, target, ...extra };
     const all = [...classes, missing(source) || missing(target) ? "kgd-dangling" : ""];
     elements.push({ group: "edges", data, classes: all.filter(Boolean).join(" ") });
   };

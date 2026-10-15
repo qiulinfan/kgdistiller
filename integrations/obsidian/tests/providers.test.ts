@@ -79,11 +79,11 @@ describe("stored providers", () => {
   it("keep the complete ones, each name once, and say when anything else was there", () => {
     expect(storedProviders([deepseek, local])).toEqual({ providers: [deepseek, local], dropped: false });
     expect(storedProviders([deepseek, { ...deepseek, baseUrl: "x" }, { ...local, format: "anthropic" }, { ...local, name: " " },
-      { ...local, name: "other", kind: "gemini" }, { name: "old", baseUrl: "https://api.deepseek.com", format: "deepseek", apiKey: "" }, null, local]))
+      { ...local, name: "other", kind: "gemini" }, { name: "partial", baseUrl: "https://api.deepseek.com", apiKey: "" }, null, local]))
       .toEqual({ providers: [deepseek, local], dropped: true });
-    // A provider stored without levels lists none; an unknown level drops it.
+    // A provider stored without levels, or with an unknown level, is dropped.
     const { levels: _, ...unlisted } = local;
-    expect(storedProviders([unlisted, { ...deepseek, levels: ["turbo"] }])).toEqual({ providers: [local], dropped: true });
+    expect(storedProviders([unlisted, { ...deepseek, levels: ["turbo"] }, local])).toEqual({ providers: [local], dropped: true });
     expect(storedProviders(undefined)).toEqual({ providers: [], dropped: false });
     expect(storedProviders({ name: "deepseek" })).toEqual({ providers: [], dropped: true });
   });
@@ -124,7 +124,6 @@ describe("reasoning levels", () => {
 
 describe("the connection test", () => {
   const reply = (calls: string[]): ChatReply => ({
-    model: "m", finish_reason: "tool_calls", usage: { prompt_tokens: 1, completion_tokens: 1 },
     message: { content: null, tool_calls: calls.map((name, index) => ({ id: String(index), type: "function", function: { name, arguments: "{}" } })) },
   });
 

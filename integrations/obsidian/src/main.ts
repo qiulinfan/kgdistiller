@@ -64,7 +64,7 @@ export default class KgdistillerPlugin extends Plugin {
   private readonly api = new ApiClient();
   /**
    * The model chosen in the sidebar, at its provider, with the reasoning level
-   * chosen there or each job's own moved to one the model accepts; no provider
+   * chosen there or each job's own moved to one the service documents; no provider
    * of that name leaves the agent off.
    */
   readonly model = new ModelClient(() => {
@@ -420,7 +420,7 @@ export default class KgdistillerPlugin extends Plugin {
     return provider && this.settings.model ? { chosen, levels: levelsOf(provider) } : { chosen };
   }
 
-  /** Use another model from now on, at each job's own reasoning level, since models accept different levels; the open sidebars show it. */
+  /** Use another model from now on, keeping the chosen reasoning level only if the new service documents it and otherwise going back to auto; the open sidebars show it. */
   async chooseModel(choice: ModelChoice): Promise<void> {
     this.settings.provider = choice.provider;
     this.settings.model = choice.model;

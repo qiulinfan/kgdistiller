@@ -1,9 +1,11 @@
 /**
- * The plugin's connection to the local kgd command. Lookups go through one
- * resident `kgd mcp` process, kgd's read-only MCP server over stdio, which
- * keeps the embedding model loaded between queries; `kgd base list` and
- * `kgd index` run as short commands. kgd stays the only reader of the
- * kgdistiller home and its database: the plugin never opens either itself.
+ * The plugin's connection to the local kgd command. Reads go through one
+ * resident `kgd mcp` process, kgd's read-only MCP server over stdio; it loads
+ * no model, and dense search uses the user's shared embedding process. Short
+ * commands (`kgd base list`, `kgd sheet --json`, `kgd accept`, `kgd index`,
+ * `kgd index --no-embed`, `kgd embedding`) run as separate processes. kgd
+ * stays the only reader of the kgdistiller home and its database: the plugin
+ * never opens either itself.
  */
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";

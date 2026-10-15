@@ -3,19 +3,17 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 import kgdistiller.codex_product as codex_product_module
 from kgdistiller.claude_product import (
-    ClaudeProductError,
     doctor_claude_product,
     link_claude_product,
     load_claude_manifest,
 )
-from kgdistiller.codex_product import STATE_NAME, load_manifest
+from kgdistiller.codex_product import STATE_NAME, ProductError, load_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,12 +39,11 @@ def copy_product_root(destination: Path) -> Path:
     for item in manifest["skills"]:
         source = REPO_ROOT / item["path"]
         shutil.copytree(source, destination / item["path"])
-    for group in ("agents", "linkers"):
-        for item in manifest[group]:
-            source = REPO_ROOT / item["path"]
-            target = destination / item["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+    for item in manifest["agents"]:
+        source = REPO_ROOT / item["path"]
+        target = destination / item["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     for relative in [manifest["workflow_guide"], *manifest.get("workflow_resources", [])]:
         (destination / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / relative, destination / relative)
@@ -76,7 +73,6 @@ class ClaudeProductTests(unittest.TestCase):
             {item["name"] for item in manifest["skills"]},
         )
         self.assertEqual(2, len(manifest["agents"]))
-        self.assertEqual(2, len(manifest["linkers"]))
         self.assertEqual(
             len({item["id"] for item in manifest["workflows"]}),
             len(manifest["workflows"]),
@@ -103,29 +99,6 @@ class ClaudeProductTests(unittest.TestCase):
             [item["name"] for item in codex_manifest["agents"]],
             [item["name"] for item in claude_manifest["agents"]],
         )
-
-    def test_posix_linker_is_lf_only_and_git_attributes_enforce_it(self) -> None:
-        linker = REPO_ROOT / "scripts" / "link-claude-product.sh"
-        content = linker.read_bytes()
-        self.assertTrue(content.startswith(b"#!/usr/bin/env sh\n"))
-        self.assertNotIn(b"\r", content)
-        completed = subprocess.run(
-            [
-                "git",
-                "check-attr",
-                "text",
-                "eol",
-                "--",
-                "scripts/link-claude-product.sh",
-            ],
-            cwd=REPO_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("text: set", completed.stdout)
-        self.assertIn("eol: lf", completed.stdout)
 
     def test_copy_link_and_doctor_preserve_global_configuration(self) -> None:
         with real_temporary_directory(prefix="kgdistiller-claude-") as temporary:
@@ -244,7 +217,7 @@ class ClaudeProductTests(unittest.TestCase):
             occupied.mkdir(parents=True)
             (occupied / "SKILL.md").write_text("user-owned\n", encoding="utf-8")
             with self.assertRaisesRegex(
-                ClaudeProductError, "unmanaged Claude Code asset"
+                ProductError, "unmanaged Claude Code asset"
             ):
                 link_claude_product(
                     claude_home=home, mode="symlink", source_root=source
@@ -263,7 +236,7 @@ class ClaudeProductTests(unittest.TestCase):
             except OSError as error:
                 self.skipTest(f"platform cannot create directory links: {error}")
             with self.assertRaisesRegex(
-                ClaudeProductError, "unmanaged Claude Code asset"
+                ProductError, "unmanaged Claude Code asset"
             ):
                 link_claude_product(
                     claude_home=home, mode="symlink", source_root=source
@@ -279,7 +252,7 @@ class ClaudeProductTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
-                ClaudeProductError, "kgdistiller-query-reviewer"
+                ProductError, "kgdistiller-query-reviewer"
             ):
                 load_claude_manifest(source)
 

@@ -134,7 +134,6 @@ describe("judging an origin", () => {
       requests.push(structuredClone(request));
       const args = answers.shift();
       return {
-        model: "m", finish_reason: "tool_calls", usage: { prompt_tokens: 1, completion_tokens: 1 },
         message: { content: null, tool_calls: [{ id: `c${requests.length}`, type: "function", function: { name: "origin", arguments: JSON.stringify(args) } }] },
       };
     };

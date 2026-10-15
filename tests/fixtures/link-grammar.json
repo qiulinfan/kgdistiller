@@ -1,5 +1,5 @@
 {
-  "description": "Record value grammar shared by kgd (tests/test_records.py) and the Obsidian plugin model. Each case gives a frontmatter value, the base of the record holding it, and the expected uid, term, or error reason.",
+  "description": "Record value grammar checked by tests/test_records.py. Each case gives a frontmatter value, the base of the record holding it, and the expected uid, term, or error reason.",
   "cases": [
     {"value": "[[measure-space]]", "base": "kb", "expect": {"uid": "kb:measure-space"}},
     {"value": "  [[measure-space]]  ", "base": "kb", "expect": {"uid": "kb:measure-space"}},

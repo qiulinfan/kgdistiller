@@ -5,17 +5,15 @@ encoder that ships its sentencepiece tokenizer, such as ``BAAI/bge-m3``. It is
 loaded with int8 weights (one scale per row, the vocabulary table included)
 and tokenized by sentencepiece, so a loaded model holds about a quarter of its
 float32 size: measured on 2026-10-15, ``BAAI/bge-m3`` takes about 1 GB on
-Apple silicon instead of 3.2 GB, and on a 2635-record base its dense top 10
-kept 96.8% of the float32 top 10 and every float32 first hit. The vectors
-therefore belong to the model and this precision together: ``identity`` is
-what ``meta.embedding`` stores.
+Apple silicon instead of 3.2 GB. The vectors therefore belong to the model and
+this precision together: ``identity`` is what ``meta.embedding`` stores.
 
 The vocabulary table stays in CPU memory and the rest runs on CUDA or Apple's
 MPS when present, in float16, else on the CPU in float32. Texts are encoded one
 at a time: batching on MPS doubled the process (2 GB) for 2.6 times the speed,
 and one at a time needs no padding, so a text's vector never depends on its
-neighbours. Pooling and prompts
-come from the model's sentence-transformers configuration. Weights are read
+neighbours. Pooling comes from the model's ``1_Pooling/config.json`` and the
+prompts from its ``config_sentence_transformers.json``. Weights are read
 tensor by tensor from a memory map and quantized in row chunks, so loading
 never holds the float32 model. Offline use is Hugging Face's own
 ``HF_HUB_OFFLINE``. Vectors leave this module as little-endian float32 bytes,
@@ -129,6 +127,9 @@ def describe(model: str) -> Description:
 
     Network access follows ``HF_HUB_OFFLINE``; with it set, only the cache is read.
     """
+    # huggingface_hub reads this when first imported, which happens only after this point:
+    # in ``_download`` and, for ``Encoder``, with transformers after this function returns.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     if not all(importlib.util.find_spec(name) for name in ("numpy", "torch", "transformers", "sentencepiece")):
         raise RetrievalExtraMissing("install kgdistiller[retrieval]")
 
@@ -168,8 +169,7 @@ class Encoder:
     """One loaded model, addressed by its id."""
 
     def __init__(self, model: str) -> None:
-        # Read by huggingface_hub and transformers when first imported, which happens only here.
-        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        described = describe(model)
         try:
             import numpy
             import sentencepiece
@@ -177,7 +177,6 @@ class Encoder:
             from transformers import XLMRobertaConfig, XLMRobertaModel
         except ImportError as error:
             raise RetrievalExtraMissing("install kgdistiller[retrieval]") from error
-        described = describe(model)
         files, weights, prompts, limit = described.files, described.weights, described.prompts, described.limit
         config = XLMRobertaConfig.from_pretrained(files["config.json"].parent)
 

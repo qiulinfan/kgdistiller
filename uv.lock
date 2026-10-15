@@ -262,8 +262,10 @@ dependencies = [
 
 [package.optional-dependencies]
 retrieval = [
+    { name = "huggingface-hub" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "safetensors" },
     { name = "sentencepiece" },
     { name = "torch" },
     { name = "transformers" },
@@ -278,8 +280,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub", marker = "extra == 'retrieval'", specifier = ">=1.33,<2" },
     { name = "numpy", marker = "extra == 'retrieval'", specifier = ">=2" },
     { name = "pyyaml", specifier = ">=6" },
+    { name = "safetensors", marker = "extra == 'retrieval'", specifier = ">=0.8,<0.9" },
     { name = "sentencepiece", marker = "extra == 'retrieval'", specifier = "==0.2.2" },
     { name = "torch", marker = "extra == 'retrieval'", specifier = ">=2.6" },
     { name = "transformers", marker = "extra == 'retrieval'", specifier = "==5.19.0" },

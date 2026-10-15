@@ -189,13 +189,16 @@ draft into `entries/` without ever overwriting a file. Results:
 ```json
 {"refused": [{"path": "/abs/.knowledge/drafts/x.md", "message": "premise[0]: select [[y]] too"}]}
 {"would_create": ["notes:x"]}
-{"created": ["notes:x", "notes:y"], "understanding_set": [{"uid": "notes:x", "value": "understood"}]}
+{"created": ["notes:x", "notes:y"], "understanding_set": [{"uid": "notes:x", "value": "understood"}], "index": {"…": "…"}}
 ```
 
 A refusal writes nothing and exits 1. A receipt with `aborted` names a target
 that appeared meanwhile; rerunning the same command finishes an interrupted
 accept. `understanding_set` lists every created record whose understanding is
-not `unknown`, so a set understanding is always visible.
+not `unknown`, so a set understanding is always visible. `index` is the report
+of the index run that follows: every changed record file is indexed and the
+created records are embedded; an embedding failure is reported there and does
+not undo the acceptance.
 
 ## What to extract
 

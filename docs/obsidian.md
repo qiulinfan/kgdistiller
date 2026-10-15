@@ -26,7 +26,9 @@ metadata cache like any other folder. Then:
 - drafts and sheets open in place, so a sheet's draft checkboxes are ticked in
   the ordinary editor before `kgd harvest`.
 
-After any edit, run `kgd check` (and `kgd index` to refresh retrieval).
+After any edit, run `kgd check`. The plugin refreshes the keyword index itself
+when a record file is saved (see [Lookup](#lookup)); re-embedding an edited
+record is the owner's Re-embed.
 
 The plugin is desktop only: its manifest sets `isDesktopOnly`, so Obsidian
 never loads it on a phone or tablet. Mobile is out of scope, because Obsidian
@@ -125,8 +127,9 @@ reports: the model and its precision, and whether records await Re-embed.
 one kgd run allowed to go online, which downloads the model into the Hugging
 Face cache when it is missing (about 2.3 GB for `BAAI/bge-m3`) and refuses a
 model kgdistiller cannot run with kgd's reason; **Turn off** runs
-`kgd embedding off`. Neither re-embeds: Re-embed in the sidebar turns solid
-and embeds every record with the new model when clicked. The model runs on
+`kgd embedding off`. Neither re-embeds: the next index run, the plugin's
+keyword refresh included, drops the old model's vectors, and Re-embed in the
+sidebar turns solid and embeds every record with the new model when clicked. The model runs on
 this computer only.
 
 Settings, under **Lookup**:
@@ -142,14 +145,16 @@ The plugin starts `kgd mcp` on the first lookup and keeps it running. The
 embedding model lives in the user's one embedding process, shared with every
 other window and agent: it loads once (about 2 s for `BAAI/bge-m3` on Apple
 silicon) and later searches take tens of milliseconds. It stops the server after 15 minutes
-without a lookup, when either setting changes and when the plugin unloads. It
-also runs `kgd base list` once per server to locate the bases, and `kgd index`
-only from the button. Every run but `kgd embedding set` gets
-`HF_HUB_OFFLINE=1`: vectors exist only after a local `kgd index` loaded the
-model, so the model is in the local cache.
-These processes read the home, the database and the registered bases; the
-plugin itself opens neither the home nor the database, and lookups write no
-knowledge.
+without a lookup, when either setting changes and when the plugin unloads.
+With the same executable and home it also runs `kgd base list` once per server
+to locate the bases, `kgd sheet SOURCE --json` for a source's document type,
+`kgd index --no-embed` for the keyword refresh, `kgd index` from Re-embed,
+`kgd accept` from the Capture view and `kgd embedding` from the Embedding
+settings, and it writes and deletes draft files. Every run but
+`kgd embedding set` gets `HF_HUB_OFFLINE=1`: `kgd embedding set` fills the
+Hugging Face model cache, so every other load is local. These processes read
+the home, the database and the registered bases; the plugin itself opens
+neither the home nor the database, and lookups write no knowledge.
 
 ## Agent
 
@@ -162,10 +167,10 @@ becomes knowledge when the owner accepts it in the Capture view.
 The harness runs inside the plugin (`agent.ts`). Model requests go directly
 from `model.ts` to the Chat Completions API of the model chosen in the
 sidebar, at its provider, and search tools call
-Exa's hosted MCP server (`https://mcp.exa.ai/mcp`) from `web.ts`. No OMP, external
-agent executable, gateway process, generated extension or temporary search
-file is involved. Local knowledge still uses the separately installed `kgd`
-engine through its resident MCP server and admission commands.
+Exa's hosted MCP server (`https://mcp.exa.ai/mcp`) from `web.ts`; Find sources
+also asks Wikipedia and arXiv. The agent depends on no external agent runtime.
+Local knowledge uses the separately installed `kgd` engine through its
+resident MCP server, and drafts are written as files that `kg_drafts` checks.
 
 A model request that the service answers with HTTP 503 (busy) or 429 (too
 many requests) is sent again after 1 s and then after 2 s, each time with the
@@ -187,16 +192,13 @@ forced choices then). A forced turn offers only its named tool in that mode,
 and the harness rejects another tool's call.
 API keys are selected or created with Obsidian's `SecretComponent` and read
 from `app.secretStorage`; plugin `data.json` stores only secret identifiers.
-It never imports OMP credentials or role aliases. Existing installations must
-configure the new API endpoints, actual model ID and secret references.
 
 Each job asks for its own reasoning level: none to judge a selection and
 answer a question, low to capture and find sources. Services document
 different levels, and several map many names onto a few: DeepSeek runs
 `minimal` and `low` at low, `medium` to `xhigh` at high and `max` at max, with
 thinking off as the fourth. So each service kind declares the levels its
-vendor documents as distinct for what a request sends (read 2026-10-15), and
-the sidebar lists them at once, without asking the model:
+vendor documents as distinct for what a request sends (read 2026-10-15):
 
 | Service | Levels |
 |---|---|
@@ -227,13 +229,9 @@ request shows the service's own explanation from a JSON error body
 most 300 characters, with the request's key replaced by `[key]`; any other
 error body is not displayed. API requests are not retried implicitly.
 Missing search configuration is reported as a tool error; local knowledge
-queries remain available.
-
-The timing and quality observations below were measured with the earlier
-OMP integration. They have not been remeasured for the direct API transport.
-The direct transport is covered by local HTTP integration tests, including a
-complete model → search → cited-answer round; these use synthetic keys and
-make no calls to paid services.
+queries remain available. Local HTTP integration tests cover the client,
+including a complete model → search → cited-answer round; they use synthetic
+keys and make no calls to paid services.
 
 **Judgment.** After the deterministic results, one call compares the
 selection, read in the lines around it, with the records sharing its name and
@@ -242,8 +240,7 @@ recorded** with one or two sentences on how the selection connects to them.
 The model first says whether the selection is a concept or a statement, and a
 match must have that class: a concept is a node, a statement a relation, and a
 record that only mentions the selection is related, not the same. A matched
-record is put in focus unless the owner has focused another one. With the
-model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
+record is put in focus unless the owner has focused another one.
 
 **Capture** drafts the selection as one record by the rules of
 [the knowledge model](model.md) that the capture-kgdistiller Skill follows,
@@ -294,14 +291,11 @@ while the owner keeps reading:
   write nothing yet: the in-place overwrite of a more general or corrected
   definition, relocation, and the linking of pending uses remain the capture
   Skill's.
-- Capture asks for low reasoning: on eleven test selections from the test
-  papers and notes it decided every one as expected in two runs, with a
-  median of about 6 s and the slowest near 20 s on DeepSeek V4 Flash, usually
-  in one model call. Without reasoning the median was 4 s, but a concept the
-  paper credits to earlier work was filed as its own. Drafting rather than
-  accepting matters: on 2026-10-15 the same thirteen selections, drafted three
-  times, gave different labels, kinds and ownership decisions between runs,
-  and about eight of ten drafts needed an edit before they were worth keeping.
+- Capture asks for low reasoning. Drafting rather than accepting matters: on
+  2026-10-15 thirteen test selections from the test papers and notes, drafted
+  three times, gave different labels, kinds and ownership decisions between
+  runs, and about eight of ten drafts needed an edit before they were worth
+  keeping.
 
 **Find sources**, for an unrecorded or borrowed term, finds the work that
 introduced it and the Wikipedia article that explains it. The sidebar lists at
@@ -328,21 +322,17 @@ its arXiv id gives. Only a work without such a link is searched on arXiv by
 title, once and at least three seconds after the last search, as arXiv's terms
 ask, since arXiv's API refuses clients that ask too often; a work arXiv does
 not hold says so and keeps its own link. The article is shown with its opening
-sentences, the Chinese article and the first paper its text cites. On nine
-test terms from the MAE paper and the notes, the last round picked as
-expected: BEiT, block-wise masking and MoCo v3 through the references the
-passage cites, masked autoencoder as the paper being read, denoising
-autoencoder as its reference (not on arXiv), variational autoencoder as
-Auto-Encoding Variational Bayes, and none for latent representation, partial
-fine-tuning and linear probing; latent representation was explained by
-Latent space in five runs out of five, and every same-named article was left
-out. A lookup took about 6 to 9 s on DeepSeek V4 Flash, a hard term up to
-about a minute. With the plugin's own harness, the direct DeepSeek API
-(`deepseek-flash`) and Exa's keyless search sending the origin query as
-written, one round of the same nine terms picked eight as expected; linear
-probing picked the paper on linear classifier probes (arXiv 1610.01644)
-instead of none. The web search took 0.6 to 1.8 s, the judgment 3 to 22 s. It
-sends the term to Exa,
+sentences, the Chinese article and the first paper its text cites. Nine test
+terms from the MAE paper and the notes have expected picks: BEiT, block-wise
+masking and MoCo v3 through the references the passage cites, masked
+autoencoder as the paper being read, denoising autoencoder as its reference
+(not on arXiv), variational autoencoder as Auto-Encoding Variational Bayes,
+and none for latent representation, partial fine-tuning and linear probing.
+With the direct DeepSeek API (`deepseek-flash`) and Exa's keyless search
+sending the origin query as written, one round picked eight as expected;
+linear probing picked the paper on linear classifier probes (arXiv
+1610.01644) instead of none. The web search took 0.6 to 1.8 s, the judgment 3
+to 22 s. It sends the term to Exa,
 Wikipedia and arXiv only when pressed, naming the plugin in its User-Agent as
 Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
 borrowed capture runs it by itself.
@@ -378,8 +368,8 @@ so when the knowledge base holds nothing. A model that writes its answer as
 text instead of calling the answer tool has still answered, and the sixth
 model call must answer. On five research questions asked while reading the
 MAE paper, answers took 4.2 to 15.4 s with the direct DeepSeek API
-(`deepseek-flash`, reasoning off) and Exa's keyless search, against 5.5 to
-11 s earlier through OMP, and every web source they cited was an arXiv paper.
+(`deepseek-flash`, reasoning off) and Exa's keyless search, and every web
+source they cited was an arXiv paper.
 An Exa search took 0.5 to 2 s.
 
 Settings, under **Model providers**, hold the services the agent's models
@@ -452,8 +442,8 @@ and [DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/).
 The model sees the selection or the question, the paragraph around a
 selection (for Find sources also the source's opening lines and the references
 it cites) and the records and web results the agent reads; web searches send
-their queries to Exa. Capture's drafts and `kgd` runs
-stay on this machine.
+their queries to Exa, and Find sources sends the term to Exa, Wikipedia and
+arXiv. Capture's drafts and `kgd` runs stay on this machine.
 
 ## Capture view
 
@@ -551,7 +541,7 @@ not configurable, and nothing under it is excluded.
 
 Stored plugin settings are type-checked at load. A value whose type differs
 from the default is replaced by the default and named in a notice; keys the
-plugin does not have, including those of removed settings, are ignored.
+plugin does not have are ignored.
 
 If `.knowledge` does not yet exist, the setting is retained and the status
 reports it as missing. After creating it, select **Rescan** or run **Rescan
@@ -559,7 +549,7 @@ hidden knowledge folder** from the command palette
 (`kgdistiller:rescan-hidden-knowledge-folder`). A symbolic link in place of
 the folder is reported as invalid and not indexed. Changes within the indexed
 folder are delivered through the adapter's normal file reconciliation and
-watching behavior, which is what keeps the graph live.
+watching behavior.
 
 ### Compatibility and boundaries
 

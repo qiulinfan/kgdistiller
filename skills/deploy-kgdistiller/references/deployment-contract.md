@@ -120,10 +120,12 @@ The owner's rules for nodes, relations, examples and pending terms.
   `path` and `sources`. `embedding` is a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no
   revision pin (`BAAI/bge-m3` is the recommended one; the device is chosen
   automatically) or `null` for lexical and name search only. It needs the
-  package installed with the `retrieval` extra. The first `kgd index` downloads
+  package installed with the `retrieval` extra. `kgd embedding set` downloads
   the weights into the Hugging Face cache (`~/.cache/huggingface`, or
-  `$HF_HOME`); afterwards `HF_HUB_OFFLINE=1` keeps every load local. Changing
-  the id re-embeds every record on the next `kgd index`. `kgd embedding`
+  `$HF_HOME`; about 2.3 GB for `BAAI/bge-m3`); afterwards `HF_HUB_OFFLINE=1`
+  keeps every load local. After a change, the next index run of any kind drops
+  the old vectors, and the next plain `kgd index` embeds every record with the
+  new model. `kgd embedding`
   shows it, `kgd embedding set MODEL` downloads and checks a model and then
   writes it, and `kgd embedding off` writes `null`.
 - Each `sources` key is a glob relative to the base root with Python glob
@@ -186,7 +188,7 @@ kgd index
 ```
 
 This re-embeds every record, which is the only slow part of a restore (about
-two minutes per 500 records with `BAAI/bge-m3` on Apple silicon); report the
+14 records a second with `BAAI/bge-m3` on Apple silicon); report the
 wall time. A missing, unreadable or other-version database is also rebuilt
 automatically by `kgd index`. Readers (`search`, `resolve`, `get`,
 `neighbors`, `browse`, `pack`, MCP) open it read-only and report `lag`; a
@@ -206,8 +208,8 @@ It copies `main.js`, `manifest.json` and `styles.css` into
 in the plugin's `data.json`, keeping its other keys, so Obsidian indexes
 `.knowledge/`. It warns when `.obsidian/app.json` sets `newLinkFormat` to
 `relative`; report the warning and never edit `app.json` unasked. It refuses a
-root that is not a registered base. The plugin is desktop only and reads record
-frontmatter live from Obsidian's metadata cache.
+root that is not a registered base. The plugin is desktop only and reads
+knowledge only through a resident `kgd mcp`.
 
 `kgdistiller codex link` and `kgdistiller claude link` treat installed copies
 as product-owned: `doctor` reports a copy that differs from the product source,

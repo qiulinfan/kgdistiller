@@ -223,12 +223,9 @@ embedding failed; an embedding failure leaves the lexical phase committed.
 
 **Restore.** Delete `index.sqlite*` in the home and run `kgd index`. The
 lexical tables come back identical and every record is re-embedded, which is
-the only slow part. Measured on a notes base of 535 records (316 nodes and 219
-relations) with `"embedding": "BAAI/bge-m3"` on Apple silicon (MPS), offline:
-the restore took 115 s and reproduced every `record`, `link`, `name`, `fts` and
-`meta` row and all 535 vectors byte for byte; `kgd index --rebuild` on the
-embedded database took 0.26 s and re-used all 535 vectors without loading the
-model; a no-op `kgd index` took 0.07 s.
+the only slow part, at about 14 records a second with `BAAI/bge-m3` on Apple
+silicon. `kgd index --rebuild` re-uses the stored vectors by text and loads no
+model.
 
 ## When records are embedded
 
@@ -261,16 +258,18 @@ read tensor by tensor from a memory map and quantized in row chunks. Texts are
 encoded one at a time and truncated to the model's limit.
 
 `meta.embedding` records the model with its precision, such as
-`BAAI/bge-m3 int8`, so vectors of another precision count as another model:
-the first `kgd index` after the switch re-embeds every record.
+`BAAI/bge-m3 int8`, so vectors of another precision count as another model.
 
 `kgd embedding` shows the model, the precision, what the stored vectors were
 computed with and how many records await a re-embed; `kgd embedding set
 MODEL` downloads the model into the Hugging Face cache, checks that
 kgdistiller can run it (its configuration first, so another architecture is
 refused before its weights download) and then writes it into `config.json`
-under the home lock; `kgd embedding off` writes `null`. Neither re-embeds:
-the next plain `kgd index` embeds every record with the new model.
+under the home lock; `kgd embedding off` writes `null`. Neither re-embeds.
+The next index run of any kind, `--no-embed` included, sees that
+`meta.embedding` differs and drops every vector of the old model (lexical
+phase, step 1), and the next plain `kgd index` embeds every record with the
+new model.
 
 Measured on 2026-10-15 with `BAAI/bge-m3` on Apple silicon, against its
 float32 vectors on a 2635-record base with 210 questions: int8 kept 96.8% of
@@ -316,7 +315,7 @@ carries:
   otherwise; the dense lane does not see them.
 - `embedding_changed`: `config.embedding` (or `''`) differs from
   `meta.embedding`; the stored vectors belong to the previous model, and the
-  dense lane keeps using it until `kgd index` re-embeds.
+  dense lane keeps using it until the next index run drops them.
 
 When `changed_files` is above 0, run `kgd index --no-embed` and repeat the
 read. `unembedded` and `embedding_changed` weaken only the dense lane, and
@@ -651,65 +650,10 @@ quality, answer correctness and model cost are reported separately from
 positive-query recall. Model-based content reviews remain diagnostics rather
 than deterministic retrieval scores.
 
-Measurements behind the current design, from the design research on the
-40-paper benchmark library (222 questions, deterministic candidate recall):
-
-| Candidate lanes | Full@40 |
-|---|---|
-| FTS5 over whole records (lexical alone) | 85.6 |
-| FTS5 + dense | 90.5 |
-| FTS5 + dense + name | 91.0 |
-
+The lanes and the unit of retrieval rest on a 40-paper benchmark (222
+questions, deterministic candidate recall). Full@40 was 85.6 for FTS5 over
+whole records alone, 90.5 with the dense lane and 91.0 with the name lane too.
 Whole-record BM25 scored 53.6 against 45.5 for passage BM25, which is why the
 unit of retrieval is the record. Using graph closure as a ranking lane raised
 Full@40 but cut Full@10 from 73.9 to 63.1, so closure is delivered as links on
 each result instead.
-
-Measured on the 535-record notes base with `BAAI/bge-m3` and `--base notes`,
-top three fused results:
-
-| Query | Top results (lexical / dense / name rank) |
-|---|---|
-| `measure space` | `notes:measure-space` (26 / 1 / 1), `notes:measure` (31 / 7 / 2), `notes:measure-space-derived-from-measurable-space` (3 / 3 / –) |
-| `测度` | `notes:probability-measure-derived-from-measure` (5 / 3 / –), `notes:probability-measure` (12 / 1 / –), `notes:borel-cantelli-lemma` (15 / 14 / –) |
-| `a set with a sigma-algebra and a countably additive function` | `notes:sigma-algebra` (23 / 3 / 1), `notes:measurable-space-derived-from-σ-algebra` (2 / 7 / –), `notes:measure-contrasts-with-outer-measure` (1 / 14 / –) |
-
-With `--no-dense`, "measure space" still ranks `notes:measure-space` first
-through the name lane, but ranks 3 and 4 become other spaces
-(`notes:l-p-space-is-a-vector-space`, `notes:banach-space`). No label or alias
-is `测度`, so its name lane is empty; 14 of the 535 records contain the word,
-and neither `notes:measure` nor `notes:measure-space` is among its top 40
-results (the dense lane ranks `notes:measure-space` 48th). The paraphrase
-matches no name except `sigma-algebra`; the lexical and dense lanes supply the
-related measure-theory records.
-
-### Reproducing the compiled-library benchmark
-
-The 40-paper benchmark behind the measurements above (222 questions) ran
-against a compiled library and its own agent tools, which the product no
-longer ships. Each of their behaviours maps onto a read primitive:
-
-| Benchmark behaviour | Primitive |
-|---|---|
-| a 40-candidate search | `search --limit 40` |
-| the tree root and a paper's tree | `browse` and `browse base:path` |
-| the term inventory and its senses | `resolve` |
-| a paper's claims list | `browse --kind K` for a relation kind |
-| reading and packing entries | `get` and `pack` (shared relations and gaps included) |
-| needs, links and agent-side closure | a result's `requires`, `participants` and `in`, then `neighbors` and `pack --requires-depth` |
-| the paper cue | `--source PREFIX` |
-
-Reproducing its numbers takes three steps:
-
-1. Recompile the 40-paper library into records in a scratch base, registered
-   in a scratch `KGDISTILLER_HOME` inside the experiment repository, and
-   record a gold map from every old reference to its uid, in which claims
-   become relation uids.
-2. Point OMP at `kgd mcp` with that home (see
-   [deployment.md](deployment.md#mcp-server)) and confirm that the run's tool
-   list exposes the `mcp__kgdistiller_kg_*` tools before any benchmark run.
-3. Run OMP with DeepSeek Flash as before.
-
-The product ships no converter from the old library. Candidate selection,
-answer submission and any run guard belong to the experiment, not to the
-read-only server.

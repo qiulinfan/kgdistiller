@@ -1,6 +1,5 @@
 __pycache__/
 *.py[cod]
-.pytest_cache/
 .venv/
 dist/
 build/
@@ -8,4 +7,14 @@ build/
 /node_modules/
 /main.js
 /styles.css
+/coverage/
+.wheel-smoke/
+*.log
 .DS_Store
+.obsidian/
+.vscode/
+.idea/
+*.code-workspace
+.claude/settings*.json
+.claude/*.local.*
+.codex/config.toml

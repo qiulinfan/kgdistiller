@@ -4,212 +4,91 @@ All notable changes are documented here.
 
 ## Unreleased
 
-- `kgd embedding` shows the home's embedding model, its precision, what the
-  stored vectors were computed with and how many records await a re-embed;
-  `kgd embedding set MODEL` downloads a model into the Hugging Face cache,
-  checks that kgdistiller can run it, reading its configuration first so that
-  another architecture is refused before its weights download, and writes it
-  into `config.json`; `kgd embedding off` turns the dense lane off. Neither
-  re-embeds. The Obsidian plugin's new **Embedding** settings show the home's
-  model and change it through these commands; the model still runs only on
-  this computer.
-- At most one embedding model is in memory per user, at about a third of its
-  former size. Every `kgd` process, every `kgd mcp` of every Obsidian window
-  and agent included, now sends texts to one shared embedding process instead
-  of loading the model itself; it starts on the first request, answers one at
-  a time and exits after 15 idle minutes, so a capture pays the model's load
-  once while the owner keeps editing (a warm `kgd accept` with its embedding
-  took 0.15 s). The model runs with int8 weights, the vocabulary table
-  included, and the sentencepiece tokenizer, one text at a time: `BAAI/bge-m3`
-  takes about 1 GB instead of 3.2 GB. Against its float32 vectors on a
-  2635-record base, int8 kept 96.8% of each question's dense top 10 and every
-  first hit in the top 10; fp8 kept 94.8% at the same size and int4 75.6%.
-  `meta.embedding` now records the precision (`BAAI/bge-m3 int8`), so the next
-  `kgd index` re-embeds every record once. The `retrieval` extra is now
-  PyTorch, transformers and sentencepiece in place of sentence-transformers,
-  and `embedding` must name an XLM-RoBERTa sentence encoder that ships
-  `sentencepiece.bpe.model`, such as `BAAI/bge-m3`.
-- A new record is embedded when it is admitted, and an edited one only when
-  the owner asks. `kgd accept` and `kgd harvest` now end with an index run
-  whose embedding phase covers only the records they created, and report it
-  under `index`.
-  Skills refresh the keyword index after an edit with `kgd index --no-embed`,
-  and never re-embed. The Obsidian plugin indexes a record file of its vault
-  for keyword search as soon as it is created, saved, renamed or deleted, and
-  any change a read reports, without asking, and its lookup sidebar replaces
-  **Run kgd index** with **Re-embed**: solid with the number of records whose
-  text changed since their vector was computed, or after a model change, and
-  grey otherwise. That number comes from the text each vector was computed
-  from, which the index already keeps, so touching a file or changing its
-  understanding asks for no embedding.
-- Add the **Zhipu GLM Coding Plan** service for the Obsidian agent, at
-  `https://open.bigmodel.cn/api/coding/paas/v4` with the thinking switch. A
-  GLM Coding Plan's quota is spent only through that address: with the same
-  key, Zhipu's general address answered 429 with code 1113 (no balance) while
-  the plan's address answered every request.
-- Capture in the Obsidian plugin only drafts; the owner accepts. The agent
-  writes a draft and stops, and the new **kgdistiller Capture** view, opened
-  below the lookup sidebar, shows the captures being drafted and every draft
-  in full: its label, kind, source lines, statement, Evidence, each value as
-  a record, a draft or a concept not yet recorded, and whether `kgd accept`
-  would take it. **Accept** admits a draft with the drafts it links and
-  indexes it in about 0.1 s, **Open draft** opens the file beside the source,
-  and **Discard** deletes it after asking. The view checks a draft again
-  whenever its file is saved. Captures run in the background, several at a
-  time, and later captures see and may link earlier drafts. On 2026-10-15 the
-  same selections drafted three times gave different labels, kinds and
-  ownership decisions between runs, which is why nothing is accepted
-  unseen. **Show drafts** opens the view.
-- `kgd drafts` and the MCP tool `kg_drafts` list the drafts from their files,
-  with each value's target, the drafts each must be accepted with, the drafts
-  linking it and exactly what `kgd accept` would refuse, writing nothing and
-  taking no lock. `kgd accept` and `kgd drafts` share one validation.
-- Choose the Obsidian agent's reasoning level in the lookup sidebar, beside
-  the model, from the levels the provider's service documents. Each service
-  kind declares the levels its vendor documents as distinct (DeepSeek and
-  Zhipu: none, low, high, max), and Ollama, LM Studio and another service list
-  theirs in settings, so the list appears at once and no request is sent to
-  find it. **auto** keeps each job's own level, moved to the next one up that
-  the service documents; a chosen level goes with every request. **Test**
-  sends one request at the level judgments use.
-- Zhipu providers use the thinking switch that DeepSeek providers use:
-  reasoning `none` now sends `thinking: disabled` instead of
-  `reasoning_effort: none`, which GLM-4.5 Flash ignored and kept thinking;
-  with thinking off it answered a forced tool call in about 1 s. The custom
-  **API format** option for this format is now called **Thinking switch
-  (DeepSeek, Zhipu)**.
-- Model and search errors show the service's own explanation, read from a
-  JSON error body on one line of at most 300 characters with the request's key
-  replaced by `[key]`, instead of only the HTTP status. A 429 that persists
-  after the retries is reported in the service's words, since it also means
-  an exhausted balance, such as Zhipu's code 1113.
-- Configure several model providers for the Obsidian agent and switch models
-  in the sidebar. A provider is a service, a name and an API key in
-  SecretStorage: fifteen hosted services (DeepSeek, OpenAI, OpenRouter,
+Upgrading from 1.0.1: reinstall with the `retrieval` extra, whose packages
+changed, and run `kgd index` once, which re-embeds every record because
+vectors now record their precision. Copy-mode agent installations need
+`kgd claude link` or `kgd codex link` again. In Obsidian, the lookup sidebar
+and the Capture view work once **kgd executable** names the `kgd` command, and
+the agent once a model provider is configured.
+
+- Look knowledge up in Obsidian. Select text and hold ⌘ (Ctrl elsewhere) for
+  0.3 s, run **Look up selection**, or type into the search box of the
+  **kgdistiller Lookup** sidebar (ribbon **Open kgdistiller**, command
+  **Search knowledge**). It searches every registered base and shows the
+  records of the same name, the records that use it as a pending term, the
+  record in focus with a typed graph of its neighbours within three steps and
+  a collapsible legend, its prose, Evidence and links, the relations about
+  it, the records built on it, its `requires` chain, and the related records.
+  It follows the file open in the editor: a record comes into focus, and a
+  source or its sheet lists the records the source defines. The plugin reads
+  knowledge only through one resident `kgd mcp`, stopped after 15 idle
+  minutes, and never parses records; **kgd executable** and **Knowledge
+  home** configure it.
+- Add an agent to the lookup sidebar that runs inside the plugin and calls
+  the owner's model providers directly. It judges whether a selection is
+  **Recorded**, **Possibly** or **Not recorded**; answers a typed question
+  from the knowledge base first and from arXiv papers and the web for the
+  rest, citing records and pages it was given; **Find sources** finds the
+  work that introduced a term (from the references the selected lines cite,
+  an Exa web search and arXiv) and the Wikipedia article that explains it;
+  and **Capture** drafts the selection. **Model providers** settings hold any
+  number of providers: fifteen hosted services (DeepSeek, OpenAI, OpenRouter,
   SiliconFlow, Moonshot, Zhipu, Zhipu GLM Coding Plan, Qwen, Doubao, Groq,
-  Mistral, xAI, MiniMax, StepFun, Together AI) give their base URL and request
-  format, Ollama and LM Studio run locally at their default address unless
-  another is given, and another OpenAI-compatible service takes its own base
-  URL and format. Its models are detected at `GET <base URL>/models`, and
-  **Test** sends one request of the kind the agent sends, to check the
-  connection. The **Model providers** settings show one provider at a time,
-  picked from a list, and **Add** asks for the service and the name first. The
-  lookup sidebar lists every provider's models grouped by provider and uses
-  the one chosen there. The single **Model API endpoint**, **Model**, **Model
-  API format** and **Model API key** settings are removed without a migration;
-  add the provider again.
-- The Obsidian agent asks a busy model service again: a model request
-  answered with HTTP 503 or 429 is retried after 1 s and then 2 s, and when
-  the service still refuses, the sidebar says the model service is busy
-  instead of only reporting the HTTP status.
-- Merge the Obsidian graph view into the lookup sidebar. A graph of every
-  record was too large to read anything from, so the plugin keeps one
-  sidebar, opened from the ribbon (**Open kgdistiller**) or the lookup
-  commands, and its graph is always the neighbourhood of the record in
-  focus, now with a collapsible legend. The full graph, the graph view with
-  its filters and details pane, the **Open typed graph** and **Reload typed
-  graph** commands and the **Show drafts** setting are removed. The sidebar
-  follows the file open in the editor: an accepted record comes into focus,
-  and a source or its sheet lists the records the source defines, from
-  `kg_browse`. Knowledge comes only through `kgd mcp`, so drafts are not drawn
-  and records just edited appear after `kgd index`; the plugin no longer
-  parses records itself.
-- Run the Obsidian agent entirely inside the plugin. Replace OMP's model
-  gateway and per-search extension process with direct Chat Completions
-  requests and direct calls to Exa's hosted MCP search, which needs no key.
-  Model providers are configured in the settings, with their API keys in
-  Obsidian SecretStorage (settings store secret IDs only); an Exa key is
-  optional. Keep the existing tool loop and local kgd engine; handle DeepSeek
-  thinking/tool calls directly. Reuse HTTP connections and cancel requests on
-  timeout, settings changes and unload. The previous OMP settings are removed
-  without a fallback; configure the new API settings before using the agent.
-  Local HTTP tests cover a complete search-and-answer round with synthetic
-  keys. With `deepseek-flash` and keyless Exa, a web search took 0.5 to 2 s,
-  five research questions were answered in 4.2 to 15.4 s and Find sources
-  picked eight of nine test terms as expected; the other timings below
-  describe the earlier OMP implementation.
-- Add agentic search to the Obsidian lookup sidebar. A search box at the top
-  of the sidebar (and the **Search knowledge** command) looks typed text up
-  like a selection, and the agent answers it from the knowledge base first and
-  from the web for what the knowledge base does not hold: it reads records
-  with `kg_search`, `kg_get` and `kg_neighbors` and searches the web through
-  Exa's hosted MCP search, showing each step as it runs. Every citation is
-  checked against what the tools returned; records appear as K1, K2, … and web
-  pages as W1, W2, …, listed apart. Answers took 4 to 6 s from the knowledge
-  base and 8 to 11 s with a web search on DeepSeek V4 Flash.
-- Find sources judges the work that introduced a term and the Wikipedia
-  article that explains it: one web search asks who first
-  introduced the term while Wikipedia gives the article its name leads to and
-  the first three its search finds, and one model call at low reasoning picks
-  the originating work among the source being read, the references the
-  selected lines cite and the web results, or none for a general term, and the
-  article that explains the term as the text uses it, leaving out articles
-  about other things of the same name, with one sentence on why. The work
-  links to its arXiv page with the year its arXiv id gives; only a work without
-  an arXiv link is searched on arXiv by title, and a work not on arXiv says so.
-  On nine test terms the last round picked as expected, in about 6 to 9 s on
-  DeepSeek V4 Flash. Paper links in search answers point to arXiv abstract
-  pages.
-- Search answers research questions from papers. The agent is told which
-  registered source the owner is reading and its document type, gains a paper
-  search that looks on arXiv for papers that may answer the question, and,
-  while a registered source is open, is offered no general web search, so its
-  answers cite papers instead of encyclopedia or tutorial pages. Cited papers
-  are listed under Papers, apart from other web pages.
-- Add an agent to the Obsidian lookup sidebar. With the model API
-  settings, the plugin asks the configured model directly; keys live in
-  Obsidian SecretStorage. Each lookup gets a
-  judgment (**Recorded**, **Possibly** or **Not recorded**, with how the
-  selection connects to the records) in about 1.5 s. **Capture** and the
-  **Capture selection** command file the selection, from the editor or from
-  reading view, as one checked record: the plugin prepares the document type,
-  the numbered passage and the candidates, looks up every name before writing
-  it, places each evidence quote in the source, and admits the draft with
-  `kgd accept` and `kgd index --no-embed`, in about 6 s (median, low
-  reasoning) on DeepSeek V4 Flash.
-  Unchanged and borrowed items write nothing; superseding and conflicting ones
-  are shown to the owner and not yet written. **Find sources** shows where an
-  unrecorded term comes from: the works the selected lines cite from the
-  source's reference list, the Wikipedia article and the originating work.
-- Add selection lookup to the Obsidian plugin. Selecting text and holding the
-  command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s, or running **Look up
-  selection**, opens the **kgdistiller Lookup** sidebar. It lists the records
-  that share the selection's name as candidates to compare, the records that
-  use it as a pending term, and the related records of `kg_search`, and shows
-  the record in focus with a typed graph of its neighbours within three steps
-  (relations drawn as edges),
-  its prose, Evidence and links, the relations about it, the records built on
-  it and its `requires` chain, across every registered base. The plugin starts one
-  resident `kgd mcp` on the first lookup, so the embedding model loads once,
-  and stops it after 15 minutes idle. Lookups are off until the new **kgd
-  executable** setting names the kgd command; **Knowledge home** sets the
-  `KGDISTILLER_HOME` they use.
-- Remove topic navigation: the `organize-kgdistiller` Skill with its helper
-  and proposal reference, the `navigation` document-type template and type
-  key, `kgd navigate`, and the `check` rule against links to navigation
-  records. The 2026-10-11 ablation on 1.0.1 found that navigation gave
-  retrieval no measurable benefit while being one of the costliest steps of
-  building a knowledge base. A home whose types declare `navigation`, or whose
-  bases hold topic or organization records and their guide, deletes them
-  before upgrading. Copy-mode agent installations need `kgd claude link` or
-  `kgd codex link` again, which removes the installed `organize-kgdistiller`.
-- Make the writing Skills lightweight. Capture runs as a short fixed pass: one
-  lookup turn (`sheet --json`, one `resolve` of every name and
-  `search --no-dense --limit 5`), then one shell command that writes the draft
-  and runs `kgd accept … && kgd index --no-embed`, then one line to the owner.
-  No embedding model loads during a capture: names in both languages let the
-  name and lexical lanes match translations, and the next full `kgd index`
-  builds the new vector. Pending uses are linked only when the lookup found
-  them, and the Skill carries a compact record template, reading the full
-  format only on a refusal. Compile and harvest look up a whole batch in one
-  turn and finish with one command. A new `capture-writer` agent preset runs
-  captures in the background on a small model at low reasoning effort (Claude
-  Code `model: haiku`, `effort: low`; Codex `model_reasoning_effort = "low"`),
-  because the model's reasoning volume, not `kgd`, dominated capture time. On
-  six benchmark captures with Claude Haiku 5.5 the mean fell from 445 s (the
-  old Skill with navigation, Claude Code subagent) to 24 s, median 24 s (this
-  Skill invoked at low reasoning in a lean harness), with the same
-  classifications. Relinking the agent runtimes installs the preset.
+  Mistral, xAI, MiniMax, StepFun, Together AI), Ollama, LM Studio and any
+  other OpenAI-compatible service, with model detection and a connection
+  **Test**. The sidebar chooses the model and a reasoning level among those
+  the service documents, or **auto**. DeepSeek and both Zhipu services use the
+  thinking switch (reasoning `none` sends `thinking: disabled`). API keys live
+  in Obsidian SecretStorage; web search uses Exa's hosted MCP server, keyless
+  unless an Exa key is set.
+- A model request answered with HTTP 503 or 429 is sent again after 1 s and
+  2 s. Failed model and search requests show the service's own explanation,
+  such as Zhipu's code 1113 for an exhausted balance, on one line with the
+  key masked.
+- Capture in Obsidian only drafts; the owner accepts. The **kgdistiller
+  Capture** view, below the lookup sidebar, shows captures while they draft,
+  several at a time, and every draft in full with whether `kgd accept` would
+  take it. **Accept** admits a draft with the drafts it links, **Open draft**
+  opens the file beside the source, and **Discard** deletes it after asking;
+  **Show drafts** opens the view.
+- `kgd drafts` and the MCP tool `kg_drafts` list the drafts from their files,
+  with each value's target and exactly what `kgd accept` would refuse, writing
+  nothing and taking no lock. `kgd mcp` has seven tools.
+- A record is embedded when it is admitted, and an edited one only when the
+  owner asks. `kgd accept` and `kgd harvest` end with an index run that
+  embeds the records they created and report it under `index`. After an edit,
+  Skills run `kgd index --no-embed`, and the Obsidian plugin refreshes the
+  keyword index whenever a record file of its vault is saved, renamed or
+  deleted. The sidebar's **Re-embed** runs `kgd index`; it is solid with the
+  number of records whose text changed since their vector was computed, or
+  after a model change.
+- At most one embedding model is in memory per user: every `kgd` process and
+  every `kgd mcp` asks one shared embedding process, which exits after 15
+  idle minutes. The model is an XLM-RoBERTa sentence encoder that ships
+  `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, run with int8 weights and
+  the sentencepiece tokenizer in about 1 GB, at about 14 records a second on
+  Apple silicon; `meta.embedding` records the precision
+  (`BAAI/bge-m3 int8`). The `retrieval` extra is PyTorch, transformers,
+  sentencepiece and NumPy instead of sentence-transformers.
+- `kgd embedding` shows the home's embedding model and its vectors;
+  `kgd embedding set MODEL` downloads and checks a model (about 2.3 GB for
+  `BAAI/bge-m3`) and writes it under the home lock, and `kgd embedding off`
+  turns the dense lane off. Neither re-embeds: the next index run drops the
+  old vectors, and a plain `kgd index` embeds every record. The plugin's
+  **Embedding** settings run these commands.
+- Make the writing Skills lightweight: one lookup turn, one write turn and
+  one command. The capture lookup loads no embedding model. The new
+  `kgdistiller-capture-writer` agent preset runs captures in the background
+  on a small model at low reasoning effort.
+- Remove topic navigation: the `organize-kgdistiller` Skill, the
+  `navigation` document-type template and type key, `kgd navigate` and its
+  `check` rule. Remove the plugin's graph view with its filters and details
+  pane, the **Open typed graph** and **Reload typed graph** commands and the
+  **Show drafts** setting. Remove `scripts/link-claude-skills.{sh,ps1}` (use
+  `scripts/link-skills.sh claude` or `scripts/link-skills.ps1 -Runtime
+  claude`), the `scripts/link-{codex,claude}-product.{sh,ps1}` wrappers and the
+  manifests' `linkers` key. The installers' error class is `ProductError`; the
+  `ClaudeProductError` alias is gone.
 
 ## 1.0.1 — 2026-10-11
 

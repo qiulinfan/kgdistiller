@@ -15,7 +15,7 @@ import {
   type SourceBrowse,
 } from "../src/lookup-model";
 
-const LAG = { changed_files: 0, unavailable_bases: [], unembedded: 0, embedding_changed: false };
+const LAG = { changed_files: 0, unembedded: 0, embedding_changed: false };
 
 describe("the lookup query", () => {
   it("collapses whitespace and caps long selections", () => {

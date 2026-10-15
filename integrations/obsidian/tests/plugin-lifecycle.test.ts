@@ -199,7 +199,7 @@ describe("community lifecycle conventions", () => {
     showSettings(pluginFixture());
     expect(controls.headings).toEqual(["Hidden knowledge folder", "Lookup", "Embedding", "Model providers", "Web search"]);
   });
-  it("registers the lookup sidebar, opened from the ribbon, and the Capture view, and no graph view or its commands", async () => {
+  it("registers the lookup sidebar, opened from the ribbon, and the Capture view", async () => {
     const plugin = pluginFixture(); await plugin.onload();
     expect(controls.registerView.mock.calls).toEqual([["kgdistiller-lookup", expect.any(Function)], ["kgdistiller-capture", expect.any(Function)]]);
     expect(controls.ribbons).toEqual([{ icon: "scan-search", title: "Open kgdistiller" }]);
@@ -252,12 +252,12 @@ describe("record indexing", () => {
 });
 
 describe("hidden knowledge lifecycle", () => {
-  it("keeps existing installs disabled and ignores keys outside the defaults", async () => {
-    controls.stored = { kgdCommand: "/bin/kgd", showDrafts: false, retiredSetting: "old/graph.json", unexpected: false };
+  it("defaults hidden indexing off and ignores unknown keys", async () => {
+    controls.stored = { kgdCommand: "/bin/kgd", unexpected: false };
     const plugin = pluginFixture(); await plugin.onload();
     expect(controls.configure).toHaveBeenCalledWith(false);
     expect(plugin.settings.kgdCommand).toBe("/bin/kgd");
-    for (const key of ["showDrafts", "retiredSetting", "unexpected"]) expect(plugin.settings).not.toHaveProperty(key);
+    expect(plugin.settings).not.toHaveProperty("unexpected");
     expect(controls.notice).not.toHaveBeenCalled();
   });
   it("awaits initial indexing before completing plugin load for workspace restoration", async () => {
@@ -359,11 +359,10 @@ describe("stored settings", () => {
 });
 
 describe("hidden knowledge settings", () => {
-  it("always indexes the product .knowledge folder and ignores a stored folder path", async () => {
-    controls.stored = { hiddenKnowledgeEnabled: true, hiddenKnowledgeFolder: ".research" };
+  it("indexes the product .knowledge folder once enabled and lists every setting", async () => {
+    controls.stored = { hiddenKnowledgeEnabled: true };
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
-    expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
       "Lookup", "kgd executable", "Knowledge home", "Embedding", "Vectors", "Embedding model",
@@ -527,8 +526,8 @@ describe("the agent", () => {
 
   it("shows one provider at a time, picked from the list", async () => {
     controls.stored = { providers: [
-      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" },
-      { name: "work", kind: "custom", baseUrl: "https://llm.example.org/v1", format: "chat-completions", apiKey: "" },
+      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" },
+      { name: "work", kind: "custom", baseUrl: "https://llm.example.org/v1", format: "chat-completions", levels: [], apiKey: "" },
     ] };
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     expect(names().filter((name) => name === "Service")).toHaveLength(1);
@@ -540,7 +539,7 @@ describe("the agent", () => {
   });
 
   it("keeps a provider's name when its service changes, and shows only the fields that service takes", async () => {
-    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }],
+    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" }],
       provider: "deepseek", model: "deepseek-flash" };
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     const toOllama = last("Service").dropdownChange!;
@@ -554,7 +553,7 @@ describe("the agent", () => {
   });
 
   it("tests a provider's connection from its settings and shows the result", async () => {
-    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }] };
+    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" }] };
     const plugin = pluginFixture(); await plugin.onload();
     const report = "Connected: deepseek-flash answered at reasoning none in 0.9 s with the tool call the agent needs.";
     const test = vi.spyOn(plugin, "testProvider").mockResolvedValue(report);
@@ -576,7 +575,7 @@ describe("the agent", () => {
   });
 
   it("lists the provider's documented levels at once and sends each job's level moved to one of them", async () => {
-    controls.stored = { providers: [{ name: "ds", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }], provider: "ds", model: "deepseek-flash" };
+    controls.stored = { providers: [{ name: "ds", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" }], provider: "ds", model: "deepseek-flash" };
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.reasoningChoices()).toEqual({ chosen: "", levels: ["none", "low", "high", "max"] });
     await plugin.model.complete({ messages: [], reasoning_effort: "medium" });
@@ -604,7 +603,7 @@ describe("the agent", () => {
   });
 
   it("says what the connection test could not do before sending a request", async () => {
-    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }] };
+    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" }] };
     const plugin = pluginFixture(); await plugin.onload();
     await expect(plugin.testProvider(plugin.settings.providers[0]!)).resolves.toBe("The service lists no models.");
     controls.listModels.mockRejectedValue(new Error("API request failed (HTTP 401). Check the API key and access permissions."));
@@ -614,8 +613,8 @@ describe("the agent", () => {
 
   it("follows a renamed provider, refuses a duplicate name and forgets a removed one in use", async () => {
     controls.stored = { providers: [
-      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" },
-      { name: "openai", kind: "openai", baseUrl: "", format: "chat-completions", apiKey: "" },
+      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" },
+      { name: "openai", kind: "openai", baseUrl: "", format: "chat-completions", levels: [], apiKey: "" },
     ], provider: "deepseek", model: "deepseek-flash" };
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await last("Name").textChange!("ds");
@@ -629,8 +628,8 @@ describe("the agent", () => {
 
   it("lists every provider's models for the sidebar and says why one listed none", async () => {
     controls.stored = { providers: [
-      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" },
-      { name: "local", kind: "lm-studio", baseUrl: "", format: "chat-completions", apiKey: "" },
+      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "" },
+      { name: "local", kind: "lm-studio", baseUrl: "", format: "chat-completions", levels: [], apiKey: "" },
     ], provider: "deepseek", model: "deepseek-flash" };
     controls.listModels.mockImplementation(async (provider: { name: string }) => {
       if (provider.name === "local") throw new Error("API connection failed (ECONNREFUSED).");

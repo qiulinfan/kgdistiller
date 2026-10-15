@@ -54,7 +54,8 @@ describe("direct model requests", () => {
         { spec: spec("read"), run: async () => "read result" },
         { spec: spec("answer"), run: async () => ({ done: "done" }) },
       ],
-    })).resolves.toMatchObject({ value: "done", turns: 2 });
+    })).resolves.toBe("done");
+    expect(post).toHaveBeenCalledTimes(2);
     expect(post.mock.calls[0]![2]).toMatchObject({ thinking: { type: "enabled" }, reasoning_effort: "low" });
     expect(post.mock.calls[0]![2]).toMatchObject({ tool_choice: "auto", tools: [spec("read")] });
     expect(post.mock.calls[1]![2]).toMatchObject({ tool_choice: "auto", tools: [spec("answer")] });

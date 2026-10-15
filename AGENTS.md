@@ -45,7 +45,7 @@
   `os.link` then `os.unlink`, never overwriting), or through in-place edits of
   accepted records with a stale-read-safe editing tool followed by
   `kgd check`. The home lock is held by `accept`, `harvest`,
-  `check --fix-lines` and `base add|rm`; no data file is ever locked or
+  `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
   truncated. The product never re-serializes frontmatter; `--fix-lines`
   rewrites only the `lines:` line.
 - Embedding follows admission, not edits (owner, 2026-10-15). `kgd accept`
@@ -56,9 +56,9 @@
   and whether it has work is `unembedded`, derived from the stored unified
   text, never from a snapshot or hash.
 - Ingestion stays lightweight; the owner's budget for waiting on one capture
-  is about 20 seconds. On 2026-10-11 the owner accepted about 24 seconds of
-  background processing per capture over making `kgd` call a model itself:
-  the core stays model-free, and model work stays in the Skills and presets. The writing Skills work in batches: one lookup turn (one
+  is about 20 seconds. The core stays model-free; model work stays in the
+  Skills, the presets and the plugin's agent. The writing Skills work in
+  batches: one lookup turn (one
   `kgd resolve` of every name, `kgd search --limit 5` only where needed), one
   write turn, then one command that accepts or checks and indexes; nothing
   runs after admission except linking the pending uses the lookup found. A
@@ -67,10 +67,8 @@
   0.15 s when it is warm and about 2 s more when it must load. The
   `capture-writer` presets run it in the background on a small model
   at low reasoning effort, since model reasoning, not `kgd`, dominates capture
-  time.
-  There is no topic navigation or other generated directory: the 2026-10-11
-  ablation found it gave retrieval no measurable benefit. `kgd index` never
-  invokes a semantic model.
+  time. `kgd index` never invokes a generative model; its only model is the
+  embedding encoder.
 - A record asserts only what its cited text states: a relation citing a paper
   or note quotes text stating that relation, and a connection no source states
   is reported, never written. Each concept has one record, owned by the source
@@ -146,7 +144,9 @@
   `npm run check` in `integrations/obsidian` plus root `npm run build` (which
   asserts the bundled license notices) and root `npm test`. Every test and
   `scripts/smoke_installed_runtime.py` use a temporary `KGDISTILLER_HOME` and
-  never read or write the real home. Unit tests use a fake encoder. The
+  never read or write the real home. Unit tests use a fake encoder. The int8
+  encoder tests (`tests/test_embedding_adapter.py`) need the `retrieval` extra,
+  so they run locally and are skipped in CI. The
   real-model smoke test is opt-in and never runs in CI:
   `HF_HUB_OFFLINE=1 KGD_TEST_EMBEDDING_MODEL=<model id> <python with the retrieval extra> -m unittest discover -s tests -p test_real_model.py`.
   Its switch is test-only; `KGDISTILLER_HOME` stays the only product
@@ -197,9 +197,12 @@
   editor, and the Capture view lists the drafts waiting for the owner. It reads
   knowledge and drafts only through a resident `kgd mcp` (`kg_drafts` for
   drafts), off until the vault's settings name a kgd executable,
-  covering every base, and runs `kgd base list` and `kgd index` with the
-  configured executable and `KGDISTILLER_HOME`; the plugin never parses
-  records, and never opens the home or the database itself. Capture's ids
+  covering every base. With the configured executable and
+  `KGDISTILLER_HOME` it also runs `kgd base list`, `kgd sheet SOURCE --json`,
+  `kgd accept`, `kgd index`, `kgd index --no-embed` and `kgd embedding`
+  (`kgd embedding set` fills the Hugging Face model cache), and it writes and
+  deletes draft files; the plugin never parses records, and never opens the
+  home or the database itself. Capture's ids
   casefold with `integrations/obsidian/src/case-folding.json`, which
   `tests/test_records.py` checks against `unicodedata` (regenerate it when
   that test fails after a Python Unicode upgrade). The plugin's agent (judgment, Capture, Find sources and
@@ -215,8 +218,8 @@
   checks every model answer and citation, and writes knowledge only as a
   draft, under the same rules as the capture Skill; the agent never accepts,
   and a draft becomes knowledge when the owner accepts it in the Capture view
-  (`kgd accept`, which indexes and embeds it). The plugin re-indexes the
-  keyword index whenever a record file changes. Preserve the complete upstream MIT notice and pinned source
+  (`kgd accept`, which indexes and embeds it). The plugin refreshes the
+  keyword index (`kgd index --no-embed`) whenever a record file is saved. Preserve the complete upstream MIT notice and pinned source
   revision in the bundle.
 - Claude Code has the full product integration: the transactional
   `kgdistiller claude link` installer, driven by
@@ -224,10 +227,10 @@
   (`.claude/agents/*.md`), and the canonical product root, mirroring
   `kgdistiller codex link`. Keep the `skills` and `workflows` sections of the
   two runtime manifests identical; agent presets stay runtime-specific files.
-- `scripts/link-claude-skills.sh` / `.ps1` remain a skills-only development
+- `scripts/link-skills.sh RUNTIME` / `scripts/link-skills.ps1 -Runtime RUNTIME`
+  (`claude`, `codex`, `opencode` or `omp`) are a skills-only development
   shortcut independent of both manifests; they install no agents, workflows,
-  or link state, and `kgdistiller claude link` adopts symlinks they created.
-  They delegate to the product-owned `scripts/link-skills.sh RUNTIME` /
-  `.ps1 -Runtime RUNTIME`; that Skill-only linker also supports native OpenCode
-  and OMP homes. Full agent/workflow integration remains governed by the
-  Codex and Claude manifests; shared Skill links do not port agent presets.
+  or link state, and `kgdistiller claude link` adopts the symlinks they
+  create. Full agent/workflow integration is governed
+  by the Codex and Claude manifests; shared Skill links do not port agent
+  presets.

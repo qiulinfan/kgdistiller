@@ -35,7 +35,7 @@ export const DEFAULT_SETTINGS: Readonly<KgdistillerSettings> = {
 };
 
 const NOT_LISTED = "Not listed yet; press Detect.";
-const LEVELS_HINT = "The reasoning levels the service documents as distinct, separated by commas, such as none, low, high. Empty, requests set none, and the service decides.";
+const LEVELS_HINT = "The reasoning levels the service documents as distinct, separated by commas, such as none, low, high. Empty, requests carry no level and the service decides.";
 const NAME_HINT = "Shown in the sidebar's model list; no two providers share a name.";
 
 /**
@@ -84,7 +84,7 @@ export interface SettingsHost {
   embeddingStatus(): Promise<EmbeddingStatus>;
   /** Make a model the home's embedding model, downloading it if needed, or turn the dense lane off with null. */
   setEmbedding(model: string | null): Promise<EmbeddingStatus>;
-  /** Ask a model of the provider at each reasoning level with the agent's kind of request, and say how it went. */
+  /** Send a model of the provider one forced tool call at the lowest documented reasoning level, and say how it went. */
   testProvider(provider: Provider): Promise<string>;
 }
 

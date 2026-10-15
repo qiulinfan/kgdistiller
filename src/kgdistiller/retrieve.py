@@ -7,8 +7,8 @@ three lanes with reciprocal rank fusion:
 
 - lexical: FTS5 over the unified text;
 - dense: an exact dot product over the stored vectors, the query encoded with
-  ``meta.embedding``; it runs when ``meta.embedding`` is set (an embedding
-  model built the index) and the caller does not disable it;
+  ``meta.embedding``; it runs when ``meta.embedding`` is set (the index
+  records the home's embedding model) and the caller does not disable it;
 - name: label and alias keys.
 
 There are no boosts, intent rules or thresholds. ``neighbors`` follows links
@@ -94,10 +94,6 @@ def _session() -> tuple[sqlite3.Connection, Home]:
     # from the same commit even while `kgd index` writes.
     connection.execute("BEGIN")
     return connection, home
-
-
-def _lines(row: sqlite3.Row) -> str:
-    return row["lines"]
 
 
 def _rows(connection: sqlite3.Connection, uids: Sequence[str]) -> dict[str, sqlite3.Row]:
@@ -262,7 +258,7 @@ def _summary(row: sqlite3.Row) -> dict[str, Any]:
         "class": row["class"],
         "base": row["base"],
         "source": row["source"],
-        "lines": _lines(row),
+        "lines": row["lines"],
         "gloss": gloss(row["body"]),
     }
 
@@ -271,7 +267,8 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
     """Fuse the lexical, dense and name lanes with RRF (k=60); ties break by uid.
 
     The dense lane runs when ``dense`` is true and ``meta.embedding`` is set
-    (an embedding model built the index); ``lanes`` lists the lanes that ran.
+    (the index records the home's embedding model); ``lanes`` lists the lanes
+    that ran.
     """
     if limit < 1:
         raise KnowledgeError("limit must be at least 1")
@@ -291,14 +288,7 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
                 ranks[uid][lane] = rank
                 scores[uid] += 1 / (RRF_K + rank)
         chosen = sorted(scores, key=lambda uid: (-scores[uid], uid))[:limit]
-        rows = {
-            row["uid"]: row
-            for start in range(0, len(chosen), _CHUNK)
-            for row in connection.execute(
-                f"SELECT * FROM record WHERE uid IN ({', '.join('?' for _ in chosen[start : start + _CHUNK])})",
-                chosen[start : start + _CHUNK],
-            )
-        }
+        rows = _rows(connection, chosen)
         out_links = _links_out(connection, chosen)
         in_links = _links_in(connection, chosen)
         labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
@@ -327,7 +317,7 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
                 "label": row["label"],
                 "base": row["base"],
                 "source": row["source"],
-                "lines": _lines(row),
+                "lines": row["lines"],
                 "understanding": row["understanding"],
                 "epistemic": row["epistemic"],
                 "gloss": gloss(row["body"]),
@@ -447,7 +437,7 @@ def _record(row: sqlite3.Row, out_links: Sequence[sqlite3.Row], labels: dict[str
         "label": row["label"],
         "aliases": json.loads(row["aliases"]),
         "source": row["source"],
-        "lines": _lines(row),
+        "lines": row["lines"],
         "understanding": row["understanding"],
         "epistemic": row["epistemic"],
         "gloss": gloss(row["body"]),
@@ -707,7 +697,7 @@ def _browse_source(connection: sqlite3.Connection, base: str, source: str, filte
             "uid": row["uid"],
             "label": row["label"],
             "class": row["class"],
-            "lines": _lines(row),
+            "lines": row["lines"],
             "understanding": row["understanding"],
             "gloss": gloss(row["body"]),
             "links": _references(out_links[row["uid"]], labels),
@@ -743,7 +733,7 @@ def _browse_kind(connection: sqlite3.Connection, base: str | None, path: str, fi
             "class": row["class"],
             "base": row["base"],
             "source": row["source"],
-            "lines": _lines(row),
+            "lines": row["lines"],
             "understanding": row["understanding"],
             "epistemic": row["epistemic"],
             "gloss": gloss(row["body"]),

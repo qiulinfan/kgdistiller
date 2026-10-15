@@ -55,7 +55,7 @@ function json(text: string): unknown {
 
 export function apiUrl(value: string): URL {
   let url: URL;
-  try { url = new URL(value.trim()); } catch { throw new Error("Set a complete API endpoint URL in the kgdistiller settings."); }
+  try { url = new URL(value.trim()); } catch { throw new Error("The API base URL is incomplete."); }
   if (url.username || url.password || url.hash || url.search) throw new Error("API endpoints must not contain credentials, query parameters or fragments.");
   if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) {
     throw new Error("Use HTTPS for an API endpoint, or HTTP on localhost.");

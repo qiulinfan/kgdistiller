@@ -570,7 +570,7 @@ class EmbeddingTest(IndexTestCase):
     def test_missing_retrieval_extra_keeps_the_lexical_commit(self) -> None:
         self.without_retrieval_extra()
         report = index()
-        self.assertIn("install kgdistiller[retrieval] or set embedding to null", report["embedding_error"])
+        self.assertIn("install kgdistiller[retrieval] or run `kgd embedding off`", report["embedding_error"])
         self.assertIn(self.MODEL, report["embedding_error"])
         self.assertFalse(index_clean(report))
         self.assertEqual((0, 3), (report["embedded"], report["unembedded"]))

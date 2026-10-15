@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-claude-workflows-v1",
   "product": "kgdistiller",
-  "version": 4,
+  "version": 5,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -12,16 +12,6 @@
     "docs/retrieval.md",
     "docs/obsidian.md",
     "docs/deployment.md"
-  ],
-  "linkers": [
-    {
-      "platform": "posix",
-      "path": "scripts/link-claude-product.sh"
-    },
-    {
-      "platform": "windows",
-      "path": "scripts/link-claude-product.ps1"
-    }
   ],
   "skills": [
     {

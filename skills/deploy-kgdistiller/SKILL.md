@@ -62,13 +62,15 @@ Edit `$KGDISTILLER_HOME/config.json` by hand:
   downloads and checks the model before writing it. A model id only, with no
   revision pin; it must be an XLM-RoBERTa sentence encoder that ships
   `sentencepiece.bpe.model`. It runs with int8 weights in one shared process
-  of about 1 GB. The first `kgd index` downloads the weights into
-  the Hugging Face cache (`~/.cache/huggingface`, several GB for this model)
-  and embeds every record; afterwards set `HF_HUB_OFFLINE=1` so every load
-  stays local. If an offline load reports that the files are not in the
+  of about 1 GB. `kgd embedding set` downloads the weights into the Hugging
+  Face cache (`~/.cache/huggingface`, about 2.3 GB for this model), and the
+  next `kgd index` embeds every record; afterwards set `HF_HUB_OFFLINE=1` so
+  every load stays local. If an offline load reports that the files are not in the
   cached files, the cache entry is incomplete (often a missing `refs/main`);
   report it rather than going online unasked. `null` means lexical and name
-  search only. Changing the id re-embeds every record on the next `kgd index`.
+  search only. After a change, the next index run of any kind drops the old
+  vectors, and the next plain `kgd index` embeds every record with the new
+  model.
 
 Write each `$KGDISTILLER_HOME/types/<type>.md` from the owner's vocabulary:
 `node_kinds`, optional `relation_kinds` (each kind with its ordered roles, for
@@ -113,8 +115,8 @@ is committed, so report the message and install the extra rather than editing
 the model id away unasked.
 
 To restore a lost or damaged database, delete `index.sqlite*` in the home and
-run `kgd index`; it re-embeds every record (about two minutes per 500 records
-with `BAAI/bge-m3` on Apple silicon), so report the wall time. `kgd base list`
+run `kgd index`; it re-embeds every record (about 14 records a second with
+`BAAI/bge-m3` on Apple silicon), so report the wall time. `kgd base list`
 then shows each base's `records`, `drafts`, `indexed` count and `lag`.
 
 ## 6. Obsidian
@@ -131,8 +133,9 @@ first. It copies `main.js`, `manifest.json` and `styles.css` into
 `<root>/.obsidian/plugins/kgdistiller/` (updating an older bundle), enables the
 plugin in `.obsidian/community-plugins.json`, and sets `hiddenKnowledgeEnabled`
 to `true` in the plugin's `data.json` while keeping its other keys, so Obsidian
-indexes `.knowledge/`. The plugin is desktop only and reads record frontmatter
-live. Ask the owner to reload Obsidian.
+indexes `.knowledge/`. The plugin is desktop only and reads knowledge only
+through a resident `kgd mcp` once its settings name the `kgd` executable. Ask
+the owner to reload Obsidian.
 
 The result's `warnings` list reports `newLinkFormat` set to `relative` in
 `.obsidian/app.json`, which writes `../` links that the record link grammar

@@ -20,7 +20,7 @@
 - 通过一个 SQLite 索引同时搜索所有已注册的 vault；`kgd search` 融合全文检索、dense embedding 检索（例如 BGE-M3）和名称匹配三路结果。
 - 在 Obsidian 里选中文字即可查询知识，看到记录周围的类型化邻居图；内置 agent 把选中内容起草成草稿，你在入库侧栏里确认入库；coding agent 通过 Skills 和 MCP server 来记录、编译和查询知识。
 
-本仓库包含 Obsidian 插件和 Python 核心，二者都是 **1.0.0**，即第一个正式版本。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
+本仓库包含 Obsidian 插件和 Python 核心，二者都是 **1.0.1**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
 
 ## 为什么以知识图谱为核心
 
@@ -42,9 +42,9 @@ kgd get research:sigma-algebra --source-lines 20
 
 打开 [kgdistiller 社区页面](https://community.obsidian.md/plugins/kgdistiller)，点 **Add to Obsidian**，然后启用 **kgdistiller**。手动安装时，从 [plugin release](https://github.com/qiulinfan/kgdistiller/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放进 `<vault>/.obsidian/plugins/kgdistiller/`，重载 Obsidian 后启用。需要桌面版 Obsidian **1.13.7 或更新**，移动端不加载此插件。
 
-本 README 描述的是 1.0.0 及更新版本的插件。更早的版本读取旧的导出格式，看不到下文所说的任何记录。
+下文的查询侧栏、agent、Capture 视图和 Embedding 设置已在 `main` 上，随下一个插件版本发布。
 
-记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。按[安装](#安装)装好 CLI 后，`kgd obsidian install` 会把随包附带的 1.0.0 插件复制进 vault，并一起打开这个设置。如果社区页面或 release 页面提供的仍是更早的版本，就用这条命令安装。它具体改动哪些文件，见 [docs/obsidian.md](docs/obsidian.md#installation)。
+记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。按[安装](#安装)装好 CLI 后，`kgd obsidian install` 会把 CLI 随包附带的插件复制进 vault，并一起打开这个设置。它具体改动哪些文件，见 [docs/obsidian.md](docs/obsidian.md#installation)。
 
 在 **Settings → kgdistiller → kgd executable** 填好 `kgd` 的路径后：
 
@@ -260,7 +260,7 @@ A measure space is defined over a sigma-algebra.
 | `kgd browse [HANDLE]` | 列出 base、某个 base 的 source 目录、某个 source 按 kind 分组的记录，或用 `--kind` 列出某类全部记录。 |
 | `kgd pack UID... [--budget BYTES] [--requires-depth N]` | 在字节预算内打包完整记录，附带共享的 relation 和未补上的 gap。 |
 | `kgd obsidian install [--base NAME]` | 在某个 base 的 vault 中安装或更新插件，并启用隐藏目录索引。 |
-| `kgd claude link\|doctor`、`kgd codex link\|doctor` | 为 Claude Code 或 Codex 安装或检查 Skills、agent preset 和 workflow 文件。 |
+| `kgd claude link\|doctor`、`kgd codex link\|doctor` | 为 Claude Code 或 Codex 安装或检查 Skills、agent presets 和 workflow 文件。 |
 | `kgd mcp` | 通过 stdio 为所有 base 提供只读工具。 |
 
 `search`、`resolve`、`neighbors`、`browse` 和 `pack` 支持筛选参数 `--base`、`--kind`、`--class {node,relation}`、`--source PREFIX` 和 `--understanding`，都可以重复使用。id 在所有 base 中唯一时可以直接写 id，不带 base 前缀。各命令细节看 `kgd <command> --help`，输出格式见 [docs/retrieval.md](docs/retrieval.md)。
@@ -288,8 +288,8 @@ harvest 一次性接受所有勾选的草稿，为它们建索引、算向量，
 
 | Skill | 作用 |
 |---|---|
-| `capture-kgdistiller` | 边读边保存或更新一条记录（node、relation 或例子），带上引文和 pending term。 |
-| `compile-knowledge-sheets` | 按 document type 从已注册 source 的一部分或全部抽取草稿，并写出 sheet。不会改动已接受的记录。 |
+| `capture-kgdistiller` | 边读边保存或更新一条记录（node、relation 或例子），带上引文和 pending term。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
+| `compile-knowledge-sheets` | 按 document type 从已注册 source 的一部分或全部抽取草稿，并写出 sheet。已记录的知识按 [docs/model.md](docs/model.md#conflicts-updates-and-relocation) 的冲突规则忽略、重新引用、覆盖、迁移或删除为 pending。 |
 | `harvest-kgdistiller` | 对你勾选的草稿运行 `kgd harvest`，它会建索引并算向量。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |
 | `deploy-kgdistiller` | 安装 kgdistiller，注册 base、source、document type 和模型，然后检查、建索引、安装插件、链接 runtime。 |
@@ -306,7 +306,7 @@ kgd codex link
 kgd codex doctor
 ```
 
-`link` 把 Skills、`kgdistiller-query-reviewer` preset 和 workflow manifest 装到 `~/.claude` 或 `~/.codex`（遵循 `CLAUDE_CONFIG_DIR` 和 `CODEX_HOME`），不会修改 `CLAUDE.md`、`settings.json`、`AGENTS.md` 或 `config.toml`。OpenCode 和 OMP 只装 Skills，在 checkout 里运行 `./scripts/link-skills.sh opencode` 或 `./scripts/link-skills.sh omp`（PowerShell 7：`./scripts/link-skills.ps1 -Runtime opencode`）。
+`link` 把 Skills、`kgdistiller-query-reviewer` 和 `kgdistiller-capture-writer` 两个 preset 以及 workflow manifest 装到 `~/.claude` 或 `~/.codex`（遵循 `CLAUDE_CONFIG_DIR` 和 `CODEX_HOME`），不会修改 `CLAUDE.md`、`settings.json`、`AGENTS.md` 或 `config.toml`。OpenCode 和 OMP 只装 Skills，在 checkout 里运行 `./scripts/link-skills.sh opencode` 或 `./scripts/link-skills.sh omp`（PowerShell 7：`./scripts/link-skills.ps1 -Runtime opencode`）。
 
 MCP server 提供 `kg_search`、`kg_resolve`、`kg_get`、`kg_neighbors`、`kg_browse`、`kg_pack` 和 `kg_drafts`，JSON 与 CLI 相同。它自己不加载模型：dense 检索交给共享的 embedding 进程，只有空闲 15 分钟后的第一次 dense 搜索需要等模型加载。注册命令是 `kgd mcp`：
 
@@ -337,7 +337,7 @@ kgd check
 kgd index
 ```
 
-数据库缺失或损坏时，`kgd index` 会从记录文件重建它，并重新 embed 所有记录。事先删除数据库（`rm -f ~/.knowledge/index.sqlite*`）不是必需的。embedding 进程在 Apple silicon 上用 `BAAI/bge-m3` 每秒约编码 14 条，所以 535 条记录的 base 大约要 40 秒。`kgd index --rebuild` 重新生成所有行，但不重新 embed。
+数据库缺失或损坏时，`kgd index` 会从记录文件重建它，并重新 embed 所有记录。事先删除数据库（`rm -f ~/.knowledge/index.sqlite*`）不是必需的。embedding 进程在 Apple silicon 上用 `BAAI/bge-m3` 每秒约编码 14 条。`kgd index --rebuild` 重新生成所有行，但不重新 embed。
 
 ## 开发
 
@@ -345,8 +345,8 @@ kgd index
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/1.0.0
-uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.0
+uv build --out-dir build/release/1.0.1
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.1
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```

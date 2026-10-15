@@ -1,9 +1,10 @@
 """kgdistiller: source-backed research knowledge records and role-bound relations in Obsidian vaults.
 
 Bases are registered in $KGDISTILLER_HOME (default ~/.knowledge). Records live
-in <root>/.knowledge/entries/, proposed records in drafts/, and every read goes
-through the derived index $KGDISTILLER_HOME/index.sqlite. Output is JSON. Exit
-codes: 0 ok, 1 findings or refusal, 2 usage.
+in <root>/.knowledge/entries/, proposed records in drafts/, and the retrieval
+commands (search, resolve, get, neighbors, browse, pack, mcp) read the derived
+index $KGDISTILLER_HOME/index.sqlite. Output is JSON. Exit codes: 0 ok, 1
+findings or refusal, 2 usage.
 """
 
 from __future__ import annotations
@@ -114,7 +115,8 @@ def parse_args() -> argparse.Namespace:
         help="show or change the home's embedding model",
         description="Show the embedding model in $KGDISTILLER_HOME/config.json and the stored vectors, or change it. "
         "The model runs on this computer; `set` downloads it into the Hugging Face cache and checks that kgdistiller "
-        "can run it. A change re-embeds nothing: the next plain `kgd index` embeds every record with the new model.",
+        "can run it. A change re-embeds nothing; the next `kgd index` run of any kind drops the old vectors, and a "
+        "plain `kgd index` embeds every record with the new model.",
     )
     embedding_commands = embedding.add_subparsers(dest="embedding_command")
     embedding_set = embedding_commands.add_parser(
@@ -145,11 +147,15 @@ def parse_args() -> argparse.Namespace:
         help="list only drafts whose label or an alias has this name (repeatable)",
     )
 
-    accept = commands.add_parser("accept", help="promote drafts to accepted records, all or nothing")
+    accept = commands.add_parser(
+        "accept", help="promote drafts to accepted records, all or nothing, then index and embed the created records"
+    )
     accept.add_argument("drafts", nargs="+", type=Path, metavar="DRAFT")
     accept.add_argument("--dry-run", action="store_true")
 
-    harvest = commands.add_parser("harvest", help="accept the ticked drafts of a sheet and regenerate it")
+    harvest = commands.add_parser(
+        "harvest", help="accept the ticked drafts of a sheet and regenerate it, then index and embed the created records"
+    )
     harvest.add_argument("sheet", type=Path)
     harvest.add_argument("--dry-run", action="store_true")
 
@@ -300,30 +306,28 @@ def _embedding(args: argparse.Namespace) -> int:
 
 
 def _runtime_product(args: argparse.Namespace) -> int:
+    from .codex_product import ProductError
+
     if args.command == "codex":
-        from .codex_product import CodexProductError, doctor_product, link_product
+        from .codex_product import doctor_product, link_product
 
         try:
             if args.codex_command == "link":
                 result = link_product(codex_home=args.codex_home, mode=args.mode)
             else:
                 result = doctor_product(codex_home=args.codex_home, source_only=args.source_only)
-        except (CodexProductError, OSError) as error:
+        except (ProductError, OSError) as error:
             _error("kgdistiller-codex-product-error", "codex-product-failed", str(error))
             return 1
     else:
-        from .claude_product import (
-            ClaudeProductError,
-            doctor_claude_product,
-            link_claude_product,
-        )
+        from .claude_product import doctor_claude_product, link_claude_product
 
         try:
             if args.claude_command == "link":
                 result = link_claude_product(claude_home=args.claude_home, mode=args.mode)
             else:
                 result = doctor_claude_product(claude_home=args.claude_home, source_only=args.source_only)
-        except (ClaudeProductError, OSError) as error:
+        except (ProductError, OSError) as error:
             _error("kgdistiller-claude-product-error", "claude-product-failed", str(error))
             return 1
     print(pretty_json(result), end="")

@@ -12,15 +12,15 @@ kgdistiller is a local, single-user engine. It validates bounded registered
 paths, rejects traversal, symlinked knowledge trees and unsafe source and
 record paths, and bounds MCP inputs and responses. Writers that change
 knowledge or the registry (`accept`, `harvest`, `check --fix-lines`,
-`base add|rm`) serialize on the dedicated `$KGDISTILLER_HOME/lock` file; no
+`base add|rm`, `embedding set|off`) serialize on the dedicated `$KGDISTILLER_HOME/lock` file; no
 data file is ever locked or truncated, and `accept` never overwrites a record.
 MCP is read-only. kgdistiller has no web server and no publishing surface, and
 it is not an authenticated multi-user service.
 
-kgdistiller has no remote model provider, credential, network service or
-machine-profile runtime. With the `retrieval` extra installed and `embedding`
-set, kgdistiller may download the model's weights, configuration and
-sentencepiece tokenizer from the Hugging Face Hub on first use: no token is
+The core (`kgd` and its MCP server) has no remote model provider, credential,
+network service or machine-profile runtime. With the `retrieval` extra
+installed, `kgd embedding set` downloads the model's weights, configuration and
+sentencepiece tokenizer from the Hugging Face Hub: no token is
 sent (`token=False`), no remote code runs (the network is transformers' own
 XLM-RoBERTa), and
 `HF_HUB_OFFLINE=1` forbids network access once the weights are in the local
@@ -33,10 +33,20 @@ and never parses, executes or converts them. Records under each base's
 `.knowledge/` are the only knowledge; consistency with sources is checked by
 comparing text, not by stored content hashes.
 
-The Obsidian plugin is desktop only. It reads record frontmatter from the
-vault's metadata cache and, for the details pane, the selected record's file
-through the vault API; it opens sources and sheets in Obsidian and writes no
-knowledge. Its hidden-folder indexing exposes `.knowledge/` to Obsidian search
+The Obsidian plugin is desktop only. It reads knowledge and drafts only
+through a resident `kgd mcp` and never parses records or opens the home or the
+database itself. It runs `kgd base list`, `kgd sheet SOURCE --json`,
+`kgd accept`, `kgd index`, `kgd index --no-embed` and `kgd embedding` with the
+configured executable, and writes and deletes draft files; a draft becomes
+knowledge only when the owner presses Accept. Every `kgd` run except
+`kgd embedding set` gets `HF_HUB_OFFLINE=1`. The plugin's optional agent is
+the only part that uses the network and credentials: it sends the selection,
+the paragraph around it, the records it reads and its questions to the model
+providers the owner configures, search queries to Exa's hosted MCP server, and
+terms to Wikipedia and arXiv for Find sources. It requires HTTPS except for
+loopback services, follows no redirects, and keeps API keys only in Obsidian
+SecretStorage; the plugin's `data.json` stores only secret identifiers, and
+keys are masked in displayed errors. Its hidden-folder indexing exposes `.knowledge/` to Obsidian search
 and to the vault's other plugins. `kgd obsidian install` writes only
 `<root>/.obsidian/plugins/kgdistiller/{main.js,manifest.json,styles.css,data.json}`
 and `<root>/.obsidian/community-plugins.json` of a registered base (creating

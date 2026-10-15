@@ -15,7 +15,8 @@ edit like any other note, and, once the path of the `kgd` CLI is set, it adds:
 
 The plugin never opens the kgdistiller home or its database: it reads
 knowledge through `kgd mcp` and changes it only through `kgd` commands
-(`kgd accept`, `kgd index`, `kgd embedding`) and the draft files a capture
+(`kgd accept`, `kgd index`, `kgd index --no-embed`, `kgd embedding`) and the
+draft files a capture
 writes or a discard deletes. Edit records with Obsidian's editor and
 Properties panel; the keyword index follows saved record files by itself.
 
@@ -24,8 +25,8 @@ Properties panel; the keyword index follows saved record files by itself.
 Requires Obsidian **1.13.7 or newer** on desktop. The manifest sets
 `isDesktopOnly`, so Obsidian does not load the plugin on a phone or tablet.
 
-This README describes plugin 1.0.0 or newer; releases up to 0.1.4 read an
-older export format and show none of these records. With the kgdistiller CLI,
+The lookup sidebar, the agent, the Capture view and the Embedding settings
+are on `main` and ship in the next plugin release. With the kgdistiller CLI,
 `kgd obsidian install` ([CLI installation](#cli-installation)) installs the
 bundled plugin and turns on hidden-folder indexing in one step.
 

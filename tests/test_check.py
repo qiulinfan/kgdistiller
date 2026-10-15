@@ -42,7 +42,7 @@ class CheckTestCase(unittest.TestCase):
         )
 
     def run_check(self, *bases: str) -> dict[str, Any]:
-        return check(None, list(bases) or None)
+        return check(list(bases) or None)
 
     def errors(self, *bases: str) -> list[tuple[str, str, str]]:
         return [(Path(item["path"]).name, item["rule"], item["message"]) for item in self.run_check(*bases)["errors"]]

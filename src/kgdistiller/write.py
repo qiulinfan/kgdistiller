@@ -1,4 +1,4 @@
-"""The knowledge write path: list and ``accept`` drafts, generate source ``sheet``s and ``harvest`` them.
+"""The knowledge write path: list and ``accept`` drafts, generate source ``sheet``s and ``harvest`` them, then index and embed the created records.
 
 Drafts are proposed new records in ``<root>/.knowledge/drafts/``. ``drafts``
 reads them from files with what ``accept`` would make of each, writing
@@ -358,7 +358,7 @@ def _records(base: Base, folder: str, relative: str) -> list[Record]:
 
 
 def _display(files: Files, record: Record, uid: str) -> str:
-    label = files.label(uid, drafts=True)
+    label = files.label(uid)
     if label is not None:
         return label
     base, identifier = uid.split(":", 1)
@@ -512,7 +512,7 @@ def sheet_json(source: Path | str) -> dict[str, Any]:
 
 
 def harvest(sheet: Path | str, dry_run: bool = False) -> dict[str, Any]:
-    """Accept the ticked drafts of a sheet in one call, then regenerate the sheet."""
+    """Accept the ticked drafts of a sheet in one call and regenerate the sheet, then index and embed the created records."""
     home = load_home(home_directory())
     real = _realpath(sheet)
     base = base_for_path(home.bases, real)

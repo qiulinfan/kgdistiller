@@ -9,7 +9,7 @@ from pathlib import Path
 
 from kgdistiller.claude_product import doctor_claude_product, link_claude_product
 from kgdistiller.codex_product import (
-    CodexProductError,
+    ProductError,
     _validate_workflows,
     doctor_product,
     link_product,
@@ -101,13 +101,13 @@ class ProductSkillTests(unittest.TestCase):
         for mode in ("transaction", "export", "", None):
             with self.subTest(mode=mode):
                 workflow[0]["steps"][0]["mode"] = mode
-                with self.assertRaisesRegex(CodexProductError, "invalid step mode"):
+                with self.assertRaisesRegex(ProductError, "invalid step mode"):
                     _validate_workflows(workflow, {"harvest-kgdistiller"}, set())
         workflow[0]["steps"][0]["mode"] = "write"
         for invalid in ("unknown", "", False, []):
             with self.subTest(agent=invalid):
                 workflow[0]["steps"][0]["agent"] = invalid
-                with self.assertRaises(CodexProductError):
+                with self.assertRaises(ProductError):
                     _validate_workflows(workflow, {"harvest-kgdistiller"}, set())
 
     def test_manifests_declare_the_shipped_workflows(self) -> None:

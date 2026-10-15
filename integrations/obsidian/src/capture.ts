@@ -365,7 +365,7 @@ class CaptureState {
 }
 
 export async function captureSelection(complete: Complete, kgd: CaptureKgd, files: CaptureFiles, input: CaptureInput):
-  Promise<CaptureResult & { turns: number }> {
+  Promise<CaptureResult> {
   const sheeted = await kgd.command(["sheet", input.path, "--json"]);
   if (sheeted.failed) throw new CaptureError(kgdMessage(sheeted.report) ?? "kgd sheet refused the source");
   const sheet = sheeted.report as unknown as Sheet;
@@ -386,7 +386,7 @@ export async function captureSelection(complete: Complete, kgd: CaptureKgd, file
     : [];
   const lookup: Tool<CaptureResult> = { spec: LOOKUP_TOOL, run: (args) => lookUp(kgd, state, args) };
   const submit: Tool<CaptureResult> = { spec: SUBMIT_TOOL, run: (args) => file(kgd, files, state, args) };
-  const result = await runJob(complete, {
+  return runJob(complete, {
     system: `${CAPTURE_SYSTEM}\n\n${typeText(sheet)}`,
     user: [
       captureUser(input, sheet, lines, searched.results.filter((hit) => !sheet.records.some((record) => record.uid === hit.uid)), named),
@@ -398,7 +398,6 @@ export async function captureSelection(complete: Complete, kgd: CaptureKgd, file
     // without it the median fell to 4 s, but a concept credited to earlier work was filed as new.
     effort: "low",
   });
-  return { ...result.value, turns: result.turns };
 }
 
 async function lookUp(kgd: CaptureKgd, state: CaptureState, args: Record<string, unknown>): Promise<string> {

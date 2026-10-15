@@ -28,7 +28,7 @@
   an MCP server.
 
 This repository holds the Obsidian plugin and the Python core, both at
-**1.0.0**, the first stable release. They are versioned and tagged separately: plugin tags are bare
+**1.0.1**. They are versioned and tagged separately: plugin tags are bare
 `x.y.z`, core tags are `core-x.y.z`.
 
 ## Why the knowledge graph comes first
@@ -60,16 +60,15 @@ download `main.js`, `manifest.json` and `styles.css` from the
 Obsidian **1.13.7 or newer** on desktop is required; the plugin does not load
 on mobile.
 
-This README describes plugin 1.0.0 or newer. Earlier releases read an older
-export format and show none of the records below.
+The lookup sidebar, the agent, the Capture view and the Embedding settings
+described below are on `main` and ship in the next plugin release.
 
 Records live in the vault's hidden `.knowledge/` folder, which Obsidian skips
 by default. Turn on **Settings → kgdistiller → Index hidden knowledge folder**
 so that `.knowledge/` appears in the file explorer, search, Properties and
 Backlinks like any other folder. With the CLI from [Install](#install),
-`kgd obsidian install` copies the bundled plugin 1.0.0 into the vault and turns
-this setting on in one step; use it if the community listing or the release
-page still offers an earlier version.
+`kgd obsidian install` copies the plugin bundled with the CLI into the vault
+and turns this setting on in one step.
 [docs/obsidian.md](docs/obsidian.md#installation) lists what it changes.
 
 With the path of `kgd` set in **Settings → kgdistiller → kgd executable**:
@@ -402,7 +401,7 @@ rules.
 | `kgd browse [HANDLE]` | List bases, a base's source directories, a source's records by kind, or every record of a `--kind`. |
 | `kgd pack UID... [--budget BYTES] [--requires-depth N]` | Pack whole records within a byte budget, with shared relations and the gaps left open. |
 | `kgd obsidian install [--base NAME]` | Install or update the plugin in a base's vault and enable it with hidden-folder indexing. |
-| `kgd claude link\|doctor`, `kgd codex link\|doctor` | Install or verify the Skills, agent preset and workflow files for Claude Code or Codex. |
+| `kgd claude link\|doctor`, `kgd codex link\|doctor` | Install or verify the Skills, agent presets and workflow files for Claude Code or Codex. |
 | `kgd mcp` | Serve the read tools over stdio for every base. |
 
 `search`, `resolve`, `neighbors`, `browse` and `pack` take the filters
@@ -441,8 +440,8 @@ Five Skills cover the write and read workflows:
 
 | Skill | What it does |
 |---|---|
-| `capture-kgdistiller` | Saves or updates one record while you read: a node, a relation or an example, with its quote and pending terms. |
-| `compile-knowledge-sheets` | Extracts drafts from part or all of a registered source, following its document type, and writes the sheet. It never changes accepted records. |
+| `capture-kgdistiller` | Saves or updates one record while you read: a node, a relation or an example, with its quote and pending terms. The `kgdistiller-capture-writer` agent preset runs it in the background. |
+| `compile-knowledge-sheets` | Extracts drafts from part or all of a registered source, following its document type, and writes the sheet. Knowledge already recorded is ignored, re-cited, overwritten, relocated or deleted to pending by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
 | `harvest-kgdistiller` | Runs `kgd harvest` on the drafts you ticked, which indexes and embeds them. |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |
 | `deploy-kgdistiller` | Installs, registers bases, sources, types and the model, then checks, indexes, installs the plugin and links the runtimes. |
@@ -462,7 +461,8 @@ kgd codex link
 kgd codex doctor
 ```
 
-`link` installs the Skills, the `kgdistiller-query-reviewer` preset and the
+`link` installs the Skills, the `kgdistiller-query-reviewer` and
+`kgdistiller-capture-writer` presets and the
 workflow manifest under `~/.claude` or `~/.codex` (honoring `CLAUDE_CONFIG_DIR`
 and `CODEX_HOME`) and never edits `CLAUDE.md`, `settings.json`, `AGENTS.md` or
 `config.toml`. OpenCode and OMP get the Skills only, from the checkout:
@@ -521,8 +521,7 @@ kgd index
 `kgd index` recreates a missing or damaged database from the record files and
 re-embeds every record. Deleting the database first
 (`rm -f ~/.knowledge/index.sqlite*`) is optional. The embedding process
-encodes about 14 records a second with `BAAI/bge-m3` on Apple silicon, so a
-535-record base takes about 40 s.
+encodes about 14 records a second with `BAAI/bge-m3` on Apple silicon.
 `kgd index --rebuild` re-derives every row without re-embedding.
 
 ## Development
@@ -531,8 +530,8 @@ encodes about 14 records a second with `BAAI/bge-m3` on Apple silicon, so a
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/1.0.0
-uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.0
+uv build --out-dir build/release/1.0.1
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.1
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```

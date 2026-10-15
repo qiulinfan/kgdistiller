@@ -112,12 +112,11 @@ export async function judgeSelection(complete: Complete, input: JudgeInput): Pro
       return typeof judged === "string" ? judged : { done: judged };
     },
   };
-  const result = await runJob(complete, {
+  return runJob(complete, {
     system: JUDGE_SYSTEM,
     user: judgeUser({ ...input, candidates }),
     tools: [tool],
     turns: 2,
     first: "judge",
   });
-  return result.value;
 }

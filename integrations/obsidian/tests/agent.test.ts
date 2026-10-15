@@ -8,7 +8,7 @@ function call(name: string, args: unknown, id = name): ToolCall {
 }
 
 function reply(calls: ToolCall[], content: string | null = null): ChatReply {
-  return { model: "m", message: { content, tool_calls: calls }, finish_reason: "tool_calls", usage: { prompt_tokens: 10, completion_tokens: 2 } };
+  return { message: { content, tool_calls: calls } };
 }
 
 /** A model that answers with the scripted replies in order and records each request. */
@@ -35,15 +35,14 @@ const submit: Tool<string> = {
 describe("the agent loop", () => {
   it("returns the final tool's value and the tool results the model saw", async () => {
     const { complete, requests } = scripted(reply([call("lookup", { name: "MAE" })]), reply([call("submit", { answer: "good" })]));
-    const result = await runJob(complete, { system: "S", user: "U", tools: [lookup, submit], turns: 3 });
-    expect(result).toMatchObject({ value: "filed", turns: 2, usage: { prompt_tokens: 20, completion_tokens: 4 } });
+    await expect(runJob(complete, { system: "S", user: "U", tools: [lookup, submit], turns: 3 })).resolves.toBe("filed");
+    expect(requests).toHaveLength(2);
     expect(requests[0]).toMatchObject({ tool_choice: "required", reasoning_effort: "none" });
     expect(requests[0]!.messages).toEqual([{ role: "system", content: "S" }, { role: "user", content: "U" }]);
     expect(requests[1]!.messages.slice(2)).toEqual([
       { role: "assistant", content: null, tool_calls: [call("lookup", { name: "MAE" })] },
       { role: "tool", tool_call_id: "lookup", content: "found MAE" },
     ]);
-    expect(result.steps.map((step) => step.result)).toEqual(["found MAE", "done"]);
   });
 
   it("forces the first tool and passes a reasoning effort", async () => {
@@ -57,7 +56,7 @@ describe("the agent loop", () => {
       reply([call("submit", { answer: "bad" }, "a"), call("missing", {}, "b"), call("submit", "{not json", "c")]),
       reply([call("submit", { answer: "good" })]),
     );
-    await expect(runJob(complete, { system: "S", user: "U", tools: [submit], turns: 2 })).resolves.toMatchObject({ value: "filed" });
+    await expect(runJob(complete, { system: "S", user: "U", tools: [submit], turns: 2 })).resolves.toBe("filed");
     expect(requests[1]!.messages.slice(3)).toEqual([
       { role: "tool", tool_call_id: "a", content: "error: answer must be good" },
       { role: "tool", tool_call_id: "b", content: "error: there is no tool named missing" },
@@ -81,7 +80,7 @@ describe("the agent loop", () => {
     ]);
   });
 
-  it("runs a turn's read-only calls together, reports each call, and the rest in order", async () => {
+  it("runs a turn's read-only calls together, and the rest in order", async () => {
     const order: string[] = [];
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -95,24 +94,19 @@ describe("the agent loop", () => {
       concurrent: true,
       run: async () => { order.push("fast"); release(); return "fast"; },
     };
-    const calls: string[] = [];
     const { complete, requests } = scripted(reply([call("slow", {}, "a"), call("fast", {}, "b")]), reply([call("submit", { answer: "good" })]));
-    await runJob(complete, { system: "S", user: "U", tools: [slow, fast, submit], turns: 2, onCall: (tool) => calls.push(tool) });
+    await runJob(complete, { system: "S", user: "U", tools: [slow, fast, submit], turns: 2 });
     expect(order).toEqual(["slow start", "fast", "slow end"]);
-    expect(calls).toEqual(["slow", "fast", "submit"]);
     expect(requests[1]!.messages.slice(3)).toEqual([
       { role: "tool", tool_call_id: "a", content: "slow" },
       { role: "tool", tool_call_id: "b", content: "fast" },
     ]);
   });
 
-  it("fails after its turn limit, keeping the steps it took", async () => {
+  it("fails after its turn limit", async () => {
     const { complete } = scripted(reply([call("submit", { answer: "bad" })]), reply([call("submit", { answer: "bad" })]));
     const job = runJob(complete, { system: "S", user: "U", tools: [submit], turns: 2 });
     await expect(job).rejects.toBeInstanceOf(AgentError);
-    await job.catch((error: AgentError) => {
-      expect(error.message).toBe("the agent did not finish within 2 model calls");
-      expect(error.steps).toHaveLength(2);
-    });
+    await expect(job).rejects.toThrow("the agent did not finish within 2 model calls");
   });
 });

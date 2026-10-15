@@ -212,7 +212,7 @@ export async function judgeOrigin(complete: Complete, fetch: Fetch, input: Origi
       return typeof judged === "string" ? judged : { done: judged };
     },
   };
-  const { value: judged } = await runJob(complete, {
+  const judged = await runJob(complete, {
     system: ORIGIN_SYSTEM,
     user: originUser(input),
     tools: [tool],

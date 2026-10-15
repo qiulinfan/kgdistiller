@@ -52,9 +52,9 @@ describe("citations", () => {
 
 describe("the search prompt", () => {
   it("gives the question, the first results and the looked-up names", () => {
-    const hit = { ...mae, understanding: "unknown", epistemic: null, ranks: {} };
+    const hit = { ...mae, epistemic: null, ranks: {} };
     expect(searchUser("What is BEiT?", { query: "", lanes: [], results: [hit], lag: {} as never },
-      { terms: [{ term: "BEiT", key: "beit", senses: [], mentions: [], pending: [] }], lag: {} as never })).toBe([
+      { terms: [{ term: "BEiT", senses: [], pending: [] }], lag: {} as never })).toBe([
       "Question: What is BEiT?",
       "Knowledge base search for the question:\n[papers:masked-autoencoder] Masked autoencoder · architecture node · papers — Masked autoencoder.",
       "Names in the question, looked up in every base:\n\"BEiT\":\n  - no record has this name",
@@ -98,7 +98,7 @@ describe("searching", () => {
   const kgd: SearchKgd = {
     async call<T>(tool: string, args: Record<string, unknown>): Promise<T> {
       if (tool === "kg_search") return { query: args.query, lanes: ["lexical"], results: [mae], lag: {} } as T;
-      if (tool === "kg_resolve") return { terms: (args.terms as string[]).map((term) => ({ term, key: term, senses: [], mentions: [], pending: [] })), lag: {} } as T;
+      if (tool === "kg_resolve") return { terms: (args.terms as string[]).map((term) => ({ term, senses: [], pending: [] })), lag: {} } as T;
       if (tool === "kg_get") return { records: [], missing: args.uids, lag: {} } as T;
       throw new Error(`unexpected ${tool}`);
     },
@@ -113,7 +113,7 @@ describe("searching", () => {
       if (next === undefined) throw new Error("no more replies");
       const calls = typeof next === "string" ? [] : next.map(([name, args], index) =>
         ({ id: `c${requests.length}-${index}`, type: "function" as const, function: { name, arguments: JSON.stringify(args) } }));
-      return { model: "m", finish_reason: "stop", usage: { prompt_tokens: 1, completion_tokens: 1 }, message: { content: typeof next === "string" ? next : null, tool_calls: calls } };
+      return { message: { content: typeof next === "string" ? next : null, tool_calls: calls } };
     };
     return { complete, requests };
   }
@@ -127,7 +127,8 @@ describe("searching", () => {
     );
     const answer = await searchKnowledge(complete, kgd, async (query) => { queries.push(query); return web; }, "What is BEiT?",
       { onStep: (step) => steps.push(step) });
-    expect(answer).toMatchObject({ turns: 2, records: [{ uid: mae.uid, label: mae.label }], web: [{ number: 1, url: web[0]!.url }] });
+    expect(requests).toHaveLength(2);
+    expect(answer).toMatchObject({ records: [{ uid: mae.uid, label: mae.label }], web: [{ number: 1, url: web[0]!.url }] });
     expect(queries).toEqual(["BEiT paper"]);
     expect(steps).toEqual([{ tool: "kg_search", query: "BEiT" }, { tool: "web_search", query: "BEiT paper" }, { tool: "answer" }]);
     expect(requests[1]!.messages.at(-1)!.content).toBe(`[W1] BEiT — arXiv:2106.08254 — ${web[0]!.url}\n    We introduce BEiT.`);
@@ -170,7 +171,8 @@ describe("searching", () => {
   it("takes a text reply as the answer and returns a refused one as a message", async () => {
     const { complete, requests } = model(`Wrong [[papers:invented]].`, `MAE is recorded [[${mae.uid}]].`);
     const answer = await searchKnowledge(complete, kgd, async () => [], "What is MAE?");
-    expect(answer).toMatchObject({ turns: 2, text: `MAE is recorded [[${mae.uid}]].` });
+    expect(requests).toHaveLength(2);
+    expect(answer).toMatchObject({ text: `MAE is recorded [[${mae.uid}]].` });
     expect(requests[1]!.messages.at(-1)).toEqual({
       role: "user", content: "error: [[papers:invented]] is not among the records and web sources the tools returned. Cite only those, or leave the claim out.",
     });
@@ -179,7 +181,8 @@ describe("searching", () => {
   it("forces the answer on its last turn", async () => {
     const lookups = Array.from({ length: 5 }, () => [["kg_get", { uids: [mae.uid] }]] as Array<[string, Record<string, unknown>]>);
     const { complete, requests } = model(...lookups, [["answer", { answer: "Nothing recorded answers this." }]]);
-    await expect(searchKnowledge(complete, kgd, async () => [], "Q?")).resolves.toMatchObject({ turns: 6, records: [], web: [] });
+    await expect(searchKnowledge(complete, kgd, async () => [], "Q?")).resolves.toMatchObject({ records: [], web: [] });
+    expect(requests).toHaveLength(6);
     expect(requests[0]!.tool_choice).toBe("required");
     expect(requests[5]!.tool_choice).toEqual({ type: "function", function: { name: "answer" } });
   });

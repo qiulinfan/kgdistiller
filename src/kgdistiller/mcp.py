@@ -90,7 +90,7 @@ TOOL_DEFINITIONS = [
     _tool(
         "kg_search", "Search Knowledge",
         "Rank records and relations across every base by fusing a lexical lane, a dense lane (when "
-        "meta.embedding is set: an embedding model built the index) and a name lane; no_dense skips the "
+        "meta.embedding is set: the index records the home's embedding model) and a name lane; no_dense skips the "
         "dense lane. Filters repeat: OR within one filter, AND across filters.",
         _object_schema({
             "query": {"type": "string", "minLength": 1, "maxLength": 4096},
