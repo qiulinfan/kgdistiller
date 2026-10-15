@@ -19,10 +19,15 @@ it is not an authenticated multi-user service.
 
 kgdistiller has no remote model provider, credential, network service or
 machine-profile runtime. With the `retrieval` extra installed and `embedding`
-set, sentence-transformers may download model weights from the Hugging Face Hub
-on first use: no token is sent (`token=False`), `trust_remote_code` is off, and
+set, kgdistiller may download the model's weights, configuration and
+sentencepiece tokenizer from the Hugging Face Hub on first use: no token is
+sent (`token=False`), no remote code runs (the network is transformers' own
+XLM-RoBERTa), and
 `HF_HUB_OFFLINE=1` forbids network access once the weights are in the local
-cache. Record text is encoded locally and never leaves the machine. Sources are
+cache. Record text is encoded locally and never leaves the machine: the one
+embedding process per user listens on a socket (a named pipe on Windows) in a
+directory only that user can open, and every connection proves a key stored
+there. Sources are
 registered UTF-8 text documents of any format; kgdistiller reads them as lines
 and never parses, executes or converts them. Records under each base's
 `.knowledge/` are the only knowledge; consistency with sources is checked by

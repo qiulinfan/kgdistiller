@@ -59,8 +59,8 @@ kgd base add BASE_ROOT --name research
 kgd base list
 ```
 
-The extra brings NumPy and sentence-transformers; without it, keep
-`embedding` `null`.
+The extra brings NumPy, PyTorch, transformers and sentencepiece; without it,
+keep `embedding` `null`.
 
 `kgd base add PATH [--name N]` creates the home on first use (`config.json` as
 `{"bases": {}, "embedding": null}`, an empty `types/` and the `.gitignore`),
@@ -109,9 +109,10 @@ search for a `.knowledge` directory.
 
 - The top level has exactly `bases` and `embedding`; each base has exactly
   `path` and `sources`.
-- `embedding` is a sentence-transformers model id or `null`. The recommended
+- `embedding` is a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, or `null`. The recommended
   value is `"BAAI/bge-m3"`: a model id only, with no revision pin, and the
-  device chosen automatically. `null` means search runs only the lexical and
+  device chosen automatically. It runs with int8 weights in about 1 GB
+  ([retrieval.md](retrieval.md#the-embedding-process)). `null` means search runs only the lexical and
   name lanes. Changing the id re-embeds every record on the next `kgd index`.
 - `path` is stored as `~/…` (forward slashes) when the root lies under the
   user's home, otherwise as an absolute path.
@@ -127,7 +128,7 @@ search for a `.knowledge` directory.
 
 ### Model cache
 
-sentence-transformers downloads the model weights into the Hugging Face cache
+The first load downloads the model's weights into the Hugging Face cache
 (`~/.cache/huggingface`, or `$HF_HOME`) on first use, several GB for
 `BAAI/bge-m3`. Later loads may still contact the Hugging Face Hub unless
 `HF_HUB_OFFLINE=1` is set; after the first download, set it in the environment
@@ -279,10 +280,10 @@ commit or remote synchronization happened.
 `kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`
 and `kg_drafts` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)). It takes no
 arguments, opens a fresh read-only connection for every retrieval call and
-reports lag like the CLI; `kg_drafts` reads the draft files. The embedding model loads lazily on the first dense search and
-stays resident until `meta.embedding` changes, so repeated searches avoid the
-cold load a CLI `kgd search` pays; `kg_search` takes `no_dense` to skip the
-dense lane, and the other tools load no model. Register it in an agent runtime as the command `kgd` with the argument `mcp`,
+reports lag like the CLI; `kg_drafts` reads the draft files. It loads no
+model: `kg_search`'s dense lane asks the user's one embedding process, which
+every `kgd` command shares; `kg_search` takes `no_dense` to skip the dense
+lane. Register it in an agent runtime as the command `kgd` with the argument `mcp`,
 with `HF_HUB_OFFLINE=1` in its environment once the model is cached.
 
 OMP loads MCP stdio servers natively; no separate OMP extension exists. It

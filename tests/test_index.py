@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 import sqlite3
-import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,12 @@ from kgdistiller.index import (
     open_read_only,
     tokens,
 )
-from tests.knowledge_fixture import FakeEncoder, fake_encoder, make_record_home
+from tests.knowledge_fixture import (
+    FakeEncoder,
+    fake_encoder,
+    make_record_home,
+    missing_retrieval_extra,
+)
 
 SOURCE = "notes/a.txt"
 LINES = [
@@ -229,7 +233,7 @@ class InvariantTest(IndexTestCase):
             third = dump()
         self.assertEqual(first, second)
         self.assertEqual(first, third)
-        self.assertEqual([("embedding", "fake/model")], first["meta"])
+        self.assertEqual([("embedding", "fake/model int8")], first["meta"])
         for row in first["record"]:
             self.assertEqual(FakeEncoder.vector(row[16]), row[17], row[0])
 
@@ -417,7 +421,7 @@ class LagTest(IndexTestCase):
         self.assertEqual(3, report["unembedded"])
         self.assertEqual({"changed_files": 0, "unavailable_bases": [], "unembedded": 3, "embedding_changed": False},
                          self.lag())
-        self.assertEqual([("embedding", "example/model")], dump()["meta"])
+        self.assertEqual([("embedding", "example/model int8")], dump()["meta"])
         shutil.move(self.kb.roots["notes"], self.kb.home.parent / "away")
         current = self.lag()
         self.assertEqual(["notes"], current["unavailable_bases"])
@@ -469,7 +473,7 @@ class EmbeddingTest(IndexTestCase):
             report = index()
             self.assertEqual((0, 3, 0, []), (report["reused"], report["embedded"], report["unembedded"], report["truncated"]))
             self.assert_all_encoded()
-            self.assertEqual([("embedding", self.MODEL)], dump()["meta"])
+            self.assertEqual([("embedding", f"{self.MODEL} int8")], dump()["meta"])
             self.assertEqual([self.MODEL], fake.loads)
             again = index()
             self.assertEqual([self.MODEL], fake.loads)
@@ -505,7 +509,7 @@ class EmbeddingTest(IndexTestCase):
             report = index()
             self.assertEqual((0, 3, 0), (report["reused"], report["embedded"], report["unembedded"]))
             self.assertEqual([self.MODEL, "other/model"], fake.loads)
-        self.assertEqual([("embedding", "other/model")], dump()["meta"])
+        self.assertEqual([("embedding", "other/model int8")], dump()["meta"])
         self.assert_all_encoded()
 
     def test_stale_write_is_a_no_op(self) -> None:
@@ -559,12 +563,9 @@ class EmbeddingTest(IndexTestCase):
         self.assert_all_encoded()
 
     def without_retrieval_extra(self) -> None:
-        resident = patch("kgdistiller.adapters.sentence_transformers._resident", None)
-        resident.start()
-        self.addCleanup(resident.stop)
-        modules = patch.dict(sys.modules, {"sentence_transformers": None})
-        modules.start()
-        self.addCleanup(modules.stop)
+        missing = missing_retrieval_extra()
+        missing.__enter__()
+        self.addCleanup(missing.__exit__, None, None, None)
 
     def test_missing_retrieval_extra_keeps_the_lexical_commit(self) -> None:
         self.without_retrieval_extra()

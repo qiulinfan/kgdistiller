@@ -117,7 +117,7 @@ The owner's rules for nodes, relations, examples and pending terms.
 ```
 
 - The top level holds exactly `bases` and `embedding`; each base holds exactly
-  `path` and `sources`. `embedding` is a sentence-transformers model id with no
+  `path` and `sources`. `embedding` is a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no
   revision pin (`BAAI/bge-m3` is the recommended one; the device is chosen
   automatically) or `null` for lexical and name search only. It needs the
   package installed with the `retrieval` extra. The first `kgd index` downloads

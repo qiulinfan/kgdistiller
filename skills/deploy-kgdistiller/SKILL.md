@@ -35,8 +35,8 @@ The package bundles the Obsidian plugin, whose built
 `integrations/obsidian/main.js` is not tracked in git, so building it needs
 Node 22 and npm, and `npm run build` must run before any `uv` command builds
 the package; a direct `git+https` install fails for that reason. The
-`retrieval` extra brings NumPy and sentence-transformers for the dense
-lane; without it `embedding` must stay `null`.
+`retrieval` extra brings NumPy, PyTorch, transformers and sentencepiece for
+the dense lane; without it `embedding` must stay `null`.
 
 ## 2. Register a base
 
@@ -57,8 +57,10 @@ Edit `$KGDISTILLER_HOME/config.json` by hand:
 
 - `bases.NAME.sources`: each key is a glob relative to the base root, each
   value a type name. Every matched file has exactly one type.
-- `embedding`: recommend `"BAAI/bge-m3"`, a sentence-transformers model id
-  only, with no revision pin. The first `kgd index` downloads the weights into
+- `embedding`: recommend `"BAAI/bge-m3"`, a model id only, with no revision
+  pin; it must be an XLM-RoBERTa sentence encoder that ships
+  `sentencepiece.bpe.model`. It runs with int8 weights in one shared process
+  of about 1 GB. The first `kgd index` downloads the weights into
   the Hugging Face cache (`~/.cache/huggingface`, several GB for this model)
   and embeds every record; afterwards set `HF_HUB_OFFLINE=1` so every load
   stays local. If an offline load reports that the files are not in the

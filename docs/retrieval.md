@@ -25,7 +25,8 @@ SQLite extension loading. Every open checks for FTS5 and fails with a clear
 message when the SQLite build lacks it. The trigram tokenizer and contentless
 FTS tables are not used.
 
-NumPy and sentence-transformers come only with the `retrieval` extra; without
+NumPy, PyTorch, transformers and sentencepiece come only with the
+`retrieval` extra; without
 it, `embedding` stays `null` and search runs only the lexical lane and the name
 lane. The exact scan is revisited when a home exceeds 50k records or a cold
 vector load takes more than 1 s; the next step would be a vector index over the
@@ -246,9 +247,46 @@ field the unified text leaves out such as `understanding` or `lines`, leaves
 the vector current; renaming a record that others require changes their text
 too, since it carries the required labels. The Obsidian plugin's Re-embed
 button is solid with that count while it is above 0 or the model changed, and
-grey otherwise. Measured on 2026-10-15 with `BAAI/bge-m3` on Apple silicon:
-`kgd accept` of one draft takes about 5 s more than before, nearly all of it
-loading the model, and encoding one record in a warm process takes 0.09 s.
+grey otherwise. See "The embedding process" for what an embedding costs.
+
+## The embedding process
+
+`embedding` names a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, and kgdistiller runs it its own
+way (`adapters/embedding.py`): transformers' XLM-RoBERTa network with every
+Linear and Embedding stored as int8 rows with one scale each, the vocabulary
+table kept in CPU memory, sentencepiece for tokens, and the model's own
+sentence-transformers pooling (CLS or mean) and prompts. The rest runs on CUDA
+or MPS in float16 when present, otherwise on the CPU in float32. Weights are
+read tensor by tensor from a memory map and quantized in row chunks. Texts are
+encoded one at a time and truncated to the model's limit.
+
+`meta.embedding` records the model with its precision, such as
+`BAAI/bge-m3 int8`, so vectors of another precision count as another model:
+the first `kgd index` after the switch re-embeds every record.
+
+Measured on 2026-10-15 with `BAAI/bge-m3` on Apple silicon, against its
+float32 vectors on a 2635-record base with 210 questions: int8 kept 96.8% of
+each question's dense top 10 and every float32 first hit within the top 10,
+and every document vector at cosine 0.998 or more. float16 kept 99.7% but
+needs twice the memory; fp8 (e4m3) kept 94.8% at int8's size; int4 kept
+75.6%. The process takes about 1 GB (float32 3.2 GB); 0.3 GB of that is
+Python, PyTorch and MPS. It encodes about 14 records a second; batching on
+MPS reached 35 a second but doubled the memory. sentencepiece tokenized 2844
+of 2845 texts exactly as the model's 0.33 GB fast tokenizer did, the other
+splitting `}}}` the other way.
+
+At most one model is in memory per user. `kgd index`, `kgd accept`,
+`kgd harvest`, `kgd search` and every `kgd mcp` send texts to one embedding
+process (`adapters/embed_service.py`) and get vectors back; it never opens the
+database, so `kgd index` stays its only writer. The first request starts it,
+it loads a model on that model's first request, answers one request (one batch
+of 64 texts or one query) at a time, and exits after 15 minutes without a
+request. A capture while reading therefore pays the load once per session: on
+2026-10-15 a warm `kgd accept` with its embedding took 0.15 s. Its socket (a
+named pipe on Windows), key, lock and log live in `kgdistiller-<uid>` under the
+user's temporary directory, private to the user. It holds the lock for its
+whole life, so a second process exits at once and a socket with no lock holder
+is left from one that died; a client that cannot connect starts it again.
 
 ## Reads and lag
 
@@ -304,9 +342,10 @@ or a model loads. Up to three lanes each produce a ranked uid list:
    kgdistiller[retrieval] or pass --no-dense (MCP: no_dense)`; a model that
    cannot be loaded fails with the same `--no-dense` hint. When no stored
    vector matches, the dense lane is empty and needs neither NumPy nor the
-   model. Every CLI process loads the model again: a cold `kgd search` on the
-   535-record base took 5.5–6.4 s with `BAAI/bge-m3`, against 0.06 s with
-   `--no-dense`; the MCP server keeps the model resident.
+   model. The query is encoded by the user's one embedding process, so only
+   the first dense search after 15 idle minutes waits for the model (about
+   2 s for `BAAI/bge-m3` on Apple silicon); a warm `kgd search` took 0.2 s on
+   2026-10-15.
 3. **Name.** Candidate keys are every contiguous run of 1–12 words of
    `name_key(QUERY)`, plus every substring of length 1–12 of each CJK run. They
    are looked up in `name`; the ranking is: key equal to `name_key(QUERY)`
@@ -552,15 +591,13 @@ or Windows code page. A `query` that is empty after trimming is refused, as in
 Inputs are bounded and unknown arguments are rejected. Each retrieval call
 opens a fresh read-only connection, so it sees every `kgd index` that
 committed since the previous call; `kg_drafts` reads the draft files instead,
-which the database never holds, and takes no lock. The embedding model loads lazily on the first dense search and
-stays resident; it is reloaded only when `meta.embedding` changes. On the
-535-record base the first `kg_search` took 6.2 s and the next one 0.03 s.
+which the database never holds, and takes no lock. The server loads no
+model: `kg_search`'s dense lane asks the user's one embedding process.
 `no_dense` skips the dense lane, as `--no-dense` does. A missing database is a
 tool error that says to run `kgd index`. Responses are capped at 8 MiB; the
 `budget` maximum of 4 MiB keeps a packet and its gaps under that cap. Only
-`kg_search`'s dense lane loads the model; `kg_resolve`, `kg_get`,
-`kg_neighbors`, `kg_browse`, `kg_pack` and `kg_drafts` load none and leave a
-resident model in place. There are no write tools; Skills write through the CLI.
+`kg_search`'s dense lane needs the model. There are no write tools; Skills
+write through the CLI.
 
 ## Evaluation
 

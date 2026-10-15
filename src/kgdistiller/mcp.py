@@ -5,10 +5,9 @@ The tools are ``kg_search``, ``kg_resolve``, ``kg_get``, ``kg_neighbors``,
 serves the whole home. Every retrieval call goes through ``retrieve``, which
 opens a fresh read-only connection to the derived database, so a call sees the
 latest ``kgd index`` and never writes anything; ``kg_drafts`` reads the draft
-files instead, as ``kgd accept`` would validate them, and takes no lock. Only
-``kg_search``'s dense lane loads the embedding model: it loads lazily on the
-first dense search and stays resident until ``meta.embedding`` changes. The
-other tools load no model.
+files instead, as ``kgd accept`` would validate them, and takes no lock. The
+server loads no model: ``kg_search``'s dense lane asks the user's one
+embedding process (``adapters/embed_service.py``).
 """
 
 from __future__ import annotations

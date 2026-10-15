@@ -1,4 +1,4 @@
-"""Opt-in smoke test of the dense lane with a real sentence-transformers model.
+"""Opt-in smoke test of the dense lane with a real embedding model, through the user's embedding process.
 
 Skipped unless KGD_TEST_EMBEDDING_MODEL names a model that is already in the
 Hugging Face cache. Run it with an interpreter that has the retrieval extra

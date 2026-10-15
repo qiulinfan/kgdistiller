@@ -126,9 +126,10 @@ Settings, under **Lookup**:
   kgd's default `~/.knowledge`. Plugin settings belong to the vault, so a test
   vault can point at a scratch home.
 
-The plugin starts `kgd mcp` on the first lookup and keeps it running, so the
-embedding model loads once (about 4 s for `BAAI/bge-m3` on Apple silicon) and
-later searches take tens of milliseconds. It stops the server after 15 minutes
+The plugin starts `kgd mcp` on the first lookup and keeps it running. The
+embedding model lives in the user's one embedding process, shared with every
+other window and agent: it loads once (about 2 s for `BAAI/bge-m3` on Apple
+silicon) and later searches take tens of milliseconds. It stops the server after 15 minutes
 without a lookup, when either setting changes and when the plugin unloads. It
 also runs `kgd base list` once per server to locate the bases, and `kgd index`
 only from the button. Every run gets `HF_HUB_OFFLINE=1`: vectors exist only
@@ -473,7 +474,8 @@ Accept.
 - **Accept** runs `kgd accept` on the draft and the drafts it links, which
   indexes them and embeds them; the card reads "Accepting and embedding…"
   until it returns. On 2026-10-15 checking, accepting and indexing took about
-  0.1 s and loading the embedding model about 5 s more.
+  0.1 s, and embedding 0.05 s more while the shared embedding process is warm
+  or about 2 s when it must load the model.
   **Open draft** opens the draft file in a split beside the source for any
   edit. **Discard** asks first, then deletes the draft; nothing remembers it,
   and a draft that linked it cannot be accepted until that link is edited.

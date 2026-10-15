@@ -17,7 +17,7 @@ export interface KgdSettings {
 
 export class KgdError extends Error {}
 
-/** A stopped server is restarted by the next call; an idle one stops itself to release the model. */
+/** A stopped server is restarted by the next call; an idle one stops itself. */
 export const IDLE_MS = 15 * 60 * 1000;
 export const REQUEST_TIMEOUT_MS = 120 * 1000;
 export const INDEX_TIMEOUT_MS = 30 * 60 * 1000;

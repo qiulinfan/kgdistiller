@@ -38,8 +38,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-from .adapters import sentence_transformers as embedding_adapter
-from .adapters.sentence_transformers import EmbeddingError, RetrievalExtraMissing
+from .adapters import embedding as embedding_adapter
+from .adapters.embedding import EmbeddingError, RetrievalExtraMissing
 from .home import KNOWLEDGE_DIRECTORY, Home, KnowledgeError, home_directory, load_home
 from .records import (
     ENTRIES,
@@ -405,7 +405,7 @@ def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None 
     }
     try:
         connection.execute("BEGIN IMMEDIATE")
-        model = home.embedding or ""
+        model = wanted_embedding(home)
         if model != meta_embedding(connection):
             connection.execute("UPDATE record SET vec = NULL")
             connection.execute("UPDATE meta SET value = ? WHERE key = 'embedding'", (model,))
@@ -481,21 +481,19 @@ def _embed(connection: sqlite3.Connection, model: str, report: dict[str, Any], o
     ]
     if not rows:
         return
-    try:
-        encoder = embedding_adapter.encoder(model)
-    except RetrievalExtraMissing as error:
-        raise KnowledgeError(
-            f"embedding is set to {model} but the retrieval extra is missing: "
-            "install kgdistiller[retrieval] or set embedding to null"
-        ) from error
-    except EmbeddingError as error:
-        raise KnowledgeError(f"{error}; rerun `kgd index`") from error
+    name = embedding_adapter.model_of(model)
+    encoder = embedding_adapter.encoder(name)
     for start in range(0, len(rows), EMBED_BATCH):
         batch = rows[start:start + EMBED_BATCH]
         texts = [row["text"] for row in batch]
         try:
             report["truncated"].extend(batch[position]["uid"] for position in encoder.over_limit(texts))
             vectors = encoder.encode_documents(texts)
+        except RetrievalExtraMissing as error:
+            raise KnowledgeError(
+                f"embedding is set to {name} but the retrieval extra is missing: "
+                "install kgdistiller[retrieval] or set embedding to null"
+            ) from error
         except EmbeddingError as error:
             raise KnowledgeError(f"{error}; rerun `kgd index`") from error
         connection.execute("BEGIN IMMEDIATE")
@@ -535,6 +533,11 @@ def _changed(files: dict[str, os.stat_result], rows: dict[str, tuple[int, int]])
     return changed
 
 
+def wanted_embedding(home: Home) -> str:
+    """The ``meta.embedding`` that ``config.embedding`` asks for: the model and its precision, or ``''``."""
+    return embedding_adapter.identity(home.embedding) if home.embedding else ""
+
+
 def meta_embedding(connection: sqlite3.Connection | None) -> str:
     if connection is None:
         return ""
@@ -564,7 +567,7 @@ def lag(connection: sqlite3.Connection, home: Home) -> dict[str, Any]:
         "changed_files": changed,
         "unavailable_bases": unavailable,
         "unembedded": _unembedded(connection),
-        "embedding_changed": (home.embedding or "") != meta_embedding(connection),
+        "embedding_changed": wanted_embedding(home) != meta_embedding(connection),
     }
 
 
@@ -585,7 +588,7 @@ def base_status(home: Home) -> dict[str, dict[str, Any]]:
                     "changed_files": _changed(_scan(root), rows) if available else 0,
                     "unavailable_bases": [] if available else [name],
                     "unembedded": _unembedded(connection, name),
-                    "embedding_changed": (home.embedding or "") != meta,
+                    "embedding_changed": wanted_embedding(home) != meta,
                 },
             }
         return status

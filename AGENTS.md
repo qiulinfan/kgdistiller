@@ -63,7 +63,8 @@
   write turn, then one command that accepts or checks and indexes; nothing
   runs after admission except linking the pending uses the lookup found. A
   capture's lookup loads no embedding model (`search --no-dense`); its
-  `kgd accept` loads it once to embed the new record, about 5 s. The
+  `kgd accept` embeds the new record through the shared embedding process,
+  0.15 s when it is warm and about 2 s more when it must load. The
   `capture-writer` presets run it in the background on a small model
   at low reasoning effort, since model reasoning, not `kgd`, dominates capture
   time.
@@ -150,10 +151,17 @@
   `HF_HUB_OFFLINE=1 KGD_TEST_EMBEDDING_MODEL=<model id> <python with the retrieval extra> -m unittest discover -s tests -p test_real_model.py`.
   Its switch is test-only; `KGDISTILLER_HOME` stays the only product
   environment variable.
-- PyYAML>=6 is the single runtime dependency. NumPy and sentence-transformers
-  come only with the `retrieval` extra (the dense lane); NumPy is also in the
-  `dev` group so the fake-encoder tests run in CI. The product ships no default
-  embedding model and no revision pin.
+- PyYAML>=6 is the single runtime dependency. NumPy, PyTorch, transformers
+  and sentencepiece come only with the `retrieval` extra (the dense lane);
+  NumPy is also in the `dev` group so the fake-encoder tests run in CI. The
+  product ships no default embedding model and no revision pin.
+- Embedding (owner, 2026-10-15): a model is an XLM-RoBERTa sentence encoder
+  with its sentencepiece tokenizer, loaded with int8 weights (the vocabulary
+  table included) and run one text at a time, about 1 GB for `BAAI/bge-m3`;
+  `meta.embedding` records the model with its precision (`BAAI/bge-m3 int8`).
+  At most one model is in memory per user: every process asks the one
+  embedding process (`adapters/embed_service.py`), which holds a lifetime lock,
+  only encodes, never opens the database, and exits after 15 idle minutes.
 - Do not add user knowledge data, credentials, derived databases
   (`index.sqlite`), or model keys to this repository. Retrieval stays generic:
   never hardcode papers, benchmark questions or answers.

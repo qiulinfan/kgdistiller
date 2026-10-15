@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kgdistiller import retrieve
-from kgdistiller.adapters import sentence_transformers as adapter
+from kgdistiller.adapters import embedding as adapter
 from kgdistiller.home import KnowledgeError
 from kgdistiller.index import index
 from kgdistiller.retrieve import (
@@ -30,9 +30,8 @@ from tests.knowledge_fixture import (
     FakeEncoder,
     fake_encoder,
     make_record_home,
+    missing_retrieval_extra,
 )
-
-REAL_ENCODER = adapter.encoder
 
 LINES = [
     "Title line",
@@ -292,11 +291,7 @@ class DenseLaneTest(RetrieveTestCase):
         self.assertEqual([], self.encoders.loads)
 
     def test_missing_retrieval_extra(self) -> None:
-        for name, value in (("encoder", REAL_ENCODER), ("_resident", None)):
-            patcher = patch.object(adapter, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        with patch.dict(sys.modules, {"sentence_transformers": None}):
+        with missing_retrieval_extra():
             with self.assertRaises(KnowledgeError) as caught:
                 search("measure space")
             self.assertEqual(["lexical", "name"], search("measure space", dense=False)["lanes"])

@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import records
-from .adapters import sentence_transformers as embedding_adapter
+from .adapters import embedding as embedding_adapter
 from .home import Home, KnowledgeError, home_directory, load_home
 from .index import is_cjk, lag, meta_embedding, name_key, open_read_only, tokens
 from .records import UNDERSTANDING, fold, gloss
@@ -207,7 +207,7 @@ def _dense(connection: sqlite3.Connection, query: str, filters: Filters, model: 
     except ImportError:
         raise missing from None
     try:
-        query_vector = embedding_adapter.encoder(model).encode_query(query)
+        query_vector = embedding_adapter.encoder(embedding_adapter.model_of(model)).encode_query(query)
     except embedding_adapter.RetrievalExtraMissing:
         raise missing from None
     except embedding_adapter.EmbeddingError as error:

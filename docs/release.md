@@ -93,8 +93,8 @@ Then verify that:
   UTF-8 length of the compact JSON of its records; `resolve` separates
   homonyms within and across bases from mentions; and the MCP server exposes
   exactly the six read-only tools;
-- the sentence-transformers adapter takes a model id only and has no reranker,
-  default model or revision pin;
+- the embedding adapter takes a model id only and has no reranker, default
+  model or revision pin; at most one embedding process runs per user;
 - the home lock serializes `accept`, `harvest`, `check --fix-lines` and
   `base add|rm`: a held lock makes each fail without writing, `accept` never
   overwrites a record and refuses without writing anything, and

@@ -221,7 +221,7 @@ relative to the base root, expanded with Python's
 `glob.glob(pattern, root_dir=root, recursive=True)`: `*` stays in one path
 segment, `**` spans directories, and hidden files and directories never match.
 A file matched by globs naming two different types is an error. `embedding` is
-`null` or a sentence-transformers model id, with no revision pin; with `null`
+`null` or a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no revision pin; with `null`
 the index is lexical and name only. Changing it re-embeds every record on the
 next `kgd index`.
 

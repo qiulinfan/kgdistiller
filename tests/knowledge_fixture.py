@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from kgdistiller.adapters.embedding import RetrievalExtraMissing
 from kgdistiller.home import HOME_GITIGNORE
 
 BASE_NAME = "kb"
@@ -233,5 +234,24 @@ def fake_encoder(on_encode: Callable[[list[str]], None] | None = None,
                  max_chars: int | None = None) -> Iterator[FakeEncoders]:
     """Patch the adapter's ``encoder`` seam with fake encoders; ``on_encode`` runs before each document batch."""
     factory = FakeEncoders(on_encode, max_chars)
-    with patch("kgdistiller.adapters.sentence_transformers.encoder", factory):
+    with patch("kgdistiller.adapters.embedding.encoder", factory):
         yield factory
+
+
+class _Missing:
+    """An encoder whose embedding process reports the retrieval extra missing."""
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        def missing(*args: Any) -> Any:
+            raise RetrievalExtraMissing("install kgdistiller[retrieval]")
+        return missing
+
+
+@contextmanager
+def missing_retrieval_extra() -> Iterator[None]:
+    """Patch the ``encoder`` seam with encoders whose every call reports the retrieval extra missing."""
+    with patch("kgdistiller.adapters.embedding.encoder", _Missing):
+        yield

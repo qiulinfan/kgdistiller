@@ -4,10 +4,26 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- At most one embedding model is in memory per user, at about a third of its
+  former size. Every `kgd` process, every `kgd mcp` of every Obsidian window
+  and agent included, now sends texts to one shared embedding process instead
+  of loading the model itself; it starts on the first request, answers one at
+  a time and exits after 15 idle minutes, so a capture pays the model's load
+  once while the owner keeps editing (a warm `kgd accept` with its embedding
+  took 0.15 s). The model runs with int8 weights, the vocabulary table
+  included, and the sentencepiece tokenizer, one text at a time: `BAAI/bge-m3`
+  takes about 1 GB instead of 3.2 GB. Against its float32 vectors on a
+  2635-record base, int8 kept 96.8% of each question's dense top 10 and every
+  first hit in the top 10; fp8 kept 94.8% at the same size and int4 75.6%.
+  `meta.embedding` now records the precision (`BAAI/bge-m3 int8`), so the next
+  `kgd index` re-embeds every record once. The `retrieval` extra is now
+  PyTorch, transformers and sentencepiece in place of sentence-transformers,
+  and `embedding` must name an XLM-RoBERTa sentence encoder that ships
+  `sentencepiece.bpe.model`, such as `BAAI/bge-m3`.
 - A new record is embedded when it is admitted, and an edited one only when
   the owner asks. `kgd accept` and `kgd harvest` now end with an index run
   whose embedding phase covers only the records they created, and report it
-  under `index`; a capture's accept takes about 5 s more, loading the model.
+  under `index`.
   Skills refresh the keyword index after an edit with `kgd index --no-embed`,
   and never re-embed. The Obsidian plugin indexes a record file of its vault
   for keyword search as soon as it is created, saved, renamed or deleted, and

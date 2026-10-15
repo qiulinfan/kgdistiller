@@ -43,10 +43,9 @@ budgeted evidence with its gaps.
 Use the MCP tools of `kgd mcp` when they are available: `kg_search`,
 `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and `kg_pack`. The server
 is read-only, serves the whole home and opens a fresh connection per call.
-Prefer it for repeated queries: it keeps the embedding model resident after
-the first search, while every cold CLI `kgd search` loads the model again
-(several seconds with `BAAI/bge-m3` on Apple silicon). Otherwise use the CLI;
-both print the same JSON.
+Otherwise use the CLI; both print the same JSON and share the user's one
+embedding process, so only the first dense search after 15 idle minutes waits
+for the model.
 
 ```sh
 kgd search "QUESTION OR TERMS" [--limit 40] [--no-dense] [filters]
