@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const controls = vi.hoisted(() => ({
   headings: [] as string[], stored: null as Record<string, unknown> | null,
   configure: vi.fn(), rescan: vi.fn(), dispose: vi.fn(), saveData: vi.fn(), registerView: vi.fn(), notice: vi.fn(),
-  lookup: vi.fn(), capture: vi.fn(), ribbons: [] as Array<{ icon: string; title: string }>,
+  lookup: vi.fn(), capture: vi.fn(), showModels: vi.fn(), listModels: vi.fn(), ribbons: [] as Array<{ icon: string; title: string }>,
   domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
   secrets: new Map<string, string>(),
   commands: [] as Array<{ id: string; callback: () => void }>,
@@ -11,9 +11,11 @@ const controls = vi.hoisted(() => ({
     name: string; description?: string;
     toggleChange?: (value: boolean) => void | Promise<void>;
     textChange?: (value: string) => void | Promise<void>;
+    textValue?: string;
     secretChange?: (value: string) => unknown;
     dropdownChange?: (value: string) => unknown;
     buttonClick?: () => void | Promise<void>;
+    buttons?: Array<{ text: string; click?: () => void | Promise<void> }>;
   }>,
 }));
 vi.mock("obsidian", () => {
@@ -53,17 +55,19 @@ vi.mock("obsidian", () => {
     addText(callback: (text: unknown) => void): this {
       const control = {
         setPlaceholder: () => control,
-        setValue: () => control,
+        setValue: (value: string) => { this.record.textValue = value; return control; },
         onChange: (fn: (value: string) => void | Promise<void>) => { this.record.textChange = fn; return control; },
       };
       callback(control); return this;
     }
     addButton(callback: (button: unknown) => void): this {
+      const button: { text: string; click?: () => void | Promise<void> } = { text: "" };
       const control = {
-        setButtonText: () => control,
-        onClick: (fn: () => void | Promise<void>) => { this.record.buttonClick = fn; return control; },
+        setButtonText: (text: string) => { button.text = text; return control; },
+        setWarning: () => control, setCta: () => control, setDisabled: () => control,
+        onClick: (fn: () => void | Promise<void>) => { button.click = fn; this.record.buttonClick ??= fn; return control; },
       };
-      callback(control); return this;
+      callback(control); (this.record.buttons ??= []).push(button); return this;
     }
   }
   class SecretComponent {
@@ -72,11 +76,18 @@ vi.mock("obsidian", () => {
     onChange(callback: (value: string) => unknown): this { this.record.secretChange = callback; return this; }
   }
   class ItemView { constructor(public leaf: unknown) {} }
+  class Modal {
+    contentEl = { empty: () => undefined };
+    constructor(public app: unknown) {}
+    setTitle(): this { return this; }
+    open(): void { (this as unknown as { onOpen(): void }).onOpen(); }
+    close(): void { (this as unknown as { onClose(): void }).onClose(); }
+  }
   class TFile { path = ""; }
   const debounce = (callback: () => void) => Object.assign(() => callback(), { cancel: () => undefined, run: () => undefined });
   class FileSystemAdapter {}
   class MarkdownView {}
-  return { Plugin, PluginSettingTab, Setting, SecretComponent, ItemView, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
+  return { Plugin, PluginSettingTab, Setting, SecretComponent, ItemView, Modal, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
     Platform: { isMacOS: true }, requestUrl: vi.fn(),
     Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path };
 });
@@ -85,8 +96,12 @@ vi.mock("../src/hidden-knowledge", () => ({ HiddenKnowledgeIndexer: class {
   rescan(): unknown { return controls.rescan(); }
   dispose(): void { controls.dispose(); }
 } }));
+vi.mock("../src/providers", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/providers")>(), listModels: controls.listModels,
+}));
 vi.mock("../src/lookup-view", () => ({ VIEW_TYPE_KGDISTILLER_LOOKUP: "kgdistiller-lookup", LOOKUP_ICON: "scan-search",
   KgdistillerLookupView: class {
+    showModels(): Promise<void> { controls.showModels(); return Promise.resolve(); }
     lookup(selection: { text: string }, options?: { capture?: boolean }): Promise<void> {
       if (options?.capture) controls.capture(selection.text);
       else controls.lookup(selection.text);
@@ -142,6 +157,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   controls.configure.mockImplementation(async (enabled: boolean) => ({ state: enabled ? "enabled" : "disabled" }));
   controls.rescan.mockResolvedValue({ state: "enabled" });
+  controls.listModels.mockReset();
+  controls.listModels.mockResolvedValue([]);
 });
 
 describe("community lifecycle conventions", () => {
@@ -152,7 +169,7 @@ describe("community lifecycle conventions", () => {
   });
   it("settings use Obsidian headings without writing HTML headings", () => {
     showSettings(pluginFixture());
-    expect(controls.headings).toEqual(["Hidden knowledge folder", "Lookup", "Agent", "Web search"]);
+    expect(controls.headings).toEqual(["Hidden knowledge folder", "Lookup", "Model providers", "Web search"]);
   });
   it("registers one sidebar, opened from the ribbon, and no graph view or its commands", async () => {
     const plugin = pluginFixture(); await plugin.onload();
@@ -252,16 +269,17 @@ describe("hidden knowledge lifecycle", () => {
 describe("stored settings", () => {
   it("defaults to hidden indexing off until kgd obsidian install turns it on, and lookups and the agent off", () => {
     expect(DEFAULT_SETTINGS).toEqual({
-      hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", exaKey: "",
+      hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", providers: [], provider: "", model: "", exaKey: "",
     });
   });
   it("replaces wrongly typed stored values with defaults and reports only those", async () => {
-    controls.stored = { hiddenKnowledgeEnabled: true, kgdCommand: 7, modelEndpoint: false, unknown: true };
+    const provider = { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "deepseek-key" };
+    controls.stored = { hiddenKnowledgeEnabled: true, kgdCommand: 7, model: false, providers: [provider, { ...provider, format: "x" }], unknown: true };
     const plugin = pluginFixture(); await plugin.onload();
     expect(plugin.settings).toEqual({
-      hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", exaKey: "",
+      hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", providers: [provider], provider: "", model: "", exaKey: "",
     });
-    expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: kgdCommand, modelEndpoint."));
+    expect(controls.notice).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("used defaults: kgdCommand, model, providers."));
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(() => showSettings(plugin)).not.toThrow();
   });
@@ -275,7 +293,7 @@ describe("hidden knowledge settings", () => {
     expect(plugin.settings).not.toHaveProperty("hiddenKnowledgeFolder");
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
-      "Lookup", "kgd executable", "Knowledge home", "Agent", "Model API endpoint", "Model", "Model API format", "Model API key", "Web search", "Exa API key",
+      "Lookup", "kgd executable", "Knowledge home", "Model providers", "Provider", "Web search", "Exa API key",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
@@ -284,7 +302,7 @@ describe("hidden knowledge settings", () => {
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
     await controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.toggleChange?.(true);
     expect(controls.saveData).toHaveBeenCalledWith({
-      hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", modelEndpoint: "", agentModel: "", modelProtocol: "chat-completions", modelKey: "", exaKey: "",
+      hiddenKnowledgeEnabled: true, kgdCommand: "", knowledgeHome: "", providers: [], provider: "", model: "", exaKey: "",
     });
     expect(controls.configure).toHaveBeenLastCalledWith(true);
     await controls.settings.find((setting) => setting.name === "Indexing status")?.buttonClick?.();
@@ -349,26 +367,138 @@ describe("selection lookup", () => {
 });
 
 describe("the agent", () => {
-  it("configures direct API calls and stores secret references rather than keys", async () => {
+  const last = (name: string) => controls.settings.filter((setting) => setting.name === name).at(-1)!;
+  const names = () => controls.settings.map((setting) => setting.name);
+  const buttonOf = (setting: (typeof controls.settings)[number], text: string) => setting.buttons!.find((item) => item.text === text)!.click!;
+  const button = (setting: (typeof controls.settings)[number], text: string) => buttonOf(setting, text)();
+  /** Run an action that redraws the settings, keeping only the redrawn ones. */
+  const redraw = async (action: () => unknown): Promise<void> => { controls.settings.length = 0; await action(); };
+
+  it("adds a provider of a known service without a base URL, detects its models and stores secret references only", async () => {
+    controls.listModels.mockResolvedValue(["deepseek-flash", "deepseek-v4-pro"]);
     const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
-    await controls.settings.find((setting) => setting.name === "Model API endpoint")!.textChange!(" https://example.org/v1/chat/completions ");
-    await controls.settings.find((setting) => setting.name === "Model")!.textChange!(" test-model ");
-    controls.secrets.set("model-key", "synthetic-secret-value");
-    await controls.settings.find((setting) => setting.name === "Model API key")!.secretChange!("model-key");
-    expect(plugin.settings).toMatchObject({ modelEndpoint: "https://example.org/v1/chat/completions", agentModel: "test-model", modelKey: "model-key" });
+    await redraw(buttonOf(last("Provider"), "Add"));
+    // The dialog asks for the service and the name; nothing is added before Add.
+    expect(names()).toEqual(["Service", "Name", ""]);
+    expect(plugin.settings.providers).toEqual([]);
+    await last("Service").dropdownChange!("openai");
+    expect(last("Name").textValue).toBe("openai");
+    await last("Service").dropdownChange!("deepseek");
+    expect(last("Name").textValue).toBe("deepseek");
+    await last("Name").textChange!(" work ");
+    await last("Service").dropdownChange!("deepseek");
+    expect(last("Name").textValue).toBe("deepseek");
+    await redraw(buttonOf(last(""), "Add"));
+    expect(plugin.settings.providers).toEqual([{ name: "work", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }]);
+    expect(names()).toEqual(expect.arrayContaining(["Provider", "Service", "Name", "API key", "Models"]));
+    expect(names()).not.toContain("Base URL");
+    expect(last("Service").description).toBe("https://api.deepseek.com, in DeepSeek's format.");
+    controls.secrets.set("deepseek-key", "synthetic-secret-value");
+    await last("API key").secretChange!("deepseek-key");
+    await button(last("Models"), "Detect");
+    expect(controls.listModels).toHaveBeenLastCalledWith(plugin.settings.providers[0], "synthetic-secret-value", expect.any(Function));
+    expect(last("Models").description).toBe("deepseek-flash, deepseek-v4-pro");
+    expect(plugin.model.configured()).toBe(false);
+    await plugin.chooseModel({ provider: "work", model: "deepseek-flash" });
     expect(plugin.model.configured()).toBe(true);
+    expect(controls.showModels).toHaveBeenCalled();
     expect(JSON.stringify(controls.saveData.mock.calls)).not.toContain("synthetic-secret-value");
     plugin.onunload();
   });
 
-  it("captures only a selection in a source file, with kgd and a model API configured", async () => {
+  it("shows one provider at a time, picked from the list", async () => {
+    controls.stored = { providers: [
+      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" },
+      { name: "work", kind: "custom", baseUrl: "https://llm.example.org/v1", format: "chat-completions", apiKey: "" },
+    ] };
+    const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
+    expect(names().filter((name) => name === "Service")).toHaveLength(1);
+    expect(names()).not.toContain("Base URL");
+    const pick = last("Provider").dropdownChange!;
+    await redraw(() => pick("1"));
+    expect(names()).toEqual(expect.arrayContaining(["Service", "Name", "Base URL", "API format", "API key", "Models"]));
+    expect(last("Provider").description).toBe("2 providers.");
+  });
+
+  it("keeps a provider's name when its service changes, and shows only the fields that service takes", async () => {
+    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }],
+      provider: "deepseek", model: "deepseek-flash" };
+    const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
+    const toOllama = last("Service").dropdownChange!;
+    await redraw(() => toOllama("ollama"));
+    expect(plugin.settings).toMatchObject({ providers: [{ name: "deepseek", kind: "ollama", baseUrl: "", format: "chat-completions" }], provider: "deepseek" });
+    expect(last("Base URL").description).toBe("Leave empty for http://localhost:11434/v1.");
+    expect(names()).not.toContain("API format");
+    const toCustom = last("Service").dropdownChange!;
+    await redraw(() => toCustom("custom"));
+    expect(names()).toEqual(expect.arrayContaining(["Base URL", "API format"]));
+  });
+
+  it("tests a provider's connection from its settings and shows the result", async () => {
+    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }] };
+    const plugin = pluginFixture(); await plugin.onload();
+    const test = vi.spyOn(plugin, "testProvider").mockResolvedValue("Connected: deepseek-flash answered in 1.2 s with a tool call, as the agent needs.");
+    showSettings(plugin);
+    await button(last("Connection"), "Test");
+    expect(test).toHaveBeenCalledExactlyOnceWith(plugin.settings.providers[0]);
+    expect(last("Connection").description).toBe("Connected: deepseek-flash answered in 1.2 s with a tool call, as the agent needs.");
+  });
+
+  it("says what the connection test could not do before sending a request", async () => {
+    controls.stored = { providers: [{ name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" }] };
+    const plugin = pluginFixture(); await plugin.onload();
+    await expect(plugin.testProvider(plugin.settings.providers[0]!)).resolves.toBe("The service lists no models.");
+    controls.listModels.mockRejectedValue(new Error("API request failed (HTTP 401). Check the API key and access permissions."));
+    await expect(plugin.testProvider(plugin.settings.providers[0]!)).resolves.toBe(
+      "Could not list models: API request failed (HTTP 401). Check the API key and access permissions.");
+  });
+
+  it("follows a renamed provider, refuses a duplicate name and forgets a removed one in use", async () => {
+    controls.stored = { providers: [
+      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" },
+      { name: "openai", kind: "openai", baseUrl: "", format: "chat-completions", apiKey: "" },
+    ], provider: "deepseek", model: "deepseek-flash" };
+    const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
+    await last("Name").textChange!("ds");
+    expect(plugin.settings).toMatchObject({ provider: "ds", model: "deepseek-flash" });
+    await last("Name").textChange!("openai");
+    expect(plugin.settings.providers[0]!.name).toBe("ds");
+    expect(last("Name").description).toContain("a name that no other provider has");
+    await button(last("Provider"), "Remove");
+    expect(plugin.settings).toMatchObject({ providers: [{ name: "openai" }], provider: "", model: "" });
+  });
+
+  it("lists every provider's models for the sidebar and says why one listed none", async () => {
+    controls.stored = { providers: [
+      { name: "deepseek", kind: "deepseek", baseUrl: "", format: "deepseek", apiKey: "" },
+      { name: "local", kind: "lm-studio", baseUrl: "", format: "chat-completions", apiKey: "" },
+    ], provider: "deepseek", model: "deepseek-flash" };
+    controls.listModels.mockImplementation(async (provider: { name: string }) => {
+      if (provider.name === "local") throw new Error("API connection failed (ECONNREFUSED).");
+      return ["deepseek-flash", "deepseek-v4-pro"];
+    });
+    const plugin = pluginFixture(); await plugin.onload();
+    await expect(plugin.modelChoices()).resolves.toEqual({
+      groups: [
+        { provider: "deepseek", models: ["deepseek-flash", "deepseek-v4-pro"] },
+        { provider: "local", models: [], error: "API connection failed (ECONNREFUSED)." },
+      ],
+      chosen: { provider: "deepseek", model: "deepseek-flash" },
+    });
+    await plugin.modelChoices();
+    expect(controls.listModels).toHaveBeenCalledTimes(2);
+    await plugin.modelChoices(true);
+    expect(controls.listModels).toHaveBeenCalledTimes(4);
+  });
+
+  it("captures only a selection in a source file, with kgd and a model configured", async () => {
     const plugin = pluginFixture(); await plugin.onload();
     expect(controls.commands.map((command) => command.id)).toContain("capture-selection");
     await plugin.captureSelection();
-    expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("Set the kgd executable, model API endpoint and model"));
+    expect(controls.notice).toHaveBeenLastCalledWith(expect.stringContaining("add a model provider in the kgdistiller settings"));
     plugin.settings.kgdCommand = "/bin/kgd";
-    plugin.settings.modelEndpoint = "https://example.org/v1/chat/completions";
-    plugin.settings.agentModel = "test-model";
+    plugin.settings.providers = [{ name: "test", kind: "custom", baseUrl: "https://example.org/v1", format: "chat-completions", apiKey: "" }];
+    Object.assign(plugin.settings, { provider: "test", model: "test-model" });
     domSelection.text = "masked autoencoder";
     await plugin.captureSelection();
     expect(controls.notice).toHaveBeenLastCalledWith("Select text in a source file to capture it.");

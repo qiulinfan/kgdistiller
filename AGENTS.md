@@ -183,8 +183,9 @@
   `tests/test_records.py` checks against `unicodedata` (regenerate it when
   that test fails after a Python Unicode upgrade). The plugin's agent (judgment, Capture, Find sources and
   search; see docs/obsidian.md "Agent") is the model-side adapter that keeps
-  the core model-free: its harness runs inside the plugin, calls the configured
-  Chat Completions model API and Exa's hosted MCP search directly (keyless
+  the core model-free: its harness runs inside the plugin, calls the Chat
+  Completions API of the model chosen among the configured providers and
+  Exa's hosted MCP search directly (keyless
   unless the owner adds an Exa key), and stores API keys only through
   Obsidian SecretStorage. It depends on no external
   agent runtime, owns its prompts and

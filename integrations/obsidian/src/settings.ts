@@ -1,5 +1,6 @@
-import { App, Plugin, PluginSettingTab, SecretComponent, Setting } from "obsidian";
+import { App, Modal, Plugin, PluginSettingTab, SecretComponent, Setting, type TextComponent } from "obsidian";
 
+import { kindOf, newProviderName, PROVIDER_KINDS, storedProviders, type Detected, type Provider } from "./providers";
 import { KNOWLEDGE_DIRECTORY } from "./records";
 import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
 
@@ -9,48 +10,49 @@ export interface KgdistillerSettings {
   kgdCommand: string;
   /** KGDISTILLER_HOME for lookups; empty keeps kgd's default home. */
   knowledgeHome: string;
-  /** Full Chat Completions URL; empty turns the agent off. */
-  modelEndpoint: string;
-  agentModel: string;
-  modelProtocol: "chat-completions" | "deepseek";
-  /** SecretStorage identifiers, never API key values. */
-  modelKey: string;
-  /** Empty searches the web at Exa's free rate limits. */
+  /** The Chat Completions services the agent may call. */
+  providers: Provider[];
+  /** The provider and model the agent uses, chosen in the sidebar; empty turns the agent off. */
+  provider: string;
+  model: string;
+  /** A SecretStorage identifier, never a key; empty searches the web at Exa's free rate limits. */
   exaKey: string;
 }
 
-export const DEFAULT_SETTINGS: KgdistillerSettings = {
+export const DEFAULT_SETTINGS: Readonly<KgdistillerSettings> = {
   hiddenKnowledgeEnabled: false,
   kgdCommand: "",
   knowledgeHome: "",
-  modelEndpoint: "",
-  agentModel: "",
-  modelProtocol: "chat-completions",
-  modelKey: "",
+  providers: [],
+  provider: "",
+  model: "",
   exaKey: "",
 };
 
+const NOT_LISTED = "Not listed yet; press Detect.";
+const NAME_HINT = "Shown in the sidebar's model list; no two providers share a name.";
+
 /**
  * Overlay stored plugin data on the defaults, keeping only values whose type
- * matches the default. Unknown keys are ignored; wrongly typed known keys are
- * returned so the caller can report them.
+ * matches the default and the providers that are complete. Unknown keys are
+ * ignored; wrongly typed known keys, and a provider list with anything else
+ * in it, are returned so the caller can report them.
  */
 export function mergeStoredSettings(stored: unknown): { settings: KgdistillerSettings; rejected: string[] } {
-  const settings: KgdistillerSettings = { ...DEFAULT_SETTINGS };
+  const settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [] };
   const rejected: string[] = [];
   if (stored === null || stored === undefined) return { settings, rejected };
   if (typeof stored !== "object" || Array.isArray(stored)) return { settings, rejected: ["(all)"] };
   const record = stored as Record<string, unknown>;
   const target = settings as unknown as Record<string, unknown>;
   for (const [key, fallback] of Object.entries(DEFAULT_SETTINGS)) {
-    if (!(key in record)) continue;
+    if (key === "providers" || !(key in record)) continue;
     if (typeof record[key] === typeof fallback) target[key] = record[key];
     else rejected.push(key);
   }
-  if (!["chat-completions", "deepseek"].includes(settings.modelProtocol)) {
-    settings.modelProtocol = DEFAULT_SETTINGS.modelProtocol;
-    rejected.push("modelProtocol");
-  }
+  const { providers, dropped } = storedProviders(record.providers);
+  settings.providers = providers;
+  if (dropped) rejected.push("providers");
   return { settings, rejected };
 }
 
@@ -63,10 +65,64 @@ export interface SettingsHost {
   kgdSettingsChanged(): void;
   /** Called after model or search API settings change. */
   agentSettingsChanged(): void;
+  /** Each provider's detected models, detecting those not yet known. */
+  modelCatalog(): Promise<ReadonlyMap<string, Detected>>;
+  /** Forget a provider's detected models after its settings change. */
+  forgetModels(name: string): void;
+  /** Send the provider one short request of the kind the agent sends, and say how it went. */
+  testProvider(provider: Provider): Promise<string>;
+}
+
+/** Asks for a new provider's service and name, and adds it once both are set. */
+class AddProviderModal extends Modal {
+  constructor(app: App, private readonly providers: readonly Provider[], private readonly add: (provider: Provider) => Promise<void>) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle("Add a model provider");
+    let kind = PROVIDER_KINDS[0]!;
+    let name = newProviderName(this.providers, kind.id);
+    // Until the owner types a name, the suggested one follows the service.
+    let typed = false;
+    let nameText: TextComponent | undefined;
+    new Setting(this.contentEl).setName("Service").addDropdown((dropdown) => {
+      for (const option of PROVIDER_KINDS) dropdown.addOption(option.id, option.label);
+      dropdown.setValue(kind.id).onChange((id) => {
+        kind = PROVIDER_KINDS.find((option) => option.id === id) ?? kind;
+        if (typed) return;
+        name = newProviderName(this.providers, kind.id);
+        nameText?.setValue(name);
+      });
+    });
+    const named = new Setting(this.contentEl).setName("Name").setDesc(NAME_HINT).addText((text) => {
+      nameText = text;
+      text.setValue(name).onChange((value) => {
+        name = value.trim();
+        typed = true;
+      });
+    });
+    new Setting(this.contentEl)
+      .addButton((button) => button.setButtonText("Add").setCta().onClick(async () => {
+        if (!name || this.providers.some((provider) => provider.name === name)) {
+          named.setDesc("Give the provider a name that no other provider has.");
+          return;
+        }
+        this.close();
+        await this.add({ name, kind: kind.id, baseUrl: "", format: kind.format, apiKey: "" });
+      }))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 export class KgdistillerSettingTab extends PluginSettingTab {
   private hiddenStatusSetting?: Setting;
+  /** The position of the provider whose settings are shown. */
+  private editing = 0;
   constructor(app: App, private readonly host: SettingsHost & Plugin) {
     super(app, host);
   }
@@ -128,45 +184,155 @@ export class KgdistillerSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl).setName("Agent").setHeading()
-      .setDesc("The agent judges lookups, captures selections, finds sources and answers searches. It needs the model API endpoint, model and, for a hosted service, its API key; web search needs no key.");
-    this.apiText("Model API endpoint", "Required. The full Chat Completions URL, such as https://api.deepseek.com/chat/completions. Leave empty to turn the agent off. Requests go directly to this service.",
-      "modelEndpoint", "https://api.example.com/v1/chat/completions");
-    this.apiText("Model", "Required. The model ID that endpoint accepts, such as deepseek-flash; it must support function tools.", "agentModel", "model-id");
-    new Setting(containerEl)
-      .setName("Model API format")
-      .setDesc("Choose DeepSeek for its thinking controls. Other Chat Completions services must support reasoning_effort (none and low).")
-      .addDropdown((dropdown) => dropdown
-        .addOption("chat-completions", "Chat Completions")
-        .addOption("deepseek", "DeepSeek")
-        .setValue(this.host.settings.modelProtocol)
-        .onChange(async (value) => {
-          if (value !== "chat-completions" && value !== "deepseek") return;
-          this.host.settings.modelProtocol = value;
-          await this.host.savePluginSettings();
-          this.host.agentSettingsChanged();
-        }));
-    this.apiSecret("Model API key", "Required by a hosted service. Choose a secret in Obsidian's SecretStorage, or add one holding the key; the plugin stores only the secret's name. Leave empty only for a local API that needs no authentication.", "modelKey");
-    new Setting(containerEl).setName("Web search").setHeading();
-    this.apiSecret("Exa API key", "Optional. Web search asks Exa's hosted MCP server (mcp.exa.ai) directly and works without a key at Exa's free rate limits; choose or add an Exa key in Obsidian SecretStorage to use your Exa plan's limits.", "exaKey");
-  }
-
-  private apiText(name: string, description: string, key: "modelEndpoint" | "agentModel", placeholder: string): void {
-    new Setting(this.containerEl).setName(name).setDesc(description).addText((text) => text
-      .setPlaceholder(placeholder).setValue(this.host.settings[key]).onChange(async (value) => {
-        this.host.settings[key] = value.trim();
+    new Setting(containerEl).setName("Model providers").setHeading()
+      .setDesc("The services the agent's models come from. The agent judges lookups, captures selections, finds sources and answers searches "
+        + "with the model chosen at the top of the kgdistiller sidebar, which lists every provider's models. Pick a provider here to change it.");
+    const { providers } = this.host.settings;
+    this.editing = Math.min(this.editing, Math.max(providers.length - 1, 0));
+    const current = providers[this.editing];
+    const picker = new Setting(containerEl).setName("Provider")
+      .setDesc(current ? `${providers.length} provider${providers.length === 1 ? "" : "s"}.` : "No provider yet: add one, such as DeepSeek or OpenAI.");
+    if (current) {
+      picker.addDropdown((dropdown) => {
+        providers.forEach((provider, index) => dropdown.addOption(String(index), `${provider.name} · ${kindOf(provider).label}`));
+        dropdown.setValue(String(this.editing)).onChange((value) => {
+          this.editing = Number(value);
+          this.display();
+        });
+      });
+    }
+    picker.addButton((button) => button.setButtonText("Add").onClick(() => {
+      new AddProviderModal(this.app, providers, async (provider) => {
+        providers.push(provider);
+        this.editing = providers.length - 1;
+        await this.host.savePluginSettings();
+        this.display();
+      }).open();
+    }));
+    if (current) {
+      picker.addButton((button) => button.setButtonText("Remove").setWarning().onClick(async () => {
+        const { settings } = this.host;
+        settings.providers.splice(this.editing, 1);
+        this.host.forgetModels(current.name);
+        if (settings.provider === current.name) {
+          settings.provider = "";
+          settings.model = "";
+        }
         await this.host.savePluginSettings();
         this.host.agentSettingsChanged();
+        this.display();
       }));
-  }
+      void this.showModels(current, this.providerSettings(current));
+    }
 
-  private apiSecret(name: string, description: string, key: "modelKey" | "exaKey"): void {
-    const setting = new Setting(this.containerEl).setName(name).setDesc(description);
-    new SecretComponent(this.app, setting.controlEl).setValue(this.host.settings[key]).onChange(async (id) => {
-      this.host.settings[key] = id;
+    new Setting(containerEl).setName("Web search").setHeading();
+    const exa = new Setting(containerEl).setName("Exa API key")
+      .setDesc("Optional. Web search asks Exa's hosted MCP server (mcp.exa.ai) directly and works without a key at Exa's free rate limits; choose or add an Exa key in Obsidian SecretStorage to use your Exa plan's limits.");
+    new SecretComponent(this.app, exa.controlEl).setValue(this.host.settings.exaKey).onChange(async (id) => {
+      this.host.settings.exaKey = id;
       await this.host.savePluginSettings();
       this.host.agentSettingsChanged();
     });
+  }
+
+  /** The settings of the provider being changed; returns the row that shows its models. */
+  private providerSettings(provider: Provider): Setting {
+    const { containerEl } = this;
+    const kind = kindOf(provider);
+    const changed = async (forget: boolean): Promise<void> => {
+      if (forget) {
+        this.host.forgetModels(provider.name);
+        models.setDesc(NOT_LISTED);
+      }
+      await this.host.savePluginSettings();
+      this.host.agentSettingsChanged();
+    };
+    new Setting(containerEl)
+      .setName("Service")
+      .setDesc(kind.ownUrl ? (kind.baseUrl ? `Runs on this machine, by default at ${kind.baseUrl}.` : "Any service with OpenAI's Chat Completions and models endpoints.")
+        : `${kind.baseUrl}${kind.format === "deepseek" ? ", in DeepSeek's format" : ""}.`)
+      .addDropdown((dropdown) => {
+        for (const option of PROVIDER_KINDS) dropdown.addOption(option.id, option.label);
+        dropdown.setValue(provider.kind).onChange(async (id) => {
+          const next = PROVIDER_KINDS.find((option) => option.id === id);
+          if (!next) return;
+          this.host.forgetModels(provider.name);
+          provider.kind = next.id;
+          provider.baseUrl = "";
+          provider.format = next.format;
+          await this.host.savePluginSettings();
+          this.host.agentSettingsChanged();
+          this.display();
+        });
+      });
+    const name = new Setting(containerEl).setName("Name").setDesc(NAME_HINT);
+    name.addText((text) => text.setValue(provider.name).onChange(async (value) => {
+      const next = value.trim();
+      if (!next || this.host.settings.providers.some((other) => other !== provider && other.name === next)) {
+        name.setDesc("Give this provider a name that no other provider has.");
+        return;
+      }
+      name.setDesc(NAME_HINT);
+      if (next === provider.name) return;
+      this.host.forgetModels(provider.name);
+      if (this.host.settings.provider === provider.name) this.host.settings.provider = next;
+      provider.name = next;
+      await changed(true);
+    }));
+    if (kind.ownUrl) {
+      new Setting(containerEl)
+        .setName("Base URL")
+        .setDesc(kind.baseUrl ? `Leave empty for ${kind.baseUrl}.` : "The URL that /chat/completions and /models follow, such as https://api.example.com/v1. Requests go directly to this service.")
+        .addText((text) => text.setPlaceholder(kind.baseUrl ?? "https://api.example.com/v1").setValue(provider.baseUrl).onChange(async (value) => {
+          provider.baseUrl = value.trim();
+          await changed(true);
+        }));
+    }
+    if (kind.ownFormat) {
+      new Setting(containerEl)
+        .setName("API format")
+        .setDesc("Choose DeepSeek for its thinking controls. Other services must support reasoning_effort (none and low).")
+        .addDropdown((dropdown) => dropdown
+          .addOption("chat-completions", "Chat Completions")
+          .addOption("deepseek", "DeepSeek")
+          .setValue(provider.format)
+          .onChange(async (value) => {
+            if (value !== "chat-completions" && value !== "deepseek") return;
+            provider.format = value;
+            await changed(false);
+          }));
+    }
+    const key = new Setting(containerEl).setName("API key")
+      .setDesc(kind.ownUrl && kind.baseUrl ? "A local server usually needs none; otherwise choose or add the secret holding its key."
+        : "Choose a secret in Obsidian's SecretStorage, or add one holding the service's key; the plugin stores only the secret's name.");
+    new SecretComponent(this.app, key.controlEl).setValue(provider.apiKey).onChange(async (id) => {
+      provider.apiKey = id;
+      await changed(true);
+    });
+    const models: Setting = new Setting(containerEl).setName("Models").setDesc(NOT_LISTED)
+      .addButton((button) => button.setButtonText("Detect").onClick(async () => {
+        this.host.forgetModels(provider.name);
+        await this.showModels(provider, models);
+      }));
+    const connection = new Setting(containerEl).setName("Connection")
+      .setDesc("Send one short request of the kind the agent sends, to the model in use or the first one listed.")
+      .addButton((button) => button.setButtonText("Test").onClick(async () => {
+        button.setDisabled(true);
+        connection.setDesc("Testing…");
+        connection.setDesc(await this.host.testProvider(provider));
+        button.setDisabled(false);
+        await this.showModels(provider, models);
+      }));
+    return models;
+  }
+
+  /** Detect the provider's models and show them, or why they could not be listed. */
+  private async showModels(provider: Provider, row: Setting): Promise<void> {
+    row.setDesc("Detecting…");
+    const entry = (await this.host.modelCatalog()).get(provider.name);
+    row.setDesc(!entry ? NOT_LISTED
+      : "error" in entry ? `Could not list models: ${entry.error}`
+      : entry.models.length > 0 ? entry.models.join(", ") : "The service lists no models.");
   }
 
   refreshHiddenKnowledgeStatus(): void {

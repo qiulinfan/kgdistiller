@@ -4,6 +4,21 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Configure several model providers for the Obsidian agent and switch models
+  in the sidebar. A provider is a service, a name and an API key in
+  SecretStorage: fourteen hosted services (DeepSeek, OpenAI, OpenRouter,
+  SiliconFlow, Moonshot, Zhipu, Qwen, Doubao, Groq, Mistral, xAI, MiniMax,
+  StepFun, Together AI) give their base URL and request format, Ollama and LM
+  Studio run locally at their default address unless another is given, and
+  another OpenAI-compatible service takes its own base URL and format. Its
+  models are detected at `GET <base URL>/models`, and **Test** sends one
+  request of the kind the agent sends, to check the connection. The **Model
+  providers** settings show one provider at a time, picked from a list, and
+  **Add** asks for the service and the name first. The lookup
+  sidebar lists every provider's models grouped by provider and uses the one
+  chosen there. The single **Model API endpoint**, **Model**, **Model API
+  format** and **Model API key** settings are removed without a migration;
+  add the provider again.
 - The Obsidian agent asks a busy model service again: a model request
   answered with HTTP 503 or 429 is retried after 1 s and then 2 s, and when
   the service still refuses, the sidebar says the model service is busy
@@ -23,7 +38,7 @@ All notable changes are documented here.
 - Run the Obsidian agent entirely inside the plugin. Replace OMP's model
   gateway and per-search extension process with direct Chat Completions
   requests and direct calls to Exa's hosted MCP search, which needs no key.
-  Configure the model endpoint, the actual model ID and API keys through
+  Model providers are configured in the settings, with their API keys in
   Obsidian SecretStorage (settings store secret IDs only); an Exa key is
   optional. Keep the existing tool loop and local kgd engine; handle DeepSeek
   thinking/tool calls directly. Reuse HTTP connections and cancel requests on

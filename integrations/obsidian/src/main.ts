@@ -6,6 +6,7 @@ import type { Selection } from "./agent-pane";
 import { locateSelection, type CaptureFiles } from "./capture";
 import { ModelClient } from "./model";
 import { ApiClient } from "./api";
+import { chatUrl, connectionTest, formatOf, listModels, modelGroups, type Detected, type ModelChoice, type ModelGroup, type Provider } from "./providers";
 import type { Reading } from "./search";
 import { webSearch, type WebSource } from "./web";
 
@@ -28,7 +29,7 @@ import {
 const READING_BLOCKS = "p, li, td, th, blockquote, h1, h2, h3, h4, h5, h6";
 
 export default class KgdistillerPlugin extends Plugin {
-  settings: KgdistillerSettings = { ...DEFAULT_SETTINGS };
+  settings: KgdistillerSettings = { ...DEFAULT_SETTINGS, providers: [] };
   hiddenKnowledgeStatus: HiddenKnowledgeStatus = { state: "disabled" };
   private hiddenKnowledgeIndexer?: HiddenKnowledgeIndexer;
   private settingsTab?: KgdistillerSettingTab;
@@ -39,11 +40,16 @@ export default class KgdistillerPlugin extends Plugin {
   readonly kgd = new KgdServer(() => ({ command: this.settings.kgdCommand, home: this.settings.knowledgeHome }));
   /** Model and search requests run directly inside the desktop plugin. */
   private readonly api = new ApiClient();
-  readonly model = new ModelClient(() => ({
-    endpoint: this.settings.modelEndpoint, model: this.settings.agentModel,
-    protocol: this.settings.modelProtocol,
-    apiKey: this.secret(this.settings.modelKey),
-  }), this.api.post);
+  /** The model chosen in the sidebar, at its provider; no provider of that name leaves the agent off. */
+  readonly model = new ModelClient(() => {
+    const provider = this.settings.providers.find((candidate) => candidate.name === this.settings.provider);
+    return {
+      endpoint: provider ? chatUrl(provider) : "", model: provider ? this.settings.model : "",
+      protocol: provider ? formatOf(provider) : "chat-completions", apiKey: provider ? this.secret(provider.apiKey) : "",
+    };
+  }, this.api.post);
+  /** Each provider's detected models, or why they could not be listed, by provider name. */
+  private readonly detected = new Map<string, Detected>();
 
   private secret(id: string): string {
     return id ? this.app.secretStorage.getSecret(id) ?? "" : "";
@@ -185,7 +191,7 @@ export default class KgdistillerPlugin extends Plugin {
   /** Look the selection up, then capture it from the lookup sidebar. */
   async captureSelection(): Promise<void> {
     if (!this.model.configured() || !this.kgd.configured()) {
-      new Notice("Set the kgd executable, model API endpoint and model in the kgdistiller settings to capture knowledge.");
+      new Notice("Set the kgd executable and add a model provider in the kgdistiller settings, and choose a model in the sidebar, to capture knowledge.");
       return;
     }
     const selection = await this.selection();
@@ -262,6 +268,58 @@ export default class KgdistillerPlugin extends Plugin {
 
   agentSettingsChanged(): void {
     this.api.cancel();
+    for (const view of this.lookupViews()) void view.showModels();
+  }
+
+  /** Each provider's detected models, detecting those not yet known, or every provider's again with `refresh`. */
+  async modelCatalog(refresh = false): Promise<ReadonlyMap<string, Detected>> {
+    await Promise.all(this.settings.providers.map(async (provider) => {
+      if (!refresh && this.detected.has(provider.name)) return;
+      try {
+        this.detected.set(provider.name, { models: await listModels(provider, this.secret(provider.apiKey), this.api.get) });
+      } catch (error) {
+        this.detected.set(provider.name, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }));
+    return this.detected;
+  }
+
+  /** Forget a provider's detected models after its settings change. */
+  forgetModels(name: string): void {
+    this.detected.delete(name);
+  }
+
+  /** Detect the provider's models again, then test the model in use there, or the first one it lists. */
+  async testProvider(provider: Provider): Promise<string> {
+    this.forgetModels(provider.name);
+    const entry = (await this.modelCatalog()).get(provider.name);
+    if (!entry || "error" in entry) return `Could not list models: ${entry && "error" in entry ? entry.error : "no answer"}`;
+    const model = this.settings.provider === provider.name && this.settings.model ? this.settings.model : entry.models[0];
+    if (!model) return "The service lists no models.";
+    const client = new ModelClient(() => ({
+      endpoint: chatUrl(provider), model, protocol: formatOf(provider), apiKey: this.secret(provider.apiKey),
+    }), this.api.post);
+    return connectionTest((request) => client.complete(request), model);
+  }
+
+  /** The sidebar's model choices, grouped by provider, and the model in use. */
+  async modelChoices(refresh = false): Promise<{ groups: ModelGroup[]; chosen: ModelChoice }> {
+    const detected = await this.modelCatalog(refresh);
+    const chosen = { provider: this.settings.provider, model: this.settings.model };
+    return { groups: modelGroups(this.settings.providers, detected, chosen), chosen };
+  }
+
+  /** Use another model from now on; the open sidebars show it. */
+  async chooseModel(choice: ModelChoice): Promise<void> {
+    this.settings.provider = choice.provider;
+    this.settings.model = choice.model;
+    await this.savePluginSettings();
+    for (const view of this.lookupViews()) void view.showModels();
+  }
+
+  private lookupViews(): KgdistillerLookupView[] {
+    return this.app.workspace.getLeavesOfType(VIEW_TYPE_KGDISTILLER_LOOKUP)
+      .flatMap((leaf) => (leaf.view instanceof KgdistillerLookupView ? [leaf.view] : []));
   }
 
   async savePluginSettings(): Promise<void> {

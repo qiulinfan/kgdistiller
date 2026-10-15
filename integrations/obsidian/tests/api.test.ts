@@ -12,7 +12,7 @@ async function server(handler: (req: IncomingMessage, res: ServerResponse, body:
     let data = "";
     req.setEncoding("utf8");
     req.on("data", (chunk) => { data += chunk; });
-    req.on("end", () => handler(req, res, JSON.parse(data)));
+    req.on("end", () => handler(req, res, data ? JSON.parse(data) : {}));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   cleanup.push(() => new Promise<void>((resolve, reject) => {
@@ -67,6 +67,20 @@ describe("the plugin's HTTP transport", () => {
     api.close();
     await assertion;
     await expect(api.post(url, "", {}, 1000)).rejects.toThrow("closed");
+  });
+
+  it("gets JSON with a bearer key and no body, as model detection asks", async () => {
+    const url = await server((req, res) => {
+      expect(req.method).toBe("GET");
+      expect(req.headers.authorization).toBe("Bearer synthetic-test-key");
+      expect(req.headers.accept).toBe("application/json");
+      expect(req.headers["content-type"]).toBeUndefined();
+      if (req.url === "/denied") { res.writeHead(401); res.end("secret"); return; }
+      res.end(JSON.stringify({ data: [{ id: "deepseek-flash" }] }));
+    });
+    const api = client();
+    await expect(api.get(`${url}/models`, "synthetic-test-key", 1000)).resolves.toEqual({ data: [{ id: "deepseek-flash" }] });
+    await expect(api.get(`${url}/denied`, "synthetic-test-key", 1000)).rejects.toThrow("HTTP 401");
   });
 
   it("posts with the caller's headers, returns the text and keeps the HTTP status of a failure", async () => {

@@ -31,7 +31,7 @@ describe("direct model requests", () => {
     for (const incomplete of [{ ...settings, endpoint: "" }, { ...settings, model: "" }]) {
       const model = new ModelClient(() => incomplete, post);
       expect(model.configured()).toBe(false);
-      await expect(model.complete({ messages: [] })).rejects.toThrow("Set the model API endpoint and model");
+      await expect(model.complete({ messages: [] })).rejects.toThrow("Add a model provider in the kgdistiller settings and choose a model");
     }
     expect(post).not.toHaveBeenCalled();
   });

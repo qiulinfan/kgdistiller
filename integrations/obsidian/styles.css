@@ -123,6 +123,18 @@ SOFTWARE.
   padding: 10px 12px;
 }
 
+.kgd-lookup-model {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.kgd-lookup-model select {
+  flex: 1;
+  min-width: 0;
+}
+
 .kgd-lookup-search {
   margin-bottom: 8px;
   width: 100%;

@@ -85,7 +85,7 @@ export class ModelClient {
 
   private async send(request: ChatRequest): Promise<ChatReply> {
     const settings = this.settings();
-    if (!this.configured()) throw new Error("Set the model API endpoint and model in the kgdistiller settings.");
+    if (!this.configured()) throw new Error("Add a model provider in the kgdistiller settings and choose a model in the sidebar.");
     apiUrl(settings.endpoint);
     const { reasoning_effort, ...chat } = request;
     const body: Record<string, unknown> = { ...chat, model: settings.model.trim(), stream: false };

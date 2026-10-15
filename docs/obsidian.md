@@ -136,7 +136,8 @@ whatever is typed into the search box. Nothing is written until the owner
 presses Capture or runs **Capture selection**.
 
 The harness runs inside the plugin (`agent.ts`). Model requests go directly
-from `model.ts` to the configured Chat Completions API, and search tools call
+from `model.ts` to the Chat Completions API of the model chosen in the
+sidebar, at its provider, and search tools call
 Exa's hosted MCP server (`https://mcp.exa.ai/mcp`) from `web.ts`. No OMP, external
 agent executable, gateway process, generated extension or temporary search
 file is involved. Local knowledge still uses the separately installed `kgd`
@@ -311,18 +312,49 @@ MAE paper, answers took 4.2 to 15.4 s with the direct DeepSeek API
 11 s earlier through OMP, and every web source they cited was an arXiv paper.
 An Exa search took 0.5 to 2 s.
 
-Settings, under **Agent**:
+Settings, under **Model providers**, hold the services the agent's models
+come from, one at a time: **Provider** picks the provider to change from a
+list, with **Add** and **Remove** beside it, so the section stays one
+provider long however many there are. **Add** asks for the new provider's
+service and name, suggesting a name after the service until one is typed,
+and adds nothing until both are set and the name is free. A provider has:
 
-- **Model API endpoint**: the full Chat Completions URL, including
-  `/chat/completions`; empty turns the agent off. For example,
-  `https://api.deepseek.com/chat/completions` with the DeepSeek format.
-- **Model**: the actual model ID accepted by that endpoint, never an OMP role.
-  Empty also turns the agent off.
-- **Model API format**: **Chat Completions** for a service accepting
-  `reasoning_effort` (`none` and `low`), or **DeepSeek** for its thinking and
-  tool-choice rules.
-- **Model API key**: select or add a secret in Obsidian SecretStorage. It may
-  be empty for a local service that requires no authentication.
+- **Service**: its kind. A hosted service gives the base URL and the request
+  format, so neither is typed: DeepSeek (`https://api.deepseek.com`, DeepSeek
+  format), OpenAI, OpenRouter, SiliconFlow, Moonshot (Kimi), Zhipu (GLM),
+  Alibaba Qwen (DashScope), Volcengine Doubao (Ark), Groq, Mistral, xAI,
+  MiniMax, StepFun and Together AI, each of whose `/models` and
+  `/chat/completions` answered on 2026-10-15. Ollama and LM Studio run
+  locally and take their default address unless **Base URL** gives another;
+  **Other OpenAI-compatible service** takes its own **Base URL** (the URL
+  that `/chat/completions` and `/models` follow) and **API format**.
+  Changing the service keeps the provider's name.
+- **Name**: shown in the sidebar's model list. No two providers share a name;
+  a rename the sidebar's choice used follows the provider, and **Remove**
+  deletes the provider, clearing the choice when it was in use.
+- **API format**, only for another service: **Chat Completions** for a
+  service accepting `reasoning_effort` (`none` and `low`), or **DeepSeek** for
+  its thinking and tool-choice rules. Every hosted service but DeepSeek uses
+  Chat Completions, so it too must accept `reasoning_effort`.
+- **API key**: select or add a secret in Obsidian SecretStorage. A local
+  server usually needs none.
+- **Models**: the models the provider lists at `GET <base URL>/models`, sent
+  with the key as a bearer token; the ids are read from OpenAI's `data` list,
+  a `models` list or a bare list. They are detected when the settings or the
+  sidebar open, again with **Detect**, and after the service, base URL or key
+  changes; a provider that lists none says why.
+- **Connection**: **Test** detects the models again and sends the model in
+  use there, or the first one listed, one short request of the kind the
+  agent sends: a forced tool call with the model's reasoning off. It says
+  whether the model answered, in how many seconds, and whether it made the
+  tool call the agent's jobs need, so a wrong key, a busy service or a model
+  that rejects `reasoning_effort` or tools shows here first.
+
+The model the agent uses is chosen at the top of the lookup sidebar, from a
+list of every provider's detected models grouped under the provider's name;
+the button beside it detects them all again. The choice is stored with the
+vault's settings. Until a model is chosen, or while its provider is gone, the
+agent is off and lookups show only the deterministic results.
 
 Under **Web search**:
 

@@ -5,12 +5,20 @@ import { Agent as HttpsAgent, request as httpsRequest } from "https";
 export type PostJson = (url: string, key: string, body: Record<string, unknown>, timeout: number) => Promise<unknown>;
 /** POST a JSON body with the caller's own headers and return the response text. */
 export type PostText = (url: string, headers: Record<string, string>, body: Record<string, unknown>, timeout: number) => Promise<string>;
+/** GET with a bearer key and parse the JSON reply. */
+export type GetJson = (url: string, key: string, timeout: number) => Promise<unknown>;
 
 /** A failed API request; `status` is the HTTP status when the service answered. */
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
   }
+}
+
+const bearer = (key: string): Record<string, string> => (key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {});
+
+function json(text: string): unknown {
+  try { return JSON.parse(text); } catch { throw new ApiError("The API returned invalid JSON."); }
 }
 
 export function apiUrl(value: string): URL {
@@ -30,23 +38,23 @@ export class ApiClient {
   private closed = false;
 
   /** POST JSON with a bearer key and parse the JSON reply. */
-  readonly post: PostJson = async (endpoint, key, body, timeout) => {
-    const text = await this.postText(endpoint, {
-      Accept: "application/json",
-      ...(key.trim() ? { Authorization: `Bearer ${key.trim()}` } : {}),
-    }, body, timeout);
-    try { return JSON.parse(text); } catch { throw new ApiError("The API returned invalid JSON."); }
-  };
+  readonly post: PostJson = async (endpoint, key, body, timeout) =>
+    json(await this.postText(endpoint, { Accept: "application/json", ...bearer(key) }, body, timeout));
 
-  readonly postText: PostText = async (endpoint, headers, body, timeout) => {
+  readonly postText: PostText = (endpoint, headers, body, timeout) => this.send("POST", endpoint, headers, JSON.stringify(body), timeout);
+
+  readonly get: GetJson = async (endpoint, key, timeout) =>
+    json(await this.send("GET", endpoint, { Accept: "application/json", ...bearer(key) }, undefined, timeout));
+
+  private async send(method: "GET" | "POST", endpoint: string, headers: Record<string, string>, payload: string | undefined, timeout: number): Promise<string> {
     if (this.closed) throw new ApiError("The plugin's API client is closed.");
     const url = apiUrl(endpoint);
-    const payload = JSON.stringify(body);
     return new Promise((resolve, reject) => {
       const secure = url.protocol === "https:";
       const request = (secure ? httpsRequest : httpRequest)(url, {
-        method: "POST", agent: secure ? this.https : this.http,
-        headers: { ...headers, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
+        method, agent: secure ? this.https : this.http,
+        headers: payload === undefined ? headers
+          : { ...headers, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
       });
       let settled = false;
       const finish = (error?: Error, value?: string): void => {
@@ -83,7 +91,7 @@ export class ApiClient {
       });
       request.end(payload);
     });
-  };
+  }
 
   cancel(): void {
     for (const abort of this.pending.values()) abort(new ApiError("API request cancelled."));

@@ -14,7 +14,7 @@
  */
 
 import cytoscape, { type Core, type EventObject } from "cytoscape";
-import { Component, ItemView, MarkdownRenderer, Notice, normalizePath, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Notice, normalizePath, setIcon, TFile, type App, type WorkspaceLeaf } from "obsidian";
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
@@ -41,6 +41,7 @@ import {
   type SearchResult,
   type SourceBrowse,
 } from "./lookup-model";
+import type { ModelChoice, ModelGroup } from "./providers";
 import { entryPath, firstLine } from "./records";
 
 export const VIEW_TYPE_KGDISTILLER_LOOKUP = "kgdistiller-lookup-view";
@@ -63,6 +64,9 @@ export interface LookupHost extends AgentHost {
   app: App;
   /** The real path of this vault's root, when the vault lives on the local filesystem. */
   vaultRoot(): string | undefined;
+  /** Every provider's detected models and the model in use; `refresh` detects them all again. */
+  modelChoices(refresh?: boolean): Promise<{ groups: ModelGroup[]; chosen: ModelChoice }>;
+  chooseModel(choice: ModelChoice): Promise<void>;
 }
 
 type Settled<T> = { value: T; error?: undefined } | { value?: undefined; error: string };
@@ -71,6 +75,8 @@ const settle = <T>(promise: Promise<T>): Promise<Settled<T>> =>
   promise.then((value) => ({ value }), (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
 
 export class KgdistillerLookupView extends ItemView {
+  private modelEl: HTMLSelectElement | null = null;
+  private modelsRequest = 0;
   private searchEl: HTMLInputElement | null = null;
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
@@ -121,6 +127,17 @@ export class KgdistillerLookupView extends ItemView {
   async onOpen(): Promise<void> {
     this.contentEl.empty();
     this.contentEl.addClass("kgd-lookup-view");
+    const picker = this.contentEl.createDiv({ cls: "kgd-lookup-model" });
+    const select = picker.createEl("select", { cls: "dropdown", attr: { "aria-label": "Model" } });
+    select.addEventListener("change", () => {
+      const [provider, model] = JSON.parse(select.value) as [string, string];
+      void this.host.chooseModel({ provider, model });
+    });
+    const detect = picker.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Detect the providers' models again" } });
+    setIcon(detect, "refresh-cw");
+    detect.addEventListener("click", () => void this.showModels(true));
+    this.modelEl = select;
+    void this.showModels();
     const search = this.contentEl.createEl("input", {
       cls: "kgd-lookup-search",
       type: "search",
@@ -195,6 +212,36 @@ export class KgdistillerLookupView extends ItemView {
     this.queryEl?.setText(browse.source);
     this.agent?.reset(undefined);
     this.renderResults();
+  }
+
+  /**
+   * Fill the model list: every provider's detected models under the
+   * provider's name, the model in use selected. `refresh` detects them again.
+   */
+  async showModels(refresh = false): Promise<void> {
+    const select = this.modelEl;
+    if (!select) return;
+    const request = ++this.modelsRequest;
+    const { groups, chosen } = await this.host.modelChoices(refresh);
+    if (request !== this.modelsRequest) return;
+    select.empty();
+    select.disabled = groups.length === 0;
+    if (groups.length === 0) {
+      select.createEl("option", { text: "Add a model provider in the kgdistiller settings", value: "" });
+      return;
+    }
+    if (!groups.some((group) => group.provider === chosen.provider && group.models.includes(chosen.model))) {
+      select.createEl("option", { text: "Choose a model", value: "", attr: { disabled: "" } });
+      select.value = "";
+    }
+    for (const group of groups) {
+      const label = group.error ? `${group.provider} (models not listed)` : group.provider;
+      const optgroup = select.createEl("optgroup", { attr: { label, ...(group.error ? { title: group.error } : {}) } });
+      for (const model of group.models) {
+        const option = optgroup.createEl("option", { text: model, value: JSON.stringify([group.provider, model]) });
+        if (group.provider === chosen.provider && model === chosen.model) option.selected = true;
+      }
+    }
   }
 
   /** Put the cursor in the search box, as the Search knowledge command does. */
