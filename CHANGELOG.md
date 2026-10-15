@@ -2,7 +2,11 @@
 
 All notable changes are documented here.
 
-## Unreleased
+## 1.1.0 — 2026-10-15
+
+kgdistiller 1.1.0 turns the knowledge base into a usable Obsidian plugin:
+look knowledge up while reading, let an agent draft what is new, accept it
+in one click, and keep one small local embedding model behind it.
 
 Upgrading from 1.0.1: reinstall with the `retrieval` extra, whose packages
 changed, and run `kgd index` once, which re-embeds every record because

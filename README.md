@@ -28,7 +28,7 @@
   an MCP server.
 
 This repository holds the Obsidian plugin and the Python core, both at
-**1.0.1**. They are versioned and tagged separately: plugin tags are bare
+**1.1.0**. They are versioned and tagged separately: plugin tags are bare
 `x.y.z`, core tags are `core-x.y.z`.
 
 ## Why the knowledge graph comes first
@@ -59,9 +59,6 @@ download `main.js`, `manifest.json` and `styles.css` from the
 `<vault>/.obsidian/plugins/kgdistiller/`, reload Obsidian and enable the plugin.
 Obsidian **1.13.7 or newer** on desktop is required; the plugin does not load
 on mobile.
-
-The lookup sidebar, the agent, the Capture view and the Embedding settings
-described below are on `main` and ship in the next plugin release.
 
 Records live in the vault's hidden `.knowledge/` folder, which Obsidian skips
 by default. Turn on **Settings → kgdistiller → Index hidden knowledge folder**
@@ -530,8 +527,8 @@ encodes about 14 records a second with `BAAI/bge-m3` on Apple silicon.
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/1.0.1
-uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.1
+uv build --out-dir build/release/1.1.0
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.1.0
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```

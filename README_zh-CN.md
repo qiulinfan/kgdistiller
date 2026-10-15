@@ -20,7 +20,7 @@
 - 通过一个 SQLite 索引同时搜索所有已注册的 vault；`kgd search` 融合全文检索、dense embedding 检索（例如 BGE-M3）和名称匹配三路结果。
 - 在 Obsidian 里选中文字即可查询知识，看到记录周围的类型化邻居图；内置 agent 把选中内容起草成草稿，你在入库侧栏里确认入库；coding agent 通过 Skills 和 MCP server 来记录、编译和查询知识。
 
-本仓库包含 Obsidian 插件和 Python 核心，二者都是 **1.0.1**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
+本仓库包含 Obsidian 插件和 Python 核心，二者都是 **1.1.0**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
 
 ## 为什么以知识图谱为核心
 
@@ -41,8 +41,6 @@ kgd get research:sigma-algebra --source-lines 20
 ## Obsidian 插件
 
 打开 [kgdistiller 社区页面](https://community.obsidian.md/plugins/kgdistiller)，点 **Add to Obsidian**，然后启用 **kgdistiller**。手动安装时，从 [plugin release](https://github.com/qiulinfan/kgdistiller/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放进 `<vault>/.obsidian/plugins/kgdistiller/`，重载 Obsidian 后启用。需要桌面版 Obsidian **1.13.7 或更新**，移动端不加载此插件。
-
-下文的查询侧栏、agent、Capture 视图和 Embedding 设置已在 `main` 上，随下一个插件版本发布。
 
 记录存放在 vault 的隐藏目录 `.knowledge/` 里，Obsidian 默认会跳过它。打开 **Settings → kgdistiller → Index hidden knowledge folder** 之后，`.knowledge/` 会像普通文件夹一样出现在文件列表、搜索、Properties 和 Backlinks 中。按[安装](#安装)装好 CLI 后，`kgd obsidian install` 会把 CLI 随包附带的插件复制进 vault，并一起打开这个设置。它具体改动哪些文件，见 [docs/obsidian.md](docs/obsidian.md#installation)。
 
@@ -345,8 +343,8 @@ kgd index
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/1.0.1
-uv run --locked python scripts/check_distribution.py --dist-root build/release/1.0.1
+uv build --out-dir build/release/1.1.0
+uv run --locked python scripts/check_distribution.py --dist-root build/release/1.1.0
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```

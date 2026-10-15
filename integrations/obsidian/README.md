@@ -25,8 +25,7 @@ Properties panel; the keyword index follows saved record files by itself.
 Requires Obsidian **1.13.7 or newer** on desktop. The manifest sets
 `isDesktopOnly`, so Obsidian does not load the plugin on a phone or tablet.
 
-The lookup sidebar, the agent, the Capture view and the Embedding settings
-are on `main` and ship in the next plugin release. With the kgdistiller CLI,
+With the kgdistiller CLI,
 `kgd obsidian install` ([CLI installation](#cli-installation)) installs the
 bundled plugin and turns on hidden-folder indexing in one step.
 
