@@ -3,11 +3,12 @@
 A base is normally one Obsidian vault, and its knowledge lives in the vault's
 hidden `.knowledge/` folder: accepted records in `entries/`, proposed records in
 `drafts/` and generated def/pending sheets in `sheets/`. Obsidian itself is the
-editor. The kgdistiller plugin adds three things: it lets Obsidian index the
-hidden folder, it draws the records as a typed graph with a details pane, and,
-once a kgd executable is configured, it looks selected text up in every
-registered base. Its optional agent runs inside the plugin and calls model
-and search APIs directly. `kgd check` stays the validator; Capture writes only
+editor. The kgdistiller plugin adds two things: it lets Obsidian index the
+hidden folder, and, once a kgd executable is configured, one sidebar looks
+knowledge up in every registered base, for a selection, a typed query or the
+file open in the editor, with the record in focus and a typed graph of its
+neighbours. Its optional agent runs inside the plugin and calls model and
+search APIs directly. `kgd check` stays the validator; Capture writes only
 drafts admitted by `kgd accept`.
 
 ## Native-first editing
@@ -31,157 +32,15 @@ never loads it on a phone or tablet. Mobile is out of scope, because Obsidian
 Sync does not sync dot folders and hidden indexing needs the desktop
 filesystem adapter.
 
-## The live model
-
-The plugin builds its model only from
-`app.metadataCache.getFileCache(file).frontmatter` for
-`.knowledge/entries/*.md` and `.knowledge/drafts/*.md`. It builds the model
-once the metadata cache is resolved and then updates it on each metadata-cache
-`changed` and `deleted` event and each vault `rename` under those two folders,
-re-rendering open graph views. The details pane reads the selected record's
-file through the vault API, only when a record is selected, to render its
-body. There is no exported feed, no polling, no database access and no reading
-of the kgdistiller home.
-
-The plugin knows exactly what kgd fixes in the record format (see
-[model.md](model.md)):
-
-- the fixed keys `label`, `kind`, `source`, `lines`, `aliases`,
-  `understanding`, `epistemic`, `requires`, `tags` and `cssclasses`; every
-  other key with a list value is a role;
-- the class rule: a record is a relation if and only if a non-fixed key holds a
-  non-empty list, otherwise a node;
-- the value grammar. A value is a link `[[id]]`, `[[base:id]]` or
-  `[[.knowledge/entries/id]]`, where a trailing `.md` and a `|display` part are
-  ignored and the target is matched after NFKC normalization and casefolding;
-  any other single-line string is a pending term;
-- the name key of a pending term: the term after NFKC normalization and
-  casefolding, reduced to its runs of letters and digits joined by single
-  spaces, so `Measurable-Space` and `measurable space` share one key.
-
-Links are resolved textually, never through Obsidian's own link resolution, so
-the plugin and kgd always agree: a local id resolves to `entries/<id>.md`, and
-for a draft also to `drafts/<id>.md`. An accepted record's link to a draft
-therefore shows as missing, as `kgd check` reports it. The plugin cannot read
-the home registry, so it does not know the vault's base name: a
-`[[<own base>:id]]` link, which `kgd check` rejects, is drawn as a link into
-another base.
-
-The TypeScript link grammar and name key follow kgd's Python. Casefolding goes
-character by character: `integrations/obsidian/src/case-folding.json` lists
-every character whose Python `str.casefold` differs from its lowercase mapping
-(such as `ß`, `ς`, `ᾳ`, `ǰ` and the Cherokee letters), and the Python suite
-checks that table against `unicodedata`; every other character is lowercased on
-its own by JavaScript. Two fixtures shared by both test suites pin the results:
-`tests/fixtures/link-grammar.json` (every link and term case) and
-`tests/fixtures/name-key.json` (name keys, including CJK, final sigma, `ß`,
-ligatures, combining marks, roman numerals, Greek iota subscripts, Cherokee
-and a symbols-only term with an empty key). The Python tests assert kgd's
-results and the plugin's vitest suite asserts the same results for the
-TypeScript port. These checks cover the characters assigned in the Unicode
-version of the Python that runs them; a character assigned only in a newer
-Unicode version can fold differently in the two runtimes.
-
-## Rendering
-
-The graph view (ribbon icon or **Open typed graph**) uses Cytoscape with the
-cytoscape-fcose force-directed layout. Positions are not stored; every render
-lays the drawn elements out again.
-
-- **Nodes.** Node-class records are circles labelled with their `label`.
-- **Kind colour.** Each kind takes a colour from a fixed twelve-colour palette
-  by its position in the sorted list of every kind in the model, drafts
-  included. Filters and the drafts toggle therefore never change a colour. No
-  hashing is involved. Nodes, diamonds, typed edges and role edges take the
-  colour of their record's kind.
-- **Understanding borders.** The border of every node and diamond shows
-  understanding: dashed grey when unknown (the key is absent or empty), amber
-  when not yet understood, green when understood. A value outside the three
-  states gets no understanding border; `kgd check` reports it.
-- **Typed binary edges.** A relation with exactly two link values, both in
-  roles, that no link targets is drawn as one edge labelled with its kind:
-  - both values in one role: an undirected edge;
-  - values in two roles: an arrow from the first role's value to the second,
-    in frontmatter order;
-  - the same record twice: a loop.
-- **Diamonds.** Every other relation is a diamond with one role-labelled edge
-  per value. That includes every relation that another record links to, so a
-  relation about relations always has a node to attach to.
-- **Requires.** Each `requires` link is a dashed arrow.
-- **Drafts.** A draft has a dashed outline, a translucent fill and a second
-  label line `draft`; its edges are dashed and faded. The draft line and fill
-  tell a draft apart from a record whose understanding is unknown.
-- **Other bases and missing records.** A `[[base:id]]` target is a grey stub
-  labelled with its uid. A local link to a missing record ends at a red node
-  named by the id, and its edge is red.
-- **Pending terms.** Off by default. With **Show pending terms** on, each
-  pending term with a non-empty name key becomes one hollow dotted ghost node
-  per name key, labelled with its first spelling in model order (records by
-  path, then roles in frontmatter order, then `requires`). Role and `requires`
-  edges reach it from every record that uses the term. While ghosts are shown,
-  a relation with any pending term is drawn as a diamond, so each term keeps
-  its incidence edge; with ghosts off, the binary-edge rule above is unchanged.
-
-The legend in the details pane lists every one of these styles.
-
-## Controls
-
-- **Neighbourhood** (the default mode) draws the part of the graph around the
-  active file, following Obsidian's `file-open` event. The active file focuses:
-  - a record under `entries/` or `drafts/`: that record;
-  - a source: the records whose `source` is that file;
-  - a sheet `.knowledge/sheets/<source>.md`: the records of that source.
-
-  A relation drawn as a typed edge focuses both of its endpoints. The view
-  keeps every element within **Depth** 1 (default) or 2 hops of the focus,
-  following all edges in both directions, so depth 2 reaches the other
-  participants of a diamond. Depth counts drawn hops, so turning on **Show
-  pending terms** redraws a binary relation that has a pending term as a
-  diamond and moves its other participant from depth 1 to depth 2. The status
-  line shows how many of the filtered records are drawn. With no focus, the
-  view asks for a record, a source or a sheet, or for the full graph.
-- **Full graph** draws every record that passes the filters.
-- **Filters**, applied before the neighbourhood is taken: **Kind** (one kind of
-  the model), **Class** (nodes or relations), **Understanding** (one of the
-  three states), **Source** (a path prefix of `source`, applied on change) and
-  **Show drafts** (default from the **Show drafts** setting, on). The records
-  a selected record links to are still drawn as its endpoints.
-- **Show pending terms** toggles the ghost nodes; **Fit** fits the view.
-- **Commands.** **Reload typed graph** re-reads every record from the metadata
-  cache; **Rescan hidden knowledge folder** re-runs hidden indexing.
-
-Mode, depth, filters and the pending toggle belong to the open view and are
-not stored.
-
-## Details pane
-
-Selecting a node, diamond or typed edge shows its record:
-
-- the label, kind, class, epistemic label and understanding (unknown
-  included), the source with its lines, each role with the labels of its
-  values (pending terms and missing records are marked) and `requires`;
-- the record's body and its `## Evidence` section, each rendered through
-  Obsidian's `MarkdownRenderer` from the record file, so links, math and
-  quotes look as they do in the editor;
-- **Open record**, which opens the record file;
-- **Open source at line N**, shown when the source file is in the vault. It
-  opens the source with `openFile(file, {eState: {line}})` at the first line of
-  the first range in `lines`. Markdown views honour `eState.line`; the latex-live and tinymist
-  source views are expected to honour it too, which is still to be confirmed
-  in Obsidian (see the manual checks below);
-- **Open sheet**, shown only when `.knowledge/sheets/<source>.md` exists.
-
-Selecting a role or `requires` edge shows its owning record. A ghost shows its
-term, its name key and every record that uses it with the role; a stub shows
-its uid; a missing record shows the path that does not exist.
-
 ## Lookup
 
-Select text in any view and hold the command key (⌘ on macOS, Ctrl elsewhere)
-for 0.3 s, run **Look up selection**, or type into the search box at the top
-of the view and press Enter (**Search knowledge** puts the cursor there). The selection, with whitespace
-collapsed and cut at 500 characters, is looked up in every registered base,
-and the **kgdistiller Lookup** view opens in the right sidebar without taking
+The **kgdistiller Lookup** view is the plugin's one sidebar; the ribbon icon
+**Open kgdistiller** opens it with the cursor in its search box. Select text
+in any view and hold the command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s,
+run **Look up selection**, or type into the search box at the top of the view
+and press Enter (**Search knowledge** puts the cursor there). The selection,
+with whitespace collapsed and cut at 500 characters, is looked up in every
+registered base, and the view opens in the right sidebar without taking
 focus. A press starts at most one lookup, whatever keydown repeats the system
 sends. Pressing another key or a mouse button, or releasing the key, cancels
 the hold first, so shortcuts such as ⌘C and ⌘-click never start a lookup, and
@@ -205,10 +64,13 @@ The view shows, from the top:
     relation that another record links to, and a relation in focus, remain
     diamonds with their role edges. A relation about a single record is no
     edge and is listed under About it instead; pending terms are left out.
-    Node records are circles coloured by kind with the graph view's palette,
-    `requires` links are dashed and count as one step. At most the 40 nearest
-    records are drawn; clicking a record or an edge puts it in focus. Over the
-    graph the wheel zooms, elsewhere it scrolls the panel;
+    Node records are circles, each kind taking a colour from a fixed
+    twelve-colour palette by its position among the drawn kinds sorted;
+    `requires` links are dashed and count as one step, and a missing record
+    is red. The record in focus is larger, with an accent ring. At most the 40
+    nearest records are drawn; clicking a record or an edge puts it in focus.
+    Over the graph the wheel zooms, elsewhere it scrolls the panel. A
+    collapsible **Legend** under the graph lists these styles;
   - its prose and Evidence rendered as in the editor and its links by role;
   - **About it**: the relations it takes part in, grouped by kind, with its
     role in each;
@@ -219,13 +81,32 @@ The view shows, from the top:
 - **Related**: the other records among the first ten of `kg_search`, with each
   lane's rank and the first line of the gloss.
 
+While the view is open it follows the file open in the editor, when the vault
+is a registered base (its root is the base's root in `kgd base list`):
+
+- an accepted record `.knowledge/entries/<id>.md` comes into focus;
+- a source, or its sheet `.knowledge/sheets/<source>.md`, lists under **In
+  this source** the records the source defines, by kind and then line, from
+  `kg_browse base:source`; the record in focus stays, and a click focuses
+  another;
+- a draft, any other file under `.knowledge/`, and a note that defines no
+  indexed record leave the view as it is.
+
+The later action wins: a selection or a search started while an opened file
+is being looked up replaces it, and an opened source replaces an earlier
+lookup's results.
+
+There is no view of the whole graph: a graph of every record is too large to
+read, so the graph is always the neighbourhood of the record in focus.
+
 Record ids and uids are never shown: they are addresses for programs, not
 knowledge.
 - **Open record** and **Open source** open the file in this vault when the
   record's base is this vault, and otherwise through an `obsidian://open?path=`
   link in the vault that holds it.
 - When a result reports lag, **Run kgd index** runs `kgd index` and repeats the
-  lookup.
+  lookup, or lists the source again. Records just edited or captured appear
+  once the index has them.
 
 Settings, under **Lookup**:
 
@@ -323,6 +204,11 @@ model's reasoning off, a judgment takes about 1.5 s on DeepSeek V4 Flash.
   its only occurrence in the source when the lines were wrong; and replaced
   by the source's own text when an alignment inside the cited lines is at
   least 90% similar. Otherwise the model is shown the cited lines to copy.
+- A new record's id is its label folded as kgd folds names, with runs of
+  other characters joined by hyphens, and numbered when an existing id folds
+  the same. `integrations/obsidian/src/case-folding.json` lists every
+  character whose Python `str.casefold` differs from its lowercase mapping,
+  and the Python suite checks it against `unicodedata`.
 - A new record is written as a draft with every frontmatter value a quoted
   string, admitted with `kgd accept` and indexed with `kgd index --no-embed`;
   `kgd accept`'s refusal returns to the model. Unchanged and borrowed write
@@ -543,23 +429,19 @@ changes, Unicode names and case-only rename checks. Plugin reload and vault
 reload preserved an open hidden note. These checks cover the tested desktop
 version; they do not establish behavior on all future app versions.
 
-The plugin's vitest suite verifies the live model, link resolution, name keys
-and rendering rules with a mocked metadata cache: binary, n-ary, self,
-relation-as-participant, draft, foreign and pending cases, incremental updates
-on change, deletion and rename, the filters, kind colours, understanding
-classes, the neighbourhood from a record, a typed edge, a source and a sheet,
-the details model with its source line and sheet, and the body and Evidence
-split.
+The plugin's vitest suite verifies hidden indexing with a mocked adapter, the
+lookup's shaping of kgd's answers (the neighbour graph and its kind colours,
+the `requires` chain, inbound links, the open file's target and a source's
+records), the case folding, and the agent's tools and checks.
 
 Still to be checked by hand in Obsidian 1.14.4 on a real vault:
 
 - a Properties edit of a role list round-trips and `kgd check` stays clean;
 - Backlinks groups a record's incoming links by role name;
-- the graph renders a vault of several hundred records at a usable speed,
-  with the neighbourhood and full-graph modes, the filters, and the body and
-  Evidence in the details pane;
+- the sidebar follows an opened record, source and sheet, and the neighbour
+  graph and its legend render in the light and dark themes;
 - **Open source** lands on the record's first line in the latex-live and
-  tinymist views, and **Open sheet** appears once a sheet exists;
+  tinymist views;
 - hidden indexing is on after `kgd obsidian install` without a manual toggle.
 
 ## Source and distribution

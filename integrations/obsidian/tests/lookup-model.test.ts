@@ -6,10 +6,14 @@ import {
   inboundGroups,
   lagging,
   linksByRole,
+  kindPalette,
   lookupQuery,
   neighbourGraph,
+  openFileTarget,
   rankText,
+  sourceRecords,
   type NeighborsResult,
+  type SourceBrowse,
 } from "../src/lookup-model";
 
 const LAG = { changed_files: 0, unavailable_bases: [], unembedded: 0, embedding_changed: false };
@@ -193,5 +197,46 @@ describe("the neighbour graph", () => {
     expect(nodes(elements).map((element) => element.data.id)).toEqual(["papers:mae", "notes:ae", "notes:dae"]);
     expect(edges(elements).map(ends)).toEqual(["papers:mae --> notes:ae", "notes:dae --> notes:ae", "papers:mae -property-> notes:dae"]);
     expect([shown, total]).toEqual([3, 9]);
+  });
+});
+
+describe("the open file", () => {
+  it("puts an accepted record in focus and lists a source or its sheet's source", () => {
+    expect(openFileTarget(".knowledge/entries/masked-autoencoder.md", "papers")).toEqual({ uid: "papers:masked-autoencoder" });
+    expect(openFileTarget("papers/mae/mae_ch.md", "papers")).toEqual({ handle: "papers:papers/mae/mae_ch.md" });
+    expect(openFileTarget(".knowledge/sheets/papers/mae/mae_ch.md.md", "papers")).toEqual({ handle: "papers:papers/mae/mae_ch.md" });
+  });
+
+  it("brings nothing for a draft or the rest of the knowledge folder", () => {
+    for (const path of [".knowledge/drafts/masked-autoencoder.md", ".knowledge/sheets", ".knowledge", ".knowledge/notes.md"]) {
+      expect(openFileTarget(path, "papers")).toBeUndefined();
+    }
+  });
+
+  it("lists a source's records in kgd's order, each with its kind", () => {
+    const browse: SourceBrowse = {
+      base: "papers", source: "papers/mae/mae_ch.md", lag: LAG,
+      kinds: [
+        { kind: "architecture", records: [{ uid: "papers:mae", label: "MAE", class: "node", lines: "20-22", gloss: "An autoencoder." }] },
+        { kind: "property", records: [
+          { uid: "papers:high-ratio", label: "High masking ratio", class: "relation", lines: "40", gloss: "" },
+          { uid: "papers:asymmetric", label: "Asymmetric design", class: "relation", lines: "45", gloss: "" },
+        ] },
+      ],
+    };
+    expect(sourceRecords(browse).map((record) => [record.uid, record.kind, record.base, record.source])).toEqual([
+      ["papers:mae", "architecture", "papers", "papers/mae/mae_ch.md"],
+      ["papers:high-ratio", "property", "papers", "papers/mae/mae_ch.md"],
+      ["papers:asymmetric", "property", "papers", "papers/mae/mae_ch.md"],
+    ]);
+  });
+});
+
+describe("kind colours", () => {
+  it("take a fixed palette by the kinds' sorted position, empty kinds left out", () => {
+    const colours = kindPalette(["property", "architecture", "", "property"]);
+    expect([...colours.keys()]).toEqual(["architecture", "property"]);
+    expect(colours.get("architecture")).toBe("#7c3aed");
+    expect(kindPalette(Array.from({ length: 13 }, (_, index) => `kind-${String(index).padStart(2, "0")}`)).get("kind-12")).toBe("#7c3aed");
   });
 });

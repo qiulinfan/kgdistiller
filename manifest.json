@@ -3,7 +3,7 @@
   "name": "kgdistiller",
   "version": "1.0.1",
   "minAppVersion": "1.13.7",
-  "description": "Preview kgdistiller records and role-bound relations as a typed graph.",
+  "description": "Look up kgdistiller records from a selection, a search or the open file, with the focused record's typed neighbourhood graph.",
   "author": "Qiulin Fan",
   "authorUrl": "https://github.com/qiulinfan",
   "isDesktopOnly": true

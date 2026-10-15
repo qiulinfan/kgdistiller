@@ -7,7 +7,7 @@
 
 import type { ElementDefinition } from "cytoscape";
 
-import { kindPalette, type GraphElementData } from "./graph-model";
+import { entryId, KNOWLEDGE_DIRECTORY, sourceOfSheet } from "./records";
 
 export interface Lag {
   changed_files: number;
@@ -90,6 +90,37 @@ export interface NeighborsResult {
   records: Record<string, { label: string | null; kind: string | null; class: string | null; exists: boolean }>;
   missing: string[];
   lag: Lag;
+}
+
+/** One source's records as `kg_browse base:path` returns them: grouped by kind, in line order within a kind. */
+export interface SourceBrowse {
+  base: string;
+  source: string;
+  kinds: Array<{ kind: string; records: Array<{ uid: string; label: string; class: "node" | "relation"; lines: string; gloss: string }> }>;
+  lag: Lag;
+}
+
+/**
+ * What the file open in the editor brings to the lookup, for a vault that is
+ * the registered base `base`: an accepted record is put in focus, and a source
+ * or its sheet lists the source's records. Drafts are not indexed, and nothing
+ * else under the knowledge folder is a source.
+ */
+export function openFileTarget(path: string, base: string): { uid: string } | { handle: string } | undefined {
+  const id = entryId(path);
+  if (id !== undefined) return { uid: `${base}:${id}` };
+  const source = sourceOfSheet(path);
+  if (source !== undefined) return { handle: `${base}:${source}` };
+  if (path === KNOWLEDGE_DIRECTORY || path.startsWith(`${KNOWLEDGE_DIRECTORY}/`)) return undefined;
+  return { handle: `${base}:${path}` };
+}
+
+/** The records a source listing shows, in kgd's order: kinds alphabetically, then lines. */
+export function sourceRecords(browse: SourceBrowse): RecordSummary[] {
+  return browse.kinds.flatMap((group) => group.records.map((record) => ({
+    uid: record.uid, label: record.label, kind: group.kind, class: record.class,
+    base: browse.base, source: browse.source, lines: record.lines, gloss: record.gloss,
+  })));
 }
 
 /** Selections longer than this are cut before they become a query. */
@@ -199,6 +230,36 @@ export function inboundGroups(links: readonly InLink[]): InboundGroups {
     else about.push({ kind: link.kind, links: [link] });
   }
   return { about, builtOn };
+}
+
+/** What one drawn element of the neighbour graph stands for. */
+export type GraphElementKind = "node" | "relation" | "dangling" | "relation-edge" | "role" | "requires";
+
+export interface GraphElementData {
+  id: string;
+  label: string;
+  /** The node caption. */
+  display?: string;
+  element: GraphElementKind;
+  /** The record behind a node, a diamond or a relation edge. */
+  uid?: string;
+  kind?: string;
+  role?: string;
+  color?: string;
+  source?: string;
+  target?: string;
+}
+
+/** A fixed palette; kinds take colours by their position among the drawn kinds sorted. */
+const KIND_COLORS = [
+  "#7c3aed", "#2563eb", "#0891b2", "#db2777", "#0f766e", "#c026d3",
+  "#4338ca", "#0369a1", "#9d174d", "#65a30d", "#ea580c", "#475569",
+];
+
+/** A colour per non-empty kind, by the kind's position among the given kinds sorted. */
+export function kindPalette(kinds: Iterable<string>): Map<string, string> {
+  const sorted = [...new Set(kinds)].filter((kind) => kind !== "").sort();
+  return new Map(sorted.map((kind, index) => [kind, KIND_COLORS[index % KIND_COLORS.length]!]));
 }
 
 /** The most records the neighbour graph draws. */

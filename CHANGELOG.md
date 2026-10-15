@@ -4,6 +4,18 @@ All notable changes are documented here.
 
 ## Unreleased
 
+- Merge the Obsidian graph view into the lookup sidebar. A graph of every
+  record was too large to read anything from, so the plugin keeps one
+  sidebar, opened from the ribbon (**Open kgdistiller**) or the lookup
+  commands, and its graph is always the neighbourhood of the record in
+  focus, now with a collapsible legend. The full graph, the graph view with
+  its filters and details pane, the **Open typed graph** and **Reload typed
+  graph** commands and the **Show drafts** setting are removed. The sidebar
+  follows the file open in the editor: an accepted record comes into focus,
+  and a source or its sheet lists the records the source defines, from
+  `kg_browse`. Knowledge comes only through `kgd mcp`, so drafts are not drawn
+  and records just edited appear after `kgd index`; the plugin no longer
+  parses records itself.
 - Run the Obsidian agent entirely inside the plugin. Replace OMP's model
   gateway and per-search extension process with direct Chat Completions
   requests and direct calls to Exa's hosted MCP search, which needs no key.

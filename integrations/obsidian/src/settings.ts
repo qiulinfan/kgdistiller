@@ -4,7 +4,6 @@ import { KNOWLEDGE_DIRECTORY } from "./records";
 import type { HiddenKnowledgeStatus } from "./hidden-knowledge";
 
 export interface KgdistillerSettings {
-  showDrafts: boolean;
   hiddenKnowledgeEnabled: boolean;
   /** Absolute path of the kgd executable that lookups run; empty turns lookups off. */
   kgdCommand: string;
@@ -21,7 +20,6 @@ export interface KgdistillerSettings {
 }
 
 export const DEFAULT_SETTINGS: KgdistillerSettings = {
-  showDrafts: true,
   hiddenKnowledgeEnabled: false,
   kgdCommand: "",
   knowledgeHome: "",
@@ -60,7 +58,6 @@ export interface SettingsHost {
   settings: KgdistillerSettings;
   hiddenKnowledgeStatus: HiddenKnowledgeStatus;
   savePluginSettings(): Promise<void>;
-  applyGraphSettings(): void;
   rescanHiddenKnowledge(): Promise<void>;
   /** Called after the kgd executable or the knowledge home changed. */
   kgdSettingsChanged(): void;
@@ -77,18 +74,6 @@ export class KgdistillerSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Graph view").setHeading();
-    new Setting(containerEl)
-      .setName("Show drafts")
-      .setDesc(`Draw proposed records from ${KNOWLEDGE_DIRECTORY}/drafts with a dashed outline and a draft badge. The view's toolbar can change this for the open view.`)
-      .addToggle((toggle) =>
-        toggle.setValue(this.host.settings.showDrafts).onChange(async (value) => {
-          this.host.settings.showDrafts = value;
-          await this.host.savePluginSettings();
-          this.host.applyGraphSettings();
-        }),
-      );
-
     new Setting(containerEl).setName("Hidden knowledge folder").setHeading();
     new Setting(containerEl)
       .setName("Index hidden knowledge folder")

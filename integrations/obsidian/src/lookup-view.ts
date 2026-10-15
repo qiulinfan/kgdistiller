@@ -1,21 +1,22 @@
 /**
- * The lookup sidebar: what the knowledge base holds for a selected passage.
- * It shows the records sharing the selection's name, the records the three
- * search lanes rank as related, and for the record in focus its links, the
- * relations about it, the records built on it, its `requires` chain and a
- * graph of its neighbours. Every answer comes from `kgd mcp`, so it covers
- * every registered base; same name is not same concept, so name matches are
- * shown as candidates to compare. The search box at the top looks up typed
- * text the same way. When the agent is set up, its judgment of a selection,
- * Capture, the sources of an unrecorded term and the answer to a typed
- * question sit above the results (agent-pane.ts).
+ * The kgdistiller sidebar: what the knowledge base holds for a selected
+ * passage, a typed query or the file open in the editor. It shows the records
+ * sharing the selection's name, the records the three search lanes rank as
+ * related, and for the record in focus its links, the relations about it, the
+ * records built on it, its `requires` chain and a typed graph of its
+ * neighbours with a legend. Opening an accepted record puts it in focus, and
+ * opening a source or its sheet lists the records the source defines. Every
+ * answer comes from `kgd mcp`, so it covers every registered base; same name
+ * is not same concept, so name matches are shown as candidates to compare.
+ * When the agent is set up, its judgment of a selection, Capture, the sources
+ * of an unrecorded term and the answer to a typed question sit above the
+ * results (agent-pane.ts).
  */
 
 import cytoscape, { type Core, type EventObject } from "cytoscape";
 import { Component, ItemView, MarkdownRenderer, Notice, normalizePath, TFile, type App, type WorkspaceLeaf } from "obsidian";
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
-import type { GraphElementData } from "./graph-model";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
 import {
   chainTree,
@@ -26,15 +27,19 @@ import {
   NEIGHBOUR_STEPS,
   NEIGHBOUR_WALK_DEPTH,
   neighbourGraph,
+  openFileTarget,
   rankText,
+  sourceRecords,
   type ChainNode,
   type FullRecord,
   type GetResult,
+  type GraphElementData,
   type Lag,
   type NeighborsResult,
   type RecordSummary,
   type ResolveResult,
   type SearchResult,
+  type SourceBrowse,
 } from "./lookup-model";
 import { entryPath, firstLine } from "./records";
 
@@ -44,6 +49,15 @@ const SEARCH_LIMIT = 10;
 const CHAIN_DEPTH = 3;
 /** The most uids one `kg_get` call takes. */
 const MAX_UIDS = 128;
+/** The neighbour graph's styles, as its legend lists them: swatch class and meaning. */
+const LEGEND: ReadonlyArray<readonly [string, string]> = [
+  ["focus", "Large circle with an accent ring: the record in focus"],
+  ["node", "Circle: a node record, coloured by its kind"],
+  ["edge", "Coloured line labelled with a kind: a relation between two records"],
+  ["relation", "Diamond: a relation joining more records, or one that other records link to; its arrows are labelled with their roles"],
+  ["requires", "Dashed arrow: requires"],
+  ["dangling", "Red: a missing record"],
+];
 
 export interface LookupHost extends AgentHost {
   app: App;
@@ -66,6 +80,10 @@ export class KgdistillerLookupView extends ItemView {
   private relatedEl: HTMLElement | null = null;
   private query = "";
   private selection: Selection | undefined;
+  /** The source whose records the sidebar lists, when the open file put it there. */
+  private listed: SourceBrowse | undefined;
+  /** The vault path of the file the sidebar last followed. */
+  private followed: string | undefined;
   private resolved: Settled<ResolveResult> | undefined;
   private searched: Settled<SearchResult> | undefined;
   /** Labels of the records that use the query as a pending term; uids are never shown. */
@@ -124,7 +142,59 @@ export class KgdistillerLookupView extends ItemView {
     this.namesEl = this.contentEl.createDiv({ cls: "kgd-lookup-names" });
     this.recordEl = this.contentEl.createDiv({ cls: "kgd-lookup-record" });
     this.relatedEl = this.contentEl.createDiv({ cls: "kgd-lookup-related" });
-    this.queryEl.setText("Select text and hold the command key, run Look up selection, or type in the box above.");
+    this.queryEl.setText("Select text and hold the command key, run Look up selection, type in the box above, or open a record or a source.");
+    this.registerEvent(this.app.workspace.on("file-open", (file) => void this.follow(file?.path)));
+    void this.follow(this.app.workspace.getActiveFile()?.path);
+  }
+
+  /**
+   * Follow the file open in the editor: an accepted record of this vault's
+   * base comes into focus, and a source or its sheet lists the records the
+   * source defines. A file that is neither, or a lookup started meanwhile,
+   * leaves the sidebar as it is.
+   */
+  private async follow(path: string | undefined): Promise<void> {
+    if (!path || path === this.followed || !this.host.kgd.configured()) return;
+    this.followed = path;
+    const lookup = this.lookupRequest;
+    const base = await this.vaultBase();
+    if (!base || lookup !== this.lookupRequest || path !== this.followed) return;
+    const target = openFileTarget(path, base);
+    if (!target) return;
+    if ("uid" in target) {
+      if (target.uid !== this.focus) await this.show(target.uid);
+      return;
+    }
+    const browsed = await settle(this.host.kgd.call<SourceBrowse>("kg_browse", { handle: target.handle }));
+    if (lookup !== this.lookupRequest || path !== this.followed || !browsed.value) return;
+    if (browsed.value.kinds.every((group) => group.records.length === 0)) return;
+    this.listSource(browsed.value);
+  }
+
+  /** The registered base whose root is this vault, if any. */
+  private async vaultBase(): Promise<string | undefined> {
+    const root = this.host.vaultRoot();
+    if (!root) return undefined;
+    try {
+      for (const [name, baseRoot] of await this.host.kgd.baseRoots()) if (baseRoot === root) return name;
+    } catch {
+      // Without the base list there is nothing to follow.
+    }
+    return undefined;
+  }
+
+  /** List a source's records in place of the lookup's results; the record in focus stays. */
+  private listSource(browse: SourceBrowse): void {
+    ++this.lookupRequest;
+    this.query = browse.source;
+    this.selection = undefined;
+    this.listed = browse;
+    this.resolved = undefined;
+    this.searched = undefined;
+    this.ownerLabels = new Map();
+    this.queryEl?.setText(browse.source);
+    this.agent?.reset(undefined);
+    this.renderResults();
   }
 
   /** Put the cursor in the search box, as the Search knowledge command does. */
@@ -143,6 +213,7 @@ export class KgdistillerLookupView extends ItemView {
     const query = selection.text;
     this.query = query;
     this.selection = selection;
+    this.listed = undefined;
     this.resolved = undefined;
     this.searched = undefined;
     this.focus = undefined;
@@ -206,6 +277,11 @@ export class KgdistillerLookupView extends ItemView {
     container.empty();
     relatedContainer.empty();
     this.renderStatus();
+    if (this.listed) {
+      const section = this.section(container, "In this source", "The records this source defines, by kind and line.");
+      for (const record of sourceRecords(this.listed)) this.hit(section, record);
+      return;
+    }
     if (!this.resolved) return;
     const senses = this.senses();
     const pending = this.resolved.value?.terms[0]?.pending ?? [];
@@ -241,11 +317,11 @@ export class KgdistillerLookupView extends ItemView {
     if (!status) return;
     status.empty();
     if (!this.query) return;
-    if (!this.resolved || !this.searched) status.createSpan({ text: "Looking up…" });
+    if (!this.listed && (!this.resolved || !this.searched)) status.createSpan({ text: "Looking up…" });
     for (const error of [this.resolved?.error, this.searched?.error]) {
       if (error) status.createDiv({ cls: "kgd-lookup-error", text: error });
     }
-    const lag: Lag | undefined = this.searched?.value?.lag ?? this.resolved?.value?.lag;
+    const lag: Lag | undefined = this.listed?.lag ?? this.searched?.value?.lag ?? this.resolved?.value?.lag;
     if (lagging(lag)) {
       const line = status.createDiv({ cls: "kgd-lookup-lag" });
       line.createSpan({ text: "The index is behind the record files. " });
@@ -264,6 +340,12 @@ export class KgdistillerLookupView extends ItemView {
       new Notice(`kgd index failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (this.selection) await this.lookup(this.selection);
+    else if (this.listed) {
+      // List the source again from the fresh index.
+      const path = this.followed;
+      this.followed = undefined;
+      await this.follow(path);
+    }
   }
 
   /** Render an agent answer's Markdown, replacing the previous answer's rendering. */
@@ -309,7 +391,8 @@ export class KgdistillerLookupView extends ItemView {
     pane.empty();
     const record = got.value?.records[0];
     if (!record) {
-      pane.createDiv({ cls: "kgd-lookup-error", text: got.error ?? `No record ${uid} in the index.` });
+      // Uids are addresses for programs, never shown.
+      pane.createDiv({ cls: "kgd-lookup-error", text: got.error ?? "This record is not in the index yet; run kgd index to add it." });
       return;
     }
     this.renderRecord(pane, record, chain, around);
@@ -417,6 +500,14 @@ export class KgdistillerLookupView extends ItemView {
       const data = event.target.data() as GraphElementData;
       if (data.uid && data.element !== "dangling" && data.uid !== this.focus) void this.show(data.uid);
     });
+    const legend = pane.createEl("details", { cls: "kgd-lookup-legend" });
+    legend.createEl("summary", { text: "Legend" });
+    const list = legend.createEl("ul", { cls: "kgd-legend" });
+    for (const [swatch, text] of LEGEND) {
+      const item = list.createEl("li");
+      item.createSpan({ cls: `kgd-swatch kgd-swatch-${swatch}` });
+      item.createSpan({ text });
+    }
   }
 
   private clearNeighbours(): void {

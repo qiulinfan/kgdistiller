@@ -86,7 +86,6 @@ class TokenizeTest(unittest.TestCase):
         self.assertEqual("", name_key("∑ + ∏"))
 
     def test_name_key_fixture(self) -> None:
-        # The Obsidian plugin's nameKey reads the same fixture, so both stay in step.
         rows = json.loads((Path(__file__).parent / "fixtures" / "name-key.json").read_text(encoding="utf-8"))
         self.assertTrue(rows)
         for row in rows:

@@ -70,12 +70,12 @@ export class AgentPane {
     this.sourcesEl = container.createDiv({ cls: "kgd-lookup-sources" });
   }
 
-  /** Start over for a new selection or question; a selection's actions appear at once. */
-  reset(selection: Selection, question = false): void {
+  /** Start over for a new selection or question; a selection's actions appear at once, and without one (a listed source) nothing shows. */
+  reset(selection: Selection | undefined, question = false): void {
     this.selection = selection;
     this.request++;
     for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.captureEl, this.sourcesEl]) element.empty();
-    if (!this.host.model.configured() || question) return;
+    if (!selection || !this.host.model.configured() || question) return;
     if (selection.source) this.button("Capture", true, (button) => this.capture(button));
     this.button("Find sources", false, (button) => this.sources(button));
   }

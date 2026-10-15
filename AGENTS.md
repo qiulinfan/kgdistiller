@@ -121,7 +121,7 @@
   with its cited lines by text and reports moved or stale records;
   `check --fix-lines` rewrites only moved line ranges. The index detects
   changes by file stat. Staleness is reported, never used to hide knowledge
-  from retrieval, MCP or the Obsidian graph. Vector writes are guarded by the
+  from retrieval, MCP or the Obsidian sidebar. Vector writes are guarded by the
   row's text and `meta.embedding`, never by hashing; queries are encoded with
   `meta.embedding`; `--rebuild` re-derives in place and never swaps the
   database file.
@@ -161,8 +161,8 @@
   the full Cytoscape.js, cytoscape-fcose, cose-base and layout-base MIT
   notices in the actual bundle. Original project code is MIT; upstream
   licenses remain unchanged.
-- Plugin unload leaves workspace layout restoration to Obsidian; never detach graph
-  leaves in `onunload`. Settings headings use `Setting.setHeading` and omit the
+- Plugin unload leaves workspace layout restoration to Obsidian; never detach the
+  sidebar's leaves in `onunload`. Settings headings use `Setting.setHeading` and omit the
   plugin name. The root clean
   builder explicitly installs integration devDependencies, including when the
   caller sets `NODE_ENV=production`; this is required to reproduce release assets.
@@ -172,18 +172,16 @@
   desktop only (`isDesktopOnly`), desktop-capability guarded and scoped to the
   whole `.knowledge` subtree (the folder is the product constant, not a
   setting) with no exclusion list; do not enable competing hidden-folder
-  indexers. The plugin's model is built live from the metadata-cache
-  frontmatter of `entries/` and `drafts/`; the details pane reads the selected
-  record's file through the vault only on demand. Its link grammar and name
-  key follow `kgd`: casefolding uses `integrations/obsidian/src/case-folding.json`,
-  which `tests/test_records.py` checks against `unicodedata` (regenerate it when
-  that test fails after a Python Unicode upgrade), and both test suites assert
-  `tests/fixtures/link-grammar.json` and `tests/fixtures/name-key.json`. It
-  reads no feed and no database. Selection lookup, off until the vault's
-  settings name a kgd executable, reads every base only through a resident
-  `kgd mcp` and runs `kgd base list` and `kgd index` with the configured
-  executable and `KGDISTILLER_HOME`; the plugin never opens the home or the
-  database itself. The plugin's agent (judgment, Capture, Find sources and
+  indexers. The plugin has one sidebar and draws no graph of the whole base:
+  it shows the neighbourhood of the record in focus, for a selection, a typed
+  query or the file open in the editor. It reads knowledge only through a
+  resident `kgd mcp`, off until the vault's settings name a kgd executable,
+  covering every base, and runs `kgd base list` and `kgd index` with the
+  configured executable and `KGDISTILLER_HOME`; the plugin never parses
+  records, and never opens the home or the database itself. Capture's ids
+  casefold with `integrations/obsidian/src/case-folding.json`, which
+  `tests/test_records.py` checks against `unicodedata` (regenerate it when
+  that test fails after a Python Unicode upgrade). The plugin's agent (judgment, Capture, Find sources and
   search; see docs/obsidian.md "Agent") is the model-side adapter that keeps
   the core model-free: its harness runs inside the plugin, calls the configured
   Chat Completions model API and Exa's hosted MCP search directly (keyless
