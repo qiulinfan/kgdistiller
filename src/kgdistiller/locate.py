@@ -207,6 +207,8 @@ def _target(home: Home, target: str) -> tuple[str, Path]:
         base = home.bases.get(name)
         if base is None:
             raise KnowledgeError(f"unknown base {name!r}")
+        if not base.root.is_dir():
+            raise KnowledgeError(f"base {name} is unavailable: {base.root} is not a directory")
         path = base.root / ".knowledge" / ENTRIES / f"{fold(identifier)}.md"
         if not path.is_file():
             raise KnowledgeError(f"{target} is not an accepted record; pass a draft by its path")

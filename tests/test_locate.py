@@ -198,6 +198,11 @@ class RelocateTest(LocateTestCase):
         report = relocate("kb:token", "Each mask token", dry_run=True)
         self.assertTrue(report["dry_run"])
         self.assertEqual(before, path.read_bytes())
+        away = self.kb.home.parent / "notes-away"
+        self.kb.roots["notes"].rename(away)
+        with self.assertRaisesRegex(KnowledgeError, "base notes is unavailable"):
+            relocate("notes:token", "Each mask token")
+        away.rename(self.kb.roots["notes"])
         for target in ("kb:missing", "nope:token", "token"):
             with self.subTest(target=target), self.assertRaises(KnowledgeError):
                 relocate(target, "Each mask token")

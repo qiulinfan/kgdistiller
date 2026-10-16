@@ -13,7 +13,7 @@ from unittest.mock import patch
 from kgdistiller import cli
 from kgdistiller.adapters.embedding import EmbeddingError
 from kgdistiller.index import index
-from tests.knowledge_fixture import fake_encoder, make_record_home
+from tests.knowledge_fixture import fake_encoder, make_record_home, use_temporary_home
 
 
 class Described:
@@ -105,6 +105,7 @@ class CachedModelsTest(unittest.TestCase):
         environment = patch.dict("os.environ", {"HF_HUB_CACHE": str(self.cache)})
         environment.start()
         self.addCleanup(environment.stop)
+        use_temporary_home(self)
 
     def model(self, name: str, files: dict[str, str], revisions: int = 1) -> None:
         names = list(files)

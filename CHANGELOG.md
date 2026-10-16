@@ -2,6 +2,11 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+- `kgd relocate BASE:ID` names an unavailable base instead of reporting
+  that the record is not accepted.
+
 ## 2.0.2 — 2026-10-16
 
 - A read whose document type does not load fails before it opens the
