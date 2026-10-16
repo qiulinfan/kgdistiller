@@ -809,7 +809,6 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
         _, conflicts = files.sources(base)
         for relative, type_names in sorted(conflicts.items()):
             error(base.root / relative, "source-type", f"{relative} matches globs of several types: {', '.join(type_names)}")
-        entry_ids = files.ids(name, ENTRIES)
         draft_ids = files.ids(name, DRAFTS)
         for folder in (ENTRIES, DRAFTS):
             draft = folder == DRAFTS
@@ -830,15 +829,6 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
                 except (OSError, UnicodeDecodeError) as problem:
                     error(path, "frontmatter", f"cannot read the record as UTF-8 text: {problem}")
                     continue
-                if draft and key in entry_ids:
-                    accepted = entry_ids[key]
-                    try:
-                        identical = read_text(accepted) == text
-                    except (OSError, UnicodeDecodeError):
-                        identical = False
-                    if identical:
-                        error(path, "id", f"this draft equals {accepted}; rerun `kgd accept {path}` to remove it")
-                        continue
                 try:
                     record = parse_text(text, name, path.stem, path)
                 except RecordError as problem:

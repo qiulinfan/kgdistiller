@@ -144,8 +144,8 @@ class AcceptTest(WriteTestCase):
     def test_identical_entry_finishes_an_interrupted_accept(self) -> None:
         draft = self.draft("dimension", node("Dimension", "6"))
         os.link(draft, self.kb.path("dimension"))
-        self.assertEqual({"would_create": ["kb:dimension"], "would_update": []}, accept([draft], dry_run=True))
-        self.assertEqual({"created": ["kb:dimension"], "updated": []}, without_index(accept([draft])))
+        self.assertEqual({"would_create": [], "would_update": ["kb:dimension"]}, accept([draft], dry_run=True))
+        self.assertEqual({"created": [], "updated": ["kb:dimension"]}, without_index(accept([draft])))
         self.assertFalse(draft.exists())
         self.assertTrue(self.kb.path("dimension").exists())
 
@@ -321,13 +321,15 @@ class UpdateDraftTest(WriteTestCase):
         }], receipt["refused"])
         self.assertEqual(before, self.snapshot())
 
-    def test_a_draft_identical_to_its_entry_is_removed(self) -> None:
+    def test_a_record_drawn_into_a_draft_and_left_unchanged_is_only_removed(self) -> None:
         draft = self.kb.path("subspace", "drafts")
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_bytes(self.kb.path("subspace").read_bytes())
         content = draft.read_bytes()
+        listed = drafts()["drafts"][0]
+        self.assertEqual(("kb:subspace", []), (listed["replaces"], listed["problems"]))
         receipt = accept([draft])
-        self.assertEqual(["kb:subspace"], receipt["created"])
+        self.assertEqual(([], ["kb:subspace"]), (receipt["created"], receipt["updated"]))
         self.assertFalse(draft.exists())
         self.assertEqual(content, self.kb.path("subspace").read_bytes())
 

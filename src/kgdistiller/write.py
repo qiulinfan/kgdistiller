@@ -177,14 +177,19 @@ def _promote(home: Home, selected: list[tuple[Base, str, Path]], dry_run: bool) 
     uids = [f"{base.name}:{identifier}" for base, identifier, _ in selected]
     if dry_run:
         return {
-            "would_create": [uid for (*_, action), uid in zip(plan, uids, strict=True) if action != "update"],
-            "would_update": [uid for (*_, action), uid in zip(plan, uids, strict=True) if action == "update"],
+            "would_create": [uid for (*_, action), uid in zip(plan, uids, strict=True) if action == "create"],
+            "would_update": [uid for (*_, action), uid in zip(plan, uids, strict=True) if action != "create"],
         }
     created: list[str] = []
     updated: list[str] = []
     for (path, target, text, action), uid in zip(plan, uids, strict=True):
-        if action == "update":
-            os.replace(path, target)
+        if action != "create":
+            # A replacement moves over its record; a draft its record already equals, unchanged since it was
+            # drawn from the record or left by an interrupted accept, is only removed.
+            if action == "update":
+                os.replace(path, target)
+            else:
+                os.unlink(path)
             updated.append(uid)
             continue
         if action == "create":

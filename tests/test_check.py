@@ -243,15 +243,11 @@ class DraftRulesTest(CheckTestCase):
         self.assertEqual([str(self.kb.path("subspace", "drafts"))], report["stale"])
         self.assert_error("subspace.md", "kind", "kind 'lemma'")
 
-    def test_a_draft_equal_to_its_entry_is_reported_for_removal(self) -> None:
+    def test_a_record_drawn_into_a_draft_checks_clean_before_any_edit(self) -> None:
         draft = self.kb.path("subspace", "drafts")
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_bytes(self.subspace.read_bytes())
-        report = self.run_check()
-        self.assertEqual([{
-            "path": str(draft), "rule": "id",
-            "message": f"this draft equals {self.subspace}; rerun `kgd accept {draft}` to remove it",
-        }], report["errors"])
+        self.assertEqual([], self.run_check()["errors"])
 
     def test_drafts_are_checked_for_freshness(self) -> None:
         draft = self.kb.write_record("stale-draft", node("S", "1"), "Text.", ["Not in the source."], folder="drafts")
