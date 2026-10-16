@@ -2,4 +2,4 @@
 role-bound relations in Obsidian vaults, indexed in one SQLite file.
 """
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"

@@ -1,33 +1,35 @@
-kgdistiller Obsidian 1.1.0 turns the plugin into the place where you use your
-knowledge base while reading. It needs the kgdistiller 1.1.0 CLI (`kgd`),
-whose path you set under **Settings → kgdistiller → kgd executable**.
+kgdistiller Obsidian 2.0.0 makes every piece of knowledge pass your review:
+whatever the agent, a Skill or you capture becomes a draft you edit and
+accept. It needs the kgdistiller 2.0.0 CLI (`kgd`), whose path you set under
+**Settings → kgdistiller → kgd executable**. Records and document types of
+1.x need a one-time edit; the changelog's upgrade notes list it.
 
-- **Lookup sidebar.** Select text and hold ⌘ (Ctrl elsewhere) for 0.3 s, run
-  **Look up selection**, or type into the sidebar's search box. It looks the
-  text up in every registered base and shows the records of the same name,
-  those that use it as a pending term, the record in focus with a typed graph
-  of its neighbours within three steps, and the related records. It follows
-  the record or source open in the editor.
-- **Agent** (optional). With a model provider configured under **Model
-  providers** (fifteen hosted services, Ollama, LM Studio or any
-  OpenAI-compatible service), the sidebar judges whether a selection is
-  already recorded, answers questions from the knowledge base, arXiv papers
-  and the web, finds where a term comes from (**Find sources**) and drafts a
-  selection (**Capture**). API keys stay in Obsidian SecretStorage.
-- **Capture view.** Drafts wait in the **kgdistiller Capture** view, each
-  shown in full with whether `kgd accept` would take it. **Accept** admits a
-  draft and embeds it, **Open draft** opens it for editing, **Discard**
-  deletes it after asking. Nothing enters the knowledge base unseen.
-- **Indexing and embedding.** The keyword index follows saved record files by
-  itself; **Re-embed** in the sidebar re-embeds edited records when you choose.
-  **Settings → kgdistiller → Embedding** shows and changes the knowledge
-  home's embedding model, which runs only on your computer.
+- **Capture view.** Drafts are grouped by source on the left, by file name,
+  with foreign drafts under **foreign**. Each draft's card edits its label,
+  kind, other names, epistemic label, understanding, statement and every
+  role's and `requires`' links in place, through `kgd edit`. **Accept**
+  admits a draft with the drafts it links and embeds it.
+- **Revise a record.** **Revise as draft** in the lookup sidebar, or dragging
+  a record onto the Capture view, copies it into a draft that replaces it
+  when accepted.
+- **Foreign knowledge.** A concept the text only uses or credits to other
+  work is drafted from the web page of the work that originates it, found by
+  **Find sources**. **Localize here** moves it to the local passage once you
+  hold the work.
+- **Statements and relations.** A theorem, finding or example about one
+  record is a node linked to it; a relation connects two or more records. The
+  record pane shows its **Connections**, how many records it links or is
+  linked by.
+- **Lookup everywhere.** Text selected in the sidebar or the Capture view is
+  looked up and captured like text in a note.
+- **Embedding model in the sidebar.** The model is shown beside **Re-embed**
+  and switched from the runnable models in the local cache or by id, after a
+  confirmation. An index schema change keeps the existing vectors.
 - **Desktop only.** Hidden-folder indexing needs the desktop filesystem
   adapter, and Obsidian Sync does not sync dot folders.
 
 The plugin reads knowledge only through `kgd mcp` and changes it only through
-`kgd` commands and the draft files it writes. The typed graph view of 1.0 is
-replaced by the lookup sidebar's neighbour graph.
+`kgd` commands and the draft files it writes.
 
 `kgd obsidian install` installs the plugin into a registered base's vault and
 turns on **Index hidden knowledge folder** in its settings.

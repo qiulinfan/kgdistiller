@@ -10,14 +10,18 @@ edit like any other note, and, once the path of the `kgd` CLI is set, it adds:
 - an optional agent that judges whether a selection is already recorded,
   answers questions, finds where a term comes from and captures a selection
   as a draft, with the model provider you configure;
-- the **kgdistiller Capture** view, where drafts wait until you accept,
-  open or discard them.
+- the **kgdistiller Capture** view, where every draft waits, grouped by
+  source, until you edit its fields and links on its card, accept it or
+  discard it; a record drawn from the sidebar into it becomes a draft that
+  replaces it when accepted.
+
+Every way knowledge enters the base ends in a draft you review.
 
 The plugin never opens the kgdistiller home or its database: it reads
 knowledge through `kgd mcp` and changes it only through `kgd` commands
-(`kgd accept`, `kgd index`, `kgd index --no-embed`, `kgd embedding`) and the
-draft files a capture
-writes or a discard deletes. Edit records with Obsidian's editor and
+(`kgd source`, `kgd edit`, `kgd accept`, `kgd relocate`, `kgd index`,
+`kgd index --no-embed`, `kgd embedding`) and the draft files a capture writes
+or a discard deletes. Edit records with Obsidian's editor and
 Properties panel; the keyword index follows saved record files by itself.
 
 ## Install

@@ -2,12 +2,15 @@
 
 All notable changes are documented here.
 
-## Unreleased
+## 2.0.0 — 2026-10-16
 
-Every way knowledge enters the base now ends in a draft that the owner
-accepts, and knowledge from outside the owner's files is recorded as foreign
+kgdistiller 2.0.0 gives the knowledge base its settled form. Every way
+knowledge enters the base ends in a draft that the owner reviews, edits and
+accepts; knowledge from outside the owner's files is recorded as foreign
 knowledge instead of pending terms (docs/model.md, "Ingestion" and "Foreign
-knowledge and localization").
+knowledge and localization"); and the graph has one rule: concepts and the
+statements about one of them are nodes, and a relation connects two or more
+records. Records and document types of 1.x need the one-time edits below.
 
 Upgrading from 1.1.0: the index schema changed, so the next index run
 rebuilds the database and keeps the vector of every record whose text is
@@ -15,7 +18,8 @@ unchanged; a plain `kgd index` (Re-embed in the sidebar) embeds the rest.
 Rewrite each type's `node_kinds` as a mapping of kinds to roles
 (`definition: []`), and move kinds that state something about one record,
 such as a theorem or a finding, from `relation_kinds` to `node_kinds` with
-their role, as the templates do. Records with a plain-text value, or an
+their role, as the templates do; a relation with fewer than two values no
+longer passes `kgd check`. Records with a plain-text value, or an
 `understanding` of `unknown`, `not-yet-understood` or `understood`, no longer
 pass `kgd check`; edit them. Run `kgd claude link` or
 `kgd codex link` again: the compile Skill is renamed and the harvest Skill is
