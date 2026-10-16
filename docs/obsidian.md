@@ -61,15 +61,15 @@ The view shows, from the top:
   result, or any record clicked):
   - its kind, base, source and lines (a foreign record's web address instead),
     whether it is understood, its epistemic label, and its Connections, the
-    number of distinct records it links or is linked by;
+    number of distinct other existing records it links or is linked by;
   - **Neighbours within 3 steps**: a small typed graph of the records within
     three concept steps, from `kg_neighbors --dir both --depth 6`. Relations
     are edges: a relation with exactly two link values, both in roles, is one
     edge labelled with its kind, and one with more values or with `requires`
     links is a diamond joining them, its participants one step apart. A
     relation that another record links to, and a relation in focus, remain
-    diamonds with their role edges. A statement about one record, such as a
-    theorem or a finding, is a node joined to it by its role edge.
+    diamonds with their role edges. A statement node, such as a theorem or a
+    finding, is a node joined by its role edges to each record it is about.
     Node records are circles, each kind taking a colour from a fixed
     twelve-colour palette by its position among the drawn kinds sorted;
     `requires` links are dashed and count as one step, and a missing record
@@ -165,9 +165,11 @@ silicon) and later searches take tens of milliseconds. It stops the server after
 without a lookup, when either setting changes and when the plugin unloads.
 With the same executable and home it also runs `kgd base list` once per server
 to locate the bases, `kgd source SOURCE` for a source's document type,
-`kgd index --no-embed` for the keyword refresh, `kgd index` from Re-embed,
-`kgd accept` from the Capture view and `kgd embedding` from the Embedding
-settings, and it writes and deletes draft files. Every run but
+`kgd edit` and `kgd accept` from the Capture view, `kgd relocate` to localize
+a record (which changes where an accepted record cites, and may move it into
+another base), `kgd index --no-embed` for the keyword refresh, `kgd index`
+from Re-embed and `kgd embedding` from the Embedding settings, and it writes
+and deletes draft files. Every run but
 `kgd embedding set` gets `HF_HUB_OFFLINE=1`: `kgd embedding set` fills the
 Hugging Face model cache, so every other load is local. These processes read
 the home, the database and the registered bases; the plugin itself opens
@@ -180,7 +182,7 @@ a judgment of the selection, **Capture**, **Find sources**, and an answer to
 whatever is typed into the search box. Nothing is written until the owner
 presses Capture or runs **Capture selection**, or localizes a foreign record,
 and then only a draft, which becomes knowledge when the owner accepts it in
-the Capture view.
+the Capture view, or, for a localization, the record's new citation.
 
 The harness runs inside the plugin (`agent.ts`). Model requests go directly
 from `model.ts` to the Chat Completions API of the model chosen in the
@@ -245,7 +247,8 @@ not followed, so credentials stay with the configured endpoint. A failed
 request shows the service's own explanation from a JSON error body
 (`error.message`, an `error` string, `message` or `detail`) on one line of at
 most 300 characters, with the request's key replaced by `[key]`; any other
-error body is not displayed. API requests are not retried implicitly.
+error body is not displayed. The HTTP client itself never retries; model
+requests answered with 503 or 429 are sent twice more, as described above.
 Missing search configuration is reported as a tool error; local knowledge
 queries remain available. Local HTTP integration tests cover the client,
 including a complete model → search → cited-answer round; they use synthetic
@@ -257,7 +260,8 @@ the search's first results, and shows **Recorded**, **Possibly** or **Not
 recorded** with one or two sentences on how the selection connects to them.
 The model first says whether the selection is a concept or a statement: a
 concept matches only a node, never a relation, while a statement may be a node
-(a theorem or a finding about one record) or a relation, and a record that
+(a theorem or a finding, whose roles link what it is about) or a relation
+between results or concepts, and a record that
 only mentions the selection is related, not the same. A matched
 record is put in focus unless the owner has focused another one.
 
@@ -286,16 +290,16 @@ while the owner keeps reading:
   statement and evidence quotes with their lines.
 - The plugin refuses kinds and roles the type lacks, links to records the
   model was not shown, and values that are not links: a concept no record or
-  draft holds is left out of the values. It looks up every name the record
+  draft holds is left out of the values. A relation must bind at least two
+  values, and a statement node whose kind declares roles at least one, so a
+  theorem about a concept nothing records is left out. It looks up every name the record
   would write (label and aliases) among the records and the drafts, and
   returns any the model had not seen. It drops a relation's aliases.
 - Drafts are not knowledge yet, but the model sees the source's drafts and
-  those that share a name. A value may link a draft of the same base, which
-  is then accepted together with it. When the selection is a draft's item the
+  those that share a name. A value may link a draft of any base, which is
+  then accepted together with it. When the selection is a draft's item the
   decision is unchanged, and the Capture view opens that draft. A draft is
-  never superseded or contradicted: the owner edits it instead. A draft of
-  another base cannot be linked, since cross-base links target accepted
-  records.
+  never superseded or contradicted: the owner edits it instead.
 - Evidence holds only the source's text. A quote is kept when it is verbatim
   in its lines after collapsing whitespace, as `kgd check` compares; moved to
   its only occurrence in the source when the lines were wrong; and replaced
@@ -315,8 +319,8 @@ while the owner keeps reading:
   recorded id, keeping the record's understanding, which replaces it when the
   owner accepts it; the report says whether the passage generalizes, corrects
   or conflicts with it. A replacement already waiting is not overwritten. A
-  record of another base is not replaced from here: the proposed record is
-  shown, and moving a record across bases is the compile Skill's relocation.
+  record of another base is not replaced from here, since a replacement lives
+  in its record's base: the proposed record is shown and nothing is drafted.
 - Borrowed drafts the concept as **foreign knowledge**. The plugin runs Find
   sources (below) for the concept's name and fetches the pages it found: the
   originating paper's arXiv abstract and the Wikipedia article (the section a
@@ -484,8 +488,8 @@ arXiv. Capture's drafts and `kgd` runs stay on this machine.
 
 **kgdistiller Capture** lists the agent's captures and localizations and every
 draft waiting for the owner, in every registered base. Every way knowledge
-enters the base ends here: a capture, a compile run by a Skill, a replacement
-of a recorded item and a localization. It opens below the lookup sidebar the
+enters the base ends here: a capture, a compile run by a Skill and a
+replacement of a recorded item. It opens below the lookup sidebar the
 first time a capture starts, without taking focus, and **Show drafts** opens
 it at any time. Nothing in it is accepted until the owner presses Accept.
 
@@ -517,8 +521,8 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   draft links to its label's id), the kind (from its document type), its
   other names, the epistemic label, whether it is understood, and the
   statement (the pencil turns it into a text box). Each value of a role or of
-  `requires` has × to remove it, and each row + to link a record, or a draft of
-  the same base, found by name or words. Every change runs `kgd edit` on that
+  `requires` has × to remove it, and each row + to link a record or a draft,
+  of any base, found by name or words. Every change runs `kgd edit` on that
   one field and lists the drafts again, so what `kgd accept` would refuse
   shows at once; the evidence and the source change only by relocation.
 - Every draft says whether `kgd accept` would take it, together with the
@@ -529,8 +533,8 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   into a draft for revision, as **Revise as draft** does; the view is outlined
   while it can be dropped. Until it is edited, the draft equals the record and
   accepting it only removes it.
-- **Accept** runs `kgd accept` on the draft and the drafts it links, which
-  indexes them and embeds them; the card reads "Accepting and embedding…"
+- **Accept** runs `kgd accept` on the draft and the drafts it links, of any
+  base, which indexes them and embeds them; the card reads "Accepting and embedding…"
   until it returns. On 2026-10-15 checking, accepting and indexing took about
   0.1 s, and embedding 0.05 s more while the shared embedding process is warm
   or about 2 s when it must load the model.
@@ -551,20 +555,21 @@ Capture view. One model call at low reasoning reads the record's statement and
 evidence and the numbered passage around the selection, and either declines,
 when the passage is about something else or means it differently, or copies
 the sentences that state it. The plugin then runs `kgd relocate` on the record
-(or the draft's file) with those sentences, limited to the selected source,
-which rewrites only its `source`, `lines` and Evidence; a refusal goes back to
-the model. The record keeps everything else and stays accepted, or the draft
-stays a draft. A record of another base, or one whose kind the local source's
-type lacks, is not localized; moving a record across bases is the compile
-Skill's relocation.
+(or the draft's file) with those sentences, limited to the selected source and
+its base, which rewrites only its `source`, `lines` and Evidence; a refusal
+goes back to the model. When the source lies in another base, the record moves
+into that base with its id and every link to it is rewritten. The record keeps
+everything else and stays accepted, or the draft stays a draft. A record whose
+kind the local source's type lacks is not localized.
 
 ## Not yet built
 
 Later owner-scheduled frontend work: editing commands, jump links from md/tex
 sources to records, a shipped `.base` file and a Bases view. For the Capture
 view: a graph view for editing a draft's links, asking the agent to revise a
-draft, and looking a draft's concepts up from its value chips. For the agent: relocation across bases, linking the records that
-name a newly accepted concept, and compiling a whole source.
+draft, and looking a draft's concepts up from its value chips. For the agent:
+linking the records that name a newly accepted concept, and compiling a whole
+source.
 
 ## Installation
 

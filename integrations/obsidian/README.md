@@ -19,10 +19,13 @@ Every way knowledge enters the base ends in a draft you review.
 
 The plugin never opens the kgdistiller home or its database: it reads
 knowledge through `kgd mcp` and changes it only through `kgd` commands
-(`kgd source`, `kgd edit`, `kgd accept`, `kgd relocate`, `kgd index`,
-`kgd index --no-embed`, `kgd embedding`) and the draft files a capture writes
-or a discard deletes. Edit records with Obsidian's editor and
-Properties panel; the keyword index follows saved record files by itself.
+(`kgd base list`, `kgd source`, `kgd edit`, `kgd accept`, `kgd relocate`,
+`kgd index`, `kgd index --no-embed`, `kgd embedding`) and the draft files a
+capture writes or a discard deletes. `kgd relocate` runs when you localize a
+foreign record: it changes where the accepted record cites, and moves it into
+the local source's base, with every link to it, when that is another base.
+Edit records with Obsidian's editor and Properties panel; the keyword index
+follows saved record files by itself.
 
 ## Install
 
@@ -178,6 +181,7 @@ vault.
   embedding model.
 - [x] A new record from a selection: **Capture** drafts it for the Capture
   view.
-- [ ] Editing a draft's fields on its card and asking the agent to revise it.
+- [x] Editing a draft's fields and links on its card.
+- [ ] Asking the agent to revise a draft.
 - [ ] Jump links from source documents to records.
 - [ ] A shipped `.base` file and a Bases view.

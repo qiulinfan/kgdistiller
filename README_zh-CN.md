@@ -55,7 +55,7 @@ kgd get research:sigma-algebra --source-lines 20
 
 ## 隐私与数据边界
 
-插件通过你配置的 `kgd` 读取知识，自己从不打开 home 或数据库。它写自己的 `data.json`（API key 存在 Obsidian 的 SecretStorage 里，`data.json` 只存它们的名字）；你起草、入库或丢弃时，它会写 `.knowledge/drafts/` 下的草稿，并替你运行 `kgd accept` 和 `kgd index`。它不收集遥测，不需要账号，也不安装或更新任何东西。不用 agent 时，查询不发任何网络请求。agent 会把选中的文字、上下文和它读到的记录发给你选的模型服务；网页和论文搜索发往 Exa（`mcp.exa.ai`）；**Find sources** 还会读 Wikipedia 和 arXiv。为了索引隐藏目录，插件 patch 了 Obsidian 内部未公开的 file-adapter 方法，并用 Node 的文件系统 API 检查 vault 中 `.knowledge/` 下的路径，所以只支持桌面端。这样做也会让 `.knowledge/` 对 Obsidian 搜索和同一 vault 的其他插件可见。如果启用了 Hidden Folders Access 插件，kgdistiller 会报告冲突，并关闭自己的隐藏目录索引。
+插件通过你配置的 `kgd` 读取知识，自己从不打开 home 或数据库。它写自己的 `data.json`（API key 存在 Obsidian 的 SecretStorage 里，`data.json` 只存它们的名字）；你起草、入库或丢弃时，它会写 `.knowledge/drafts/` 下的草稿。它用你配置的 `kgd` 运行 `kgd base list`、`kgd source`、`kgd edit`、`kgd accept`、`kgd relocate`（localize 一条记录时运行，会改变已接受记录的引用位置，也可能把它移到另一个 base）、`kgd index`、`kgd index --no-embed` 和 `kgd embedding`。它不收集遥测，不需要账号，也不安装或更新任何东西。不用 agent 时，查询不发任何网络请求。agent 会把选中的文字、上下文和它读到的记录发给你选的模型服务；网页和论文搜索发往 Exa（`mcp.exa.ai`）；**Find sources** 还会读 Wikipedia 和 arXiv。为了索引隐藏目录，插件 patch 了 Obsidian 内部未公开的 file-adapter 方法，并用 Node 的文件系统 API 检查 vault 中 `.knowledge/` 下的路径，所以只支持桌面端。这样做也会让 `.knowledge/` 对 Obsidian 搜索和同一 vault 的其他插件可见。如果启用了 Hidden Folders Access 插件，kgdistiller 会报告冲突，并关闭自己的隐藏目录索引。
 
 CLI 和 MCP server 都在本地运行。它们读取 home 中的 `config.json` 和 `types/`、各 base 的记录和草稿，以及已注册的 source 文件（用于核对 evidence 和 `kgd get --source-lines`）。它们只写这些位置：
 
@@ -74,7 +74,7 @@ kgdistiller 原创代码采用 [MIT](LICENSE)，版权 2026 Qiulin Fan，允许�
 
 ## 核心概念
 
-kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，等你确认的草稿在 `.knowledge/drafts/`。记录分两类：node（一个概念，或一条表述精确的结论），以及 relation（用 role 键绑定其他记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文；foreign（外部）知识则引用外部作品的网页地址和该网页的原文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
+kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，等你确认的草稿在 `.knowledge/drafts/`。记录分两类：node（一个概念，或一条表述精确的结论，用 role 链接它所涉及的记录），以及 relation（用 role 键绑定两条或更多记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文；foreign（外部）知识则引用外部作品的网页地址和该网页的原文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
 
 全局 home 是 `$KGDISTILLER_HOME`（默认 `~/.knowledge`），负责注册 base、把 source glob 映射到你定义的 document type，并保存派生数据库 `index.sqlite`：
 
@@ -131,8 +131,9 @@ relation_kinds:
 epistemic: [proved, stated]
 ---
 Extract each definition and each precisely stated result as a node; a result
-about one record links it under about. Record a relation only when the text
-states a connection between two or more records.
+links every record it is about under about. Record a relation only when the
+text states a connection between records, such as one result implying
+another.
 ```
 
 在 `~/.knowledge/config.json` 里把 base 的 source 映射到这个 type：
@@ -234,12 +235,12 @@ A measure space is defined over a sigma-algebra.
 ```
 
 - 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。label 在所有 base 中只指一个概念：名字已被占用、意义不同的新概念，在名字后加上来源文件名，例如 `Autoencoder (Autoencoder&VAE)`。foreign 记录的 `source` 是它引用的外部作品的网页地址，没有 `lines`。可选：`aliases`、`understanding`（`yes` 或 `no`，默认 `yes`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
-- 其余键都是 role。至少有一个非空 role 列表的记录是 relation，否则是 node。一条 relation 的 role 数量不限。
+- 其余键都是记录 kind 的 role。记录是 node 还是 relation，取决于它的 kind 在 document type 里属于哪一节。relation 至少绑定两个值，role 数量不限；声明了 role 的 node kind（比如 theorem 的 `about`）至少链接一条记录。
 - 列表里的值都是链接：`"[[id]]"`、`"[[base:id]]"` 或 `"[[.knowledge/entries/id]]"`。库里还没有的概念，先单独入库（从本地 source，或作为 foreign 知识），再链接。
 - 正文依次是说明文字、可选的 `## Search terms` 小节，最后是 `## Evidence` 小节，内容是从被引用行（或网页）逐字摘出的引文。
-- 例子和应用也是 relation，kind 由你注册，比如 `example: [uses, setting]`。
+- 定理、发现和例子都是 node，用 role 链接它们涉及的记录，比如 `example: [uses, setting]`；“两个子空间的和是子空间”是一条涉及两条记录的 theorem，不是 relation。
 
-agent 只写草稿，由你确认。已接受的记录可以手动原地修改，改完运行 `kgd check` 和 `kgd index --no-embed`（插件会自动刷新关键词索引）；改过的记录保留旧向量，直到你用 `kgd index` 重算。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
+agent 只写草稿，由你确认。已接受的记录可以手动原地修改，改完运行 `kgd check` 和 `kgd index --no-embed`（插件会自动刷新关键词索引）；文本变了的记录会失去向量，在你用 `kgd index` 重算之前，dense 检索找不到它。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
 
 ## 命令
 
@@ -250,7 +251,7 @@ agent 只写草稿，由你确认。已接受的记录可以手动原地修改�
 | `kgd check [--base B] [--fix-lines]` | 校验 home、记录和草稿，报告移动或过期的 evidence。 |
 | `kgd source SOURCE` | 打印某个 source 的 document type profile，以及引用它的记录和草稿。 |
 | `kgd find TEXT [--base B] [--source PREFIX]` | 在已注册的 source 里查找一段文字或一个名字，不受换行和阅读视图隐藏的标记影响。 |
-| `kgd relocate TARGET TEXT` | 把一条记录的 source、行号和引文移到它所在 base 里唯一包含这段文字的段落。 |
+| `kgd relocate TARGET TEXT [--base B] [--source PREFIX]` | 把一条记录的 source、行号和引文移到已注册 source 里唯一包含这段文字的段落；段落在另一个 base 时，把记录移过去，并改写所有指向它的链接。 |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | 列出草稿、它们的链接，以及 `kgd accept` 会拒绝的原因；不写任何东西。 |
 | `kgd edit DRAFT FIELD [VALUE...]` | 设置草稿的一个字段：label、kind、epistemic、understanding、aliases、requires、某个 role，或正文陈述。 |
 | `kgd accept [--dry-run] DRAFT...` | 把草稿转为新记录，或替换 id 相同的已接受记录，全部成功或全部不改，然后建索引并算向量。 |
@@ -258,9 +259,9 @@ agent 只写草稿，由你确认。已接受的记录可以手动原地修改�
 | `kgd search QUERY [--limit N] [--no-dense]` | 按 lexical、dense、名称三路给记录排序。 |
 | `kgd resolve TERM...` | 列出 term 的各个义项和提及。 |
 | `kgd get UID... [--source-lines N]` | 读取完整记录及其链接，可附带 source 中当前的被引用行。 |
-| `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | 沿链接展开：依赖闭包和论断闭包。 |
+| `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | 沿链接展开：依赖闭包；`--dir in` 列出链接某条记录的陈述 node 和 relation。 |
 | `kgd browse [HANDLE]` | 列出 base、某个 base 的 source 目录、某个 source 按 kind 分组的记录，或用 `--kind` 列出某类全部记录。 |
-| `kgd pack UID... [--budget BYTES] [--requires-depth N]` | 在字节预算内打包完整记录，附带共享的 relation 和未补上的 gap。 |
+| `kgd pack UID... [--budget BYTES] [--requires-depth N]` | 在字节预算内打包完整记录，附带链接其中多条记录的记录和未补上的 gap。 |
 | `kgd obsidian install [--base NAME]` | 在某个 base 的 vault 中安装或更新插件，并启用隐藏目录索引。 |
 | `kgd claude link\|doctor`、`kgd codex link\|doctor` | 为 Claude Code 或 Codex 安装或检查 Skills、agent presets 和 workflow 文件。 |
 | `kgd mcp` | 通过 stdio 为所有 base 提供只读工具。 |
@@ -284,9 +285,9 @@ kgd accept .knowledge/drafts/measure-space.md
 
 | Skill | 作用 |
 |---|---|
-| `capture-kgdistiller` | 边读边把一条知识起草成草稿（概念、关于一条记录的陈述，或记录之间的关系），带上引文；借用的概念则从其出处网页起草成 foreign 知识。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
+| `capture-kgdistiller` | 边读边把一条知识起草成草稿（概念、source 陈述的结论，或记录之间的关系），带上引文；借用的概念则从其出处网页起草成 foreign 知识。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
 | `compile-kgdistiller` | 按 document type 从已注册 source 的一部分或全部起草草稿。已记录的知识按 [docs/model.md](docs/model.md#conflicts-updates-and-relocation) 的冲突规则忽略，或起草替换草稿。 |
-| `relocate-kgdistiller` | source 改动或改名后，把一条记录移到你贴出的段落：按知识名找到记录，再运行 `kgd relocate`。 |
+| `relocate-kgdistiller` | source 改动或改名后，把一条记录移到你贴出的段落（段落在另一个 base 时一并移过去）：按知识名找到记录，再运行 `kgd relocate`。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |
 | `deploy-kgdistiller` | 安装 kgdistiller，注册 base、source、document type 和模型，然后检查、建索引、安装插件、链接 runtime。 |
 
@@ -304,7 +305,7 @@ kgd codex doctor
 
 `link` 把 Skills、`kgdistiller-query-reviewer` 和 `kgdistiller-capture-writer` 两个 preset 以及 workflow manifest 装到 `~/.claude` 或 `~/.codex`（遵循 `CLAUDE_CONFIG_DIR` 和 `CODEX_HOME`），不会修改 `CLAUDE.md`、`settings.json`、`AGENTS.md` 或 `config.toml`。OpenCode 和 OMP 只装 Skills，在 checkout 里运行 `./scripts/link-skills.sh opencode` 或 `./scripts/link-skills.sh omp`（PowerShell 7：`./scripts/link-skills.ps1 -Runtime opencode`）。
 
-MCP server 提供 `kg_search`、`kg_resolve`、`kg_get`、`kg_neighbors`、`kg_browse`、`kg_pack` 和 `kg_drafts`，JSON 与 CLI 相同。它自己不加载模型：dense 检索交给共享的 embedding 进程，只有空闲 15 分钟后的第一次 dense 搜索需要等模型加载。注册命令是 `kgd mcp`：
+MCP server 提供 `kg_search`、`kg_resolve`、`kg_get`、`kg_neighbors`、`kg_browse`、`kg_pack`、`kg_drafts` 和 `kg_find`，JSON 与 CLI 相同。它自己不加载模型：dense 检索交给共享的 embedding 进程，只有空闲 15 分钟后的第一次 dense 搜索需要等模型加载。注册命令是 `kgd mcp`：
 
 ```sh
 claude mcp add kgdistiller -s user -e HF_HUB_OFFLINE=1 -- kgd mcp

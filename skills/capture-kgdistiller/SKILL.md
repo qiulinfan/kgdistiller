@@ -1,6 +1,6 @@
 ---
 name: capture-kgdistiller
-description: Draft one knowledge record the owner selected while reading — a concept, a statement about one record, or a relation between records — in a short fixed pass, one batched lookup then one command that writes and checks the draft, citing its source lines verbatim, or a web page's text for a concept the passage borrows, and linking only recorded or drafted concepts. The owner accepts it. Use for requests to capture this concept, remember this definition or result, or update one record; extraction from a whole source belongs to compile-kgdistiller.
+description: Draft one knowledge record the owner selected while reading — a concept, a result the source states, or a relation between records — in a short fixed pass, one batched lookup then one command that writes and checks the draft, citing its source lines verbatim, or a web page's text for a concept the passage borrows, and linking only recorded or drafted concepts. The owner accepts it. Use for requests to capture this concept, remember this definition or result, or update one record; extraction from a whole source belongs to compile-kgdistiller.
 ---
 
 # Capture one knowledge item as a draft
@@ -61,14 +61,18 @@ path segment).
 - **unchanged**: a record or draft holds it with the same meaning. Write
   nothing, unless that record's citation no longer verifies and this passage
   states the item: then move the citation here with
-  `kgd relocate UID - <<'PASSAGE'` and the selected text, which rewrites only
-  its `source`, `lines` and, when needed, Evidence.
+  `kgd relocate UID - <<'PASSAGE'` and the selected text (add
+  `--source SOURCE` when it occurs elsewhere too), which rewrites only its
+  `source`, `lines` and, when needed, Evidence, and moves a record of another
+  base into this source's base with every link to it.
 - **changed**: a record holds it with a different meaning. Draft its
   replacement from this passage, keeping its id and `understanding`, and say
   whether this definition is more general, corrects the recorded one, or
   conflicts with it (a narrower one included). A definition the recorded one
   explicitly rules out is a conflict even when broader. The owner decides by
-  accepting or discarding the draft.
+  accepting or discarding the draft. A replacement lives in its record's
+  base: when the record lies in another base than this source, draft nothing
+  and report the proposed replacement instead.
 - **borrowed**: the passage only uses the concept, or credits it to other work
   (a citation, "proposed by", "popularized by", "as in"). It is that work's:
   when no record or draft holds it, draft it as **foreign** knowledge from the
@@ -77,14 +81,16 @@ path segment).
 
 Before writing, check what the passage owns:
 
-- A node for an object this passage defines or originates, or for a statement
-  it makes about one: a theorem (any precisely stated result, whatever the
-  source calls it), a finding or an example, in the type's node kinds, its
-  roles linking what it is about.
-- A relation only for a connection the passage states between two or more
-  records, such as an implication or a comparison, whose Evidence quote itself
-  states it. A connection you would infer across passages or sources is
-  reported, never written.
+- A node for an object this passage defines or originates, or for a result
+  it states: a theorem (any precisely stated result, whatever the source
+  calls it), a finding or an example, in the type's node kinds, its roles
+  linking every record it is about. "The sum of two subspaces is a subspace"
+  is a theorem whose `about` links subspace and sum of subspaces, not an
+  implication.
+- A relation only for a connection the passage states between records, of a
+  kind the type declares, such as an implication between two results or a
+  comparison, whose Evidence quote itself states it. A connection you would
+  infer across passages or sources is reported, never written.
 
 ## 3. Write and check the draft, in one command
 
@@ -122,12 +128,14 @@ kgd drafts --source SOURCE
   page, which you fetch with your web tools. It lives in the base of the
   source being read and uses a kind of that source's type.
 - `kind` is one of the type's kinds. A record adds one key per role its kind
-  declares, each a list of values (a relation binds at least two records);
-  `requires` lists direct prerequisites.
+  declares, each a list of values (a relation binds at least two values, and
+  a node kind that declares roles links at least one); `requires` lists
+  direct prerequisites.
 - Every value is a link, `"[[id]]"` or `"[[base:id]]"` across bases, to a
-  record or a draft of the same base that the lookup found. A concept nothing
-  records is left out of the values and named in the report; settings and
-  measured values stay in the prose.
+  record or a draft, of any base, that the lookup found. A concept nothing
+  records is left out of the values and named in the report, to be captured
+  on its own first; a statement node with no value left cannot be drafted
+  yet, so report it. Settings and measured values stay in the prose.
 - The prose opens with the statement. Each `>` quote under `## Evidence` is
   copied verbatim from the cited lines or page.
 - Set `epistemic` only from the type's list, and `understanding: no` only when

@@ -90,10 +90,11 @@ and no document-type or class column, so editing `types/` never forces
 re-indexing. A record's class is read at query time from the types of its
 base: it is `relation` when one of them declares its kind under
 `relation_kinds`, and `node` otherwise ([model.md](model.md) "Class rule").
-`kgd index` and `kgd base list` load `config.json` only, and the reads also
-load the types for the class: a malformed type file fails `check`, `source`
-and `accept`, never the index or retrieval, which read its relation kinds as
-none.
+`kgd index` and `kgd base list` load `config.json` only, and the reads
+(`search`, `resolve`, `get`, `neighbors`, `browse`, `pack`, `drafts` and
+`source`) also load the types for the class: a type file a base's sources name
+that does not load fails them with an error naming the file, while
+`kgd index` still runs.
 
 ## Unified text
 
@@ -108,12 +109,13 @@ Each record has one text, used both for FTS and as the embedding input:
 {role}: {v1}; {v2}; …                      one line per role, roles in name order
 requires: {v1}; {v2}; …                    last
 > {quote}                                  one line per quote, whitespace-normalized
-{source}
 ```
 
 Each `{v}` is the linked record's label, or its uid when that record is
 missing. The text excludes understanding, the record's own
-id, line numbers, the base name and paths under `.knowledge`. Linked labels are
+id, its `source` and line numbers, the base name and paths under
+`.knowledge`, so relocating a record keeps its vector unless its Evidence is
+replaced. Linked labels are
 part of the text, so a relation is found by its participants' names, and a
 label change cascades to every record that links it. A text longer than the
 model's `max_seq_length` (in tokens, with the model's document prompt) is
@@ -136,11 +138,8 @@ Both live in `kgdistiller/index.py`.
 **Opening.** If `index.sqlite` is missing, cannot be opened or has
 `user_version` ≠ 4, it is deleted together with `-wal` and `-shm`, created
 with `meta.embedding = ''` and fully built. This is the one-command restore; a
-derived file needs no compatibility path. Before deleting a file that still
-reads, `index` takes its `meta.embedding` and its vectors by text: when that
-model is the configured one, the new database starts with it and every record
-whose unified text is unchanged keeps its vector, so a schema change never
-forces a re-embed.
+derived file needs no compatibility path, so nothing is carried over from a
+database of another version and every record is embedded again.
 
 **Lexical phase**, in one `BEGIN IMMEDIATE` transaction with a 30 s busy
 timeout:
@@ -165,9 +164,8 @@ timeout:
    run until fixed. Values resolve to uids textually: `[[x]]` in base `b`
    becomes `b:x`, `[[c:x]]` becomes `c:x`.
 6. Upsert with `INSERT … ON CONFLICT(uid) DO UPDATE`, which keeps the rowid,
-   then replace the record's `link` and `name` rows. A changed understanding
-   is reported in `understanding_changed`. Every deleted row (steps 3–5) puts
-   its `(text, vec)` into the pool.
+   then replace the record's `link` and `name` rows. Every deleted row
+   (steps 3–5) puts its `(text, vec)` into the pool.
 7. Recompute the unified text of every row from the stored labels and links.
    Where it differs from the stored text, put the old `(text, vec)` into the
    pool, rewrite the `fts` row (delete and insert by rowid) and set
@@ -191,9 +189,9 @@ A concurrent text or model change makes the write a no-op, and the row is
 picked up by the next run. The guard keeps every stored vector matched to its
 row's current text and model without any hashing, even when two runs overlap.
 If `embedding` is set but the `retrieval` extra is missing, the lexical commit
-stands and the report's `embedding_error` is `embedding is set to <model> but
-the retrieval extra is missing: install kgdistiller[retrieval] or set
-embedding to null`. A model that fails to load or encode also sets
+stands and the report's `embedding_error` is ``embedding is set to <model>
+but the retrieval extra is missing: install kgdistiller[retrieval] or run
+`kgd embedding off` ``. A model that fails to load or encode also sets
 `embedding_error` after the lexical commit; `embedded` says how many rows were
 written before the failure; rerun `kgd index`.
 
@@ -202,7 +200,7 @@ written before the failure; rerun `kgd index`.
 ```json
 {"created": false, "rebuild": false,
  "bases": {"notes": {"parsed": 3, "deleted": 0, "unparseable": [{"path": "/abs/…/x.md", "message": "…"}]}},
- "unavailable": [], "understanding_changed": [{"uid": "notes:measure", "from": "no", "to": "yes"}],
+ "unavailable": [],
  "reused": 1, "embedded": 2, "unembedded": 0, "truncated": [], "embedding_error": null}
 ```
 
@@ -243,8 +241,8 @@ Whether a re-embed has work needs no snapshot or hash. Each row keeps the
 unified text its vector was computed from, and the lexical phase sets `vec`
 to NULL only when that text changes (step 7), so `unembedded` counts exactly
 the records whose embedding input changed. Touching a file, or changing a
-field the unified text leaves out such as `understanding` or `lines`, leaves
-the vector current; renaming a record that others require changes their text
+field the unified text leaves out such as `understanding`, `source` or
+`lines`, leaves the vector current; renaming a record that others require changes their text
 too, since it carries the required labels. The Obsidian plugin's Re-embed
 button is solid with that count while it is above 0 or the model changed, and
 grey otherwise. See "The embedding process" for what an embedding costs.
@@ -336,7 +334,7 @@ within a filter and ANDed across filters, applied in SQL. `search` applies
 them in every lane. `neighbors` prunes the traversal with them at every hop:
 the start uids are always included, and missing targets are always reported
 as leaves. `pack` applies them only to the records it adds
-itself (the `requires` closure and shared relations), never to the uids the
+itself (the `requires` closure and the shared records), never to the uids the
 caller names. `get` addresses records by uid and takes no filters.
 
 ## `kgd search QUERY [--limit 40] [--no-dense] [filters]`
@@ -388,9 +386,10 @@ The example shortens `gloss` and `in`. A rank is `null` for a lane that did
 not return the record. `participants` maps each role of the record's kind to
 its values, a relation's participants or what a statement node is about; `in` lists the records that link this one, with the linking role.
 `requires`, each role list and `in` are capped at 12 entries; `truncated`
-counts what was cut. `degree` is the number of distinct other records the
-record links or is linked by, through roles and `requires`, all bases
-included: how connected it is, which is what makes a record central, never its
+counts what was cut. `degree` is the number of distinct other existing
+records the record links or is linked by, through roles and `requires`, all
+bases included (a link to a missing record counts for nothing): how connected
+it is, which is what makes a record central, never its
 kind. `foreign` is true when the record's `source` is a web
 address, and `lines` is then `""`.
 
@@ -417,10 +416,10 @@ is a candidate, never an identity: compare definitions.
 
 ```json
 {"records": [{"uid": "notes:sum-of-two-subspaces-is-a-subspace", "base": "notes", "id": "…",
-   "class": "relation", "kind": "implies", "label": "…", "aliases": [], "source": "…", "lines": "24-32",
+   "class": "node", "kind": "theorem", "label": "…", "aliases": [], "source": "…", "lines": "24-32",
    "foreign": false, "understanding": "yes", "epistemic": "stated", "gloss": "…", "body": "…",
    "search_terms": "", "evidence": ["…"], "degree": 3,
-   "out": [{"role": "premise", "pos": 0, "uid": "notes:subspace", "label": "Subspace", "exists": true},
+   "out": [{"role": "about", "pos": 0, "uid": "notes:subspace", "label": "Subspace", "exists": true},
            {"role": "requires", "pos": 0, "uid": "notes:vector-space", "label": "Vector space", "exists": true}],
    "in": [{"uid": "…", "label": "…", "kind": "…", "role": "…"}],
    "source_text": "23\t…\n24\t…"}],
@@ -484,12 +483,12 @@ The usual walks:
 
 - **Dependency closure:** `--role requires --dir out --depth n` lists what a
   record requires, n levels deep.
-- **Claim closure:** `--dir in` from a node lists the relations that cite it,
-  with the role it plays in each; `--dir both --depth 2` adds their other
-  participants, including relation-to-relation hops such as a relation that
-  is the witness of another.
-- **Applications:** `--dir in --kind example` lists the example records that
-  use a node. The kind filter prunes the walk, so only examples are entered.
+- **What links a record:** `--dir in` lists the statement nodes and relations
+  that link it, with the role it plays in each; `--dir both --depth 2` adds
+  what else they link, including relation-to-relation hops such as a relation
+  that is the witness of another.
+- **Examples:** `--dir in --kind example` lists the example records about a
+  node. The kind filter prunes the walk, so only examples are entered.
 
 ## `kgd browse [HANDLE] [filters]`
 
@@ -529,7 +528,8 @@ address a source.
 ## `kgd pack UID... [--budget 60000] [--requires-depth 1] [filters]`
 
 `pack` returns whole records for a set of uids within a byte budget, together
-with the relations they share and every link it could not follow.
+with the records that link several of them and every link it could not
+follow.
 
 1. **Order.** The given uids, deduplicated in caller order; an unknown one
    becomes an `unknown-uid` gap and a bare id held by several bases is an
@@ -544,11 +544,11 @@ with the relations they share and every link it could not follow.
    spaces, non-ASCII kept; `[]` is 2 bytes). A record that does not fit
    becomes an `over-budget` gap and is never truncated; later, smaller
    records may still fit.
-3. **Shared relations.** One pass over the links into the packed records
-   finds every relation not yet listed that passes the filters and has at
-   least two distinct packed targets under roles other than `requires`. They
-   are appended in order of packed participants, most first, then uid, under
-   the same budget rule.
+3. **Shared records.** One pass over the links into the packed records
+   finds every record not yet listed, relation or statement node alike, that
+   passes the filters and has at least two distinct packed targets under roles
+   other than `requires`. They are appended in order of packed targets, most
+   first, then uid, under the same budget rule.
 4. **Gaps.** Every out-link of a packed record that the packet cannot follow,
    in pack order and link order: `missing-target` for a uid with no record, `not-packed` for a record outside the packet (an
    over-budget record therefore also appears as `not-packed` from its

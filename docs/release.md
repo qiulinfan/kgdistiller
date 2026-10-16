@@ -87,11 +87,13 @@ Then verify that:
   the `retrieval` extra is missing, fails with an install hint unless
   `--no-dense` (MCP: `no_dense`) is given;
 - `neighbors` returns dependency closures whose cycles end at the depth limit
-  and whose records keep their minimum depth, claim closures across
-  relation-to-relation links and applications by kind; `browse` answers every
-  handle form and kind listing; `pack` keeps to its budget, reports
-  over-budget records while later ones still fit, orders shared relations by
-  packed participants, reports every gap reason, and its `bytes` equals the
+  and whose records keep their minimum depth, the statement nodes and
+  relations linking a record (`--dir in`) across relation-to-relation links,
+  and examples by kind; `browse` answers every handle form and kind listing;
+  `pack` keeps to its budget, reports over-budget records while later ones
+  still fit, adds every record, relation or statement node alike, with role
+  links to at least two packed records, ordered by packed targets, reports
+  every gap reason, and its `bytes` equals the
   UTF-8 length of the compact JSON of its records; `resolve` separates
   homonyms within and across bases from mentions; and the MCP server exposes
   exactly the eight read-only tools;
@@ -100,7 +102,10 @@ Then verify that:
 - the home lock serializes `accept`, `relocate`, `check --fix-lines`, `base add|rm` and
   `embedding set|off`: a held lock makes each fail without writing; `accept`
   replaces a record only with the replacement draft it is given, and a refusal
-  writes nothing; and `--fix-lines` skips a file that changed during the run;
+  writes nothing; `relocate` moves a record or a draft whose passage lies in
+  another base into that base with every link to it rewritten, and refuses
+  when that base has the id or a replacement draft waits; and `--fix-lines`
+  skips a file that changed during the run;
 - sources of any extension are read as text, and no command parses source
   syntax or converts a source;
 - `check` reports every error and every moved or stale record and exits 1 for

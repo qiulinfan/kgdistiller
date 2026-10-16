@@ -32,7 +32,7 @@
   another, and the home never lies inside a base root. The home is owner data
   and never enters this repository.
 - Storage: a base's knowledge is `.knowledge/entries/<id>.md` (accepted
-  records: nodes, and relations whose role keys bind participants) and
+  records: nodes, and relations between records) and
   `.knowledge/drafts/<id>.md` (proposed records in the same format: new, or
   under an accepted record's id its replacement). The product reads and writes
   nothing else under `.knowledge/`. Do not reintroduce sheets, pending terms or
@@ -46,15 +46,18 @@
   accepted record, except `kgd relocate`, which moves where a record cites
   without changing what it says (owner, 2026-10-15: sources change and
   nothing follows them; the relocate Skill moves a record to a passage the
-  owner gives), and the link rewrites a relocation across bases, a merge or a
+  owner gives; when the passage lies in another base it moves the record
+  there and rewrites every link to it), and the link rewrites a merge or a
   split the owner accepted requires. `kgd find` (MCP `kg_find`) finds a text
   in the registered sources, read-only and model-free. `kgd accept` creates a new record with `os.link`
   then `os.unlink`, never overwriting, and moves a replacement over its record
   with `os.replace`, refusing it when the record's file is newer than the
   draft. The home lock is held by `accept`, `relocate`, `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
   truncated. The product never re-serializes frontmatter; `--fix-lines`
-  rewrites only the `lines:` line, and `relocate` only `source:`, `lines:`
-  and the Evidence section.
+  rewrites only the `lines:` line, `kgd edit` only the lines of the draft
+  field it sets, and `relocate` only `source:`, `lines:`, the Evidence
+  section and, when it moves a record across bases, the link values of that
+  record and of the records and drafts linking it.
 - Embedding follows admission, not edits (owner, 2026-10-15). `kgd accept`
   ends with an index run that embeds only the records it created or replaced.
   After a hand edit of an accepted record the plugin runs
@@ -82,7 +85,8 @@
   that defines or originates it; a source that only uses a concept, even one
   it explains, links its record. Every value is a link (no pending terms); a
   concept nothing records is captured on its own first, from a local source
-  or as foreign knowledge.
+  or as foreign knowledge, and a single capture that cannot link it leaves it
+  out of the values and reports it.
 - A label names one concept across every base (owner, 2026-10-15): no two
   records, and no two drafts, share a label's name key, and a draft shares
   none with an accepted record but the one it replaces (`check` rule
@@ -96,8 +100,8 @@
   `lines`, and quotes that page verbatim. Foreign is derived from `source`,
   never stored. `check` never fetches it and computes no freshness for it. Its
   base is the base of the source being read, and its kind is one a type
-  registered for that base declares. Localization moves its evidence to a
-  local passage through a draft with the same id.
+  registered for that base declares. Localization is `kgd relocate` to a
+  local passage, in any base, with no draft.
 - `understanding` is `yes` or `no`, absent meaning `yes`; only the owner sets
   `no`.
 - Conflicts follow the owner's verbatim statements in docs/model.md
@@ -109,14 +113,20 @@
   - a changed meaning becomes a replacement draft keeping the id, reported as
     more general, a correction or a conflict; accepting it is the owner's
     decision.
-  Relocation is global, across bases. Knowledge that disappears from its
+  Relocation is global: `kgd relocate` finds the passage in every base and
+  moves the record, with every link to it, into the passage's base. A
+  replacement lives in its record's base; one whose passage lies in another
+  base is reported, not drafted. Knowledge that disappears from its
   source is reported; the agent deletes nothing and its fate is the owner's.
 - 如无必要，勿增实体: delete whatever a decision makes unnecessary, outright and
   in the same change, with no fallback or compatibility path (docs/model.md
   principle 11).
-- Nodes are concepts and the statements about one record (theorems, findings,
-  examples; their roles link what they are about); a relation is a connection
-  the source states between two or more records, itself a record. A record's
+- Nodes are concepts and the results a source states (theorems, findings,
+  examples), whose roles link every record they concern, at least one when
+  the kind declares roles (owner, 2026-10-16: "the sum of two subspaces is a
+  subspace" is a theorem about two records, not an implication); a relation
+  is a connection the source states between records, of a kind the type
+  declares, binding at least two values, itself a record. A record's
   class follows its kind's section in the type, never stored; importance is
   connectivity (`degree`), never kind. Role values are links to
   knowledge records, never literals; kgd stores no
@@ -246,8 +256,8 @@
   Obsidian SecretStorage. It depends on no external
   agent runtime, owns its prompts and
   checks every model answer and citation, and writes knowledge only as a
-  draft (new, foreign, a replacement, or a localization), under the same
-  rules as the capture Skill; the agent never accepts,
+  draft (new, foreign or a replacement), under the same rules as the capture
+  Skill, and localizes a record with `kgd relocate`; the agent never accepts,
   and a draft becomes knowledge when the owner accepts it in the Capture view
   (`kgd accept`, which indexes and embeds it). The plugin refreshes the
   keyword index (`kgd index --no-embed`) whenever a record file is saved. Preserve the complete upstream MIT notice and pinned source

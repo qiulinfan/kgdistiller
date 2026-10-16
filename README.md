@@ -101,8 +101,10 @@ The Obsidian plugin reads knowledge through the `kgd` engine you configure
 and never opens the home or the database itself. It writes its own
 `data.json` (API keys stay in Obsidian's SecretStorage; `data.json` holds only
 their names), and, when you capture, accept or discard, drafts under
-`.knowledge/drafts/` and the commands `kgd accept` and `kgd index` run for
-you. It collects no telemetry, needs no account and installs or updates
+`.knowledge/drafts/`. With the `kgd` you configure it runs `kgd base list`,
+`kgd source`, `kgd edit`, `kgd accept`, `kgd relocate` (to localize a record,
+which changes where an accepted record cites and may move it into another
+base), `kgd index`, `kgd index --no-embed` and `kgd embedding`. It collects no telemetry, needs no account and installs or updates
 nothing. Lookup without the agent makes no network request. The agent sends
 the selection, its context and the records it reads to the model provider you
 choose; web and paper searches go to Exa (`mcp.exa.ai`); **Find sources**
@@ -152,8 +154,9 @@ kgdistiller is a knowledge base for academic research: papers you read, papers
 you write and your own research notes. Each registered directory, usually one
 Obsidian vault, is a base. A base keeps its knowledge as Markdown records
 in `.knowledge/entries/` and proposals awaiting your acceptance in
-`.knowledge/drafts/`. A record is either a node (a concept or a precisely
-stated result) or a relation whose role keys bind other records. Every record
+`.knowledge/drafts/`. A record is either a node (a concept, or a precisely
+stated result whose roles link what it is about) or a relation whose role
+keys bind two or more records. Every record
 cites a source file of its base by path, line range and verbatim quotes, or,
 as foreign knowledge, the web page of an outside work it quotes. Sources are plain text in any format; kgdistiller reads them as
 numbered lines and never parses their syntax.
@@ -234,8 +237,9 @@ relation_kinds:
 epistemic: [proved, stated]
 ---
 Extract each definition and each precisely stated result as a node; a result
-about one record links it under about. Record a relation only when the text
-states a connection between two or more records.
+links every record it is about under about. Record a relation only when the
+text states a connection between records, such as one result implying
+another.
 ```
 
 Map the base's sources to that type in `~/.knowledge/config.json`:
@@ -368,20 +372,24 @@ A measure space is defined over a sigma-algebra.
   of the outside work it quotes, and it has no `lines`. `aliases`,
   `understanding` (`yes` or `no`, default `yes`), `epistemic` and `requires`
   are optional; `tags` and `cssclasses` are allowed and ignored.
-- Every other key is a role. A record with at least one non-empty role list is
-  a relation; otherwise it is a node. A relation may have any number of roles.
+- Every other key is a role of the record's kind. Whether a record is a node
+  or a relation follows its kind's section in the document type. A relation
+  binds at least two values, in any number of roles; a node kind that
+  declares roles, such as a theorem's `about`, links at least one record.
 - A list value is a link: `"[[id]]"`, `"[[base:id]]"` or
   `"[[.knowledge/entries/id]]"`. A concept nothing records yet is captured on
   its own first, from a local source or as foreign knowledge.
 - The body is prose, an optional `## Search terms` section, then a final
   `## Evidence` section of verbatim quotes from the cited lines (or page).
-- Examples and applications are relations of a kind you register, such as
-  `example: [uses, setting]`.
+- Theorems, findings and examples are nodes whose roles link what they are
+  about, such as `example: [uses, setting]`; "the sum of two subspaces is a
+  subspace" is a theorem about two records, not a relation.
 
 Agents only write drafts; you accept them. Edit accepted records by hand in
 place, then run `kgd check` and `kgd index --no-embed`
-(the plugin refreshes the keyword index by itself); an edited record keeps
-its old vector until you re-embed with `kgd index`. When a
+(the plugin refreshes the keyword index by itself); an edited record whose
+text changed loses its vector and is missing from the dense lane until you
+re-embed with `kgd index`. When a
 source edit shifts the cited lines, `kgd check --fix-lines` rewrites the
 `lines:` of each record whose quotes it finds exactly once elsewhere in the
 source. [docs/model.md](docs/model.md) has the full grammar and validation
@@ -396,7 +404,7 @@ rules.
 | `kgd check [--base B] [--fix-lines]` | Validate the home, records and drafts; report moved or stale evidence. |
 | `kgd source SOURCE` | Print a source's document-type profile and the records and drafts citing it. |
 | `kgd find TEXT [--base B] [--source PREFIX]` | Find a passage or a name in the registered sources, whatever its line breaks and hidden markup. |
-| `kgd relocate TARGET TEXT` | Move a record's source, lines and evidence to the only passage of its base that holds the text. |
+| `kgd relocate TARGET TEXT [--base B] [--source PREFIX]` | Move a record's source, lines and evidence to the only passage of the registered sources that holds the text, into that passage's base, with every link to it rewritten, when it lies in another. |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | List the drafts with their links and what `kgd accept` would refuse; writes nothing. |
 | `kgd edit DRAFT FIELD [VALUE...]` | Set one field of a draft: label, kind, epistemic, understanding, aliases, requires, a role or its statement. |
 | `kgd accept [--dry-run] DRAFT...` | Admit drafts as new records or replacements of the records with their ids, all or nothing, then index and embed them. |
@@ -404,9 +412,9 @@ rules.
 | `kgd search QUERY [--limit N] [--no-dense]` | Rank records by the lexical, dense and name lanes. |
 | `kgd resolve TERM...` | List the senses and mentions of terms. |
 | `kgd get UID... [--source-lines N]` | Read complete records with their links and, optionally, the live cited source lines. |
-| `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | Follow links from records: dependency and claim closures. |
+| `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | Follow links from records: dependency closures, and with `--dir in` the statement nodes and relations that link a record. |
 | `kgd browse [HANDLE]` | List bases, a base's source directories, a source's records by kind, or every record of a `--kind`. |
-| `kgd pack UID... [--budget BYTES] [--requires-depth N]` | Pack whole records within a byte budget, with shared relations and the gaps left open. |
+| `kgd pack UID... [--budget BYTES] [--requires-depth N]` | Pack whole records within a byte budget, with the records linking several of them and the gaps left open. |
 | `kgd obsidian install [--base NAME]` | Install or update the plugin in a base's vault and enable it with hidden-folder indexing. |
 | `kgd claude link\|doctor`, `kgd codex link\|doctor` | Install or verify the Skills, agent presets and workflow files for Claude Code or Codex. |
 | `kgd mcp` | Serve the read tools over stdio for every base. |
@@ -439,9 +447,9 @@ Five Skills cover the write and read workflows:
 
 | Skill | What it does |
 |---|---|
-| `capture-kgdistiller` | Drafts one record while you read: a concept, a statement about one record, or a relation between records, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
+| `capture-kgdistiller` | Drafts one record while you read: a concept, a result the source states, or a relation between records, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
 | `compile-kgdistiller` | Drafts records from part or all of a registered source, following its document type. Knowledge already recorded is ignored, or drafted as a replacement, by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
-| `relocate-kgdistiller` | Moves one record to the passage you paste, after a source was edited or renamed: it finds the record from the knowledge's name and runs `kgd relocate`. |
+| `relocate-kgdistiller` | Moves one record to the passage you paste, after a source was edited or renamed, into another base when the passage lies there: it finds the record from the knowledge's name and runs `kgd relocate`. |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |
 | `deploy-kgdistiller` | Installs, registers bases, sources, types and the model, then checks, indexes, installs the plugin and links the runtimes. |
 
@@ -468,7 +476,8 @@ and `CODEX_HOME`) and never edits `CLAUDE.md`, `settings.json`, `AGENTS.md` or
 (PowerShell 7: `./scripts/link-skills.ps1 -Runtime opencode`).
 
 The MCP server exposes `kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`,
-`kg_browse`, `kg_pack` and `kg_drafts`, with the same JSON as the CLI. It
+`kg_browse`, `kg_pack`, `kg_drafts` and `kg_find`, with the same JSON as the
+CLI. It
 loads no model: the dense lane asks the shared embedding process, so only the
 first dense search after 15 idle minutes waits for the model.
 Register it as the command `kgd mcp`:

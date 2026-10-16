@@ -2,6 +2,49 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+Upgrading from 2.0.0: a record's unified text no longer ends with its
+`source`, so the next index run of any kind drops every vector, and a plain
+`kgd index` (Re-embed in the sidebar) embeds every record again. A statement
+node whose kind declares roles but links no record no longer passes
+`kgd check`; link what it is about.
+Run `kgd claude link` or `kgd codex link` again for the updated Skills.
+
+- `kgd relocate` finds the passage in the registered sources of every base,
+  narrowed by `--base` and `--source` (both repeatable). When the passage lies
+  in another base it moves the record, accepted or a draft, there with its
+  id, rewrites the record's own links for that base and every role and
+  `requires` link to it in every base's records and drafts, and reports
+  `moved` and `relinked`; `relocated` is the new uid. It refuses when that
+  base already has the id or a replacement draft of the record waits. The
+  old path of drafting the record in the other base is gone.
+- Drafts link drafts of every base: `kgd check` and `kgd accept` resolve a
+  draft's links to drafts of any base, `kgd accept` takes drafts of several
+  bases together, and `kgd drafts` reports `with`, `linked_by` and a value's
+  `draft` state across bases.
+- A result a source states, such as "the sum of two subspaces is a
+  subspace", is a theorem node whose roles link every record it concerns,
+  not an implication; a relation connects records, such as one result and
+  another. A node kind that declares roles links at least one record in
+  them (`kgd check` rule `kind`), and a relation binds at least two values.
+- `degree` counts only the other records that exist; a link to a missing
+  record counts for nothing.
+- `pack` adds every record with role links to at least two packed records,
+  statement nodes as well as relations.
+- A document type that a base's sources name and that does not load makes
+  the reads (`search`, `resolve`, `get`, `neighbors`, `browse`, `pack`,
+  `drafts`, `source`) fail with an error naming it; `kgd index` still runs.
+- `kgd index` carries no vectors over from a database of another schema
+  version, and its report no longer has `understanding_changed`.
+- The unified text no longer ends with the record's `source`, so relocating
+  a record keeps its vector unless its Evidence is replaced.
+- Obsidian plugin: **Localize here** and **Localize to selection** work
+  across bases, moving the record into the local source's base; the Capture
+  card's + finds records and drafts of every base, and capture may link a
+  draft of any base. The plugin passes `--` before the values of
+  `kgd edit` and `kgd relocate`, so a value starting with `-` stays a value.
+
 ## 2.0.0 — 2026-10-16
 
 kgdistiller 2.0.0 gives the knowledge base its settled form. Every way
@@ -21,7 +64,10 @@ such as a theorem or a finding, from `relation_kinds` to `node_kinds` with
 their role, as the templates do; a relation with fewer than two values no
 longer passes `kgd check`. Records with a plain-text value, or an
 `understanding` of `unknown`, `not-yet-understood` or `understood`, no longer
-pass `kgd check`; edit them. Run `kgd claude link` or
+pass `kgd check`; edit them. An absent `understanding`, which meant unknown
+in 1.x, now means `yes`. Labels are now unique across every base: records or
+drafts that repeat a label fail `kgd check` and `kgd accept`; rename one, or
+add its source's name. Run `kgd claude link` or
 `kgd codex link` again: the compile Skill is renamed and the harvest Skill is
 gone. Delete any `.knowledge/sheets/` folder.
 

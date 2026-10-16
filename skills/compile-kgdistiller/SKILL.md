@@ -90,9 +90,9 @@ Classify every candidate:
   report whether the new definition is more general, corrects the recorded
   one, or conflicts with it in another way, a narrower one included. A
   definition that the recorded one explicitly rules out, such as the error it
-  corrected, is a conflict even when it is broader. When this passage lies in
-  another base, draft the record in that base with the same id (a
-  relocation).
+  corrected, is a conflict even when it is broader. A replacement lives in
+  its record's base: when the record lies in another base than this source,
+  draft nothing and report the proposed replacement with the record.
 
 Knowledge that disappeared is gone from its source:
 
@@ -109,20 +109,23 @@ went and do not delete anything.
 Write one `<root>/.knowledge/drafts/<id>.md` per new record or replacement in
 scope:
 
-- nodes for the objects the source defines and the statements it makes about
-  them, in the type's node kinds: theorems (every precisely stated result,
-  whatever the source calls it), findings and examples, their roles linking
-  what they are about;
-- relations for the connections the source states between two or more
-  records, such as implications, comparisons and evaluations, with every
-  participant bound to a declared role; relations about relations are
-  allowed; a statement about one record is a node;
+- nodes for the objects the source defines and the results it states, in
+  the type's node kinds: theorems (every precisely stated result, whatever
+  the source calls it), findings and examples, their roles linking every
+  record they are about ("the sum of two subspaces is a subspace" is a
+  theorem about subspace and sum of subspaces, not an implication); a node
+  kind that declares roles links at least one record;
+- relations for the connections the source states between records, of the
+  kinds the type declares, such as implications between results, comparisons
+  and evaluations, with every participant bound to a declared role and at
+  least two values; relations about relations are allowed;
 - for each relation, an Evidence quote that itself states the relation; a
   connection you infer by combining passages, or with another source this one
   does not state, is not written here (report it, see step 6);
-- every value a link to a record or to a draft of this base; a concept nothing
-  records stays out of the values; settings, hyperparameters and measured
-  values stay in the prose;
+- every value a link to a record or to a draft, of any base; a concept
+  nothing records stays out of the values and is reported, and a statement
+  node left with no value is reported instead of drafted; settings,
+  hyperparameters and measured values stay in the prose;
 - `requires` for direct understanding prerequisites, one level deep;
 - ids from the meaning, without section, figure, table, equation or theorem
   numbers; a replacement keeps the recorded id and is written from a fresh
@@ -143,7 +146,10 @@ kgd drafts --source SOURCE
 
 Add one `kgd relocate` for each unchanged knowledge point whose citation no
 longer verifies, with the passage of this source that states it; it rewrites
-only the record's `source`, `lines` and, when needed, Evidence. Every draft
+only the record's `source`, `lines` and, when needed, Evidence, and when the
+record lies in another base it moves the record into this source's base and
+rewrites every link to it. Pass `--base` or `--source` when the passage occurs
+more than once. Every draft
 you wrote must have empty `problems`: they are what `kgd accept` would refuse.
 Fix the drafts and run the command again. Pre-existing problems of other
 drafts are reported, not repaired.
@@ -157,8 +163,9 @@ Report the following:
 - the unchanged knowledge points with their records, marking those whose
   citation `kgd relocate` moved;
 - the replacement drafts, each with its reason (more general, a correction,
-  or a conflict) and the old and new `source:lines`, and any relocation to
-  another base;
+  or a conflict) and the old and new `source:lines`, and the proposed
+  replacements of records of another base, which were not drafted;
+- the records `kgd relocate` moved into this source's base;
 - the records whose knowledge disappeared from their source;
 - the concepts left unlinked because nothing records them;
 - the ambiguous candidates left out.

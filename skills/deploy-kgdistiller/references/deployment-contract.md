@@ -35,10 +35,9 @@ A record is YAML frontmatter plus a Markdown body:
 ```markdown
 ---
 label: Sum of two subspaces is a subspace
-kind: implies
-premise:
+kind: theorem
+about:
   - "[[subspace]]"
-conclusion:
   - "[[sum-of-subspaces]]"
 epistemic: stated
 source: notes/linear-algebra/chapters/01-review.tex
@@ -58,7 +57,9 @@ lines: 24-32
   accepted and ignored. The id is the file stem.
 - Every other key is a role declared for `kind` by the source's type. A
   record is a relation when its type declares its kind under
-  `relation_kinds` (it then binds at least two records), and a node otherwise.
+  `relation_kinds` (it then binds at least two values), and a node otherwise;
+  a node kind that declares roles, such as a theorem's `about`, links at
+  least one record in them.
 - Values are quoted links (`"[[id]]"`, `"[[base:id]]"`,
   `"[[.knowledge/entries/id]]"`); plain text is an error.
 - The body ends with `## Evidence`: verbatim quotes of the cited lines (of the
@@ -160,11 +161,13 @@ policy before any record exists.
 ```
 
 `rule` is one of `config`, `type`, `source-type`, `id`, `frontmatter`,
-`source`, `kind`, `link`, `body`. The exit code is 1 when any list is
+`source`, `kind`, `link`, `label`, `body`. The exit code is 1 when any list is
 non-empty. `moved` evidence (each quote found exactly once elsewhere in the
 source) is repaired by `--fix-lines`, which rewrites only the `lines:` line
-under the home lock and adds `fixed` and `skipped` lists. `stale` evidence
-needs the quote re-copied from the source by a reviewed edit. Staleness never
+under the home lock and adds `fixed` and `skipped` lists. A `stale` record
+is moved to the passage that now states it with the relocate Skill
+(`kgd relocate`), or, when its meaning changed, gets a replacement draft.
+Staleness never
 hides a record from retrieval.
 
 ## Index and restore
@@ -174,14 +177,14 @@ hides a record from retrieval.
 stat changed, then embeds every row whose vector is NULL with the `embedding`
 model. The model loads only when such a row exists. Its JSON report lists per
 base `parsed`, `deleted` and `unparseable`, plus `unavailable` bases,
-`understanding_changed`, `reused`, `embedded`, `unembedded`, `truncated`
+`reused`, `embedded`, `unembedded`, `truncated`
 (texts longer than the model's input limit) and `embedding_error` (`null` or
 why embedding failed); it exits 1 when a file is unparseable, a base is
 unavailable or embedding failed. `--rebuild` re-derives every row in
 place and re-uses vectors by text. `--no-embed` skips the embedding phase and
 leaves changed rows unembedded. With `embedding` set and the `retrieval` extra
 missing, it commits the lexical index, reports `embedding_error` ending in
-`install kgdistiller[retrieval] or set embedding to null` and exits 1.
+``install kgdistiller[retrieval] or run `kgd embedding off` `` and exits 1.
 
 Restore after a lost or damaged database in one step:
 
@@ -193,9 +196,11 @@ kgd index
 This re-embeds every record, which is the only slow part of a restore (about
 14 records a second with `BAAI/bge-m3` on Apple silicon); report the
 wall time. A missing, unreadable or other-version database is also rebuilt
-automatically by `kgd index`. Readers (`search`, `resolve`, `get`,
-`neighbors`, `browse`, `pack`, MCP) open it read-only and report `lag`; a
-missing database tells them to run `kgd index`.
+automatically by `kgd index`, which carries nothing over from it. Readers
+(`search`, `resolve`, `get`, `neighbors`, `browse`, `pack`, MCP) open it
+read-only and report `lag`; a missing database tells them to run `kgd index`,
+and a document type a base's sources name that does not load fails them with
+an error naming the file.
 
 ## Product provenance and boundaries
 

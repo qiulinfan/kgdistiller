@@ -35,13 +35,15 @@ A relation records a connection the source states between two or more
 records, and is a record of the graph like any node: compares for a
 source-backed comparison, evaluates for a reported evaluation of a method on
 a setting with a metric, implies and requires-for for stated implications and
-dependencies. A statement about one record is a node, never a relation. How
+dependencies. A result the source states is a node whose roles link what it
+is about, one record or several, never a relation. How
 important a node is follows from how many records it connects, never from
 its kind. An ablation or limitation that changes a result's meaning is
 knowledge too.
 
 Role values are knowledge references: links to records or drafts; a concept
-nothing records is left out of the values. Datasets, tasks and metrics are concepts and may
+nothing records is left out of the values, and a theorem or finding links at
+least one record. Datasets, tasks and metrics are concepts and may
 fill setting and metric. Resolutions, splits, training settings,
 hyperparameters, units, uncertainty and measured values belong in the
 record's prose and evidence, never in a role; numbers are never structured,

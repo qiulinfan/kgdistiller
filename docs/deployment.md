@@ -190,8 +190,9 @@ documents.
 
 `node_kinds` is required; `relation_kinds` and `epistemic` are optional. Both
 kind sections map each kind to its ordered roles: a node kind may declare none
-(`[]`), or roles linking what it is about, and a relation kind declares at
-least one, since a relation binds at least two records. A kind's section
+(`[]`), or roles linking what it is about, and then each of its records links
+at least one record there; a relation kind declares at least one, and each of
+its records binds at least two values. A kind's section
 decides its records' class, so moving a kind between the sections reclassifies
 them without re-indexing. Edit
 `sources` and the types by hand; `kgd check` validates the result, and
@@ -217,15 +218,17 @@ with its cited lines. It reads files only and prints JSON:
 ```
 
 The exit code is 1 when any list is non-empty. `rule` is one of `config`,
-`type`, `source-type`, `id`, `frontmatter`, `source`, `kind`, `link` and
-`body` ([model.md](model.md) lists what each covers).
+`type`, `source-type`, `id`, `frontmatter`, `source`, `kind`, `link`,
+`label` and `body` ([model.md](model.md) lists what each covers).
 
 After a source edit shifts cited lines, `check --fix-lines` rewrites the
 `lines:` of each moved record (every quote found exactly once elsewhere in the
 source) under the home lock and adds `fixed` and `skipped` lists; a file that
 changed during the run is skipped. A stale record (a quote no longer found, or
-found several times) needs a reviewed edit of its quotes. Staleness is
-reported only; it never hides a record from retrieval.
+found several times) is moved to the passage that now states it with the
+relocate Skill (`kgd relocate`); when its meaning changed, it gets a
+replacement draft. Staleness is reported only; it never hides a record from
+retrieval.
 
 ## Index and restore
 
@@ -236,8 +239,8 @@ kgd index --rebuild
 
 `kgd index` brings `$KGDISTILLER_HOME/index.sqlite` up to date with the
 `entries/` files of every registered, available base and prints a report with,
-per base, `parsed`, `deleted` and `unparseable` files, plus `unavailable` bases
-and `understanding_changed`. It exits 1 when a file is unparseable, a base is
+per base, `parsed`, `deleted` and `unparseable` files, plus `unavailable`
+bases. It exits 1 when a file is unparseable, a base is
 unavailable or embedding failed. With `embedding` set, an embedding phase
 follows: the rows whose vector is NULL (new or changed text, or every row
 after a model change) are encoded in batches of 64. The model loads only when such a row exists, so an
@@ -253,11 +256,10 @@ replaces; an edited record is re-embedded only by a plain
 `--rebuild` re-derives every row in place in one transaction and re-uses the
 existing vectors by text, so it loads no model. If `embedding` is set but the
 `retrieval` extra is missing, `kgd index` commits the lexical phase, reports
-`embedding_error` ending in `install kgdistiller[retrieval] or set embedding
-to null` and exits 1. After an in-place edit, Skills run
-`kgd index --no-embed`, and the Obsidian plugin runs it when the owner saves a
-record; edits made elsewhere lag until the next index run, and every read
-reports that lag.
+`embedding_error` ending in ``install kgdistiller[retrieval] or run
+`kgd embedding off` `` and exits 1. The Obsidian plugin runs
+`kgd index --no-embed` when the owner saves a record; edits made elsewhere lag
+until the next index run, and every read reports that lag.
 
 Restore after a lost or damaged database with one command:
 
@@ -302,10 +304,11 @@ commit or remote synchronization happened.
 ## MCP server
 
 `kgd mcp` is a read-only stdio server over the whole home with the tools
-`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`
-and `kg_drafts` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)). It takes no
-arguments, opens a fresh read-only connection for every retrieval call and
-reports lag like the CLI; `kg_drafts` reads the draft files. It loads no
+`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`,
+`kg_drafts` and `kg_find` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)).
+It takes no arguments, opens a fresh read-only connection for every retrieval
+call and reports lag like the CLI; `kg_drafts` reads the draft files and
+`kg_find` the registered sources. It loads no
 model: `kg_search`'s dense lane asks the user's one embedding process, which
 every `kgd` command shares; `kg_search` takes `no_dense` to skip the dense
 lane. Register it in an agent runtime as the command `kgd` with the argument `mcp`,

@@ -1,6 +1,6 @@
 ---
 name: query-kgdistiller
-description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must search records across every registered base, resolve names to their senses and mentions, read complete records with their links and cited source lines, follow dependency and claim links, browse bases, source trees and kinds, pack budgeted evidence with its gaps, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
+description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must search records across every registered base, resolve names to their senses and mentions, read complete records with their links and cited source lines, follow dependency links and the statements and relations linking a record, browse bases, source trees and kinds, pack budgeted evidence with its gaps, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Query kgdistiller
@@ -13,9 +13,10 @@ unchanged.
 
 ## What is searched
 
-Knowledge is records: nodes (concepts and precisely stated results) and
-relations (statements binding records to named roles; applications and
-examples are relations too). Every record has a uid `<base>:<id>`, a `source`
+Knowledge is records: nodes, the concepts and the results a source states
+(theorems, findings, examples), whose roles link what they are about, and
+relations, connections between records bound to named roles (an implication
+between results, a comparison, a prerequisite). Every record has a uid `<base>:<id>`, a `source`
 and verbatim Evidence quotes: a local record's `source` is a base-relative path
 with a `lines` range, and a foreign record's is the web address of the outside
 work it quotes, with no lines (`foreign: true`). Every value is a link to
@@ -39,11 +40,14 @@ filtered, and reports `lag`.
 
 Recommended order: `search` for candidates, then `browse` or `resolve` to see
 the source tree and every sense of a name, `neighbors` to follow dependency
-and claim links, `get` to read complete records, and `pack` to deliver
-budgeted evidence with its gaps.
+links and the records linking one, `get` to read complete records, and `pack`
+to deliver budgeted evidence with its gaps. `drafts` lists the drafts awaiting
+the owner, which are not knowledge, and `find` where a passage or a name
+occurs in the registered sources.
 
 Use the MCP tools of `kgd mcp` when they are available: `kg_search`,
-`kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and `kg_pack`. The server
+`kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`, `kg_drafts`
+and `kg_find`. The server
 is read-only, serves the whole home and opens a fresh connection per call.
 Otherwise use the CLI; both print the same JSON and share the user's one
 embedding process, so only the first dense search after 15 idle minutes waits
@@ -56,9 +60,11 @@ kgd get UID ... [--source-lines N]
 kgd neighbors UID ... [--role R]... [--dir out|in|both] [--depth N] [filters]
 kgd browse [HANDLE] [filters]
 kgd pack UID ... [--budget BYTES] [--requires-depth N] [filters]
+kgd drafts [--base B]... [--source PREFIX]... [--name NAME]...
+kgd find "TEXT" [--base B]... [--source PREFIX]...
 ```
 
-Every command but `get` takes the filters, repeatable with OR within one
+Every command but `get`, `drafts` and `find` takes the filters, repeatable with OR within one
 filter and AND across filters: `--base B`, `--kind K`,
 `--class node|relation`, `--source PREFIX` (a base-relative path prefix, such
 as one paper's folder) and
@@ -67,7 +73,7 @@ as one paper's folder) and
 **search** ranks records by three lanes fused with reciprocal rank fusion:
 
 - lexical: FTS5 over each record's text (label, aliases, kind, body, search
-  terms, participant and prerequisite labels, evidence and source path), with
+  terms, participant and prerequisite labels, and evidence), with
   CJK text indexed as characters and adjacent pairs, so `测度` finds `测度论`;
 - dense: semantic and cross-language matches against each record's stored
   vector; the query is encoded with the model that built the vectors. It runs
@@ -80,10 +86,12 @@ missing or the model cannot be loaded (the error names `--no-dense`), rerun it
 with `--no-dense` and report the reduced `lanes` and the error.
 
 Each result carries `uid`, `class`, `kind`, `label`, `base`, `source`,
-`lines`, `foreign`, `understanding`, `epistemic`, `gloss`, `ranks` for each lane that ran
-(`null` when that lane missed the record), `requires`, `participants` (for
-relations, by role), `in` (records that cite or require it) and `truncated`
-counts for those lists. Put source-language forms in the query when the owner
+`lines`, `foreign`, `understanding`, `epistemic`, `gloss`, `degree` (how many
+distinct other existing records it links or is linked by: how central it is),
+`ranks` for each lane that ran (`null` when that lane missed the record),
+`requires`, `participants` (every role's values, for every record with role
+values: a relation's participants or what a statement node is about), `in`
+(records that link or require it) and `truncated` counts for those lists. Put source-language forms in the query when the owner
 reads in another language; the dense lane helps across languages but does not
 replace them.
 
@@ -107,10 +115,10 @@ and each record keeps its smallest depth. Filters prune the walk at every hop.
 Three walks cover most needs:
 
 - dependency closure: `--role requires --dir out --depth N`;
-- claim closure: `--dir in` lists the relations citing a node; `--dir both
-  --depth 2` adds their co-participants, including relations that take part
-  in other relations (witnesses, debate positions);
-- applications: `--dir in --kind example`.
+- what links a record: `--dir in` lists the statement nodes and relations
+  that link it; `--dir both --depth 2` adds what else they link, including
+  relations that take part in other relations (witnesses, debate positions);
+- examples: `--dir in --kind example`.
 
 **browse** lists what is indexed. No handle lists every base with its record and
 relation counts; `base` and `base:dir/` list directories and sources with
@@ -122,8 +130,9 @@ source, narrow with the handle and filters, and never list a whole large base
 or kind into context.
 
 **pack** returns whole records, never truncated, for the given uids, their
-`requires` closure (`--requires-depth`, default 1) and the relations shared by
-at least two packed records, while the compact JSON of `records` stays within
+`requires` closure (`--requires-depth`, default 1) and every record,
+relation or statement node alike, with role links to at least two packed
+records, while the compact JSON of `records` stays within
 `--budget` bytes (default 60000). `gaps` lists what the packet lacks:
 `unknown-uid`, `over-budget`, `missing-target` uids and
 `not-packed` links. Report gaps as gaps; never fill one by guessing.

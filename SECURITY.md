@@ -35,10 +35,13 @@ comparing text, not by stored content hashes.
 
 The Obsidian plugin is desktop only. It reads knowledge and drafts only
 through a resident `kgd mcp` and never parses records or opens the home or the
-database itself. It runs `kgd base list`, `kgd sheet SOURCE --json`,
-`kgd accept`, `kgd index`, `kgd index --no-embed` and `kgd embedding` with the
-configured executable, and writes and deletes draft files; a draft becomes
-knowledge only when the owner presses Accept. Every `kgd` run except
+database itself. It runs `kgd base list`, `kgd source SOURCE`, `kgd edit`,
+`kgd accept`, `kgd relocate`, `kgd index`, `kgd index --no-embed` and
+`kgd embedding` with the configured executable, and writes and deletes draft
+files; a draft becomes knowledge only when the owner presses Accept.
+`kgd relocate`, run when the owner localizes a record, changes where an
+accepted record cites and may move it, with the links to it, into another
+base; it never changes what the record says. Every `kgd` run except
 `kgd embedding set` gets `HF_HUB_OFFLINE=1`. The plugin's optional agent is
 the only part that uses the network and credentials: it sends the selection,
 the paragraph around it, the records it reads and its questions to the model
@@ -70,7 +73,7 @@ private local Git repository whose `.gitignore` excludes `index.sqlite*` and
 repository. A base is found only through
 its registered root; there is no identity file inside the base.
 
-Bases may contain private data. Do not attach sources, records, drafts, sheets,
+Bases may contain private data. Do not attach sources, records, drafts,
 the database, or agent configuration to a public issue. Produce a minimal
 synthetic reproducer.
 

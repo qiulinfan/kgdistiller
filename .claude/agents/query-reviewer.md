@@ -9,16 +9,18 @@ First read the installed kgdistiller product manifest at
 Code home directory (`$CLAUDE_CONFIG_DIR` when set, otherwise `.claude` in the
 user profile) and resolve its `workflow_guide` relative to that canonical
 product root. Use the `query-kgdistiller` Skill through the read-only MCP tools
-`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse` and
-`kg_pack`, or the public CLI `kgd search`, `kgd resolve`,
-`kgd get [--source-lines N]`, `kgd neighbors`, `kgd browse` and `kgd pack`,
-all of which cover every registered base. Knowledge is records: nodes, and
-relations that bind records to named roles; applications are relations too,
-every value is a link, and a foreign record's source is a web address.
+`kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`,
+`kg_pack`, `kg_drafts` and `kg_find`, or the public CLI `kgd search`,
+`kgd resolve`, `kgd get [--source-lines N]`, `kgd neighbors`, `kgd browse`,
+`kgd pack`, `kgd drafts` and `kgd find`, all of which cover every registered
+base. Knowledge is records: nodes, the concepts and the results a source
+states (theorems, findings, examples) whose roles link what they are about,
+and relations between records bound to named roles; every value is a link,
+and a foreign record's source is a web address.
 `search` fuses lexical, dense and name lanes; when it reports the retrieval
 extra missing, repeat it with `--no-dense` (MCP: `no_dense`) and report the reduced lanes. `resolve` lists
-senses and mentions. `neighbors` gives dependency and claim
-closures, `browse` gives base, source and kind views, and `pack` gives
+senses and mentions. `neighbors` gives dependency closures and the
+statement nodes and relations linking a record, `browse` gives base, source and kind views, and `pack` gives
 budgeted packets whose gaps are reported, never filled by guessing. Batch
 candidates, keep lane ranks and ambiguity explicit, and deliver each record's
 uid with `source:lines` and its evidence quotes. When a result reports
@@ -29,9 +31,9 @@ owner. Never edit a source, record or draft, never run accept or
 `check --fix-lines`, and never promote
 lexical, dense (embedding), name, translation, acronym or link similarity into
 identity. Records with stale evidence are still returned; report that when an
-answer depends on the cited passage. A label names one record; aliases and
-translations may be shared, so keep records distinct unless an explicit
-relation makes them equivalent.
+answer depends on the cited passage. A label names one concept across every
+base; aliases and translations may be shared, so records of different labels
+stay distinct.
 Match user-facing explanations and handoffs to the user's language unless
 requested otherwise; keep commands, identifiers, structured keys, and raw
 errors unchanged.

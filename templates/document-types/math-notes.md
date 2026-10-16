@@ -17,10 +17,13 @@ stated results and worked examples. Keep domains, hypotheses, quantifiers,
 notation conventions, formulas and conclusions together in the record's
 prose. Every precisely stated result is a theorem node, whatever the notes
 call it (theorem, proposition, lemma, corollary, remark); its label may keep
-that name, and about links the objects it is a statement about. How important
+that name, and about links every object it is a statement about, at least
+one: "the sum of two subspaces is a subspace" is a theorem about subspace and
+sum of subspaces, not an implication. How important
 a result is follows from how many records it connects, never from its kind.
-A relation records a connection the notes state between two or more records,
-such as one result implying another, and is itself a record of the graph. A connection inferred by combining passages is not a relation of
+A relation records a connection the notes state between records, such as
+one result implying another, binds at least two values, and is itself a
+record of the graph. A connection inferred by combining passages is not a relation of
 these notes. A concept these notes use but define elsewhere is a link to its
 defining record, never a second node.
 

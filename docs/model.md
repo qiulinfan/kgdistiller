@@ -15,9 +15,10 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    (`$KGDISTILLER_HOME/config.json` and `$KGDISTILLER_HOME/types/*.md`). The
    database is derived.
 2. **One file format for every knowledge object.** Nodes and n-ary relations
-   differ only by whether role properties are present. Applications and
-   examples are relations of a user-registered kind. Every role value and
-   every `requires` value is a link to a record.
+   share it; which one a record is follows its kind's section in its base's
+   document types. A theorem, a finding or an example is a node whose roles
+   link what it is about. Every role value and every `requires` value is a
+   link to a record.
 3. **No hashes, no content-derived ids, no compatibility code.** Change
    detection uses file stat; evidence freshness is checked by finding the quote
    text in the source; re-embedding is decided by comparing stored text;
@@ -74,17 +75,21 @@ The knowledge is one graph. In the owner's words (2026-10-16):
 > 这些东西其实都是节点. 而关系是多个节点之间共同构成的关系. 一个节点自己的 proposition, 不应该是一个关系.
 
 Nodes are the concepts, methods, architectures, objectives and quantities a
-source defines, and the statements it makes about one of them: a theorem (any
-precisely stated result, whatever the source calls it: theorem, proposition,
-lemma or corollary), a finding, an example. A statement node's roles link the
-record it is about, such as `theorem: [about]`. A relation is a connection the
-source states between two or more records: an implication, a comparison, a
-generalization, a prerequisite. It binds at least two records, and it is
-itself a record, a vertex of the graph that other records may link. How
-important a record is is not its kind but its connectivity: retrieval reports
-its `degree`, the number of distinct records it links or is linked by. A
-document type's guidance may set a review threshold for the number of nodes
-per source.
+source defines, and the results it states: a theorem (any precisely stated
+result, whatever the source calls it: theorem, proposition, lemma or
+corollary), a finding, an example. A statement node's roles link every record
+it concerns, such as `theorem: [about]`, and a role may hold several values:
+"the sum of two subspaces is a subspace" is a theorem whose `about` links
+subspace and sum of subspaces, not an implication. A node kind that declares
+roles links at least one record in them. A relation is a connection the
+source states between records, of a kind the type declares: an implication
+between results, a comparison, a prerequisite, a generalization. It binds at
+least two values (a participant may repeat), and it is itself a record, a
+vertex of the graph that other records may link. How important a record is is
+not its kind but its connectivity: retrieval reports its `degree`, the number
+of distinct other existing records it links or is linked by. A document
+type's guidance may set a review threshold for the number of nodes per
+source.
 
 Each concept has exactly one record, owned by the source that defines or
 originates it. A source that only uses a concept, even one it explains at
@@ -92,7 +97,9 @@ length, never gets a node for it: the use links the concept's record. When no
 base records the concept yet, it is captured on its own, from where it is
 defined: a local source of the owner's, or the outside work that originates or
 explains it, as foreign knowledge
-([Foreign knowledge](#foreign-knowledge-and-localization)).
+([Foreign knowledge](#foreign-knowledge-and-localization)). A single capture
+that cannot link it leaves it out of the values and reports it; a statement
+node still links at least one record.
 
 A label names one concept across every base. In the owner's words
 (2026-10-15):
@@ -130,10 +137,12 @@ In the owner's words (2026-10-15):
 > 所以, 只要一个知识入库, 他就是直接进入 draft, 然后等待我审阅和修订. 不过, 它所有涉及的所有直接边关系, relation 关系都要我一一审核, 并且可以修订.
 
 So every way knowledge enters the base ends in drafts: a capture of one item
-while reading, a compile of part or all of a source, a re-ingested source, and
-a localization. Agents only write drafts. A draft is either a new record or,
-under the id of an accepted record of the same base, that record's
-replacement. The owner reads, revises and accepts each draft, its links
+while reading, a compile of part or all of a source, and a re-ingested source.
+Agents only write drafts; moving where a record cites, a localization
+included, changes no knowledge and is `kgd relocate`
+([Finding and relocating passages](#finding-and-relocating-passages)). A
+draft is either a new record or, under the id of an accepted record of the
+same base, that record's replacement. The owner reads, revises and accepts each draft, its links
 included, and `kgd accept` admits it at once; deleting a draft rejects it.
 There is no other review surface and no generated sheet.
 
@@ -163,7 +172,8 @@ files. In the owner's words (2026-10-15):
   source once the owner holds that work, for example after translating the
   paper into their vault. Looking the concept up while reading the local
   source offers it; the agent checks that the local passage states the same
-  knowledge point and moves the record there with `kgd relocate`
+  knowledge point and moves the record there with `kgd relocate`, into that
+  source's base when it is another
   ([Finding and relocating passages](#finding-and-relocating-passages)).
   Localization is never required: a foreign record is complete knowledge.
 
@@ -187,11 +197,14 @@ Nothing follows them automatically. In the owner's words (2026-10-15):
   live: a passage the owner pastes, or every place a name occurs, such as
   where a concept is defined. It is read-only and deterministic, and loads no
   model.
-- `kgd relocate` moves one record's citation to the only passage of its base
-  that holds a given text. Only where the record cites changes: its
-  `source`, `lines` and, when its quotes are not in that passage, its
-  Evidence, which becomes the matched text. It is the one write an agent
-  makes to an accepted record without a draft, because it changes no meaning.
+- `kgd relocate` moves one record's citation to the only passage of the
+  registered sources that holds a given text. Only where the record cites
+  changes: its `source`, `lines` and, when its quotes are not in that
+  passage, its Evidence, which becomes the matched text. When the passage lies
+  in another base, the record moves into that base with its id, and every
+  link to it, in every base, is rewritten to its new uid. It is the one write
+  an agent makes to an accepted record without a draft, because it changes no
+  meaning.
 - The relocate-kgdistiller Skill takes the knowledge's name, exact or
   approximate, and the new passage's text: it finds the record with a lookup
   and runs `kgd relocate`. `kgd check` still reports what moved or went stale,
@@ -260,17 +273,19 @@ The rules that follow from these statements:
   admitted with `kgd relocate`.
 - **The same knowledge point with a changed meaning** gets a replacement draft
   rewritten from the new passage, keeping the id and the owner's
-  `understanding`, with `source` and `lines` moved there (a relocation). The
+  `understanding`, with `source` and `lines` moved there. A replacement lives
+  in its record's base, so when the passage lies in another base the agent
+  drafts nothing and reports the proposed replacement; moving the record there
+  first, with `kgd relocate`, is the owner's call. The
   agent reports whether the new definition is more general than the recorded
   one, corrects it, or conflicts with it in any other way, a narrower one
   included; accepting the replacement is the owner's decision in every case.
   A definition that the recorded one explicitly rules out, such as the error
   it corrected, is reported as a conflict, never as more general.
-- **Relocation is global.** When the passage lies in another base, the agent
-  drafts the record in that base with the same id, unless that base already
-  uses the id for another concept. Once the owner accepts it, every link to
-  the old uid, in every base, is rewritten to the new one and the old record
-  is deleted.
+- **Relocation is global.** `kgd relocate` finds the passage in every
+  registered base. When it lies in another base, the record moves there with
+  its id and every link to it, in every base, is rewritten to the new uid; it
+  refuses when that base already has a record or draft with the id.
 - **Knowledge that disappears is the owner's.** A record whose knowledge a
   re-admitted source no longer contains, or whose source file no longer
   exists, is reported, and `kgd check` reports it stale or its source missing.
@@ -280,9 +295,9 @@ The rules that follow from these statements:
 - **Who writes what.** Agents write drafts only. The owner accepts them with
   `kgd accept` (the Obsidian Capture view runs it) and edits accepted records
   by hand. The only agent edits of accepted records are `kgd relocate`, which
-  moves where a record cites without changing what it says, and the link
-  rewrites that a relocation across bases, a merge or a split the owner
-  accepted requires.
+  moves where a record cites without changing what it says and, across bases,
+  rewrites the links to it, and the link rewrites that a merge or a split the
+  owner accepted requires.
 
 ## Data model
 
@@ -293,7 +308,7 @@ The rules that follow from these statements:
 | Source | Local: a file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines; it has exactly one document type. Foreign: a web address, the outside work or page whose text a foreign record quotes. |
 | Document type | `types/<name>.md`: `node_kinds` and `relation_kinds`, each a mapping of kinds to their ordered roles (a node kind's may be empty), and optional `epistemic`; the body is guidance. |
 | Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. It is local or foreign by its `source`. |
-| Node | A record whose kind is a node kind: a concept, or a statement about one record, such as a theorem, a finding or an example, whose roles link what it is about. |
+| Node | A record whose kind is a node kind: a concept, or a result a source states, such as a theorem, a finding or an example, whose roles link every record it concerns (at least one when its kind declares roles). |
 | Relation | A record whose kind is a relation kind: a connection between records, binding at least two values to that kind's roles. Arity is unbounded beyond that; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
 | Application / example | A node of a kind the owner registers for it, such as `example: [uses, setting]`. |
 | Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`; every value is a link. A role value is a knowledge reference, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role, and a concept without a record is captured before it is linked. |
@@ -361,10 +376,9 @@ newlines.
 ```markdown
 ---
 label: Sum of two subspaces is a subspace
-kind: implies
-premise:
+kind: theorem
+about:
   - "[[subspace]]"
-conclusion:
   - "[[sum-of-subspaces]]"
 epistemic: stated
 source: notes/math/linear-algebra/chapters/01-review.tex
@@ -425,8 +439,13 @@ its own meaning, so one fact has one form.
 **Class rule.** A record is a relation if and only if a document type of its
 base declares its kind under `relation_kinds`; otherwise it is a node. Its
 roles are those its kind declares. A relation binds at least two values across
-its roles; a statement about one record is a node. The class is read from the
-types and never stored, so a type edit reclassifies its records.
+its roles, a participant possibly repeated; a node kind that declares roles
+links at least one record in them. A result the source states is a node whose
+roles link what it is about, as in the example above; an implication between
+two results, such as `implies` with `premise: ["[[direct-sum-criterion]]"]`
+and `conclusion: ["[[sum-of-subspaces-is-a-subspace]]"]`, is a relation. The
+class is read from the types and never stored, so a type edit reclassifies its
+records.
 
 **YAML reading.** Frontmatter is read with `yaml.load(text,
 Loader=yaml.BaseLoader)`, so every scalar is a string (`on`, `yes` and `40-46`
@@ -435,7 +454,10 @@ strings; an empty scalar on a list or role key reads as an empty list. An
 unquoted wikilink such as `premise: [[x]]` parses as a nested list and is
 reported as "quote wikilinks". The product never re-serializes frontmatter; the
 only product-side frontmatter edits are the textual `lines:` rewrite of
-`check --fix-lines` and the `source:` and `lines:` rewrite of `kgd relocate`.
+`check --fix-lines`, `kgd edit`'s rewrite of one field of a draft, and
+`kgd relocate`'s rewrite of `source:` and `lines:` and, when it moves a record
+into another base, of the link values of that record and of every record and
+draft linking it.
 
 **Value grammar** (`requires` and every role value):
 
@@ -511,10 +533,9 @@ same knowledge point replaces its record through a draft with the same id (see
   or **Revise as draft**); the owner edits that draft and accepts it, which
   replaces the record. Until edited, the draft equals its record and
   accepting it only removes it.
-- A draft's local links may target accepted records or other drafts of the
-  same base; its cross-base links must target accepted records. A link to an
-  id that exists in `entries/` always means the accepted record. Accepted
-  records never link to drafts.
+- A draft's links may target accepted records or other drafts, of any base.
+  A link to an id that exists in `entries/` always means the accepted record.
+  Accepted records never link to drafts.
 - The owner may edit a draft before accepting it; the bytes present at
   acceptance are what is accepted. Deleting a draft rejects it, and nothing
   remembers the rejection: there is no rejection list, so a later compile may
@@ -571,14 +592,14 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | `id` | The stem is a valid id; ids are unique within `entries/` and within `drafts/`, case-insensitively. |
 | `frontmatter` | The record file is a regular file, not a symlink; the frontmatter parses; required keys present with the right shapes (`lines` for a local record, none for a foreign one); every non-fixed key is a role of `kind`; `understanding` is `yes` or `no`. |
 | `source` | A local `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root, and `lines` lies within it. A foreign one is a web address and is never fetched. |
-| `kind` | `kind` belongs to the source's type, or for a foreign record to a type registered for its base (all of those declaring it alike); a node kind has no role keys; a relation kind has a non-empty role value; `epistemic` is in the type's list. |
+| `kind` | `kind` belongs to the source's type, or for a foreign record to a type registered for its base (all of those declaring it alike); a node kind that declares roles links at least one record in them ("a theorem links what it is about in about; capture a concept no record holds first"); a relation binds at least two values ("a result the source states is a node whose roles link what it is about"); `epistemic` is in the type's list. |
 | `link` | Every value is a link matching the grammar; every link resolves to an accepted record (of this base or another, read from files); no self-link; a cross-base link to an unregistered base names it. |
 | `label` | No other accepted record, in any base, has a label with the same name key; for a draft, no other draft either, and no accepted record but the one it replaces. The message suggests `Label (source)`. |
 | `body` | The body obeys the body grammar. |
 
-Drafts follow the same rules with one change: local links may also resolve to
-drafts, while cross-base links resolve only to accepted records. An accepted
-record that links a draft is told to accept it first.
+Drafts follow the same rules with one change: links may also resolve to
+drafts, of any base. An accepted record that links a draft is told to accept
+it first.
 
 **Evidence freshness** applies to local records; a foreign record is never
 fresh, moved or stale. Quotes and source text are compared after
@@ -624,25 +645,26 @@ takes no lock and opens no database. Each draft has its record fields as
 - `replaces`: the uid of the accepted record this draft would replace, or
   `null` for a new record;
 - `out`: every value as a link with the `state` of its target: `accepted`
-  (with the record's `label` and `understanding`), `draft` (a draft of the
-  same base) or `missing`;
-- `with`: the drafts of its base that it links, directly or through other
+  (with the record's `label` and `understanding`), `draft` (a draft of any
+  base) or `missing`;
+- `with`: the drafts, of any base, that it links, directly or through other
   drafts, which `kgd accept` must be given with it;
-- `linked_by`: the drafts that link it;
+- `linked_by`: the drafts, of any base, that link it;
 - `choices`: the `node_kinds`, `relation_kinds` and `epistemic` values its
   source's type allows (for a foreign draft, every type registered for its
-  base, a kind two of them declare differently left out), or `null`;
+  base; a kind two of them declare differently keeps the declaration of the
+  first type by name, and `kgd check` reports the conflict), or `null`;
 - `problems`: what `kgd accept` would refuse when given the draft and its
   `with`, empty when it would accept them.
 
 ```json
 {"drafts": [{"uid": "notes:direct-sum-criterion", "base": "notes", "id": "direct-sum-criterion",
    "path": "/abs/root/.knowledge/drafts/direct-sum-criterion.md", "replaces": null, "foreign": false,
-   "class": "relation", "kind": "implies",
+   "class": "node", "kind": "theorem",
    "label": "Direct sum criterion", "aliases": [], "source": "…", "lines": "37-41", "understanding": "yes",
    "epistemic": null, "gloss": "…", "body": "…", "search_terms": "", "evidence": ["…"],
-   "out": [{"role": "premise", "pos": 0, "uid": "notes:direct-sum", "state": "draft", "label": "Direct sum"},
-           {"role": "conclusion", "pos": 0, "uid": "notes:subspace", "state": "accepted", "label": "Subspace",
+   "out": [{"role": "about", "pos": 0, "uid": "notes:direct-sum", "state": "draft", "label": "Direct sum"},
+           {"role": "about", "pos": 1, "uid": "notes:subspace", "state": "accepted", "label": "Subspace",
             "understanding": "yes"}],
    "with": ["notes:direct-sum"], "linked_by": [], "problems": []}],
  "unavailable_bases": []}
@@ -663,7 +685,8 @@ terminal; accepted records are edited by drawing them into a draft. FIELD is
 last two, and `understanding` `yes` is written as absent), `aliases`,
 `requires` or a role (any number of values, each a link for the last two;
 none removes the field), or `body`, the prose before `## Search terms` and
-`## Evidence` (`-` as its only value reads standard input). `source` and
+`## Evidence` (`-` as its only value reads standard input); `--` before the
+values keeps one that starts with `-` from reading as an option. `source` and
 `lines` change only with `kgd relocate`. Only that field's lines change: a
 value is written as a JSON string, a missing field is added before the closing
 `---`, and the rest of the file stays as it is. The result must still parse;
@@ -676,11 +699,12 @@ lock, and refuses, writing nothing, when the draft changed meanwhile.
 ### `kgd accept DRAFT... [--dry-run]`
 
 Each DRAFT is a `.knowledge/drafts/<id>.md` path of a registered base, absolute
-or relative to the working directory.
+or relative to the working directory; drafts of several bases are accepted
+together.
 
 1. Take the lock and parse every selected draft.
-2. Validate each one in the post-acceptance world: local links may resolve to
-   accepted records or to other selected drafts; a link to an unselected draft
+2. Validate each one in the post-acceptance world: links may resolve to
+   accepted records or to other selected drafts, of any base; a link to an unselected draft
    is refused with `select [[x]] too`; a local record's evidence must be fresh.
    A draft with the id of an accepted record replaces it, refused when the
    record's file changed after the draft's (its modification time is later):
@@ -720,7 +744,7 @@ inventory agents use:
  "epistemic": ["proved", "stated"], "guidance": "…", "line_count": 77,
  "records": [{"uid": "notes:subspace", "label": "Subspace", "kind": "definition", "class": "node",
               "lines": "7-19", "understanding": "yes", "gloss": "…"}],
- "drafts": [{"id": "direct-sum-criterion", "label": "…", "kind": "implies", "class": "relation", "lines": "37-41"}]}
+ "drafts": [{"id": "direct-sum-criterion", "label": "…", "kind": "theorem", "class": "node", "lines": "37-41"}]}
 ```
 
 Agents read the source text with their own tools; the inventory carries no
@@ -751,29 +775,40 @@ that follows, cut at 2000 characters. Matches are listed by base, source and
 line, at most `--limit`; `total` counts them all. The MCP tool `kg_find`
 returns the same JSON.
 
-### `kgd relocate TARGET TEXT [--source PREFIX]... [--dry-run]`
+### `kgd relocate TARGET TEXT [--base B]... [--source PREFIX]... [--dry-run]`
 
 TARGET is `base:id` of an accepted record, or the path of a record or draft
 file; TEXT is the passage, or `-` to read it from standard input.
 
 1. Take the lock and parse the record.
-2. Find TEXT as `kgd find` does in the record's base, narrowed by `--source`.
-   Unless it occurs exactly once, print `{"refused": {"message", "matches"}}`
-   (the matches there, or those of other bases when it occurs only there),
-   exit 1 and write nothing.
+2. Find TEXT as `kgd find` does in the registered sources of every available
+   base, narrowed by `--base` and `--source` (both repeatable). Unless it
+   occurs exactly once, print `{"refused": {"message", "matches"}}`, exit 1
+   and write nothing.
 3. Rewrite the frontmatter's `source:` line, and its `lines:` line, added
    after `source:` for a foreign record, to the match; every other byte stays.
    When the record's quotes all lie in the matched text, or in its lines, the
    Evidence stays; otherwise it becomes the matched text, one quote per run of
    non-blank lines.
-4. Refuse when the result would not pass `check` (its kind, roles and
-   evidence against the new source; links are not this command's concern) or
-   when the file changed meanwhile. `--dry-run` prints the report without
-   writing.
-5. Write the file through a temp file and an atomic replace, release the
-   lock, and for an accepted record run `kgd index --no-embed`. Print
-   `{"relocated": uid, "path", "from": {source, lines}, "to": {source, lines},
-   "evidence": "kept"|"replaced", "index": {...}}`.
+4. When the match lies in another base, the record moves there with its id:
+   an accepted record into that base's `entries/`, a draft into its
+   `drafts/`. Its own link values are rewritten for the new base (a link into
+   it becomes local `"[[id]]"`, any other `"[[base:id]]"`), and so is every
+   role and `requires` value linking it in every base's records and drafts;
+   body-prose wikilinks are not touched. Refuse when that base already has a
+   record or draft with the id, or while a replacement draft of the accepted
+   record waits.
+5. Refuse when the result would not pass `check` (its kind, roles and
+   evidence against the new source; links and the label are not this
+   command's concern) or when a file to write changed meanwhile. `--dry-run`
+   prints the report without writing.
+6. Write each file through a temp file and an atomic replace, remove the old
+   file of a moved record, release the lock, and, when an accepted record was
+   written, run `kgd index --no-embed`. Print `{"relocated": uid, "path",
+   "from": {source, lines}, "to": {source, lines}, "evidence":
+   "kept"|"replaced", "index": {...}}`, where `relocated` is the record's new
+   uid, plus, for a move, `moved: {from, to}` (the old and new uid) and
+   `relinked` (the files whose links were rewritten).
 
 ### Changes, deletes and identity changes of accepted records
 
@@ -784,21 +819,16 @@ this section is how such a change is written.
 - **Replacement.** The record is drawn into a draft with its id (the owner in
   the Capture view, or an agent from a fresh read of the record), changed
   there, and accepted. The owner may also edit accepted records by hand; then
-  the Obsidian plugin, or the owner, runs `kgd check --base B` and
-  `kgd index --no-embed`. A better
+  the owner runs `kgd check --base B`, and `kgd index --no-embed` (the
+  Obsidian plugin runs it whenever a record file is saved). A better
   name goes into `label` or `aliases`; the id stays.
 - **Delete.** The owner removes the file. `kgd check` then lists every inbound
   link left dangling, in this base and others; each is removed from its
   record or draft, or repointed by meaning to another record. Body-prose
   wikilinks to it, which `kgd check` does not validate, become plain text.
   Run `kgd check` and `kgd index --no-embed`.
-- **Relocation.** Within one base it is `kgd relocate`. Into another base, the record is drafted
-  there with the same id (another id only when that base already uses it for
-  another concept), its links adjusted to the new base; once the owner accepts
-  it, every link to the old uid, in every base, is rewritten to the new one
-  with an editing tool that refuses stale reads (a link in the new base
-  becomes local `"[[id]]"`, any other one `"[[base:id]]"`), the old file is
-  deleted, and `kgd check` and `kgd index --no-embed` run.
+- **Relocation.** `kgd relocate`, within one base or into another, where it
+  also rewrites every link to the record.
 - **Identity change.** Ids are permanent, so a changed identity is a one-time
   link rewrite, never a rename. Merging true duplicates keeps one record;
   splitting a record that conflated two meanings drafts new records for them.

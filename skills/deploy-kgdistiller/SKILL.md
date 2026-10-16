@@ -92,8 +92,9 @@ kgd check --base NAME --fix-lines
 
 `check` prints `{"errors", "stale", "moved"}` and exits 1 when any is
 non-empty. `--fix-lines` rewrites the `lines:` of records whose evidence moved
-after a source edit. `stale` evidence needs a reviewed edit of the quote;
-never force a line range. Errors after a clone mean the checkout differs from
+after a source edit. A `stale` record is moved to the passage that now
+states it with the relocate Skill (`kgd relocate`), or, when its meaning
+changed, gets a replacement draft; never force a line range. Errors after a clone mean the checkout differs from
 what was committed: restore a known-good revision or repair the source on its
 owning machine.
 
@@ -112,7 +113,7 @@ model loads only when some row needs a vector. `--no-embed` skips embedding
 and leaves those rows unembedded. `--rebuild` re-derives every row in place
 and re-uses vectors by text, so it loads no model. If `embedding` is set but
 the retrieval extra is missing, the report's `embedding_error` says
-`install kgdistiller[retrieval] or set embedding to null`; the lexical index
+``install kgdistiller[retrieval] or run `kgd embedding off` ``; the lexical index
 is committed, so report the message and install the extra rather than editing
 the model id away unasked.
 

@@ -22,7 +22,8 @@ state transitions, pseudocode or formulas needed to understand each record.
 Do not create a node from a term that is only named or cited. A connection
 the notes state between two or more records, such as an implementation of a
 specification or a resource bound of an algorithm, is a relation, itself a
-record of the graph; a statement about one record is a node.
+record of the graph; a stated invariant is a node whose about links every
+record it holds for, at least one.
 
 Use requires-for for an explicit dependency and implements for an explicit
 implementation/specification connection. Use complexity-bound for a stated

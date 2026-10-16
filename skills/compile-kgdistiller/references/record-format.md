@@ -12,10 +12,12 @@ one folder; the document type decides which a kind is.
 
 Agents write drafts only; the owner accepts them. The one exception is
 `kgd relocate`, which moves a record's citation to a passage without changing
-what it says. kgd never re-serializes frontmatter. Write whole files yourself;
-the only product-side frontmatter edits are the `lines:` rewrite of
-`kgd check --fix-lines` and the `source:` and `lines:` rewrite of
-`kgd relocate`.
+what it says, into the passage's base when it lies in another. kgd never
+re-serializes frontmatter. Write whole files yourself; the only product-side
+frontmatter edits are the `lines:` rewrite of `kgd check --fix-lines`,
+`kgd edit`'s rewrite of one field of a draft, and `kgd relocate`'s rewrite of
+`source:` and `lines:` and, when it moves a record into another base, of the
+link values of that record and of every record and draft linking it.
 
 ## File layout
 
@@ -88,14 +90,20 @@ The document type declares each kind with its roles, node kinds in
 kind's list may be empty). Every key other than the fixed ones must be a role
 of `kind`; a role key is a top-level list of links, in order.
 
-- A **node** is a concept or a statement the source makes: a definition, a
+- A **node** is a concept or a result the source states: a definition, a
   theorem (every precisely stated result, whatever the source calls it), a
-  finding, an example. Its roles link what it is about, such as `about` or an
-  example's `uses` and `setting`.
-- A **relation** is a connection the source states between two or more
-  records: `kgd check` requires a relation kind to bind at least two records
-  across its roles. A statement about one record is a node, never a relation.
-  A relation is a record like any other, so others may link it.
+  finding, an example. Its roles link every record it concerns, such as
+  `about` or an example's `uses` and `setting`, and a role may hold several
+  values. When its kind declares roles, `kgd check` requires it to link at
+  least one record in them.
+- A **relation** is a connection the source states between records, of a kind
+  the type declares: an implication between results, a comparison, a
+  prerequisite, a generalization. `kgd check` requires it to bind at least two
+  values across its roles (a participant may repeat). A result the source
+  states is a node whose roles link what it is about, never a relation: "the
+  sum of two subspaces is a subspace" is a theorem with `about: [subspace,
+  sum of subspaces]`, not an implication. A relation is a record like any
+  other, so others may link it.
 - How important a record is follows from how many records it connects, which
   retrieval reports as `degree`; it is never a kind.
 
@@ -114,9 +122,9 @@ kind: example
 uses: ["[[direct-sum]]", "[[span]]"]
 setting: ["[[coordinate-space]]"]
 
-# binary relation (2 roles)
+# binary relation (2 roles): one result implies another
 kind: implies
-premise: ["[[closed-under-addition]]"]
+premise: ["[[direct-sum-criterion]]"]
 conclusion: ["[[sum-of-two-subspaces-is-a-subspace]]"]
 
 # symmetric relation: one role, several values
@@ -145,10 +153,11 @@ target  := id | base ":" id | ".knowledge/entries/" id     a trailing ".md" is i
   registered base. Never prefix a local link with the record's own base name.
 - Targets match after NFKC normalization and casefolding. `#`, `^` and other
   path forms are errors. Plain text is an error.
-- A link targets an accepted record, or a draft of the same base. A concept
-  that nothing records is captured on its own first (locally, or as foreign
-  knowledge), and until then it is left out of the values; the prose may
-  still name it.
+- A link targets an accepted record, or a draft of any base. A concept that
+  nothing records is captured on its own first (locally, or as foreign
+  knowledge), and until then it is left out of the values and reported; the
+  prose may still name it. A statement node whose kind declares roles still
+  needs at least one value.
 - Every value is a knowledge reference, never a literal. Settings,
   hyperparameters, resolutions, splits, units and measured values belong in
   the prose and the Evidence quotes.
@@ -209,13 +218,12 @@ target  := id | base ":" id | ".knowledge/entries/" id     a trailing ".md" is i
   record's id replaces that record when accepted. Write a replacement from a
   fresh read of the record: `kgd accept` refuses it when the record changed
   after the draft was written.
-- A draft's local links may target accepted records or other drafts of the
-  same base. Cross-base links must target accepted records. A link to an id in
-  `entries/` always means the accepted record. Accepted records never link to
-  drafts.
+- A draft's links may target accepted records or other drafts, of any base.
+  A link to an id in `entries/` always means the accepted record. Accepted
+  records never link to drafts.
 - `kgd drafts [--source PREFIX] [--name NAME]` lists drafts with each value's
-  target, the drafts to accept with them (`with`), the record they replace
-  (`replaces`) and `problems`: what `kgd accept` would refuse. Fix a draft
+  target, the drafts, of any base, to accept with them (`with`), the record
+  they replace (`replaces`) and `problems`: what `kgd accept` would refuse. Fix a draft
   until its problems are empty. `kgd check` validates drafts like records.
   Drafts are never indexed.
 - Deleting a draft rejects it. Nothing remembers the rejection, so a later
@@ -232,18 +240,19 @@ Follow the source's document type: its `node_kinds`, `relation_kinds`,
 `epistemic` list and guidance (`kgd source FILE`). In general:
 
 - **Nodes** are the concepts, methods, architectures, objectives and
-  quantities the source defines, and the statements it makes about them:
-  theorems (every precisely stated result, whatever the source calls it),
-  findings and examples, each linking what it is about through its roles. Each
+  quantities the source defines, and the results it states: theorems (every
+  precisely stated result, whatever the source calls it), findings and
+  examples, each linking every record it concerns through its roles. Each
   concept has one record, owned by the source that defines or originates it.
   A concept this source only uses, even one it explains at length, is not a
   node here: link its record, or, when the owner asks to capture it, draft it
   as foreign knowledge from the page that originates or explains it.
-- **Relations** are connections the source states between two or more
-  records: implications, comparisons, generalizations, derivations,
+- **Relations** are connections the source states between records:
+  implications between results, comparisons, generalizations, derivations,
   evaluations. Bind each participant to the role the type declares; arity is
   unbounded, a binary relation is the 2-role case, and a participant may itself
-  be a relation. A statement about one record is a node.
+  be a relation. A result the source states is a node, however many records it
+  is about.
 - **Only stated connections.** A relation citing this source quotes text that
   states the relation. A connection you infer by combining passages, or
   between this source and another one it does not mention, is never written
