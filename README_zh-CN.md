@@ -20,7 +20,7 @@
 - 通过一个 SQLite 索引同时搜索所有已注册的 vault；`kgd search` 融合全文检索、dense embedding 检索（例如 BGE-M3）和名称匹配三路结果。
 - 在 Obsidian 里选中文字即可查询知识，看到记录周围的类型化邻居图；内置 agent 把选中内容起草成草稿，你在入库侧栏里确认入库；coding agent 通过 Skills 和 MCP server 来记录、编译和查询知识。
 
-本仓库包含 Obsidian 插件和 Python 核心，二者都是 **2.0.1**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
+本仓库包含 Obsidian 插件和 Python 核心，二者都是 **2.0.2**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
 
 ## 为什么以知识图谱为核心
 
@@ -339,8 +339,8 @@ kgd index
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/2.0.1
-uv run --locked python scripts/check_distribution.py --dist-root build/release/2.0.1
+uv build --out-dir build/release/2.0.2
+uv run --locked python scripts/check_distribution.py --dist-root build/release/2.0.2
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```

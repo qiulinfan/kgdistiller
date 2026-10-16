@@ -2,6 +2,12 @@
 
 All notable changes are documented here.
 
+## 2.0.2 — 2026-10-16
+
+- A read whose document type does not load fails before it opens the
+  database, so no connection stays open; on Windows the open connection kept
+  `index.sqlite` locked.
+
 ## 2.0.1 — 2026-10-16
 
 kgdistiller 2.0.1 makes the knowledge base global: `kgd relocate` moves a

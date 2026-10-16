@@ -1,6 +1,6 @@
-kgdistiller Obsidian 2.0.1 makes editing global and shows kgd's own errors.
-It needs the kgdistiller 2.0.1 CLI (`kgd`), whose path you set under
-**Settings → kgdistiller → kgd executable**. After upgrading, run a plain
+kgdistiller Obsidian 2.0.2 makes editing global and shows kgd's own errors.
+It needs the kgdistiller 2.0.2 CLI (`kgd`), whose path you set under
+**Settings → kgdistiller → kgd executable**. After upgrading from 2.0.0, run a plain
 `kgd index` (or **Re-embed** in the sidebar) once: every record is embedded
 again.
 
