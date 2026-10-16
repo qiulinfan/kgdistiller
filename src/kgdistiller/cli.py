@@ -168,6 +168,16 @@ def parse_args() -> argparse.Namespace:
         help="list only drafts whose label or an alias has this name (repeatable)",
     )
 
+    edit = commands.add_parser(
+        "edit", help="set one field of a draft: label, kind, epistemic, understanding, aliases, requires, a role, or body"
+    )
+    edit.add_argument("draft", type=Path, metavar="DRAFT")
+    edit.add_argument("key", metavar="FIELD")
+    edit.add_argument(
+        "values", nargs="*", metavar="VALUE",
+        help="the field's value or values; none removes the field; - as the only value of body reads standard input",
+    )
+
     accept = commands.add_parser(
         "accept",
         help="admit drafts as new or replacing records, all or nothing, then index and embed the admitted records",
@@ -400,6 +410,11 @@ def _command(args: argparse.Namespace) -> int:
         from .write import drafts
 
         return _print(drafts(args.base, args.source, args.name))
+    if args.command == "edit":
+        from .write import edit
+
+        values = [sys.stdin.read()] if args.key == "body" and args.values == ["-"] else args.values
+        return _print(edit(_cwd_path(args.draft), args.key, values))
     if args.command == "accept":
         from .write import accept
 

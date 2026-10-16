@@ -12,7 +12,9 @@ source's extraction profile and the records and drafts citing it.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from .home import (
     DocumentType,
     Home,
     KnowledgeError,
+    atomic_write_text,
     base_for_path,
     home_directory,
     load_home,
@@ -32,10 +35,12 @@ from .index import index, name_key
 from .records import (
     DRAFTS,
     ENTRIES,
+    MAX_ID_LENGTH,
     Files,
     Record,
     RecordError,
     Value,
+    body_sections,
     fold,
     format_ranges,
     gloss,
@@ -44,6 +49,7 @@ from .records import (
     read_text,
     record_files,
     record_problems,
+    slug,
     source_lines,
 )
 
@@ -230,6 +236,39 @@ def _draft_value(files: Files, record: Record, role: str, position: int, value: 
     return found
 
 
+def _choices(files: Files, base: Base, record: Record) -> dict[str, Any] | None:
+    """What a draft's kind, roles and epistemic may be: its source's type, or for a foreign draft every type
+    registered for its base, a kind two of them declare differently left out; None when the source has no type."""
+    if record.foreign:
+        types = [files.home.types[name] for name in sorted(set(base.sources.values())) if name in files.home.types]
+    else:
+        mapping, _ = files.sources(base)
+        name = mapping.get(record.source)
+        types = [files.home.types[name]] if name in files.home.types else []
+    if not types:
+        return None
+    node_kinds: list[str] = []
+    relation_kinds: dict[str, list[str]] = {}
+    clashing: set[str] = set()
+    for kind_type in types:
+        for kind in kind_type.node_kinds:
+            if kind in relation_kinds:
+                clashing.add(kind)
+            elif kind not in node_kinds:
+                node_kinds.append(kind)
+        for kind, roles in kind_type.relation_kinds.items():
+            if kind in node_kinds or relation_kinds.get(kind, list(roles)) != list(roles):
+                clashing.add(kind)
+            else:
+                relation_kinds[kind] = list(roles)
+    epistemic = list(dict.fromkeys(value for kind_type in types for value in kind_type.epistemic))
+    return {
+        "node_kinds": [kind for kind in node_kinds if kind not in clashing],
+        "relation_kinds": {kind: roles for kind, roles in relation_kinds.items() if kind not in clashing},
+        "epistemic": epistemic,
+    }
+
+
 def _reachable(links: dict[str, set[str]], start: str) -> set[str]:
     """The drafts ``start`` links, directly or through other drafts, without ``start`` itself."""
     reached: set[str] = set()
@@ -326,11 +365,116 @@ def drafts(bases: Iterable[str] = (), sources: Iterable[str] = (), names: Iterab
                 "search_terms": record.search_terms,
                 "evidence": list(record.evidence),
                 "out": [_draft_value(files, record, role, position, value) for role, position, value in record.values()],
+                "choices": _choices(files, base, record),
                 "with": sorted(f"{name}:{ids[other].stem}" for other in others),
                 "linked_by": linked_by,
                 "problems": problems,
             }))
     return {"drafts": [item for _, item in sorted(listed, key=lambda pair: pair[0])], "unavailable_bases": unavailable}
+
+
+# ---------------------------------------------------------------- edit
+
+SCALAR_FIELDS = ("label", "kind", "epistemic", "understanding")
+LIST_FIELDS = ("aliases", "requires")
+BODY = "body"
+_KEY_RE = re.compile(r"^([^\s#:][^:]*?)[ \t]*:")
+
+
+def _field_lines(key: str, values: list[str]) -> list[str]:
+    """A frontmatter field as written by kgd: scalars and list items as JSON strings, which YAML reads unchanged."""
+    if key in SCALAR_FIELDS:
+        return [f"{key}: {json.dumps(values[0], ensure_ascii=False)}"] if values else []
+    return [f"{key}:", *(f"  - {json.dumps(value, ensure_ascii=False)}" for value in values)] if values else []
+
+
+def _with_field(text: str, key: str, values: list[str]) -> str:
+    """The record text with one top-level frontmatter field replaced, added before the closing line, or removed."""
+    lines = text.split("\n")
+    close = lines.index("---", 1)
+    start = next((number for number in range(1, close) if (match := _KEY_RE.match(lines[number])) and match.group(1) == key), None)
+    new = _field_lines(key, values)
+    if start is None:
+        return "\n".join(lines[:close] + new + lines[close:])
+    end = start + 1
+    while end < close and (lines[end][:1] in (" ", "\t", "-") or not lines[end].strip()):
+        end += 1
+    return "\n".join(lines[:start] + new + lines[end:])
+
+
+def _with_body(text: str, prose: str) -> str:
+    """The record text with the prose before ``## Search terms`` or ``## Evidence`` replaced."""
+    lines = text.split("\n")
+    close = lines.index("---", 1)
+    body = lines[close + 1 :]
+    prose_end, _, _ = body_sections(body)
+    return "\n".join([*lines[: close + 1], *prose.strip("\n").split("\n"), "", *body[prose_end:]])
+
+
+def _links_into(files: Files, base: Base, identifier: str) -> bool:
+    """Whether another draft of the base links the draft ``identifier``."""
+    uid = f"{base.name}:{fold(identifier)}"
+    for other in files.ids(base.name, DRAFTS):
+        record = files.record(base.name, DRAFTS, other)
+        if record is not None and record.id != identifier and any(value.uid == uid for _, _, value in record.values()):
+            return True
+    return False
+
+
+def edit(path: Path | str, key: str, values: Iterable[str]) -> dict[str, Any]:
+    """Set one field of a draft: a scalar, a list (aliases, requires or a role), or the prose (``body``).
+
+    The rest of the file is kept as it is. A changed label of a new draft that
+    no other draft links also renames the draft to the label's id. The result
+    must still parse; whether ``kgd accept`` would take it is what ``drafts``
+    reports. ``source`` and ``lines`` move with ``kgd relocate``.
+    """
+    home = load_home(home_directory())
+    base, identifier, problem = _locate_draft(home, path)
+    if problem is not None:
+        raise KnowledgeError(problem)
+    assert base is not None
+    draft = base.root / KNOWLEDGE_DIRECTORY / DRAFTS / f"{identifier}.md"
+    values = [value for value in values]
+    if key in ("source", "lines"):
+        raise KnowledgeError(f"{key} moves with `kgd relocate`, not `kgd edit`")
+    if key in ("tags", "cssclasses"):
+        raise KnowledgeError(f"{key} is Obsidian's own property; edit it in Obsidian")
+    if key in SCALAR_FIELDS and len(values) > 1:
+        raise KnowledgeError(f"{key} takes one value")
+    if key in ("label", "kind") and not (values and values[0].strip()):
+        raise KnowledgeError(f"{key} must not be empty")
+    if key == "understanding" and values and values[0] == "yes":
+        values = []
+    if key == "epistemic" and values and not values[0].strip():
+        values = []
+    before = read_text(draft)
+    try:
+        after = _with_body(before, values[0] if values else "") if key == BODY else _with_field(before, key, values)
+        record = parse_text(after, base.name, identifier, draft)
+    except RecordError as error:
+        raise KnowledgeError(f"the draft would not parse: {error.message}") from error
+    target = draft
+    files = Files(home)
+    if key == "label" and fold(identifier) not in files.ids(base.name, ENTRIES) and not _links_into(files, base, identifier):
+        wanted = slug(record.label)
+        taken = (set(files.ids(base.name, ENTRIES)) | set(files.ids(base.name, DRAFTS))) - {fold(identifier)}
+        candidate, number = wanted, 2
+        while candidate and candidate in taken:
+            suffix = f"-{number}"
+            candidate, number = f"{wanted[: MAX_ID_LENGTH - len(suffix)]}{suffix}", number + 1
+        if candidate and candidate != identifier:
+            target = draft.with_name(f"{candidate}.md")
+    if read_text(draft) != before:
+        raise KnowledgeError(f"{draft} changed while it was edited; edit it again")
+    if target == draft:
+        atomic_write_text(draft, after)
+    else:
+        with open(target, "x", encoding="utf-8", newline="") as handle:
+            handle.write(after)
+        os.unlink(draft)
+    return {"draft": str(target), "uid": f"{base.name}:{target.stem}",
+            **({"renamed_from": f"{base.name}:{identifier}"} if target != draft else {})}
 
 
 # ---------------------------------------------------------------- source

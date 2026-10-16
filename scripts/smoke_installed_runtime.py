@@ -263,6 +263,11 @@ def main() -> int:
         require([(item["uid"], item["problems"], item["with"], item["replaces"]) for item in listed["drafts"]]
                 == [("smoke:measure-theory", [], [], None)] and listed["unavailable_bases"] == [],
                 f"drafts listing mismatch: {listed}")
+        edited = runtime.object("edit", ".knowledge/drafts/measure-theory.md", "aliases", "measure theory", cwd=root)
+        require(edited == {"draft": str((root / ".knowledge/drafts/measure-theory.md").resolve()), "uid": "smoke:measure-theory"},
+                f"edit report: {edited}")
+        require('aliases:\n  - "measure theory"\n' in (root / ".knowledge/drafts/measure-theory.md").read_text(encoding="utf-8"),
+                "edit did not write the field")
         receipt = runtime.object("accept", ".knowledge/drafts/measure-theory.md", cwd=root)
         indexed = receipt.pop("index", None) or {}
         require(receipt == {"created": ["smoke:measure-theory"], "updated": []}, f"accept receipt: {receipt}")
@@ -348,7 +353,7 @@ def main() -> int:
 
     print(
         "installed command, base add, embedding show and off, source, drafts and accept, check --fix-lines, index, "
-        "search (including CJK), resolve, get, neighbors, browse, pack, foreign records, accepting a replacement, find, "
+        "search (including CJK), resolve, get, neighbors, browse, pack, foreign records, edit, accepting a replacement, find, "
         "relocate and "
         "Obsidian plugin install (hidden indexing and the newLinkFormat warning) smoke passed"
     )

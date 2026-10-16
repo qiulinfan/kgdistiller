@@ -233,9 +233,8 @@ def _trim(lines: list[str]) -> str:
     return "\n".join(lines[start:end])
 
 
-def parse_body(body: str) -> tuple[str, str, tuple[str, ...]]:
-    """Split a body into prose, search terms and evidence quotes."""
-    lines = body.split("\n")
+def body_sections(lines: list[str]) -> tuple[int, int | None, int]:
+    """The indexes of the body's lines where its prose ends, ``## Search terms`` (or None) and ``## Evidence`` start."""
     headings: list[tuple[int, str]] = []
     fence: str | None = None
     for number, line in enumerate(lines):
@@ -257,7 +256,13 @@ def parse_body(body: str) -> tuple[str, str, tuple[str, ...]]:
     search_at = headings[-2][0] if len(headings) > 1 and headings[-2][1] == SEARCH_TERMS else None
     if any(title == SEARCH_TERMS for number, title in headings if number != search_at):
         raise RecordError("body", f"'## {SEARCH_TERMS}' must be the heading immediately before '## {EVIDENCE}'")
-    prose_end = evidence_at if search_at is None else search_at
+    return (evidence_at if search_at is None else search_at), search_at, evidence_at
+
+
+def parse_body(body: str) -> tuple[str, str, tuple[str, ...]]:
+    """Split a body into prose, search terms and evidence quotes."""
+    lines = body.split("\n")
+    prose_end, search_at, evidence_at = body_sections(lines)
     prose = _trim(lines[:prose_end])
     search_terms = "" if search_at is None else _trim(lines[search_at + 1 : evidence_at])
     quotes: list[str] = []

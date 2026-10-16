@@ -11,7 +11,8 @@ from unittest.mock import patch
 from kgdistiller import write
 from kgdistiller.home import KnowledgeError, LockConflict, lock
 from kgdistiller.index import index, open_read_only
-from kgdistiller.write import accept, drafts, source
+from kgdistiller.records import parse_record
+from kgdistiller.write import accept, drafts, edit, source
 from tests.knowledge_fixture import fake_encoder, make_record_home
 
 SOURCE = "notes/a.txt"
@@ -206,6 +207,12 @@ class DraftsTest(WriteTestCase):
                  "understanding": "no"},
                 {"role": "requires", "pos": 1, "uid": "notes:rank", "state": "missing", "label": None},
             ],
+            "choices": {
+                "node_kinds": ["definition", "theorem", "concept"],
+                "relation_kinds": {"implies": ["premise", "conclusion"], "equivalent": ["side"],
+                                   "example": ["uses", "setting"], "contrasts": ["subject", "contrast", "witness"]},
+                "epistemic": ["proved", "stated"],
+            },
             "with": [], "linked_by": [], "problems": ["requires[1]: dangling link [[notes:rank]]"],
         }], "unavailable_bases": []}, drafts())
 
@@ -437,6 +444,61 @@ class SourceTest(WriteTestCase):
     def test_sheet_and_harvest_are_gone(self) -> None:
         for name in ("sheet", "sheet_json", "harvest", "render_sheet"):
             self.assertFalse(hasattr(write, name), name)
+
+
+class EditTest(WriteTestCase):
+    def test_a_field_is_set_and_the_rest_of_the_file_kept(self) -> None:
+        draft = self.draft("dimension", node("Dimension", "6", extra='aliases:\n  - 维数\nrequires:\n  - "[[subspace]]"'),
+                           body="Text.\n\nMore text.")
+        before = draft.read_text(encoding="utf-8")
+        edit(draft, "requires", ["[[subspace]]", "[[notes:rank]]"])
+        after = draft.read_text(encoding="utf-8")
+        self.assertIn('requires:\n  - "[[subspace]]"\n  - "[[notes:rank]]"\n---', after)
+        self.assertEqual(before.split("requires:")[0], after.split("requires:")[0])
+        edit(draft, "aliases", [])
+        edit(draft, "epistemic", ["stated"])
+        edit(draft, "understanding", ["no"])
+        edit(draft, "body", ["A new statement.\n\nWith two paragraphs."])
+        record = parse_record(draft, "kb")
+        self.assertEqual(((), "stated", "no", "A new statement.\n\nWith two paragraphs.", ("Unique sentence about dimension.",)),
+                         (record.aliases, record.epistemic, record.understanding, record.body, record.evidence))
+        edit(draft, "understanding", ["yes"])
+        self.assertNotIn("understanding", draft.read_text(encoding="utf-8"))
+
+    def test_a_role_is_added_and_removed(self) -> None:
+        draft = self.draft("sum", node("Sum", "5", kind="implies", extra='premise:\n  - "[[subspace]]"'),
+                           quote="The sum of two subspaces is a subspace.")
+        edit(draft, "conclusion", ["[[subspace]]"])
+        self.assertEqual([("premise", "kb:subspace"), ("conclusion", "kb:subspace")],
+                         [(role, value.uid) for role, _, value in parse_record(draft, "kb").values()])
+        edit(draft, "premise", [])
+        self.assertNotIn("premise", draft.read_text(encoding="utf-8"))
+
+    def test_a_new_label_renames_a_new_draft_unless_a_draft_links_it(self) -> None:
+        draft = self.draft("dimension", node("Dimension", "6"))
+        report = edit(draft, "label", ["Vector space dimension"])
+        self.assertEqual(("kb:vector-space-dimension", "kb:dimension"), (report["uid"], report["renamed_from"]))
+        self.assertFalse(draft.exists())
+        renamed = Path(report["draft"])
+        self.assertEqual("Vector space dimension", parse_record(renamed, "kb").label)
+        self.draft("rank", node("Rank", "6", extra='requires:\n  - "[[vector-space-dimension]]"'))
+        kept = edit(renamed, "label", ["Dimension of a vector space"])
+        self.assertNotIn("renamed_from", kept)
+        replacement = self.kb.path("subspace", "drafts")
+        replacement.write_bytes(self.kb.path("subspace").read_bytes())
+        self.assertNotIn("renamed_from", edit(replacement, "label", ["Linear subspace"]))
+
+    def test_refusals_change_nothing(self) -> None:
+        draft = self.draft("dimension", node("Dimension", "6"))
+        before = draft.read_bytes()
+        for key, values in (("requires", ["plain text"]), ("source", ["x"]), ("lines", ["1"]), ("label", []),
+                            ("kind", ["a", "b"]), ("tags", ["x"])):
+            with self.subTest(key=key), self.assertRaises(KnowledgeError):
+                edit(draft, key, values)
+        with self.assertRaises(KnowledgeError):
+            edit(self.kb.path("subspace"), "label", ["Entry"])
+        self.assertEqual(before, draft.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()
