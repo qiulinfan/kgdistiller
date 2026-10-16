@@ -341,7 +341,7 @@ export default class KgdistillerPlugin extends Plugin {
     void this.captureView().then((view) => view?.startCapture(selection));
   }
 
-  /** Move a foreign record's evidence to a passage of a local source, as a draft, in the Capture view. */
+  /** Move a foreign record's citation to a passage of a local source with `kgd relocate`, into that source's base. */
   localize(target: LocalizeTarget, input: LocalizeInput): void {
     void this.captureView().then((view) => view?.startLocalize(target, input));
   }

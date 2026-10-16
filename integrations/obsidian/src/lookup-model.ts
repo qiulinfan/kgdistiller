@@ -266,10 +266,10 @@ export interface NeighbourGraph {
  * is one edge between them labelled with its kind; one with more values, or
  * with `requires` links, is a diamond joining them, and its participants are
  * one step apart. A relation that another record links to, and the focus,
- * stay records in their own right: diamonds with their role edges. A
- * statement about one record, such as a theorem, is a node joined to it by its
- * role edge. Node records are circles coloured by
- * kind, missing records red, and `requires` links dashed, one step each. At
+ * stay records in their own right: diamonds with their role edges. A result
+ * the source states, such as a theorem, is a node joined to what it is about
+ * by its role edges. Node records are circles coloured by kind, missing
+ * records red, and `requires` links dashed, one step each. At
  * most `limit` vertices are drawn, the nearest first.
  */
 export function neighbourGraph(

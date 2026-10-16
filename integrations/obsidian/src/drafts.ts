@@ -13,7 +13,7 @@ export interface DraftValue {
   role: string;
   pos: number;
   uid: string;
-  /** An accepted record, a draft of the same base, or a record that does not exist. */
+  /** An accepted record, a draft of any base, or a record that does not exist. */
   state: "accepted" | "draft" | "missing";
   label?: string | null;
 }

@@ -65,7 +65,9 @@ function world(refuse = 0): World {
       if (args[0] === "source" && args[1] === LOCAL) return { report: profile as unknown as Record<string, unknown>, failed: false };
       if (args[0] === "relocate") {
         if (refusals-- > 0) return { report: { refused: { message: "the passage does not occur in base papers", matches: [] } }, failed: true };
-        return { report: { relocated: args[1], to: { source: profile.source, lines: "3-3" }, evidence: "replaced" }, failed: false };
+        const ref = args[args.indexOf("--") + 1]!;
+        const relocated = ref.includes(":") ? `${profile.base}:${ref.split(":")[1]}` : ref;
+        return { report: { relocated, to: { source: profile.source, lines: "3-3" }, evidence: "replaced" }, failed: false };
       }
       return { report: { error: "not a registered source" }, failed: true };
     },
@@ -114,7 +116,7 @@ describe("localizing foreign knowledge", () => {
     await expect(localizeRecord(complete, w.kgd, w.files, recordTarget(record), input)).resolves.toEqual({
       localized: true, uid: "papers:block-wise-masking", label: "Block-wise masking", report: "同一概念。",
     });
-    expect(w.commands).toEqual([["source", LOCAL], ["relocate", "papers:block-wise-masking", PASSAGE, "--source", "papers/beit/beit.md"]]);
+    expect(w.commands).toEqual([["source", LOCAL], ["relocate", "--base", "papers", "--source", "papers/beit/beit.md", "--", "papers:block-wise-masking", PASSAGE]]);
     expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "localize" } }, reasoning_effort: "low" });
     const user = requests[0]!.messages[1]!.content as string;
     expect(user).toContain(`Its evidence, quoted from ${BEIT_URL}:\n> Block-wise masking masks a block of image patches at a time.`);
@@ -122,10 +124,19 @@ describe("localizing foreign knowledge", () => {
     expect(user).toContain("3| Block-wise masking masks a block of patches at a time.");
   });
 
+  it("moves a record of another base into the selected source's base", async () => {
+    const w = world();
+    const other = recordTarget({ ...record, uid: "notes:block-wise-masking", base: "notes" });
+    await expect(localizeRecord(model(same).complete, w.kgd, w.files, other, input)).resolves.toMatchObject({
+      localized: true, uid: "papers:block-wise-masking",
+    });
+    expect(w.commands.at(-1)).toEqual(["relocate", "--base", "papers", "--source", "papers/beit/beit.md", "--", "notes:block-wise-masking", PASSAGE]);
+  });
+
   it("relocates a draft by its file", async () => {
     const w = world();
     await expect(localizeRecord(model(same).complete, w.kgd, w.files, draftTarget(draft), input)).resolves.toMatchObject({ localized: true });
-    expect(w.commands.at(-1)).toEqual(["relocate", DRAFT, PASSAGE, "--source", "papers/beit/beit.md"]);
+    expect(w.commands.at(-1)).toEqual(["relocate", "--base", "papers", "--source", "papers/beit/beit.md", "--", DRAFT, PASSAGE]);
   });
 
   it("relocates nothing when the passage states something else", async () => {
@@ -145,14 +156,9 @@ describe("localizing foreign knowledge", () => {
     ]);
   });
 
-  it("refuses a source of another base and a kind the source's type lacks, before asking the model", async () => {
+  it("refuses a kind the source's type lacks, before asking the model", async () => {
     const never = async (): Promise<ChatReply> => { throw new Error("the model was asked"); };
     const w = world();
-    const other = recordTarget({ ...record, uid: "notes:block-wise-masking", base: "notes" });
-    await expect(localizeRecord(never, w.kgd, w.files, other, input)).resolves.toEqual({
-      localized: false, uid: "notes:block-wise-masking", label: "Block-wise masking",
-      report: "This source belongs to base papers, the record to base notes; moving a record across bases is the compile Skill's relocation.",
-    });
     await expect(localizeRecord(never, w.kgd, w.files, recordTarget({ ...record, kind: "theorem" }), input))
       .resolves.toMatchObject({ localized: false, report: "The kind theorem is not one of this source's document type ai-research." });
     expect(w.commands.filter((args) => args[0] === "relocate")).toEqual([]);

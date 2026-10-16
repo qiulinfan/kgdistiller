@@ -509,7 +509,7 @@ export class KgdistillerCaptureView extends ItemView {
   /**
    * The edges: one row per role the kind declares and one for `requires`, each
    * value a chip naming the record it links, with × to remove it and + to add
-   * a record or a draft of this base found by name.
+   * a record or a draft of any base found by name.
    */
   private renderValues(card: HTMLElement, draft: Draft): void {
     const byRole = new Map(valuesByRole(draft).map(({ role, values }) => [role, values]));
@@ -543,7 +543,8 @@ export class KgdistillerCaptureView extends ItemView {
   private async editDraft(draft: Draft, key: string, values: string[]): Promise<void> {
     this.busy.add(draft.uid);
     try {
-      const { report, failed } = await this.host.kgd.command(["edit", draft.path, key, ...values]);
+      // "--" keeps a value that starts with "-", such as an alias "-ε-net", from reading as an option.
+      const { report, failed } = await this.host.kgd.command(["edit", draft.path, key, "--", ...values]);
       if (failed) throw new Error(String((report.error as { message?: string } | undefined)?.message ?? "kgd edit refused the change"));
       const uid = typeof report.uid === "string" ? report.uid : draft.uid;
       if (uid !== draft.uid) {
@@ -626,7 +627,7 @@ export class KgdistillerCaptureView extends ItemView {
   }
 }
 
-/** Finds records, and drafts of the draft's base, by name or words, for a value to link. */
+/** Finds records and drafts of every base by name or words, for a value to link. */
 class RecordSuggestModal extends SuggestModal<{ uid: string; label: string; kind: string; where: string }> {
   constructor(app: App, private readonly kgd: KgdServer, private readonly base: string,
     private readonly chosen: (uid: string) => void) {
@@ -638,10 +639,12 @@ class RecordSuggestModal extends SuggestModal<{ uid: string; label: string; kind
     if (!query.trim()) return [];
     const [searched, drafts] = await Promise.all([
       this.kgd.call<SearchResult>("kg_search", { query, limit: 10 }),
-      this.kgd.call<DraftsResult>("kg_drafts", { base: [this.base], names: [query] }),
+      this.kgd.call<DraftsResult>("kg_drafts", { names: [query] }),
     ]);
     return [
-      ...drafts.drafts.filter((draft) => draft.label !== null).map((draft) => ({ uid: draft.uid, label: draft.label!, kind: draft.kind ?? "", where: "draft" })),
+      ...drafts.drafts.filter((draft) => draft.label !== null).map((draft) => ({
+        uid: draft.uid, label: draft.label!, kind: draft.kind ?? "", where: draft.base === this.base ? "draft" : `draft · ${draft.base}`,
+      })),
       ...searched.results.map((hit) => ({ uid: hit.uid, label: hit.label, kind: hit.kind, where: hit.base === this.base ? "" : hit.base })),
     ];
   }

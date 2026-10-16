@@ -366,19 +366,20 @@ describe("capturing a selection", () => {
     expect(drafts(w)[0]![1]).toContain("candidate:\n  - \"[[random-sampling]]\"");
   });
 
-  it("matches a draft as unchanged but never overwrites one, and links no draft of another base", async () => {
+  it("matches a draft as unchanged but never overwrites one, and links a draft of another base", async () => {
     const elsewhere = draft("notes:block-wise-masking", "block-wise masking");
     const unchanged = { item: "i", decision: "unchanged", record: "notes:block-wise-masking", report: "已是草稿。" };
     await expect(capture(world({ named: [elsewhere] }), model({ names: ["block-wise masking"], phrases: [] }, unchanged).complete))
       .resolves.toEqual({ item: "i", decision: "unchanged", uid: "notes:block-wise-masking", label: "block-wise masking", draft: true, report: "已是草稿。" });
     const overwrite = { ...comparison, decision: "superseding", record: "notes:block-wise-masking" };
     const crossing = { ...comparison, roles: { ...comparison.roles, baseline: ["[[notes:block-wise-masking]]"] } };
-    const { complete, requests } = model({ names: ["block-wise masking"], phrases: [] }, overwrite, crossing, comparison);
-    await capture(world({ named: [elsewhere] }), complete);
+    const { complete, requests } = model({ names: ["block-wise masking"], phrases: [] }, overwrite, crossing);
+    const w = world({ named: [elsewhere] });
+    await capture(w, complete);
     expect(seen(requests, 2)).toEqual([
       "error: [[notes:block-wise-masking]] is a draft awaiting the owner, not knowledge yet; decide unchanged when the item is that draft's item, or new",
-      "error: [[notes:block-wise-masking]] is a draft of another base, which only an accepted record can be linked across; leave it out",
     ]);
+    expect(drafts(w)[0]![1]).toContain("baseline:\n  - \"[[notes:block-wise-masking]]\"");
   });
 
   it("looks a name up among the drafts before writing it", async () => {
@@ -404,7 +405,7 @@ describe("capturing a selection", () => {
     await capture(world(), complete);
     const refusals = seen(requests);
     expect(refusals[0]).toBe("error: [[papers:invented]] is not a record or draft shown to you; link only shown uids; "
-      + "compares has no role \"winner\"; its roles are baseline, candidate, setting; a compares relation binds at least two records; a statement about one record is a node");
+      + "compares has no role \"winner\"; its roles are baseline, candidate, setting; a compares relation binds at least two values; a result the source states is a node whose roles link what it is about");
     expect(refusals[1]).toMatch(/^error: kind must be one of definition, algorithm, architecture, finding, compares, property$/);
     expect(refusals[2]).toBe(`error: evidence must be copied verbatim from the source.\nquote 1: it is not verbatim in lines 5. Those lines read:\n5| ${lines[4]}`);
   });
@@ -545,7 +546,7 @@ describe("a selection made in a side pane", () => {
   });
 });
 
-describe("statements about one record", () => {
+describe("results stated about records", () => {
   it("are nodes whose roles link what they are about, and a relation needs two records", async () => {
     const w = world();
     const finding = {
@@ -554,9 +555,11 @@ describe("statements about one record", () => {
       evidence: [{ lines: "5", quote: "简单的 random sampling 对 MAE 最好" }], epistemic: "empirical", report: "已收录。",
     };
     const single = { ...finding, kind: "compares", roles: { candidate: ["[[papers:masked-autoencoder]]"] } };
-    const { complete, requests } = model(single, finding);
+    const about = { ...finding, roles: {} };
+    const { complete, requests } = model(single, about, finding);
     await expect(capture(w, complete)).resolves.toMatchObject({ decision: "new", draft: true });
-    expect(seen(requests)[0]).toBe("error: a compares relation binds at least two records; a statement about one record is a node");
+    expect(seen(requests)[0]).toBe("error: a compares relation binds at least two values; a result the source states is a node whose roles link what it is about");
+    expect(seen(requests)[1]).toBe("error: a finding links what it is about in about; look up the concept it is about, or leave the item out when no record holds it");
     expect(drafts(w)[0]![1]).toContain("epistemic: \"empirical\"\nabout:\n  - \"[[masked-autoencoder]]\"");
     expect(requests[0]!.messages[0]!.content).toContain("Node kinds and their roles: definition; algorithm; architecture; finding (about)");
   });

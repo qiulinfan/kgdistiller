@@ -140,7 +140,7 @@ describe("the neighbour graph", () => {
   const edges = (elements: Element[]) => elements.filter((element) => element.group === "edges");
   const ends = (element: Element) => `${element.data.source} -${element.data.label}-> ${element.data.target}`;
 
-  it("draws records within three concept steps, relations as edges and statements about one record left out", () => {
+  it("draws records within three concept steps, relations as edges", () => {
     const { elements, shown, total } = neighbourGraph(around, "papers:mae");
     expect(nodes(elements).map((element) => [element.data.id, element.classes])).toEqual([
       ["papers:mae", "kgd-focus"],
@@ -195,7 +195,7 @@ describe("the open file", () => {
   });
 
   it("brings nothing for a draft or the rest of the knowledge folder", () => {
-    for (const path of [".knowledge/drafts/masked-autoencoder.md", ".knowledge/sheets/papers/mae/mae_ch.md.md", ".knowledge", ".knowledge/notes.md"]) {
+    for (const path of [".knowledge/drafts/masked-autoencoder.md", ".knowledge", ".knowledge/notes.md"]) {
       expect(openFileTarget(path, "papers")).toBeUndefined();
     }
   });

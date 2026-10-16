@@ -83,7 +83,7 @@ export interface LookupHost extends AgentHost {
   reasoningChoices(): ReasoningChoices;
   chooseReasoning(choice: ReasoningChoice): Promise<void>;
   indexer: Indexer;
-  /** Move a foreign record's evidence to a passage of a local source, as a draft, in the Capture view. */
+  /** Move a foreign record's citation to a passage of a local source with `kgd relocate`, into that source's base. */
   localize(target: LocalizeTarget, input: LocalizeInput): void;
   /** Draw an accepted record into a draft with its id, in the Capture view, for revision. */
   revise(uid: string): void;
@@ -669,7 +669,7 @@ export class KgdistillerLookupView extends ItemView {
     const shown = graph.shown < graph.total ? `The ${graph.shown} nearest of ${graph.total} records. ` : "";
     pane.createDiv({
       cls: "kgd-lookup-hint",
-      text: `${shown}A relation between two records is an edge; a statement about one record is a circle joined to it. Click a record or an edge to look at it; scroll over the graph to zoom.`,
+      text: `${shown}A relation between two records is an edge; a result such as a theorem is a circle joined to what it is about. Click a record or an edge to look at it; scroll over the graph to zoom.`,
     });
     const container = pane.createDiv({ cls: "kgd-lookup-graph" });
     this.neighbours = cytoscape({

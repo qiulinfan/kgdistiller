@@ -28,7 +28,7 @@ export interface Judgment {
   explanation: string;
 }
 
-export const JUDGE_SYSTEM = `You judge whether a passage the owner selected while reading names knowledge already recorded in their kgdistiller knowledge base. You see the selection, the text around it, and numbered candidate records found by name and by search. Nodes are concepts and the statements made about one record, such as theorems and findings; relations are connections stated between two or more records. Answer by calling judge.
+export const JUDGE_SYSTEM = `You judge whether a passage the owner selected while reading names knowledge already recorded in their kgdistiller knowledge base. You see the selection, the text around it, and numbered candidate records found by name and by search. Nodes are concepts and the results stated about them, such as theorems and findings; relations are connections stated between two or more records. Answer by calling judge.
 
 First decide what the selection means in the text around it: a concept, or a statement.
 - matched: one candidate is that same concept or statement. Judge by meaning: compare definitions and conditions. A shared name does not make the same concept: a general term used in its general sense is not a specific record that happens to share the word, and a broader or narrower concept is not a match. A concept is a node that defines it, never a statement or relation that merely mentions it; a statement matches only a record that states it.

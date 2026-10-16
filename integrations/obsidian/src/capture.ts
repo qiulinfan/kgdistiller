@@ -103,14 +103,14 @@ const SEARCH_LIMIT = 8;
 const LOOKUP_SEARCH_LIMIT = 5;
 const MAX_ID_LENGTH = 80;
 
-export const CAPTURE_SYSTEM = `You file one knowledge item that the owner selected while reading into their kgdistiller knowledge base, by calling submit. The item is exactly what the selected text names or states; the rest of the passage is context for understanding it, never something else to file. When the selected text makes a statement, the item is that statement, even when it cites other work: a node when it is about one record, a relation when it connects two or more. When it names a concept, the item is that concept. File that one item alone: never merge it with neighbouring sentences into a broader record. The names in the selection have been looked up for you; when you will write another name or term that the records shown do not cover, call lookup first, once, with all of them.
+export const CAPTURE_SYSTEM = `You file one knowledge item that the owner selected while reading into their kgdistiller knowledge base, by calling submit. The item is exactly what the selected text names or states; the rest of the passage is context for understanding it, never something else to file. When the selected text makes a statement, the item is that statement, even when it cites other work: a result the source states is a node, such as a theorem or a finding, and a connection the source states between records is a relation. When it names a concept, the item is that concept. File that one item alone: never merge it with neighbouring sentences into a broader record. The names in the selection have been looked up for you; when you will write another name or term that the records shown do not cover, call lookup first, once, with all of them.
 
 The knowledge model:
-- A node is an object this source defines or originates, such as a concept, method, architecture or objective, or a statement it makes about one: a theorem (any precisely stated result, whatever the source calls it), a finding or an example. Its roles link what it is about.
-- A relation is a connection this source states between two or more records, such as an implication, a comparison or a generalization: it binds at least two records to the roles of its kind, and its evidence itself states it. A statement about one record is a node, never a relation.
+- A node is an object this source defines or originates, such as a concept, method, architecture or objective, or a result it states about such objects: a theorem (any precisely stated result, whatever the source calls it), a finding or an example. Its roles link every record it is about.
+- A relation is a connection this source states between two or more records, such as an implication, a comparison or a generalization: it binds at least two values to the roles of its kind, and its evidence itself states it. A result is a node whose roles link every record it concerns, never a relation.
 - Each concept has exactly one record, owned by the source that defines or originates it. A concept this source only uses, or credits to other work (a citation, "proposed by", "as in", "earlier work used"), is never a node of this source, even when the passage explains it.
 - Every value is a link "[[uid]]" to a record or draft shown in this conversation. A value names a concept that has its own record, such as a method, model, dataset, task or metric. A concept no record or draft shown holds is left out of the values; the statement may still name it. Configurations, quantities and conditions, such as "fine-tune one block" or "75% masking", are never values: they stay in the statement and the evidence.
-- A draft awaits the owner's review and is not knowledge yet. A value may still link a draft shown to you of this source's base, and when the item is a draft's item, decide unchanged with that draft's uid.
+- A draft awaits the owner's review and is not knowledge yet. A value may still link a draft shown to you, of any base, and when the item is a draft's item, decide unchanged with that draft's uid.
 - Record only what the cited text states. A connection you would infer across passages or sources is not knowledge of this source.
 
 Decide by comparing meanings with the records shown; a shared name does not make the same concept:
@@ -167,7 +167,7 @@ const SUBMIT_TOOL: ToolSpec = {
         label: { type: "string" },
         aliases: { type: "array", items: { type: "string" } },
         kind: { type: "string" },
-        roles: { type: "object", additionalProperties: { type: "array", items: { type: "string" } }, description: "For a relation kind: each role's values." },
+        roles: { type: "object", additionalProperties: { type: "array", items: { type: "string" } }, description: "Each role of the kind: its values. A relation binds at least two; a node kind that declares roles, such as a theorem's about, links at least one." },
         requires: { type: "array", items: { type: "string" } },
         statement: { type: "string" },
         evidence: {
@@ -511,7 +511,7 @@ async function file(kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices
     const [base, id] = splitUid(recorded);
     const text = (understanding?: string) => recordFile(drafted, profile.source, placed.ranges, placed.quotes, understanding);
     if (base !== profile.base) {
-      // A replacement lives in its record's base; moving a record across bases is the compile Skill's relocation.
+      // A replacement lives in its record's base, and this source lies in another: the new meaning is shown, not drafted.
       return { done: { item, decision, uid: recorded, label: state.shown.get(recorded)?.label, proposal: text(), report } };
     }
     const path = `${state.root}/.knowledge/drafts/${id}.md`;
@@ -571,10 +571,11 @@ async function fileForeign(kgd: CaptureKgd, files: CaptureFiles, origin: OriginS
 }
 
 /**
- * A label names one concept across every base (docs/model.md, "Labels"): the
- * model drafts a new concept only after the lookup found no record of the same
- * meaning, so a record or draft that already has its label means another
- * concept, and the new one adds its source's name, as `Label (source)`.
+ * A label names one concept across every base (docs/model.md, "Research
+ * knowledge selection"): the model drafts a new concept only after the lookup
+ * found no record of the same meaning, so a record or draft that already has
+ * its label means another concept, and the new one adds its source's name, as
+ * `Label (source)`.
  */
 async function distinctLabel(kgd: CaptureKgd, draft: Draft, source: string): Promise<Draft> {
   const key = nameKey(draft.label);
@@ -655,10 +656,6 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): Draft | st
       return undefined;
     }
     const [base, id] = splitUid(uid);
-    if (state.drafts.has(uid) && base !== profile.base) {
-      errors.push(`[[${uid}]] is a draft of another base, which only an accepted record can be linked across; leave it out`);
-      return undefined;
-    }
     return base === profile.base ? `[[${id}]]` : `[[${base}:${id}]]`;
   };
   const convert = (items: unknown): string[] => strings(items).map(link).filter((value): value is string => value !== undefined);
@@ -670,8 +667,11 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): Draft | st
     const converted = convert(items);
     if (converted.length) roles[role] = converted;
   }
-  if (!isNode && Object.values(roles).flat().length < 2) {
-    errors.push(`a ${kind} relation binds at least two records; a statement about one record is a node`);
+  const bound = Object.values(roles).flat().length;
+  if (!isNode && bound < 2) {
+    errors.push(`a ${kind} relation binds at least two values; a result the source states is a node whose roles link what it is about`);
+  } else if (isNode && roleNames.length > 0 && bound === 0) {
+    errors.push(`a ${kind} links what it is about in ${roleNames.join(", ")}; look up the concept it is about, or leave the item out when no record holds it`);
   }
   const requires = convert(args.requires);
   const evidence = Array.isArray(args.evidence)
