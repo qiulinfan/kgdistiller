@@ -114,8 +114,11 @@
 - 如无必要，勿增实体: delete whatever a decision makes unnecessary, outright and
   in the same change, with no fallback or compatibility path (docs/model.md
   principle 11).
-- Nodes are noun-like objects and precisely stated theorems; every other
-  statement that can be true or false is a relation. Role values are links to
+- Nodes are concepts and the statements about one record (theorems, findings,
+  examples; their roles link what they are about); a relation is a connection
+  the source states between two or more records, itself a record. A record's
+  class follows its kind's section in the type, never stored; importance is
+  connectivity (`degree`), never kind. Role values are links to
   knowledge records, never literals; kgd stores no
   structured measurements. `lines` lists one or more ranges; the Evidence
   quotes are the anchor.
@@ -137,7 +140,7 @@
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain: `$KGDISTILLER_HOME/types/<name>.md`, whose
   frontmatter (read with PyYAML `BaseLoader`) has `node_kinds` and optional
-  `relation_kinds`/`epistemic`, and whose body is the guidance. A base's sources
+  `relation_kinds` (each a mapping of kinds to ordered roles) and `epistemic`, and whose body is the guidance. A base's sources
   are its `sources` glob→type map; each source has exactly one type. Do not
   hardcode the owner's example types. `templates/document-types/` holds
   optional editable starting profiles; they are bundled as data, never

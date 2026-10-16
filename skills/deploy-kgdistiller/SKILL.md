@@ -73,8 +73,10 @@ Edit `$KGDISTILLER_HOME/config.json` by hand:
   model.
 
 Write each `$KGDISTILLER_HOME/types/<type>.md` from the owner's vocabulary:
-`node_kinds`, optional `relation_kinds` (each kind with its ordered roles, for
-example `example: [uses, setting]` for applications) and optional `epistemic`,
+`node_kinds` and optional `relation_kinds`, each kind with its ordered roles
+(a node kind's may be empty, such as `definition: []`; a statement kind links
+what it is about, such as `theorem: [about]` or `example: [uses, setting]`),
+and optional `epistemic`,
 with the owner's extraction guidance as the body. Do not install a fixed
 catalog or infer types from file formats. Preview a source with
 `kgd source SOURCE`. Recommend keeping the home's `config.json`, `types/`

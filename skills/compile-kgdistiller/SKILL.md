@@ -109,13 +109,14 @@ went and do not delete anything.
 Write one `<root>/.knowledge/drafts/<id>.md` per new record or replacement in
 scope:
 
-- nodes only for the noun-like objects the source defines and the theorems
-  it states precisely, in the type's node kinds;
-- relations for every other statement that can be true or false, including
-  measured results, comparisons, findings and hypotheses, with every
-  participant bound to a declared role; a finding about one concept binds it
-  alone; self-relations and relations about relations are allowed; examples
-  and applications are relations of the kind the type registers for them;
+- nodes for the objects the source defines and the statements it makes about
+  them, in the type's node kinds: theorems (every precisely stated result,
+  whatever the source calls it), findings and examples, their roles linking
+  what they are about;
+- relations for the connections the source states between two or more
+  records, such as implications, comparisons and evaluations, with every
+  participant bound to a declared role; relations about relations are
+  allowed; a statement about one record is a node;
 - for each relation, an Evidence quote that itself states the relation; a
   connection you infer by combining passages, or with another source this one
   does not state, is not written here (report it, see step 6);

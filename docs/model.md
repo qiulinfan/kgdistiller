@@ -69,13 +69,22 @@ source's owner-defined document type. They preserve the conditions, formulas,
 limitations, counterexamples and experimental evidence that affect meaning;
 section names and source syntax never determine admission.
 
-Nodes are noun-like: the concepts, methods, architectures, objectives and
-quantities a source defines, plus theorems it states precisely. Every other
-statement that can be true or false is a relation that binds the records it
-concerns: measured results, comparisons, findings, limitations, propositions,
-remarks and explanatory hypotheses. A finding about one concept is a relation
-with that single participant. A document type's guidance may set a review
-threshold for the number of nodes per source.
+The knowledge is one graph. In the owner's words (2026-10-16):
+
+> 这些东西其实都是节点. 而关系是多个节点之间共同构成的关系. 一个节点自己的 proposition, 不应该是一个关系.
+
+Nodes are the concepts, methods, architectures, objectives and quantities a
+source defines, and the statements it makes about one of them: a theorem (any
+precisely stated result, whatever the source calls it: theorem, proposition,
+lemma or corollary), a finding, an example. A statement node's roles link the
+record it is about, such as `theorem: [about]`. A relation is a connection the
+source states between two or more records: an implication, a comparison, a
+generalization, a prerequisite. It binds at least two records, and it is
+itself a record, a vertex of the graph that other records may link. How
+important a record is is not its kind but its connectivity: retrieval reports
+its `degree`, the number of distinct records it links or is linked by. A
+document type's guidance may set a review threshold for the number of nodes
+per source.
 
 Each concept has exactly one record, owned by the source that defines or
 originates it. A source that only uses a concept, even one it explains at
@@ -282,11 +291,11 @@ The rules that follow from these statements:
 | Home | `$KGDISTILLER_HOME` (default `~/.knowledge`): base registry, source→type globs, document types, embedding model id, the database and the lock. |
 | Base | A registered directory, normally one Obsidian vault, holding its own knowledge under `.knowledge/`. Its name is a slug that exists only in `config.json`. |
 | Source | Local: a file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines; it has exactly one document type. Foreign: a web address, the outside work or page whose text a foreign record quotes. |
-| Document type | `types/<name>.md`: `node_kinds`, `relation_kinds` (each kind with ordered roles) and optional `epistemic`; the body is guidance. |
+| Document type | `types/<name>.md`: `node_kinds` and `relation_kinds`, each a mapping of kinds to their ordered roles (a node kind's may be empty), and optional `epistemic`; the body is guidance. |
 | Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. It is local or foreign by its `source`. |
-| Node | A record with no non-empty role property: a noun-like concept or a precisely stated theorem. Its kind is a node kind. |
-| Relation | A record with at least one non-empty role property. Its kind is a relation kind and its role keys are that kind's roles. Arity is unbounded; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
-| Application / example | A relation of a kind the owner registers for it, such as `example: [uses, setting]`. |
+| Node | A record whose kind is a node kind: a concept, or a statement about one record, such as a theorem, a finding or an example, whose roles link what it is about. |
+| Relation | A record whose kind is a relation kind: a connection between records, binding at least two values to that kind's roles. Arity is unbounded beyond that; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
+| Application / example | A node of a kind the owner registers for it, such as `example: [uses, setting]`. |
 | Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`; every value is a link. A role value is a knowledge reference, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role, and a concept without a record is captured before it is linked. |
 | `requires` | A list on every record holding links to its direct understanding prerequisites. Proof or derivation dependencies are relations. |
 | Evidence | `source` + `lines` (one or more ranges) + one or more verbatim quotes in the body's final `## Evidence` section; a foreign record has quotes of its web page and no `lines`. The quotes are the anchor; each lies inside one cited range of a local source. |
@@ -334,11 +343,13 @@ the new model. `kgd embedding set MODEL` and `kgd embedding off` change it
 after checking the model ([retrieval.md](retrieval.md#the-embedding-process)).
 
 A type file's stem matches `^[a-z0-9][a-z0-9-]*$`. Its frontmatter, read with
-PyYAML `BaseLoader`, has only `node_kinds` (required, non-empty, unique slugs),
-`relation_kinds` (kind slug → non-empty list of unique role slugs matching
-`^[a-z][a-z0-9-]*$`, never a fixed key) and `epistemic` (unique slugs; without
-it records of this type may not carry `epistemic`). No kind is both a node
-kind and a relation kind. The body, the guidance, is non-empty.
+PyYAML `BaseLoader`, has only `node_kinds` (required, a non-empty mapping of
+kind slugs to lists of unique role slugs matching `^[a-z][a-z0-9-]*$`, never a
+fixed key; a node kind's list may be empty), `relation_kinds` (the same
+mapping, each list non-empty) and `epistemic` (unique slugs; without it
+records of this type may not carry `epistemic`). No kind is both a node kind
+and a relation kind, in one type or across the types of one base. The body,
+the guidance, is non-empty.
 
 ## Record format
 
@@ -411,9 +422,11 @@ participants swap declares a single role and lists them unordered, as in
 `equivalent: [side]`; a kind with several roles is directional, each role with
 its own meaning, so one fact has one form.
 
-**Class rule.** A record is a relation if and only if at least one non-fixed
-key holds a non-empty list; otherwise it is a node. The Obsidian plugin applies
-the same rule.
+**Class rule.** A record is a relation if and only if a document type of its
+base declares its kind under `relation_kinds`; otherwise it is a node. Its
+roles are those its kind declares. A relation binds at least two values across
+its roles; a statement about one record is a node. The class is read from the
+types and never stored, so a type edit reclassifies its records.
 
 **YAML reading.** Frontmatter is read with `yaml.load(text,
 Loader=yaml.BaseLoader)`, so every scalar is a string (`on`, `yes` and `40-46`
@@ -703,7 +716,7 @@ inventory agents use:
 
 ```json
 {"base": "notes", "source": "notes/math/…/01-review.tex", "type": "math-notes",
- "node_kinds": ["definition", "theorem"], "relation_kinds": {"implies": ["premise", "conclusion"]},
+ "node_kinds": {"definition": [], "theorem": ["about"]}, "relation_kinds": {"implies": ["premise", "conclusion"]},
  "epistemic": ["proved", "stated"], "guidance": "…", "line_count": 77,
  "records": [{"uid": "notes:subspace", "label": "Subspace", "kind": "definition", "class": "node",
               "lines": "7-19", "understanding": "yes", "gloss": "…"}],

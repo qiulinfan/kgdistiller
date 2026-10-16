@@ -32,7 +32,7 @@ lane. The exact scan is revisited when a home exceeds 50k records or a cold
 vector load takes more than 1 s; the next step would be a vector index over the
 same BLOBs, with no change to the record files.
 
-## Schema (`PRAGMA user_version = 3`)
+## Schema (`PRAGMA user_version = 4`)
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -45,7 +45,6 @@ CREATE TABLE record(
   uid           TEXT NOT NULL UNIQUE,          -- base:id
   base          TEXT NOT NULL,
   id            TEXT NOT NULL,
-  class         TEXT NOT NULL CHECK (class IN ('node','relation')),
   kind          TEXT NOT NULL,
   label         TEXT NOT NULL,
   aliases       TEXT NOT NULL,                 -- JSON array
@@ -86,10 +85,15 @@ CREATE VIRTUAL TABLE fts USING fts5(tokens, tokenize = 'unicode61 remove_diacrit
 
 There is no file table (a row carries its own stat), no base table (bases come
 from `config.json`), no tree or passage table (the tree is the `source` path),
-no foreign column (a record is foreign when its `source` is a web address)
-and no document-type column, so editing `types/` never forces re-indexing.
-`kgd index`, the reads and `kgd base list` load `config.json` only: a malformed
-type file fails `check`, `source` and `accept`, never the index or retrieval.
+no foreign column (a record is foreign when its `source` is a web address),
+and no document-type or class column, so editing `types/` never forces
+re-indexing. A record's class is read at query time from the types of its
+base: it is `relation` when one of them declares its kind under
+`relation_kinds`, and `node` otherwise ([model.md](model.md) "Class rule").
+`kgd index` and `kgd base list` load `config.json` only, and the reads also
+load the types for the class: a malformed type file fails `check`, `source`
+and `accept`, never the index or retrieval, which read its relation kinds as
+none.
 
 ## Unified text
 
@@ -130,9 +134,13 @@ Both live in `kgdistiller/index.py`.
 `index` always covers every registered base.
 
 **Opening.** If `index.sqlite` is missing, cannot be opened or has
-`user_version` ≠ 3, it is deleted together with `-wal` and `-shm`, created
+`user_version` ≠ 4, it is deleted together with `-wal` and `-shm`, created
 with `meta.embedding = ''` and fully built. This is the one-command restore; a
-derived file needs no compatibility path.
+derived file needs no compatibility path. Before deleting a file that still
+reads, `index` takes its `meta.embedding` and its vectors by text: when that
+model is the configured one, the new database starts with it and every record
+whose unified text is unchanged keeps its vector, so a schema change never
+forces a re-embed.
 
 **Lexical phase**, in one `BEGIN IMMEDIATE` transaction with a 30 s busy
 timeout:
@@ -256,7 +264,10 @@ encoded one at a time and truncated to the model's limit.
 `BAAI/bge-m3 int8`, so vectors of another precision count as another model.
 
 `kgd embedding` shows the model, the precision, what the stored vectors were
-computed with and how many records await a re-embed; `kgd embedding set
+computed with, how many records await a re-embed, and as `cached` the models
+in the local Hugging Face cache kgdistiller can run (an XLM-RoBERTa
+configuration with `sentencepiece.bpe.model`, a pooling configuration and
+weights, read from the cache's files alone); `kgd embedding set
 MODEL` downloads the model into the Hugging Face cache, checks that
 kgdistiller can run it (its configuration first, so another architecture is
 refused before its weights download) and then writes it into `config.json`
@@ -365,7 +376,7 @@ exactly those keys; with `--no-dense`, or when `meta.embedding` is `''`
  "results": [{"uid": "notes:measure-space", "class": "node", "kind": "definition", "label": "measure space",
    "base": "notes", "source": "notes/math/measure-theory/chapters/01-sigma-algebra-与-measure.tex",
    "lines": "206-224", "foreign": false, "understanding": "yes", "epistemic": null,
-   "gloss": "…",
+   "gloss": "…", "degree": 14,
    "ranks": {"lexical": 26, "dense": 1, "name": 1},
    "requires": [], "participants": {},
    "in": [{"uid": "notes:complete-measure-space-derived-from-measure-space", "kind": "derived-from", "role": "origin"},
@@ -374,10 +385,13 @@ exactly those keys; with `--no-dense`, or when `meta.embedding` is `''`
 ```
 
 The example shortens `gloss` and `in`. A rank is `null` for a lane that did
-not return the record. `participants` (relations only) maps each role to its
-values; `in` lists the records that link this one, with the linking role.
+not return the record. `participants` maps each role of the record's kind to
+its values, a relation's participants or what a statement node is about; `in` lists the records that link this one, with the linking role.
 `requires`, each role list and `in` are capped at 12 entries; `truncated`
-counts what was cut. `foreign` is true when the record's `source` is a web
+counts what was cut. `degree` is the number of distinct other records the
+record links or is linked by, through roles and `requires`, all bases
+included: how connected it is, which is what makes a record central, never its
+kind. `foreign` is true when the record's `source` is a web
 address, and `lines` is then `""`.
 
 ## `kgd resolve TERM... [filters]`
@@ -405,7 +419,7 @@ is a candidate, never an identity: compare definitions.
 {"records": [{"uid": "notes:sum-of-two-subspaces-is-a-subspace", "base": "notes", "id": "…",
    "class": "relation", "kind": "implies", "label": "…", "aliases": [], "source": "…", "lines": "24-32",
    "foreign": false, "understanding": "yes", "epistemic": "stated", "gloss": "…", "body": "…",
-   "search_terms": "", "evidence": ["…"],
+   "search_terms": "", "evidence": ["…"], "degree": 3,
    "out": [{"role": "premise", "pos": 0, "uid": "notes:subspace", "label": "Subspace", "exists": true},
            {"role": "requires", "pos": 0, "uid": "notes:vector-space", "label": "Vector space", "exists": true}],
    "in": [{"uid": "…", "label": "…", "kind": "…", "role": "…"}],
@@ -444,8 +458,9 @@ never read). This is the only read of source text; no passages are stored.
   endpoints it can be followed from.
 - Edges are ordered by depth, then `from`, then roles before `requires`, then
   role name and position. `records` maps every reached uid, the starts
-  included, to `{label, kind, class, exists}` (JSON output sorts its keys); a
-  missing target has `exists: false` and `null` label, kind and class.
+  included, to `{label, kind, class, exists, degree}` (JSON output sorts its
+  keys); a missing target has `exists: false`, `null` label, kind and class
+  and degree 0.
 - A start that names no record goes to `missing`, as in `get`; a bare id held
   by several bases is an error. `--dir` must be `out`, `in` or `both`, and
   `--depth` at least 1.
@@ -458,7 +473,7 @@ never read). This is the only read of source text; no passages are stored.
            {"from": "notes:signed-measure-prerequisite-for-hahn-decomposition-theorem",
             "role": "dependent", "to": "notes:hahn-decomposition-theorem", "depth": 1}],
  "records": {"notes:hahn-decomposition-theorem": {"label": "Hahn Decomposition Theorem", "kind": "theorem",
-                                                  "class": "node", "exists": true},
+                                                  "class": "node", "degree": 5, "exists": true},
              "notes:hahn-decomposition-theorem-prerequisite-for-jordan-decomposition-theorem": {"…": "…"}},
  "missing": [],
  "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}

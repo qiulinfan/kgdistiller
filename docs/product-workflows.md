@@ -90,8 +90,8 @@ every read reports that lag.
 ## Capture while reading
 
 `$capture-kgdistiller` drafts one item the owner selected while reading: a
-node, a relation or an example, in a short fixed pass. One lookup turn reads
-the type profile with `kgd source FILE` and compares existing senses with one
+concept, a statement about one record, or a relation between records, in a
+short fixed pass. One lookup turn reads the type profile with `kgd source FILE` and compares existing senses with one
 `kgd resolve`, one `kgd drafts --name` and one `kgd search` of the item and
 the concepts it links, in every base. A label names one concept: a record of
 the same name and meaning is the same knowledge point, and a new concept of

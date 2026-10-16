@@ -56,8 +56,9 @@ lines: 24-32
   `aliases`, `understanding` (`yes` or `no`, default `yes`), `epistemic`,
   `requires`; `tags` and `cssclasses` are
   accepted and ignored. The id is the file stem.
-- Every other key is a role declared for `kind` by the source's type. A record
-  with a non-empty role list is a relation; otherwise it is a node.
+- Every other key is a role declared for `kind` by the source's type. A
+  record is a relation when its type declares its kind under
+  `relation_kinds` (it then binds at least two records), and a node otherwise.
 - Values are quoted links (`"[[id]]"`, `"[[base:id]]"`,
   `"[[.knowledge/entries/id]]"`); plain text is an error.
 - The body ends with `## Evidence`: verbatim quotes of the cited lines (of the
@@ -107,10 +108,12 @@ and `types/USER_TYPE.md`:
 
 ```markdown
 ---
-node_kinds: [USER_NODE_KIND]
+node_kinds:
+  USER_NODE_KIND: []
+  USER_STATEMENT_KIND: [about]
+  example: [uses, setting]
 relation_kinds:
   USER_RELATION_KIND: [USER_ROLE, USER_OTHER_ROLE]
-  example: [uses, setting]
 epistemic: [USER_STATUS]
 ---
 The owner's rules for nodes, relations and examples.
@@ -135,9 +138,9 @@ The owner's rules for nodes, relations and examples.
 - Each value names an existing type file. Globs naming two different types for
   one file are an error, so every source has exactly one type.
 - A type file has a slug stem and frontmatter read with PyYAML's `BaseLoader`.
-  `node_kinds` is a required non-empty list of unique slugs; `relation_kinds`
-  maps each kind to a non-empty list of unique role slugs (no dots, never a
-  fixed key); `epistemic` is a list of slugs, and without it records may not
+  `node_kinds` is a required non-empty mapping of kind slugs to lists of
+  unique role slugs, possibly empty; `relation_kinds` maps each kind to a
+  non-empty list of unique role slugs (no dots, never a fixed key); `epistemic` is a list of slugs, and without it records may not
   carry `epistemic`. No kind is both a node kind and a relation kind. The
   non-empty body is the extraction guidance.
 

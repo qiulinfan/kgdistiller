@@ -1,6 +1,6 @@
 ---
 name: capture-kgdistiller
-description: Draft one knowledge record the owner selected while reading — a node, a relation or an example — in a short fixed pass, one batched lookup then one command that writes and checks the draft, citing its source lines verbatim, or a web page's text for a concept the passage borrows, and linking only recorded or drafted concepts. The owner accepts it. Use for requests to capture this concept, remember this definition or result, or update one record; extraction from a whole source belongs to compile-kgdistiller.
+description: Draft one knowledge record the owner selected while reading — a concept, a statement about one record, or a relation between records — in a short fixed pass, one batched lookup then one command that writes and checks the draft, citing its source lines verbatim, or a web page's text for a concept the passage borrows, and linking only recorded or drafted concepts. The owner accepts it. Use for requests to capture this concept, remember this definition or result, or update one record; extraction from a whole source belongs to compile-kgdistiller.
 ---
 
 # Capture one knowledge item as a draft
@@ -77,12 +77,14 @@ path segment).
 
 Before writing, check what the passage owns:
 
-- A node only for a noun-like object this passage defines or originates, or a
-  theorem it states precisely.
-- Any other statement that can be true or false, such as a result, comparison
-  or finding, is a relation whose Evidence quote itself states it. A
-  connection you would infer across passages or sources is reported, never
-  written.
+- A node for an object this passage defines or originates, or for a statement
+  it makes about one: a theorem (any precisely stated result, whatever the
+  source calls it), a finding or an example, in the type's node kinds, its
+  roles linking what it is about.
+- A relation only for a connection the passage states between two or more
+  records, such as an implication or a comparison, whose Evidence quote itself
+  states it. A connection you would infer across passages or sources is
+  reported, never written.
 
 ## 3. Write and check the draft, in one command
 
@@ -119,8 +121,9 @@ kgd drafts --source SOURCE
   it has no `lines`, and each Evidence quote is copied verbatim from that
   page, which you fetch with your web tools. It lives in the base of the
   source being read and uses a kind of that source's type.
-- `kind` is one of the type's kinds. A relation adds one key per role of its
-  kind, each a list of values; `requires` lists direct prerequisites.
+- `kind` is one of the type's kinds. A record adds one key per role its kind
+  declares, each a list of values (a relation binds at least two records);
+  `requires` lists direct prerequisites.
 - Every value is a link, `"[[id]]"` or `"[[base:id]]"` across bases, to a
   record or a draft of the same base that the lookup found. A concept nothing
   records is left out of the values and named in the report; settings and

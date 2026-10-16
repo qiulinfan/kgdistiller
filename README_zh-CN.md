@@ -117,18 +117,22 @@ uv tool update-shell
 kgd base add ~/research --name research
 ```
 
-在 `~/.knowledge/types/research-notes.md` 定义一个 document type。frontmatter 列出 node kind，以及每个 relation kind 的 role（有顺序）；正文是 agent 从这类文档里抽取记录时遵循的指引。产品不会自动启用 type；你可以自己写，也可以修改[起始模板](#文档类型与起始模板)。
+在 `~/.knowledge/types/research-notes.md` 定义一个 document type。frontmatter 把每个 node kind 和 relation kind 映射到它的 role（有顺序；node kind 可以没有 role）；正文是 agent 从这类文档里抽取记录时遵循的指引。产品不会自动启用 type；你可以自己写，也可以修改[起始模板](#文档类型与起始模板)。
 
 ```markdown
 ---
-node_kinds: [definition, theorem]
+node_kinds:
+  definition: []
+  theorem: [about]
+  example: [uses, setting]
 relation_kinds:
   requires-for: [prerequisite, dependent]
-  example: [uses, setting]
+  implies: [premise, conclusion]
 epistemic: [proved, stated]
 ---
-Extract each definition and each precisely stated result as a node. Record a
-relation only when the text states it.
+Extract each definition and each precisely stated result as a node; a result
+about one record links it under about. Record a relation only when the text
+states a connection between two or more records.
 ```
 
 在 `~/.knowledge/config.json` 里把 base 的 source 映射到这个 type：
@@ -171,7 +175,7 @@ kgd search "sigma algebra"
 >
 > 我作为仓库创始人自己需要的类型（比如 math notes、ai research、cs notes），直接作为默认 templates 就可以了。
 
-一个 document type 包含 `node_kinds`、relation kind 及其 role、可选的 epistemic 标签，以及正文中的抽取指引。`config.json` 中的 source glob 为每个来源指定恰好一个 type。
+一个 document type 包含 node kind、relation kind 及其 role、可选的 epistemic 标签，以及正文中的抽取指引。`config.json` 中的 source glob 为每个来源指定恰好一个 type。
 
 Capture 和 compile 在提出记录之前，通过 `kgd source SOURCE` 读取这份策略；`kgd check` 和接受流程根据它校验 kind 与 role。你可以修改策略或增加类型，无需修改引擎。
 
@@ -280,7 +284,7 @@ kgd accept .knowledge/drafts/measure-space.md
 
 | Skill | 作用 |
 |---|---|
-| `capture-kgdistiller` | 边读边把一条知识起草成草稿（node、relation 或例子），带上引文；借用的概念则从其出处网页起草成 foreign 知识。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
+| `capture-kgdistiller` | 边读边把一条知识起草成草稿（概念、关于一条记录的陈述，或记录之间的关系），带上引文；借用的概念则从其出处网页起草成 foreign 知识。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
 | `compile-kgdistiller` | 按 document type 从已注册 source 的一部分或全部起草草稿。已记录的知识按 [docs/model.md](docs/model.md#conflicts-updates-and-relocation) 的冲突规则忽略，或起草替换草稿。 |
 | `relocate-kgdistiller` | source 改动或改名后，把一条记录移到你贴出的段落：按知识名找到记录，再运行 `kgd relocate`。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |

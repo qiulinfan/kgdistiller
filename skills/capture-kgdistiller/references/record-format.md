@@ -1,7 +1,8 @@
 # Record format
 
-Every piece of knowledge is one record file. Nodes and relations share one
-format and one folder; they differ only in whether role keys are present.
+Every piece of knowledge is one record file, and every record is a vertex of
+one graph whose edges are its links. Nodes and relations share one format and
+one folder; the document type decides which a kind is.
 
 - Accepted records: `<base root>/.knowledge/entries/<id>.md`.
 - Drafts: `<base root>/.knowledge/drafts/<id>.md`, in exactly the same format.
@@ -82,41 +83,51 @@ record is foreign when its `source` is a web address.
 
 ## Role keys and the class rule
 
-Every other key must be a role that the type declares for `kind`
-(`relation_kinds: {kind: [role, …]}`). A role key is a top-level list of
-values, in order. A record is a **relation** if and only if at least one role
-key holds a non-empty list; otherwise it is a **node**. `kgd check` requires a
-node kind to have no role keys and a relation kind to have at least one value.
+The document type declares each kind with its roles, node kinds in
+`node_kinds` and relation kinds in `relation_kinds` (`kind: [role, …]`; a node
+kind's list may be empty). Every key other than the fixed ones must be a role
+of `kind`; a role key is a top-level list of links, in order.
+
+- A **node** is a concept or a statement the source makes: a definition, a
+  theorem (every precisely stated result, whatever the source calls it), a
+  finding, an example. Its roles link what it is about, such as `about` or an
+  example's `uses` and `setting`.
+- A **relation** is a connection the source states between two or more
+  records: `kgd check` requires a relation kind to bind at least two records
+  across its roles. A statement about one record is a node, never a relation.
+  A relation is a record like any other, so others may link it.
+- How important a record is follows from how many records it connects, which
+  retrieval reports as `degree`; it is never a kind.
+
 A kind whose meaning does not change when its participants swap has a single
 role listing them unordered, like `equivalent: [side]` below; a kind with
 several roles is directional, so write each fact in one form only.
 
 ```yaml
+# a theorem node: about links what it is a statement about
+kind: theorem
+about: ["[[sum-of-subspaces]]", "[[subspace]]"]
+
+# an example node: uses links what it illustrates, setting what it works in;
+# the concrete construction ("F^n with the standard basis") is in the prose
+kind: example
+uses: ["[[direct-sum]]", "[[span]]"]
+setting: ["[[coordinate-space]]"]
+
 # binary relation (2 roles)
 kind: implies
-premise: ["[[subspace]]"]
-conclusion: ["[[sum-of-subspaces]]"]
+premise: ["[[closed-under-addition]]"]
+conclusion: ["[[sum-of-two-subspaces-is-a-subspace]]"]
 
 # symmetric relation: one role, several values
 kind: equivalent
 side: ["[[a]]", "[[b]]"]
 
-# self-relation
-kind: property
-subject: ["[[sum-of-subspaces]]"]
-uses: ["[[subspace]]", "[[subspace]]", "[[dimension]]"]
-
-# a relation about a relation: the witness is itself a relation record;
+# a relation about a relation: the witness is itself a record;
 # the two contrasted records swap freely, so they share one role
 kind: contrasts
 side: ["[[direct-sum]]", "[[sum-of-subspaces]]"]
 witness: ["[[subspace-sum-with-itself]]"]
-
-# application / example: setting binds a concept; the concrete
-# construction ("F^n with the standard basis") is written in the prose
-kind: example
-uses: ["[[direct-sum]]", "[[span]]"]
-setting: ["[[coordinate-space]]"]
 ```
 
 ## Value grammar
@@ -220,24 +231,25 @@ Agents never run it.
 Follow the source's document type: its `node_kinds`, `relation_kinds`,
 `epistemic` list and guidance (`kgd source FILE`). In general:
 
-- **Nodes** are noun-like: the concepts, methods, architectures, objectives and
-  quantities the source defines, plus theorems it states precisely. Each
+- **Nodes** are the concepts, methods, architectures, objectives and
+  quantities the source defines, and the statements it makes about them:
+  theorems (every precisely stated result, whatever the source calls it),
+  findings and examples, each linking what it is about through its roles. Each
   concept has one record, owned by the source that defines or originates it.
   A concept this source only uses, even one it explains at length, is not a
   node here: link its record, or, when the owner asks to capture it, draft it
   as foreign knowledge from the page that originates or explains it.
-- **Relations** are every other statement that can be true or false:
-  propositions, remarks, measured results, comparisons, findings, limitations,
-  derivations and explanatory hypotheses. Bind each participant to the role the
-  type declares; arity is unbounded, a binary relation is the 2-role case, and
-  a finding about one concept has that single participant. A participant may
-  repeat (self-relation) and may itself be a relation.
+- **Relations** are connections the source states between two or more
+  records: implications, comparisons, generalizations, derivations,
+  evaluations. Bind each participant to the role the type declares; arity is
+  unbounded, a binary relation is the 2-role case, and a participant may itself
+  be a relation. A statement about one record is a node.
 - **Only stated connections.** A relation citing this source quotes text that
   states the relation. A connection you infer by combining passages, or
   between this source and another one it does not mention, is never written
   as a relation of this source; report it instead.
-- **Applications and examples** are relations of the kind the type registers
-  for them, for example `example: [uses, setting]`.
+- **Examples and applications** are nodes of the kind the type registers for
+  them, for example `example: [uses, setting]`.
 - **Prerequisites** are linked one level deep, in `requires` or the role where
   they occur, when a record or draft holds them; never chase the next level.
   Lookups are global: `kgd resolve` and `kgd drafts --name` check every base,

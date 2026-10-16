@@ -60,15 +60,16 @@ The view shows, from the top:
 - The record in focus (the first name match, otherwise the first search
   result, or any record clicked):
   - its kind, base, source and lines (a foreign record's web address instead),
-    whether it is understood, and its epistemic label;
+    whether it is understood, its epistemic label, and its Connections, the
+    number of distinct records it links or is linked by;
   - **Neighbours within 3 steps**: a small typed graph of the records within
     three concept steps, from `kg_neighbors --dir both --depth 6`. Relations
     are edges: a relation with exactly two link values, both in roles, is one
     edge labelled with its kind, and one with more values or with `requires`
     links is a diamond joining them, its participants one step apart. A
     relation that another record links to, and a relation in focus, remain
-    diamonds with their role edges. A relation about a single record is no
-    edge and is listed under About it instead.
+    diamonds with their role edges. A statement about one record, such as a
+    theorem or a finding, is a node joined to it by its role edge.
     Node records are circles, each kind taking a colour from a fixed
     twelve-colour palette by its position among the drawn kinds sorted;
     `requires` links are dashed and count as one step, and a missing record
@@ -77,8 +78,8 @@ The view shows, from the top:
     Over the graph the wheel zooms, elsewhere it scrolls the panel. A
     collapsible **Legend** under the graph lists these styles;
   - its prose and Evidence rendered as in the editor and its links by role;
-  - **About it**: the relations it takes part in, grouped by kind, with its
-    role in each;
+  - **About it**: the statements about it and the relations it takes part in,
+    grouped by kind, with its role in each;
   - **Built on it**: the records whose `requires` lists it;
   - its `requires` chain three levels deep
     (`kg_neighbors --role requires --dir out --depth 3`), each record expanded
@@ -121,7 +122,15 @@ knowledge.
   change a read reports (`lag.changed_files`, such as a record edited in
   another vault) and every change made while Obsidian was closed, when the
   plugin loads. This takes tens of milliseconds and loads no model.
-- **Re-embed**, below the search box, runs `kgd index` and then repeats the
+- Below the search box, the **embedding model** is seen and switched as the
+  agent's model is: the picker lists the cached models kgdistiller can run
+  (`kgd embedding`'s `cached`), the one in use, Off, and Another model…, which
+  asks for a Hugging Face id. A switch is confirmed first, since every vault
+  and agent using the home switches and every record must be embedded again,
+  and runs `kgd embedding set` (downloading a model missing from the cache) or
+  `kgd embedding off`; the settings' Embedding section does the same, and both
+  show the result.
+- **Re-embed**, beside it, runs `kgd index` and then repeats the
   lookup, or lists the source again. It is solid and shows a count while
   records' texts have changed since their vectors were computed, or the model
   changed, and grey otherwise; an edited record is never re-embedded
@@ -246,9 +255,10 @@ keys and make no calls to paid services.
 selection, read in the lines around it, with the records sharing its name and
 the search's first results, and shows **Recorded**, **Possibly** or **Not
 recorded** with one or two sentences on how the selection connects to them.
-The model first says whether the selection is a concept or a statement, and a
-match must have that class: a concept is a node, a statement a relation, and a
-record that only mentions the selection is related, not the same. A matched
+The model first says whether the selection is a concept or a statement: a
+concept matches only a node, never a relation, while a statement may be a node
+(a theorem or a finding about one record) or a relation, and a record that
+only mentions the selection is related, not the same. A matched
 record is put in focus unless the owner has focused another one.
 
 **Capture** drafts the selection as one record by the rules of

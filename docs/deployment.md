@@ -175,17 +175,25 @@ PyYAML's `BaseLoader` and a non-empty body, the extraction guidance:
 
 ```markdown
 ---
-node_kinds: [definition, theorem, concept]
+node_kinds:
+  definition: []
+  concept: []
+  theorem: [about]
+  example: [uses, setting]
 relation_kinds:
   implies: [premise, conclusion]
-  example: [uses, setting]
 epistemic: [proved, stated]
 ---
 Write the guidance an agent follows when extracting knowledge from these
 documents.
 ```
 
-`node_kinds` is required; `relation_kinds` and `epistemic` are optional. Edit
+`node_kinds` is required; `relation_kinds` and `epistemic` are optional. Both
+kind sections map each kind to its ordered roles: a node kind may declare none
+(`[]`), or roles linking what it is about, and a relation kind declares at
+least one, since a relation binds at least two records. A kind's section
+decides its records' class, so moving a kind between the sections reclassifies
+them without re-indexing. Edit
 `sources` and the types by hand; `kgd check` validates the result, and
 `kgd source SOURCE` shows the profile a source resolves to. Sources are
 UTF-8 text documents of any format; kgdistiller reads them as numbered lines

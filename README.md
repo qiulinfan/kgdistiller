@@ -217,21 +217,25 @@ kgd base add ~/research --name research
 ```
 
 Define a document type in `~/.knowledge/types/research-notes.md`. Its
-frontmatter lists the node kinds and the relation kinds with their ordered
-roles; its body is the guidance an agent follows when extracting records from
+frontmatter maps the node kinds and the relation kinds to their ordered
+roles (a node kind may have none); its body is the guidance an agent follows when extracting records from
 documents of this type. No types are activated automatically; you can write
 one or adapt a [starter template](#document-types-and-starter-templates).
 
 ```markdown
 ---
-node_kinds: [definition, theorem]
+node_kinds:
+  definition: []
+  theorem: [about]
+  example: [uses, setting]
 relation_kinds:
   requires-for: [prerequisite, dependent]
-  example: [uses, setting]
+  implies: [premise, conclusion]
 epistemic: [proved, stated]
 ---
-Extract each definition and each precisely stated result as a node. Record a
-relation only when the text states it.
+Extract each definition and each precisely stated result as a node; a result
+about one record links it under about. Record a relation only when the text
+states a connection between two or more records.
 ```
 
 Map the base's sources to that type in `~/.knowledge/config.json`:
@@ -289,7 +293,7 @@ on a usage error.
 >
 > 我作为仓库创始人自己需要的类型（比如 math notes、ai research、cs notes），直接作为默认 templates 就可以了。
 
-A document type declares `node_kinds`, relation kinds and their roles,
+A document type declares node kinds and relation kinds with their roles,
 optional epistemic labels, and prose guidance for extraction. Source globs in
 `config.json` assign exactly one type to each source.
 
@@ -435,7 +439,7 @@ Five Skills cover the write and read workflows:
 
 | Skill | What it does |
 |---|---|
-| `capture-kgdistiller` | Drafts one record while you read: a node, a relation or an example, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
+| `capture-kgdistiller` | Drafts one record while you read: a concept, a statement about one record, or a relation between records, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
 | `compile-kgdistiller` | Drafts records from part or all of a registered source, following its document type. Knowledge already recorded is ignored, or drafted as a replacement, by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
 | `relocate-kgdistiller` | Moves one record to the passage you paste, after a source was edited or renamed: it finds the record from the knowledge's name and runs `kgd relocate`. |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |

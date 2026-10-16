@@ -9,8 +9,13 @@ accepts, and knowledge from outside the owner's files is recorded as foreign
 knowledge instead of pending terms (docs/model.md, "Ingestion" and "Foreign
 knowledge and localization").
 
-Upgrading from 1.1.0: the index schema changed, so the next `kgd index`
-rebuilds the database. Records with a plain-text value, or an
+Upgrading from 1.1.0: the index schema changed, so the next index run
+rebuilds the database and keeps the vector of every record whose text is
+unchanged; a plain `kgd index` (Re-embed in the sidebar) embeds the rest.
+Rewrite each type's `node_kinds` as a mapping of kinds to roles
+(`definition: []`), and move kinds that state something about one record,
+such as a theorem or a finding, from `relation_kinds` to `node_kinds` with
+their role, as the templates do. Records with a plain-text value, or an
 `understanding` of `unknown`, `not-yet-understood` or `understood`, no longer
 pass `kgd check`; edit them. Run `kgd claude link` or
 `kgd codex link` again: the compile Skill is renamed and the harvest Skill is
@@ -33,6 +38,10 @@ gone. Delete any `.knowledge/sheets/` folder.
   foreign knowledge and a changed meaning as a replacement, and
   `compile-knowledge-sheets` became `compile-kgdistiller`, which drafts
   replacements instead of editing records. `harvest-kgdistiller` is removed.
+- The embedding model is seen and switched in the lookup sidebar, beside
+  Re-embed, as the agent's model is: `kgd embedding` reports the runnable
+  models in the local Hugging Face cache as `cached`, and a switch is
+  confirmed first.
 - Drafts are edited on their Capture view card: label, kind, other names,
   epistemic label, understanding and statement in place, and each role's and
   `requires`' links with × to remove and + to link a record or draft found by
@@ -57,6 +66,21 @@ gone. Delete any `.knowledge/sheets/` folder.
   that holds a text. The new `relocate-kgdistiller` Skill finds the record
   from the knowledge's name and runs it; the capture and compile Skills
   relocate moved citations the same way.
+- Nodes are concepts and statements about one record; a relation is a
+  connection between two or more records (docs/model.md, "Research knowledge
+  selection"). A type's `node_kinds` maps each kind to its roles, so a
+  `theorem: [about]` node links what it is about, and a relation binds at
+  least two values. A record's class follows its kind's section in the types
+  of its base and is no longer stored: editing a type reclassifies its records
+  without re-indexing, and `kgd check` reports a kind two types of one base
+  declare differently. The templates merge theorem, proposition, lemma and
+  corollary into `theorem` and make `finding` and `example` nodes.
+- Importance is connectivity, not kind: search, `get` and `neighbors` report
+  each record's `degree`, the number of distinct records it links or is
+  linked by, and the lookup sidebar shows it as Connections. `search`
+  reports a node's role values as `participants` too.
+- A schema change no longer drops the vectors: a rebuilt index takes them
+  over by text when the embedding model is unchanged.
 - Obsidian plugin: the Capture view lists the drafts by source, each by file
   name (with parent folders when names clash) and every foreign draft under
   "foreign". Capture drafts a borrowed concept as foreign knowledge from the
