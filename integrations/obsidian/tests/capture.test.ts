@@ -271,12 +271,11 @@ describe("the record file", () => {
     ].join("\n"));
   });
 
-  it("writes understanding only when it is no, and the search terms before the evidence", () => {
+  it("writes understanding only when it is no", () => {
     expect(recordFile(node, "a.md", [[3, 3]], ["q"], "yes")).not.toContain("understanding");
-    expect(recordFile(node, "a.md", [[3, 3]], ["q"], "no", "  block masking\nBEiT masking  ")).toBe([
+    expect(recordFile(node, "a.md", [[3, 3]], ["q"], "no")).toBe([
       "---", "label: \"Block-wise masking\"", "kind: \"algorithm\"", "aliases:", "  - \"分块掩码\"", "source: \"a.md\"", "lines: \"3\"",
-      "understanding: \"no\"", "requires:", "  - \"[[masked-autoencoder]]\"", "---", "S.", "",
-      "## Search terms", "", "block masking\nBEiT masking", "", "## Evidence", "", "> q", "",
+      "understanding: \"no\"", "requires:", "  - \"[[masked-autoencoder]]\"", "---", "S.", "", "## Evidence", "", "> q", "",
     ].join("\n"));
   });
 });
@@ -457,7 +456,7 @@ describe("a changed meaning of a recorded item", () => {
     const result = await capture(w, model(superseding).complete);
     expect(result).toEqual({
       item: comparison.item, decision: "superseding", uid: "papers:random-patch-sampling", label: "Random patch sampling",
-      draft: true, replaces: true, report: "更一般。 A replacement of this record already waits for you.",
+      waiting: true, report: "更一般。",
     });
     expect(drafts(w)).toEqual([]);
     expect(w.got).toEqual([]);

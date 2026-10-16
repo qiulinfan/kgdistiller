@@ -48,7 +48,7 @@ describe("a provider's addresses", () => {
   it("name every kind once, with a base URL for every hosted one", () => {
     expect(new Set(PROVIDER_KINDS.map((kind) => kind.id)).size).toBe(PROVIDER_KINDS.length);
     for (const kind of PROVIDER_KINDS) if (!kind.ownUrl) expect(kind.baseUrl).toMatch(/^https:\/\//);
-    expect(kindOf({ kind: "unknown" }).id).toBe("custom");
+    expect(() => kindOf({ kind: "unknown" })).toThrow("unknown provider kind unknown");
   });
 });
 

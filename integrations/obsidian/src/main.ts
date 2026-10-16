@@ -20,7 +20,7 @@ import {
   type ReasoningChoices,
 } from "./providers";
 import type { Reading } from "./search";
-import type { LocalizeInput, LocalizeTarget } from "./localize";
+import type { LocalizeInput, LocalizeResult, LocalizeTarget } from "./localize";
 import type { OriginServices } from "./origin";
 import { webSearch, type WebSource } from "./web";
 
@@ -107,14 +107,17 @@ export default class KgdistillerPlugin extends Plugin {
     return webSearch(this.secret(this.settings.exaKey), query, this.api.postText);
   }
 
-  /** The registered source open in the main area's editor or reading view, from `kgd source`, which writes nothing. */
+  /** The registered source open in the main area's editor or reading view. */
   async reading(): Promise<Reading | undefined> {
     const path = this.mainAreaPath();
-    if (!path) return undefined;
+    return path ? this.registeredSource(path) : undefined;
+  }
+
+  /** The registered source at an absolute path, from `kgd source`, which writes nothing; undefined for any other file. */
+  async registeredSource(path: string): Promise<Reading | undefined> {
     try {
-      const { report, failed } = await this.kgd.command(["source", path]);
-      const { base, source, type } = report as Partial<Reading>;
-      return !failed && base && source && type ? { base, source, type } : undefined;
+      const { base, source, type } = (await this.kgd.command(["source", path])).report as unknown as Reading;
+      return { base, source, type };
     } catch {
       return undefined;
     }
@@ -331,19 +334,19 @@ export default class KgdistillerPlugin extends Plugin {
     return leaf.view instanceof KgdistillerLookupView ? leaf.view : undefined;
   }
 
-  /** Draft a selection in the Capture view, opened below the lookup sidebar; the owner keeps reading meanwhile. */
   /** Draw an accepted record into a draft in the Capture view, for the owner to revise and accept. */
   revise(uid: string): void {
     void this.captureView().then((view) => view?.drawRecord(uid));
   }
 
+  /** Draft a selection in the Capture view, opened below the lookup sidebar; the owner keeps reading meanwhile. */
   capture(selection: Selection): void {
     void this.captureView().then((view) => view?.startCapture(selection));
   }
 
   /** Move a foreign record's citation to a passage of a local source with `kgd relocate`, into that source's base. */
-  localize(target: LocalizeTarget, input: LocalizeInput): void {
-    void this.captureView().then((view) => view?.startLocalize(target, input));
+  async localize(target: LocalizeTarget, input: LocalizeInput): Promise<LocalizeResult | undefined> {
+    return (await this.captureView())?.startLocalize(target, input);
   }
 
   /** A capture found the selection borrowed and drafted nothing: the lookup sidebar still showing it finds where it comes from. */
@@ -424,9 +427,7 @@ export default class KgdistillerPlugin extends Plugin {
   }
 
   private async embedding(args: string[], online = false): Promise<EmbeddingStatus> {
-    const { report, failed } = await this.kgd.command(args, online ? INDEX_TIMEOUT_MS : undefined, online);
-    if (failed) throw new Error(typeof report.message === "string" ? report.message : `kgd ${args.join(" ")} failed`);
-    const status = report as unknown as EmbeddingStatus;
+    const status = (await this.kgd.command(args, online ? INDEX_TIMEOUT_MS : undefined, online)).report as unknown as EmbeddingStatus;
     this.indexer.observeStatus(status);
     // The settings and the sidebar both change it; every lookup sidebar shows the result.
     for (const view of this.lookupViews()) view.showEmbedding(status);

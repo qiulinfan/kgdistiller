@@ -2,7 +2,7 @@ import { EventEmitter } from "events";
 import { PassThrough } from "stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { IDLE_MS, KgdError, KgdServer, kgdEnvironment, type RunKgd, type SpawnKgd } from "../src/kgd";
+import { IDLE_MS, KgdError, KgdServer, kgdEnvironment, runKgd, type RunKgd, type SpawnKgd } from "../src/kgd";
 
 type Message = { jsonrpc: string; id?: number; method: string; params?: Record<string, unknown> };
 type Responder = (message: Message) => Record<string, unknown> | undefined;
@@ -171,5 +171,25 @@ describe("short kgd commands", () => {
   it("returns the index report together with kgd's failure flag", async () => {
     const { kgd } = server();
     await expect(kgd.index()).resolves.toEqual({ report: { bases: {}, embedded: 2 }, failed: true });
+  });
+});
+
+describe("a short kgd command", () => {
+  /** Run a Node script as kgd would run: the same exit codes and streams. */
+  const script = (code: string) => runKgd(process.execPath, ["-e", code], process.env, 10_000);
+
+  it("returns a refusing report printed with a nonzero exit", async () => {
+    await expect(script(`process.stdout.write(JSON.stringify({ refused: { message: "no match" } })); process.exit(1);`))
+      .resolves.toEqual({ stdout: "{\"refused\":{\"message\":\"no match\"}}", failed: true });
+  });
+
+  it("rejects with kgd's message when it prints only the error object on stderr", async () => {
+    const error = JSON.stringify({ kind: "kgdistiller-error", code: "command-failed", message: "base notes already has a record mae" }, null, 2);
+    await expect(script(`process.stderr.write(${JSON.stringify(error)}); process.exit(1);`))
+      .rejects.toThrow(new KgdError("base notes already has a record mae"));
+  });
+
+  it("rejects with what a crashed kgd wrote", async () => {
+    await expect(script(`process.stderr.write("usage: kgd\\n"); process.exit(2);`)).rejects.toThrow(/: usage: kgd$/);
   });
 });

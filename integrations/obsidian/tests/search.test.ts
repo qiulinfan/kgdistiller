@@ -75,6 +75,10 @@ describe("the search prompt", () => {
       `Links: subject: [${mae.uid}] Masked autoencoder; uses: [papers:data-augmentation] Data augmentation`,
       "Linked from: baseline of [papers:y] Y (compares)",
     ].join("\n"));
+    // A foreign record cites a web page and has no lines.
+    const page = "https://arxiv.org/abs/2106.08254";
+    expect(recordText([{ ...records[0]!, source: page, lines: "", foreign: true, evidence: [], out: [], in: [] }]).split("\n")[0])
+      .toBe(`[${noAug.uid}] MAE works without data augmentation · property relation · papers · ${page} · empirical`);
     const around: NeighborsResult = {
       edges: [{ from: mae.uid, role: "requires", to: "notes:autoencoder", depth: 1 }, { from: mae.uid, role: "requires", to: "papers:mask-token", depth: 1 }],
       records: { [mae.uid]: { label: mae.label, kind: "architecture", class: "node", exists: true }, "notes:autoencoder": { label: "Autoencoder", kind: "architecture", class: "node", exists: true } },
@@ -166,6 +170,12 @@ describe("searching", () => {
     const { complete, requests } = model([["answer", { answer: "Nothing found." }]]);
     await searchKnowledge(complete, kgd, async () => [], "Q?");
     expect(requests[0]!.tools!.map((tool) => tool.function.name)).toEqual(["kg_search", "kg_get", "kg_neighbors", "paper_search", "web_search", "answer"]);
+  });
+
+  it("refuses kg_neighbors without a valid direction", async () => {
+    const { complete, requests } = model([["kg_neighbors", { uids: [mae.uid], dir: "up" }]], [["answer", { answer: "Nothing found." }]]);
+    await searchKnowledge(complete, kgd, async () => [], "Q?");
+    expect(requests[1]!.messages.at(-1)).toMatchObject({ role: "tool", content: "error: dir must be out, in or both" });
   });
 
   it("takes a text reply as the answer and returns a refused one as a message", async () => {

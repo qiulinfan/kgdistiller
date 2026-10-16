@@ -86,14 +86,32 @@ export function valuesByRole(draft: Draft): Array<{ role: string; values: DraftV
   return groups;
 }
 
-/** How a value reads on a draft's card: its name and what it is; uids and ids are never shown. */
+/**
+ * How a value reads on a draft's card: its name and what it is, with the base
+ * of a record or draft of another base; uids and ids are never shown.
+ */
 export function valueText(value: DraftValue, base: string): { text: string; status: "accepted" | "draft" | "missing"; note: string } {
-  if (value.state === "draft") return { text: value.label ?? "a draft", status: "draft", note: "draft" };
-  if (value.state === "accepted") {
-    const where = value.uid.startsWith(`${base}:`) ? "" : value.uid.slice(0, value.uid.indexOf(":"));
-    return { text: value.label ?? "a record", status: "accepted", note: where };
-  }
-  return { text: "a record that does not exist", status: "missing", note: "missing" };
+  if (value.state === "missing") return { text: "a record that does not exist", status: "missing", note: "missing" };
+  const where = value.uid.startsWith(`${base}:`) ? "" : value.uid.slice(0, value.uid.indexOf(":"));
+  if (value.state === "draft") return { text: value.label ?? "a draft", status: "draft", note: where ? `draft · ${where}` : "draft" };
+  return { text: value.label ?? "a record", status: "accepted", note: where };
+}
+
+/**
+ * Why `kgd accept` did not accept a group: the drafts it refused, admitting
+ * none, or a target that appeared while it was moving the drafts, with what it
+ * created and updated before it stopped. Undefined when it accepted them all.
+ */
+export function acceptProblem(report: Record<string, unknown>, group: readonly Draft[]): string | undefined {
+  const refused = report.refused as Array<{ message: string }> | undefined;
+  if (refused) return refused.map((item) => item.message).join("; ");
+  const aborted = report.aborted as { message: string } | undefined;
+  if (!aborted) return undefined;
+  const names = (uids: string[]) => group.filter((member) => uids.includes(member.uid)).map((member) => member.label ?? member.id).join(", ");
+  const created = report.created as string[];
+  const updated = report.updated as string[];
+  const done = [created.length ? `created ${names(created)}` : "", updated.length ? `updated ${names(updated)}` : ""].filter(Boolean);
+  return `${aborted.message}. ${done.length ? `Before it stopped, kgd accept ${done.join(" and ")}.` : "Nothing was accepted."}`;
 }
 
 /** The drafts of one source, or of every foreign source, as the Capture view's source list shows them. */

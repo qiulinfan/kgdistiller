@@ -20,13 +20,13 @@ import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, SuggestM
 import type { Selection } from "./agent-pane";
 import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
 import {
-  acceptanceGroup, drawIntoDraft, editableRoles, groupProblems, linkFor, RECORD_DRAG_TYPE, roleLinks, sourceGroups, valuesByRole, valueText,
-  type Draft, type DraftsResult,
+  acceptanceGroup, acceptProblem, drawIntoDraft, editableRoles, groupProblems, linkFor, RECORD_DRAG_TYPE, roleLinks, sourceGroups, valuesByRole,
+  valueText, type Draft, type DraftsResult,
 } from "./drafts";
 import type { SearchResult } from "./lookup-model";
 import { INDEX_TIMEOUT_MS, type KgdServer } from "./kgd";
 import type { Indexer } from "./indexing";
-import { draftTarget, localizeRecord, type LocalizeInput, type LocalizeTarget } from "./localize";
+import { draftTarget, localizeRecord, type LocalizeInput, type LocalizeResult, type LocalizeTarget } from "./localize";
 import type { ModelClient } from "./model";
 import { openInBase } from "./open";
 import type { OriginServices } from "./origin";
@@ -83,12 +83,13 @@ interface Note {
   ms: number;
 }
 
-/** How a capture's decision reads when it wrote no new draft of its own. */
-function captureOutcome(result: CaptureResult): Outcome {
+/** How a capture's decision reads, with the draft it wrote, if any. */
+export function captureOutcome(result: CaptureResult): Outcome {
   const label = result.label ? `: ${result.label}` : "";
   if (result.decision === "unchanged") {
     return { headline: `${result.draft ? "Already a draft" : "Already recorded"}${label}`, report: result.report };
   }
+  if (result.waiting) return { headline: `A replacement already waits in Capture, not drafted${label}`, report: result.report };
   if (result.draft && result.uid) {
     const what = result.foreign ? "Drafted as foreign knowledge" : result.replaces ? "Drafted a replacement" : "Drafted";
     return { headline: `${what}${label}`, report: result.report, draft: result.uid };
@@ -221,14 +222,22 @@ export class KgdistillerCaptureView extends ItemView {
     await this.listDrafts();
   }
 
-  /** Move a foreign record's or draft's citation to a passage of a local source with `kgd relocate`. */
-  async startLocalize(target: LocalizeTarget, input: LocalizeInput): Promise<void> {
+  /**
+   * Move a foreign record's or draft's citation to a passage of a local source
+   * with `kgd relocate`; a draft that moved into another base keeps its card
+   * under its new uid. Resolves to the result, or undefined when the job failed.
+   */
+  async startLocalize(target: LocalizeTarget, input: LocalizeInput): Promise<LocalizeResult | undefined> {
+    const job = localizeRecord((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles, target, input);
     await this.run(`Localize ${target.label}`, async () => {
-      const result = await localizeRecord((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles, target, input);
+      const result = await job;
       if (!result.localized) return { headline: `Not localized: ${result.label}`, report: result.report };
+      this.host.indexer.observeReport(result.index);
+      this.renamed(target.uid, result.uid);
       await this.listDrafts();
       return { headline: `Localized: ${result.label}`, report: result.report };
     });
+    return job.catch(() => undefined);
   }
 
   private async run(title: string, work: () => Promise<Outcome>): Promise<void> {
@@ -395,7 +404,7 @@ export class KgdistillerCaptureView extends ItemView {
         where.appendText(` · L${draft.lines ?? ""}`);
       }
       if (!this.isLocal(draft)) where.appendText(` · ${draft.base}`);
-      if (draft.replaces) card.createDiv({ cls: "kgd-capture-row", text: "Accepting it replaces the accepted record with the same name and id." });
+      if (draft.replaces) card.createDiv({ cls: "kgd-capture-row", text: "Accepting it replaces the accepted record with the same id." });
       this.renderFields(card, draft);
       this.renderStatement(card, draft);
       this.renderValues(card, draft);
@@ -436,8 +445,8 @@ export class KgdistillerCaptureView extends ItemView {
   }
 
   /**
-   * The draft's label, kind, other names, epistemic label and understanding, each
-   * edited in place: a change runs `kgd edit` on that one field, and the
+   * The draft's label, kind, other names, epistemic label and understanding,
+   * and a foreign draft's web address, each edited in place: a change runs `kgd edit` on that one field, and the
    * drafts are listed again, so what `kgd accept` would refuse shows at once.
    */
   private renderFields(card: HTMLElement, draft: Draft): void {
@@ -456,6 +465,17 @@ export class KgdistillerCaptureView extends ItemView {
       if (event.key === "Enter") label.blur();
     });
     label.addEventListener("blur", saveLabel);
+    if (draft.foreign) {
+      // A foreign draft cites a web page; a local passage is reached with Localize, not here.
+      const page = field("page").createEl("input", { type: "url", cls: "kgd-capture-input", value: draft.source ?? "" });
+      page.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") page.blur();
+      });
+      page.addEventListener("blur", () => {
+        const value = page.value.trim();
+        if (value && value !== draft.source) void this.editDraft(draft, "source", [value]);
+      });
+    }
     const kinds = [...Object.keys(choices?.node_kinds ?? {}), ...Object.keys(choices?.relation_kinds ?? {})];
     const kind = field("kind").createEl("select", { cls: "dropdown" });
     for (const name of new Set([...kinds, draft.kind ?? ""])) {
@@ -544,22 +564,23 @@ export class KgdistillerCaptureView extends ItemView {
     this.busy.add(draft.uid);
     try {
       // "--" keeps a value that starts with "-", such as an alias "-ε-net", from reading as an option.
-      const { report, failed } = await this.host.kgd.command(["edit", draft.path, key, "--", ...values]);
-      if (failed) throw new Error(String((report.error as { message?: string } | undefined)?.message ?? "kgd edit refused the change"));
-      const uid = typeof report.uid === "string" ? report.uid : draft.uid;
-      if (uid !== draft.uid) {
-        this.expanded.delete(draft.uid);
-        this.expanded.add(uid);
-        const note = this.notes.get(draft.uid);
-        if (note) this.notes.set(uid, note);
-        this.notes.delete(draft.uid);
-      }
+      const { report } = await this.host.kgd.command(["edit", draft.path, key, "--", ...values]);
+      this.renamed(draft.uid, report.uid as string);
     } catch (error) {
-      new Notice(`kgdistiller could not edit the draft: ${kgdReason(error)}`);
+      new Notice(`kgdistiller could not edit the draft: ${message(error)}`);
     } finally {
       this.busy.delete(draft.uid);
       await this.listDrafts();
     }
+  }
+
+  /** A draft now under another uid, renamed or moved into another base, keeps its open card and its note. */
+  private renamed(from: string, to: string): void {
+    if (from === to) return;
+    if (this.expanded.delete(from)) this.expanded.add(to);
+    const note = this.notes.get(from);
+    if (note) this.notes.set(to, note);
+    this.notes.delete(from);
   }
 
   /** Localize a foreign draft to the passage selected in a local source. */
@@ -578,13 +599,12 @@ export class KgdistillerCaptureView extends ItemView {
     this.renderDrafts();
     const started = performance.now();
     try {
-      const accepted = await this.host.kgd.command(["accept", ...group.map((member) => member.path)], INDEX_TIMEOUT_MS);
-      const refused = (accepted.report.refused as Array<{ message?: string }> | undefined) ?? [];
-      if (accepted.failed || refused.length) {
-        throw new Error(refused.map((item) => item.message).filter(Boolean).join("; ") || "kgd accept refused the drafts");
-      }
-      const indexed = accepted.report.index as { embedding_error?: string | null } | undefined;
+      const { report } = await this.host.kgd.command(["accept", ...group.map((member) => member.path)], INDEX_TIMEOUT_MS);
+      // An accept that stopped part way indexed what it admitted before it stopped.
+      const indexed = report.index as { embedding_error?: string | null } | undefined;
       this.host.indexer.observeReport(indexed);
+      const problem = acceptProblem(report, group);
+      if (problem) throw new Error(problem);
       const labels = group.map((member) => member.label ?? member.id).join(", ");
       const unembedded = indexed?.embedding_error ? `; not embedded: ${indexed.embedding_error}` : "";
       new Notice(`kgdistiller accepted ${labels} in ${seconds(performance.now() - started)}${unembedded}.`);
@@ -657,12 +677,6 @@ class RecordSuggestModal extends SuggestModal<{ uid: string; label: string; kind
   onChooseSuggestion(item: { uid: string }): void {
     this.chosen(item.uid);
   }
-}
-
-/** The reason a kgd command gave for an error, read from the JSON it prints on standard error. */
-function kgdReason(error: unknown): string {
-  const text = message(error);
-  return /"message":\s*"((?:[^"\\]|\\.)*)"/.exec(text)?.[1]?.replace(/\\"/g, "\"") ?? text;
 }
 
 /** Asks before a draft is deleted: nothing remembers a discarded draft. */

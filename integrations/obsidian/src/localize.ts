@@ -14,6 +14,7 @@
 import { runJob, type Complete, type Tool } from "./agent";
 import { numberedPassage, passageRange, type CaptureKgd, type CaptureFiles, type Profile } from "./capture";
 import type { Draft } from "./drafts";
+import { KgdError } from "./kgd";
 import type { FullRecord } from "./lookup-model";
 
 /** The foreign knowledge to localize, from `kg_get` (accepted) or `kg_drafts` (a draft). */
@@ -50,9 +51,12 @@ export interface LocalizeInput {
 export interface LocalizeResult {
   /** Whether the record now cites the local passage. */
   localized: boolean;
+  /** The record's uid, a new one when it moved into the passage's base. */
   uid: string;
   label: string;
   report: string;
+  /** The report of the index run `kgd relocate` ended with, when it ran one. */
+  index?: Record<string, unknown>;
 }
 
 export const LOCALIZE_SYSTEM = `A foreign record of the owner's knowledge base cites the web page of an outside work. The owner now holds a local text and selected a passage in it. Decide whether the passage states the same knowledge point with the same meaning as the record, and call localize once:
@@ -91,9 +95,7 @@ export function localizeUser(target: LocalizeTarget, profile: Profile, lines: re
 
 export async function localizeRecord(complete: Complete, kgd: CaptureKgd, files: CaptureFiles, target: LocalizeTarget,
   input: LocalizeInput): Promise<LocalizeResult> {
-  const described = await kgd.command(["source", input.path]);
-  if (described.failed) throw new Error("kgd source refused the file: it is not a registered source");
-  const profile = described.report as unknown as Profile;
+  const profile = (await kgd.command(["source", input.path])).report as unknown as Profile;
   const done = (localized: boolean, report: string): LocalizeResult => ({ localized, uid: target.uid, label: target.label, report });
   if (!(target.kind in profile.node_kinds) && !(target.kind in profile.relation_kinds)) {
     return done(false, `The kind ${target.kind} is not one of this source's document type ${profile.type}.`);
@@ -107,14 +109,18 @@ export async function localizeRecord(complete: Complete, kgd: CaptureKgd, files:
       const passage = typeof args.passage === "string" ? args.passage.trim() : "";
       if (!passage) return "error: give passage, the sentences of the numbered passage that state the knowledge point";
       // A passage of another base moves the record there; "--" keeps a passage starting with "-" an argument.
-      const moved = await kgd.command(["relocate", "--base", profile.base, "--source", profile.source, "--", target.ref, passage]);
-      const refused = moved.report.refused as { message?: string } | undefined;
-      if (refused || moved.failed) {
-        const why = refused?.message ?? (moved.report.error as { message?: string } | undefined)?.message ?? "kgd relocate refused it";
-        return `error: ${why}. Copy the passage from the numbered lines exactly and call localize again.`;
+      let moved: { report: Record<string, unknown> };
+      try {
+        moved = await kgd.command(["relocate", "--base", profile.base, "--source", profile.source, "--", target.ref, passage]);
+      } catch (error) {
+        // Only a passage kgd cannot find is the model's to correct; any other error ends the job.
+        if (error instanceof KgdError) return { done: done(false, error.message) };
+        throw error;
       }
-      const uid = typeof moved.report.relocated === "string" ? moved.report.relocated : target.uid;
-      return { done: { ...done(true, reason), uid } };
+      const refused = moved.report.refused as { message: string } | undefined;
+      if (refused) return `error: ${refused.message}. Copy the passage from the numbered lines exactly and call localize again.`;
+      const index = moved.report.index as Record<string, unknown> | undefined;
+      return { done: { ...done(true, reason), uid: moved.report.relocated as string, ...(index ? { index } : {}) } };
     },
   };
   return runJob(complete, {

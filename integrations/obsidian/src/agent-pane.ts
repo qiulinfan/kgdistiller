@@ -7,8 +7,6 @@
  * the draft there.
  */
 
-import { Notice } from "obsidian";
-
 import type { CaptureFiles } from "./capture";
 import type { ModelClient } from "./model";
 import { judgeSelection, type Judgment } from "./judge";

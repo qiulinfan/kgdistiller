@@ -27,17 +27,18 @@ interface IndexCommands {
 /** `kgd embedding`: the home's model, what the stored vectors were computed with, and what a re-embed would do. */
 export interface EmbeddingStatus {
   embedding: string | null;
+  /** The precision vectors are stored at; null exactly when no model is set. */
   precision: string | null;
   vectors: string | null;
   unembedded: number;
   embedding_changed: boolean;
   /** The models in the local Hugging Face cache that kgdistiller can run. */
-  cached?: string[];
+  cached: string[];
 }
 
 /** The choices of the sidebar's embedding picker: the cached models and the one in use, then off ("" ). */
 export function embeddingChoices(status: EmbeddingStatus): Array<{ value: string; label: string }> {
-  const models = [...new Set([...(status.cached ?? []), ...(status.embedding ? [status.embedding] : [])])].sort();
+  const models = [...new Set([...status.cached, ...(status.embedding ? [status.embedding] : [])])].sort();
   return [...models.map((model) => ({ value: model, label: model })), { value: "", label: "Off (keywords and names)" }];
 }
 
@@ -46,7 +47,7 @@ export function embeddingSummary(status: EmbeddingStatus): string {
   if (!status.embedding) {
     return "The dense lane is off: search uses keywords and names. Name a model to turn it on.";
   }
-  const using = `${status.embedding} (${status.precision ?? "int8"})`;
+  const using = `${status.embedding} (${status.precision})`;
   if (status.embedding_changed) {
     return `The index holds ${status.vectors ? `${status.vectors} vectors` : "no vectors"}. `
       + `Re-embed in the kgdistiller sidebar to embed every record with ${using}.`;

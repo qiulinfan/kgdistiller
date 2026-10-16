@@ -2,10 +2,10 @@
  * The plugin's connection to the local kgd command. Reads go through one
  * resident `kgd mcp` process, kgd's read-only MCP server over stdio; it loads
  * no model, and dense search uses the user's shared embedding process. Short
- * commands (`kgd base list`, `kgd source`, `kgd accept`, `kgd index`,
- * `kgd index --no-embed`, `kgd embedding`) run as separate processes. kgd
- * stays the only reader of the kgdistiller home and its database: the plugin
- * never opens either itself.
+ * commands (`kgd base list`, `kgd source`, `kgd edit`, `kgd relocate`,
+ * `kgd accept`, `kgd index`, `kgd index --no-embed`, `kgd embedding`) run as
+ * separate processes. kgd stays the only reader of the kgdistiller home and
+ * its database: the plugin never opens either itself.
  */
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";
@@ -17,6 +17,7 @@ export interface KgdSettings {
   home: string;
 }
 
+/** A failed kgd run, with the message kgd gave when it gave one. */
 export class KgdError extends Error {}
 
 /** A stopped server is restarted by the next call; an idle one stops itself. */
@@ -45,14 +46,30 @@ export type RunKgd = (command: string, args: string[], environment: NodeJS.Proce
 const spawnKgd: SpawnKgd = (command, args, environment) =>
   spawn(command, args, { env: environment, stdio: "pipe", windowsHide: true });
 
-/** Run a short kgd command; a nonzero exit still returns kgd's JSON report on stdout. */
-const runKgd: RunKgd = (command, args, environment, timeout) => new Promise((resolve, reject) => {
+/**
+ * Run a short kgd command. A command whose report refuses or reports problems
+ * exits nonzero with that report on stdout, which is returned with `failed`;
+ * any other failure prints nothing on stdout and the JSON object
+ * {kind, code, message} on stderr, and rejects with kgd's message. A kgd that
+ * could not start or crashed rejects with what it wrote, or why it failed.
+ */
+export const runKgd: RunKgd = (command, args, environment, timeout) => new Promise((resolve, reject) => {
   execFile(command, args, { env: environment, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
     (error, stdout, stderr) => {
-      if (error && !stdout) reject(new KgdError(`${command} ${args.join(" ")}: ${stderr.trim() || error.message}`));
+      if (error && !stdout) reject(new KgdError(reportedError(stderr) ?? `${command} ${args.join(" ")}: ${stderr.trim() || error.message}`));
       else resolve({ stdout, failed: error !== null });
     });
 });
+
+/** The message of the error object kgd wrote on stderr, if it wrote one. */
+function reportedError(stderr: string): string | undefined {
+  try {
+    const reported = JSON.parse(stderr) as { message?: unknown } | null;
+    return typeof reported?.message === "string" ? reported.message : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface ToolResult {
   structuredContent?: unknown;
@@ -118,7 +135,11 @@ export class KgdServer {
     return this.command(["index"], INDEX_TIMEOUT_MS);
   }
 
-  /** Run one kgd command that prints a JSON report, such as `source`, `accept` or `index --no-embed`. */
+  /**
+   * Run one kgd command that prints a JSON report, such as `source`, `accept`
+   * or `index --no-embed`; `failed` marks a report that refuses or reports
+   * problems, and any other failure rejects with a KgdError.
+   */
   async command(args: string[], timeout = REQUEST_TIMEOUT_MS, online = false): Promise<{ report: Record<string, unknown>; failed: boolean }> {
     const { stdout, failed } = await this.run(args, timeout, online);
     let report: unknown;

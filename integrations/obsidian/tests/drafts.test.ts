@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CaptureFiles } from "../src/capture";
 import {
-  absoluteSource, acceptanceGroup, drawIntoDraft, editableRoles, FOREIGN_GROUP, groupProblems, linkFor, roleLinks, sourceGroups, valuesByRole,
+  absoluteSource, acceptanceGroup, acceptProblem, drawIntoDraft, editableRoles, FOREIGN_GROUP, groupProblems, linkFor, roleLinks, sourceGroups, valuesByRole,
   valueText, type Draft,
 } from "../src/drafts";
 
@@ -44,8 +44,31 @@ describe("a draft's values on its card", () => {
       .toEqual({ text: "Encoder", status: "accepted", note: "" });
     expect(valueText({ role: "setting", pos: 0, uid: "papers:mae", state: "draft", label: "Masked autoencoder" }, "papers"))
       .toEqual({ text: "Masked autoencoder", status: "draft", note: "draft" });
+    expect(valueText({ role: "setting", pos: 0, uid: "notes:encoder", state: "draft", label: "Encoder" }, "papers"))
+      .toEqual({ text: "Encoder", status: "draft", note: "draft · notes" });
     expect(valueText({ role: "setting", pos: 0, uid: "papers:gone", state: "missing", label: null }, "papers"))
       .toEqual({ text: "a record that does not exist", status: "missing", note: "missing" });
+  });
+});
+
+describe("what kgd accept did not accept", () => {
+  const group = [draft("papers:best", { label: "Best" }), draft("papers:mae", { label: "MAE" }), draft("papers:sampling", { label: "Sampling" })];
+
+  it("is nothing for a receipt that accepted every draft", () => {
+    expect(acceptProblem({ created: ["papers:best", "papers:mae"], updated: ["papers:sampling"], index: {} }, group)).toBeUndefined();
+  });
+
+  it("is every refusal", () => {
+    expect(acceptProblem({ refused: [{ path: "/a", message: "best: unknown link" }, { path: "/b", message: "mae: no evidence" }] }, group))
+      .toBe("best: unknown link; mae: no evidence");
+  });
+
+  it("is why it stopped, with what it created and updated before", () => {
+    const aborted = { path: "/v/.knowledge/drafts/sampling.md", message: "/v/.knowledge/entries/sampling.md appeared with different text; nothing was overwritten" };
+    expect(acceptProblem({ created: ["papers:best"], updated: ["papers:mae"], aborted, index: {} }, group)).toBe(
+      "/v/.knowledge/entries/sampling.md appeared with different text; nothing was overwritten. Before it stopped, kgd accept created Best and updated MAE.");
+    expect(acceptProblem({ created: [], updated: [], aborted }, group)).toBe(
+      "/v/.knowledge/entries/sampling.md appeared with different text; nothing was overwritten. Nothing was accepted.");
   });
 });
 

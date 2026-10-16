@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CaptureFiles, CaptureKgd, Profile } from "../src/capture";
 import type { Draft } from "../src/drafts";
+import { KgdError } from "../src/kgd";
 import { draftTarget, localizeRecord, recordTarget, type LocalizeInput } from "../src/localize";
 import type { FullRecord } from "../src/lookup-model";
 import type { ChatReply, ChatRequest } from "../src/model";
@@ -52,8 +53,11 @@ interface World {
   files: CaptureFiles;
 }
 
-/** kgd and the files for one localization; the first `refuse` relocations are refused. */
-function world(refuse = 0): World {
+/**
+ * kgd and the files for one localization; the first `refuse` relocations are
+ * refused, and `fail`, when given, is the error every relocation then ends with.
+ */
+function world(refuse = 0, fail?: string): World {
   const commands: string[][] = [];
   let refusals = refuse;
   const kgd: CaptureKgd = {
@@ -65,11 +69,13 @@ function world(refuse = 0): World {
       if (args[0] === "source" && args[1] === LOCAL) return { report: profile as unknown as Record<string, unknown>, failed: false };
       if (args[0] === "relocate") {
         if (refusals-- > 0) return { report: { refused: { message: "the passage does not occur in base papers", matches: [] } }, failed: true };
+        if (fail) throw new KgdError(fail);
         const ref = args[args.indexOf("--") + 1]!;
-        const relocated = ref.includes(":") ? `${profile.base}:${ref.split(":")[1]}` : ref;
-        return { report: { relocated, to: { source: profile.source, lines: "3-3" }, evidence: "replaced" }, failed: false };
+        const relocated = ref.includes(":") ? `${profile.base}:${ref.split(":")[1]}` : `${profile.base}:block-wise-masking`;
+        const index = ref.includes(":") ? { index: { unembedded: 1 } } : {};
+        return { report: { relocated, to: { source: profile.source, lines: "3-3" }, evidence: "replaced", ...index }, failed: false };
       }
-      return { report: { error: "not a registered source" }, failed: true };
+      throw new KgdError(`${args[1]} is not a registered source`);
     },
     async baseRoots() {
       return new Map([["papers", "/vaults/papers"], ["notes", "/vaults/notes"]]);
@@ -114,7 +120,7 @@ describe("localizing foreign knowledge", () => {
     const w = world();
     const { complete, requests } = model(same);
     await expect(localizeRecord(complete, w.kgd, w.files, recordTarget(record), input)).resolves.toEqual({
-      localized: true, uid: "papers:block-wise-masking", label: "Block-wise masking", report: "同一概念。",
+      localized: true, uid: "papers:block-wise-masking", label: "Block-wise masking", report: "同一概念。", index: { unembedded: 1 },
     });
     expect(w.commands).toEqual([["source", LOCAL], ["relocate", "--base", "papers", "--source", "papers/beit/beit.md", "--", "papers:block-wise-masking", PASSAGE]]);
     expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "localize" } }, reasoning_effort: "low" });
@@ -124,7 +130,7 @@ describe("localizing foreign knowledge", () => {
     expect(user).toContain("3| Block-wise masking masks a block of patches at a time.");
   });
 
-  it("moves a record of another base into the selected source's base", async () => {
+  it("moves a record of another base into the selected source's base, under the uid kgd reports", async () => {
     const w = world();
     const other = recordTarget({ ...record, uid: "notes:block-wise-masking", base: "notes" });
     await expect(localizeRecord(model(same).complete, w.kgd, w.files, other, input)).resolves.toMatchObject({
@@ -135,7 +141,9 @@ describe("localizing foreign knowledge", () => {
 
   it("relocates a draft by its file", async () => {
     const w = world();
-    await expect(localizeRecord(model(same).complete, w.kgd, w.files, draftTarget(draft), input)).resolves.toMatchObject({ localized: true });
+    const result = await localizeRecord(model(same).complete, w.kgd, w.files, draftTarget(draft), input);
+    expect(result).toMatchObject({ localized: true, uid: "papers:block-wise-masking" });
+    expect(result).not.toHaveProperty("index");
     expect(w.commands.at(-1)).toEqual(["relocate", "--base", "papers", "--source", "papers/beit/beit.md", "--", DRAFT, PASSAGE]);
   });
 
@@ -154,6 +162,22 @@ describe("localizing foreign knowledge", () => {
       "error: give passage, the sentences of the numbered passage that state the knowledge point",
       "error: the passage does not occur in base papers. Copy the passage from the numbered lines exactly and call localize again.",
     ]);
+  });
+
+  it("ends at once with kgd's message when kgd relocate fails other than by not finding the passage", async () => {
+    const w = world(0, "base papers already has a record or draft block-wise-masking; it cannot move there");
+    const { complete, requests } = model(same, same);
+    await expect(localizeRecord(complete, w.kgd, w.files, recordTarget({ ...record, uid: "notes:block-wise-masking" }), input)).resolves.toEqual({
+      localized: false, uid: "notes:block-wise-masking", label: "Block-wise masking",
+      report: "base papers already has a record or draft block-wise-masking; it cannot move there",
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("fails with kgd's message for a file that is not a registered source", async () => {
+    const w = world();
+    await expect(localizeRecord(model(same).complete, w.kgd, w.files, recordTarget(record), { ...input, path: "/vaults/papers/notes.md" }))
+      .rejects.toThrow(new KgdError("/vaults/papers/notes.md is not a registered source"));
   });
 
   it("refuses a kind the source's type lacks, before asking the model", async () => {

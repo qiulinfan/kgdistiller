@@ -73,13 +73,16 @@ export interface CaptureResult {
   replaces?: boolean;
   /** For a changed meaning of a record of another base: the record this passage proposes, as a file, not written. */
   proposal?: string;
+  /** For a changed meaning: a replacement of the record already waits for the owner, so nothing was written. */
+  waiting?: boolean;
   report: string;
 }
 
 /** The kgd operations a capture needs; `KgdServer` provides them. */
 export interface CaptureKgd {
   call<T>(tool: string, args: Record<string, unknown>): Promise<T>;
-  command(args: string[]): Promise<{ report: Record<string, unknown>; failed: boolean }>;
+  /** Run a kgd command and return its report; a failure without a report rejects with kgd's message. */
+  command(args: string[]): Promise<{ report: Record<string, unknown> }>;
   baseRoots(): Promise<Map<string, string>>;
 }
 
@@ -107,7 +110,7 @@ export const CAPTURE_SYSTEM = `You file one knowledge item that the owner select
 
 The knowledge model:
 - A node is an object this source defines or originates, such as a concept, method, architecture or objective, or a result it states about such objects: a theorem (any precisely stated result, whatever the source calls it), a finding or an example. Its roles link every record it is about.
-- A relation is a connection this source states between two or more records, such as an implication, a comparison or a generalization: it binds at least two values to the roles of its kind, and its evidence itself states it. A result is a node whose roles link every record it concerns, never a relation.
+- A relation is a connection this source states between two or more records, such as an implication between results, a comparison or a generalization: it binds at least two values to the roles of its kind, and its evidence itself states it. A result is a node whose roles link every record it concerns, never a relation.
 - Each concept has exactly one record, owned by the source that defines or originates it. A concept this source only uses, or credits to other work (a citation, "proposed by", "as in", "earlier work used"), is never a node of this source, even when the passage explains it.
 - Every value is a link "[[uid]]" to a record or draft shown in this conversation. A value names a concept that has its own record, such as a method, model, dataset, task or metric. A concept no record or draft shown holds is left out of the values; the statement may still name it. Configurations, quantities and conditions, such as "fine-tune one block" or "75% masking", are never values: they stay in the statement and the evidence.
 - A draft awaits the owner's review and is not knowledge yet. A value may still link a draft shown to you, of any base, and when the item is a draft's item, decide unchanged with that draft's uid.
@@ -365,8 +368,7 @@ export interface Draft {
  * The record file of a draft, every scalar written as a JSON string, which YAML
  * reads unchanged. A foreign draft cites its page and has no lines.
  */
-export function recordFile(draft: Draft, source: string, lines: Range[] | undefined, quotes: string[], understanding?: string,
-  searchTerms = ""): string {
+export function recordFile(draft: Draft, source: string, lines: Range[] | undefined, quotes: string[], understanding?: string): string {
   const front: string[] = [`label: ${JSON.stringify(draft.label)}`, `kind: ${JSON.stringify(draft.kind)}`];
   const list = (key: string, values: string[]) => {
     if (values.length) front.push(`${key}:`, ...values.map((value) => `  - ${JSON.stringify(value)}`));
@@ -379,8 +381,7 @@ export function recordFile(draft: Draft, source: string, lines: Range[] | undefi
   for (const [role, values] of Object.entries(draft.roles)) list(role, values);
   list("requires", draft.requires);
   const evidence = quotes.map((quote) => `> ${quote}`).join("\n\n");
-  const search = searchTerms.trim() ? `## Search terms\n\n${searchTerms.trim()}\n\n` : "";
-  return `---\n${front.join("\n")}\n---\n${draft.statement.trim()}\n\n${search}## Evidence\n\n${evidence}\n`;
+  return `---\n${front.join("\n")}\n---\n${draft.statement.trim()}\n\n## Evidence\n\n${evidence}\n`;
 }
 
 /** The state of one capture job: what the model has seen and looked up. */
@@ -408,9 +409,7 @@ class CaptureState {
 
 export async function captureSelection(complete: Complete, kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices,
   input: CaptureInput): Promise<CaptureResult> {
-  const described = await kgd.command(["source", input.path]);
-  if (described.failed) throw new CaptureError(kgdMessage(described.report) ?? "kgd source refused the source");
-  const profile = described.report as unknown as Profile;
+  const profile = (await kgd.command(["source", input.path])).report as unknown as Profile;
   const root = (await kgd.baseRoots()).get(profile.base);
   if (!root) throw new CaptureError(`base ${profile.base} has no registered root`);
   const lines = (await files.read(input.path)).replace(/\r\n?/g, "\n").split("\n");
@@ -516,7 +515,7 @@ async function file(kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices
     }
     const path = `${state.root}/.knowledge/drafts/${id}.md`;
     if ((await kgd.call<DraftsResult>("kg_drafts", { base: [base] })).drafts.some((found) => found.uid === recorded)) {
-      return { done: { item, decision, uid: recorded, label: state.shown.get(recorded)?.label, draft: true, replaces: true, report: `${report} A replacement of this record already waits for you.`.trim() } };
+      return { done: { item, decision, uid: recorded, label: state.shown.get(recorded)?.label, waiting: true, report } };
     }
     const current = await kgd.call<GetResult>("kg_get", { uids: [recorded] });
     return writeDraft(kgd, files, state, path, recorded, text(current.records[0]?.understanding), { item, decision, uid: recorded, label: drafted.label, draft: true, replaces: true, report });
@@ -717,10 +716,4 @@ function splitUid(uid: string): [string, string] {
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean) : [];
-}
-
-function kgdMessage(report: Record<string, unknown>): string | undefined {
-  const error = report.error as { message?: unknown } | string | undefined;
-  if (typeof error === "string") return error;
-  return typeof error?.message === "string" ? error.message : undefined;
 }

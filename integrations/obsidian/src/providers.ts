@@ -86,10 +86,11 @@ export const PROVIDER_KINDS: readonly ProviderKind[] = [
   { id: "custom", label: "Other OpenAI-compatible service", format: "chat-completions", ownUrl: true, ownFormat: true, ownLevels: true, levels: [] },
 ];
 
-const CUSTOM = PROVIDER_KINDS.find((kind) => kind.id === "custom")!;
-
+/** A provider's kind; stored settings keep only providers of a listed kind. */
 export function kindOf(provider: Pick<Provider, "kind">): ProviderKind {
-  return PROVIDER_KINDS.find((kind) => kind.id === provider.kind) ?? CUSTOM;
+  const kind = PROVIDER_KINDS.find((candidate) => candidate.id === provider.kind);
+  if (!kind) throw new Error(`unknown provider kind ${provider.kind}`);
+  return kind;
 }
 
 export interface Provider {

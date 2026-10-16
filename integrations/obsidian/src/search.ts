@@ -173,7 +173,7 @@ export function recordText(records: GetResult["records"]): string {
     const links = record.out.map((link) => `${link.role}: ${`[${link.uid}] ${link.label ?? ""}`.trim()}`);
     const inbound = record.in.slice(0, 12).map((link) => `${link.role} of [${link.uid}] ${link.label} (${link.kind})`);
     return [
-      `[${record.uid}] ${record.label} · ${record.kind} ${record.class} · ${record.base} · ${record.source} L${record.lines}${record.epistemic ? ` · ${record.epistemic}` : ""}`,
+      `[${record.uid}] ${record.label} · ${record.kind} ${record.class} · ${record.base} · ${record.source}${record.foreign ? "" : ` L${record.lines}`}${record.epistemic ? ` · ${record.epistemic}` : ""}`,
       `Statement: ${clip(record.body)}`,
       ...record.evidence.map((quote) => `Evidence: ${clip(quote)}`),
       ...(links.length ? [`Links: ${links.join("; ")}`] : []),
@@ -273,7 +273,8 @@ export async function searchKnowledge(complete: Complete, kgd: SearchKgd, web: S
       run: async (args) => {
         const uids = uidsOf(args.uids).slice(0, MAX_GET);
         if (!uids.length) return "error: uids are required";
-        const dir = args.dir === "in" || args.dir === "both" ? args.dir : "out";
+        const dir = args.dir;
+        if (dir !== "out" && dir !== "in" && dir !== "both") return "error: dir must be out, in or both";
         const depth = Math.min(MAX_DEPTH, Math.max(1, Number.isInteger(args.depth) ? (args.depth as number) : 1));
         onStep({ tool: "kg_neighbors", count: uids.length });
         const role = typeof args.role === "string" && args.role.trim() ? [args.role.trim()] : undefined;

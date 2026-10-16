@@ -53,7 +53,9 @@ also reads Wikipedia and arXiv. API keys stay in Obsidian's SecretStorage, and
 Embedding settings, is the one `kgd` run allowed to download (the embedding
 model, from the Hugging Face Hub); the model runs on this computer. The
 plugin uses Node's `fs` to check paths under the vault's `.knowledge` folder
-for hidden-folder indexing and to write and delete draft files.
+for hidden-folder indexing and to write and delete draft files. A draft's
+fields change with `kgd edit`, and accepted records change only with
+`kgd accept` and `kgd relocate`.
 
 Original code is MIT. The bundle embeds Cytoscape.js, cytoscape-fcose,
 cose-base and layout-base, all MIT, and the hidden-folder indexer is adapted
@@ -147,9 +149,16 @@ default with a notice, and unknown keys are ignored.
   papers and the web; **Capture** or **Capture selection** drafts a record.
 - **Capture view.** Captures appear there while they draft, several at a
   time, then as full drafts saying whether `kgd accept` would take them.
+  A draft's fields and links are edited on its card with `kgd edit`.
   **Accept** admits a draft with the drafts it links and indexes and embeds
   it; **Open draft** opens the file; **Discard** deletes it after asking.
   **Show drafts** opens the view.
+- **Localize.** A foreign record or draft, which cites a web page, moves to
+  the passage of a registered source that states it: select the passage,
+  then press **Localize here** on the record in the sidebar or **Localize to
+  selection** on the draft's card. The agent checks that the passage states
+  the same knowledge, and `kgd relocate` moves the citation there, into that
+  source's base with every link to it when the source lies in another.
 
 The full description is in [docs/obsidian.md](../../docs/obsidian.md).
 
@@ -177,8 +186,8 @@ vault.
 - [x] Publish through the monorepo's guarded root metadata and
   version-checked GitHub release assets. The canonical plugin sources and the
   bundle that `kgd obsidian install` copies remain in this directory.
-- [x] Commands that run `kgd`: lookup, capture, accept, index and the
-  embedding model.
+- [x] Commands that run `kgd`: lookup, capture, draft edits (`kgd edit`),
+  localization (`kgd relocate`), accept, index and the embedding model.
 - [x] A new record from a selection: **Capture** drafts it for the Capture
   view.
 - [x] Editing a draft's fields and links on its card.

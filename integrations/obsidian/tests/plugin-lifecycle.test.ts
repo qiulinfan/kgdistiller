@@ -454,7 +454,7 @@ describe("selection lookup", () => {
 describe("embedding settings", () => {
   const find = (name: string) => controls.settings.find((setting) => setting.name === name)!;
   const click = (name: string, text: string) => find(name).buttons!.find((item) => item.text === text)!.click!();
-  const status = { embedding: "BAAI/bge-m3", precision: "int8", vectors: "BAAI/bge-m3 int8", unembedded: 0, embedding_changed: false };
+  const status = { embedding: "BAAI/bge-m3", precision: "int8", vectors: "BAAI/bge-m3 int8", unembedded: 0, embedding_changed: false, cached: [] };
 
   it("asks for the kgd executable before it can show the home's model", async () => {
     const plugin = pluginFixture(); await plugin.onload();

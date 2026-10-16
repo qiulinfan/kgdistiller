@@ -194,7 +194,7 @@ export function chainTree(result: NeighborsResult, start: string): ChainNode {
 
 /** A record's inbound links as the lookup shows them. */
 export interface InboundGroups {
-  /** The relations it takes part in, grouped by kind in first-seen order, each with its role there. */
+  /** The statements about it and the relations it takes part in, grouped by kind in first-seen order, each with its role there. */
   about: Array<{ kind: string; links: InLink[] }>;
   /** The records whose `requires` lists it. */
   builtOn: InLink[];

@@ -2,13 +2,14 @@
  * The kgdistiller sidebar: what the knowledge base holds for a selected
  * passage, a typed query or the file open in the editor. It shows the records
  * sharing the selection's name, the records the three search lanes rank as
- * related, and for the record in focus its links, the relations about it, the
- * records built on it, its `requires` chain and a typed graph of its
- * neighbours with a legend. Opening an accepted record puts it in focus, and
- * opening a source lists the records the source defines. A foreign record
- * found while reading a local copy of its work can be localized there. Every
- * answer comes from `kgd mcp`, so it covers every registered base; same name
- * is not same concept, so name matches are shown as candidates to compare.
+ * related, and for the record in focus its links, the statements and
+ * relations about it, the records built on it, its `requires` chain and a
+ * typed graph of its neighbours with a legend. Opening an accepted record
+ * puts it in focus, and opening a source lists the records the source
+ * defines. A foreign record found while reading a registered local copy of
+ * its work can be localized there. Every answer comes from `kgd mcp`, so it
+ * covers every registered base; same name is not same concept, so name
+ * matches are shown as candidates to compare.
  * When the agent is set up, its judgment of a selection, Capture, the sources
  * of an unrecorded term and the answer to a typed question sit above the
  * results (agent-pane.ts).
@@ -19,7 +20,7 @@ import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, setIcon,
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
-import { recordTarget, type LocalizeInput, type LocalizeTarget } from "./localize";
+import { recordTarget, type LocalizeInput, type LocalizeResult, type LocalizeTarget } from "./localize";
 import { RECORD_DRAG_TYPE } from "./drafts";
 import { embeddingChoices, embeddingSummary, needsEmbedding, type EmbeddingStatus, type Indexer } from "./indexing";
 import {
@@ -46,6 +47,7 @@ import {
 } from "./lookup-model";
 import type { ReasoningChoice } from "./model";
 import type { ModelChoice, ModelGroup, ReasoningChoices } from "./providers";
+import type { Reading } from "./search";
 import { openInBase } from "./open";
 import { entryPath, firstLine } from "./records";
 
@@ -83,8 +85,10 @@ export interface LookupHost extends AgentHost {
   reasoningChoices(): ReasoningChoices;
   chooseReasoning(choice: ReasoningChoice): Promise<void>;
   indexer: Indexer;
+  /** The registered source at an absolute path; undefined for any other file. */
+  registeredSource(path: string): Promise<Reading | undefined>;
   /** Move a foreign record's citation to a passage of a local source with `kgd relocate`, into that source's base. */
-  localize(target: LocalizeTarget, input: LocalizeInput): void;
+  localize(target: LocalizeTarget, input: LocalizeInput): Promise<LocalizeResult | undefined>;
   /** Draw an accepted record into a draft with its id, in the Capture view, for revision. */
   revise(uid: string): void;
 }
@@ -596,10 +600,18 @@ export class KgdistillerLookupView extends ItemView {
     action("Open record", true, () => this.openInBase(record.base, entryPath(record.id)));
     action("Revise as draft", false, async () => this.host.revise(record.uid));
     if (!record.foreign) action("Open source", false, () => this.openInBase(record.base, record.source, firstLine(record.lines)));
-    // A foreign record found from a selection in a local source can move its evidence there.
+    // A foreign record found from a selection in a registered source can move its evidence there, and stays in focus under its uid.
     const at = this.selection?.source;
     if (record.foreign && at) {
-      action("Localize here", false, async () => this.host.localize(recordTarget(record), { ...at, selection: this.selection!.text }));
+      const input: LocalizeInput = { ...at, selection: this.selection!.text };
+      const request = this.focusRequest;
+      void this.host.registeredSource(at.path).then((registered) => {
+        if (!registered || request !== this.focusRequest) return;
+        action("Localize here", false, async () => {
+          const result = await this.host.localize(recordTarget(record), input);
+          if (result?.localized && this.focus === record.uid) await this.show(result.uid);
+        });
+      });
     }
 
     this.renderNeighbours(pane, around, record.uid);

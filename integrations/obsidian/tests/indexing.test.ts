@@ -75,7 +75,7 @@ describe("Indexer", () => {
 });
 
 describe("embeddingSummary", () => {
-  const base = { embedding: "BAAI/bge-m3", precision: "int8", vectors: "BAAI/bge-m3 int8", unembedded: 0, embedding_changed: false };
+  const base = { embedding: "BAAI/bge-m3", precision: "int8", vectors: "BAAI/bge-m3 int8", unembedded: 0, embedding_changed: false, cached: [] };
 
   it("says what Re-embed would do", () => {
     expect(embeddingSummary(base)).toBe("BAAI/bge-m3 (int8): every record's vector is current.");
