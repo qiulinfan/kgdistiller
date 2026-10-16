@@ -1,30 +1,22 @@
-kgdistiller Obsidian 2.0.0 makes every piece of knowledge pass your review:
-whatever the agent, a Skill or you capture becomes a draft you edit and
-accept. It needs the kgdistiller 2.0.0 CLI (`kgd`), whose path you set under
-**Settings → kgdistiller → kgd executable**. Records and document types of
-1.x need a one-time edit; the changelog's upgrade notes list it.
+kgdistiller Obsidian 2.0.1 makes editing global and shows kgd's own errors.
+It needs the kgdistiller 2.0.1 CLI (`kgd`), whose path you set under
+**Settings → kgdistiller → kgd executable**. After upgrading, run a plain
+`kgd index` (or **Re-embed** in the sidebar) once: every record is embedded
+again.
 
-- **Capture view.** Drafts are grouped by source on the left, by file name,
-  with foreign drafts under **foreign**. Each draft's card edits its label,
-  kind, other names, epistemic label, understanding, statement and every
-  role's and `requires`' links in place, through `kgd edit`. **Accept**
-  admits a draft with the drafts it links and embeds it.
-- **Revise a record.** **Revise as draft** in the lookup sidebar, or dragging
-  a record onto the Capture view, copies it into a draft that replaces it
-  when accepted.
-- **Foreign knowledge.** A concept the text only uses or credits to other
-  work is drafted from the web page of the work that originates it, found by
-  **Find sources**. **Localize here** moves it to the local passage once you
-  hold the work.
-- **Statements and relations.** A theorem, finding or example about one
-  record is a node linked to it; a relation connects two or more records. The
-  record pane shows its **Connections**, how many records it links or is
-  linked by.
-- **Lookup everywhere.** Text selected in the sidebar or the Capture view is
-  looked up and captured like text in a note.
-- **Embedding model in the sidebar.** The model is shown beside **Re-embed**
-  and switched from the runnable models in the local cache or by id, after a
-  confirmation. An index schema change keeps the existing vectors.
+- **Localize across bases.** **Localize here** and **Localize to selection**
+  move a foreign record or draft into the base of the local source you
+  selected, with every link to it rewritten, and the sidebar follows it to
+  its new address. **Localize here** appears only on a registered source.
+- **Drafts of every base.** A draft may link drafts of any base; the Capture
+  card's **+** finds them, and a linked draft of another base shows its base.
+- **Foreign web addresses.** A foreign draft's card edits the address of the
+  page it cites.
+- **Results are nodes.** A theorem, finding or example links every record it
+  concerns and must link at least one; a relation connects records.
+- **Clear errors.** When `kgd` refuses something, the plugin shows `kgd`'s
+  own message: Localize stops at once instead of retrying, and an
+  interrupted accept says what it admitted.
 - **Desktop only.** Hidden-folder indexing needs the desktop filesystem
   adapter, and Obsidian Sync does not sync dot folders.
 

@@ -2,7 +2,12 @@
 
 All notable changes are documented here.
 
-## Unreleased
+## 2.0.1 — 2026-10-16
+
+kgdistiller 2.0.1 makes the knowledge base global: `kgd relocate` moves a
+record into the base whose source states it, drafts link drafts of every
+base, and a result the source states is always a node. It also deletes the
+last fallbacks and fixes what two rounds of review found.
 
 Upgrading from 2.0.0: a record's unified text no longer ends with its
 `source`, so the next index run of any kind drops every vector, and a plain

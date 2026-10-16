@@ -28,7 +28,7 @@
   an MCP server.
 
 This repository holds the Obsidian plugin and the Python core, both at
-**2.0.0**. They are versioned and tagged separately: plugin tags are bare
+**2.0.1**. They are versioned and tagged separately: plugin tags are bare
 `x.y.z`, core tags are `core-x.y.z`.
 
 ## Why the knowledge graph comes first
@@ -536,8 +536,8 @@ encodes about 14 records a second with `BAAI/bge-m3` on Apple silicon.
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/2.0.0
-uv run --locked python scripts/check_distribution.py --dist-root build/release/2.0.0
+uv build --out-dir build/release/2.0.1
+uv run --locked python scripts/check_distribution.py --dist-root build/release/2.0.1
 npm test
 (cd integrations/obsidian && npm ci && npm run check)
 ```
