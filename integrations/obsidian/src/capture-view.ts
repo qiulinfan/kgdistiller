@@ -2,8 +2,9 @@
  * The Capture view: the agent's captures and localizations while it drafts
  * them, and every draft waiting for the owner, listed by source. Every way
  * knowledge enters the base ends in a draft here (docs/model.md, "Ingestion"):
- * a capture, a compile, a replacement of a recorded item and a localization.
- * The agent never accepts. A draft appears in full as `kg_drafts` reads it
+ * a capture, a compile and a replacement of a recorded item; a localization
+ * only moves a record's citation, with `kgd relocate`. The agent never
+ * accepts. A draft appears in full as `kg_drafts` reads it
  * from the file, with each value's target, whether it is foreign or replaces
  * an accepted record, and what `kgd accept` would refuse. Accept admits it
  * with the drafts it links (`kgd accept`, which indexes and embeds them);
@@ -185,15 +186,13 @@ export class KgdistillerCaptureView extends ItemView {
     });
   }
 
-  /** Move a foreign record's or draft's evidence to a passage of a local source, as a draft with its id. */
+  /** Move a foreign record's or draft's citation to a passage of a local source with `kgd relocate`. */
   async startLocalize(target: LocalizeTarget, input: LocalizeInput): Promise<void> {
     await this.run(`Localize ${target.label}`, async () => {
       const result = await localizeRecord((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles, target, input);
       if (!result.localized) return { headline: `Not localized: ${result.label}`, report: result.report };
-      return {
-        headline: `${result.replaces ? "Drafted the localized replacement" : "Localized the draft"}: ${result.label}`,
-        report: result.report, draft: result.uid,
-      };
+      await this.listDrafts();
+      return { headline: `Localized: ${result.label}`, report: result.report };
     });
   }
 

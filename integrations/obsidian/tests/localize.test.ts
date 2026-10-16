@@ -42,39 +42,31 @@ const record: FullRecord = {
 };
 
 const input: LocalizeInput = { path: LOCAL, from: 3, to: 3, selection: "Block-wise masking masks a block of patches" };
-const same = { same: true, evidence: [{ lines: "3", quote: "Block-wise masking masks a block of patches at a time." }], reason: "同一概念。" };
-
-/** The localized file of `record`, citing line 3 of the local source. */
-const localized = (understanding = "no", search = "block masking") => [
-  "---", "label: \"Block-wise masking\"", "kind: \"algorithm\"", "aliases:", "  - \"分块掩码\"", "source: \"papers/beit/beit.md\"", "lines: \"3\"",
-  ...(understanding === "no" ? ["understanding: \"no\""] : []), "epistemic: \"stated\"",
-  "requires:", "  - \"[[masked-autoencoder]]\"", "  - \"[[notes:autoencoder]]\"", "---", "Block-wise masking masks a block of image patches at a time.", "",
-  ...(search ? ["## Search terms", "", search, ""] : []), "## Evidence", "", "> Block-wise masking masks a block of patches at a time.", "",
-].join("\n");
+const PASSAGE = "Block-wise masking masks a block of patches at a time.";
+const same = { same: true, passage: PASSAGE, reason: "同一概念。" };
 
 interface World {
   kgd: CaptureKgd;
+  /** Every kgd command run, as its arguments. */
+  commands: string[][];
   files: CaptureFiles;
-  written: Map<string, string>;
-  /** Each change to the drafts folder, in order. */
-  changes: string[];
 }
 
-/** kgd and the files for one localization; the first `refuse` listings report a problem with the target's draft. */
-function world(refuse = 0, files: Record<string, string> = {}): World {
-  const written = new Map<string, string>([[LOCAL, lines.join("\n")], ...Object.entries(files)]);
-  const changes: string[] = [];
+/** kgd and the files for one localization; the first `refuse` relocations are refused. */
+function world(refuse = 0): World {
+  const commands: string[][] = [];
   let refusals = refuse;
   const kgd: CaptureKgd = {
     async call<T>(tool: string): Promise<T> {
-      if (tool !== "kg_drafts") throw new Error(`unexpected tool ${tool}`);
-      const drafts = [...written.keys()].filter((path) => path.includes("/drafts/")).map((path) => ({
-        uid: `papers:${path.split("/").pop()!.replace(/\.md$/, "")}`, path, problems: refusals-- > 0 ? ["evidence: quote 1 is not in lines 3"] : [],
-      }));
-      return { drafts } as T;
+      throw new Error(`unexpected tool ${tool}`);
     },
     async command(args: string[]) {
+      commands.push(args);
       if (args[0] === "source" && args[1] === LOCAL) return { report: profile as unknown as Record<string, unknown>, failed: false };
+      if (args[0] === "relocate") {
+        if (refusals-- > 0) return { report: { refused: { message: "the passage does not occur in base papers", matches: [] } }, failed: true };
+        return { report: { relocated: args[1], to: { source: profile.source, lines: "3-3" }, evidence: "replaced" }, failed: false };
+      }
       return { report: { error: "not a registered source" }, failed: true };
     },
     async baseRoots() {
@@ -82,23 +74,15 @@ function world(refuse = 0, files: Record<string, string> = {}): World {
     },
   };
   return {
-    written, changes, kgd,
+    kgd, commands,
     files: {
       read: async (path) => {
-        const text = written.get(path);
-        if (text === undefined) throw new Error(`no file ${path}`);
-        return text;
+        if (path !== LOCAL) throw new Error(`no file ${path}`);
+        return lines.join("\n");
       },
       ids: async () => new Set(),
-      create: async (path, text) => {
-        if (written.has(path)) throw new Error("exists");
-        changes.push(`create ${path}`);
-        written.set(path, text);
-      },
-      remove: async (path) => {
-        changes.push(`remove ${path}`);
-        written.delete(path);
-      },
+      create: async () => { throw new Error("localization writes no file itself"); },
+      remove: async () => { throw new Error("localization removes no file itself"); },
     },
   };
 }
@@ -119,24 +103,18 @@ function model(...answers: Array<Record<string, unknown>>): { complete: (request
 
 const draft: Draft = {
   uid: "papers:block-wise-masking", base: "papers", id: "block-wise-masking", path: DRAFT, replaces: null, foreign: true,
-  label: "Block-wise masking", class: "node", kind: "algorithm", aliases: ["分块掩码"], source: BEIT_URL, understanding: "yes", epistemic: "stated",
-  body: record.body, search_terms: "", evidence: record.evidence,
-  out: [
-    { role: "requires", pos: 0, uid: "papers:masked-autoencoder", state: "accepted", label: "Masked autoencoder" },
-    { role: "requires", pos: 1, uid: "notes:autoencoder", state: "accepted", label: "Autoencoder" },
-  ],
-  with: [], linked_by: [], problems: [],
+  label: "Block-wise masking", class: "node", kind: "algorithm", aliases: [], source: BEIT_URL, understanding: "yes", epistemic: "stated",
+  body: record.body, search_terms: "", evidence: record.evidence, out: [], with: [], linked_by: [], problems: [],
 };
-const FOREIGN_TEXT = "---\nlabel: \"Block-wise masking\"\nsource: \"https://arxiv.org/abs/2106.08254\"\n---\nthe foreign draft\n";
 
-describe("localizing an accepted foreign record", () => {
-  it("writes a draft with the record's id citing the local passage, keeping its values, understanding and search terms", async () => {
+describe("localizing foreign knowledge", () => {
+  it("relocates an accepted record to the passage the model copies, in the selected source only", async () => {
     const w = world();
     const { complete, requests } = model(same);
     await expect(localizeRecord(complete, w.kgd, w.files, recordTarget(record), input)).resolves.toEqual({
-      localized: true, uid: "papers:block-wise-masking", label: "Block-wise masking", replaces: true, report: "同一概念。",
+      localized: true, uid: "papers:block-wise-masking", label: "Block-wise masking", report: "同一概念。",
     });
-    expect(w.written.get(DRAFT)).toBe(localized());
+    expect(w.commands).toEqual([["source", LOCAL], ["relocate", "papers:block-wise-masking", PASSAGE, "--source", "papers/beit/beit.md"]]);
     expect(requests[0]).toMatchObject({ tool_choice: { type: "function", function: { name: "localize" } }, reasoning_effort: "low" });
     const user = requests[0]!.messages[1]!.content as string;
     expect(user).toContain(`Its evidence, quoted from ${BEIT_URL}:\n> Block-wise masking masks a block of image patches at a time.`);
@@ -144,15 +122,27 @@ describe("localizing an accepted foreign record", () => {
     expect(user).toContain("3| Block-wise masking masks a block of patches at a time.");
   });
 
-  it("writes nothing when the passage states something else, or a draft with that id already waits", async () => {
+  it("relocates a draft by its file", async () => {
+    const w = world();
+    await expect(localizeRecord(model(same).complete, w.kgd, w.files, draftTarget(draft), input)).resolves.toMatchObject({ localized: true });
+    expect(w.commands.at(-1)).toEqual(["relocate", DRAFT, PASSAGE, "--source", "papers/beit/beit.md"]);
+  });
+
+  it("relocates nothing when the passage states something else", async () => {
     const w = world();
     await expect(localizeRecord(model({ same: false, reason: "不同。" }).complete, w.kgd, w.files, recordTarget(record), input))
       .resolves.toEqual({ localized: false, uid: "papers:block-wise-masking", label: "Block-wise masking", report: "不同。" });
-    expect(w.changes).toEqual([]);
-    const waiting = world(0, { [DRAFT]: "an earlier replacement" });
-    const result = await localizeRecord(model(same).complete, waiting.kgd, waiting.files, recordTarget(record), input);
-    expect(result).toMatchObject({ localized: false, report: expect.stringContaining("A draft with this id already waits for you, so nothing was written") });
-    expect(waiting.written.get(DRAFT)).toBe("an earlier replacement");
+    expect(w.commands).toEqual([["source", LOCAL]]);
+  });
+
+  it("returns kgd relocate's refusal and an empty passage to the model", async () => {
+    const w = world(1);
+    const { complete, requests } = model({ same: true, reason: "x" }, same, same);
+    await expect(localizeRecord(complete, w.kgd, w.files, recordTarget(record), input)).resolves.toMatchObject({ localized: true });
+    expect(requests.slice(1).map((request) => request.messages.at(-1)!.content)).toEqual([
+      "error: give passage, the sentences of the numbered passage that state the knowledge point",
+      "error: the passage does not occur in base papers. Copy the passage from the numbered lines exactly and call localize again.",
+    ]);
   });
 
   it("refuses a source of another base and a kind the source's type lacks, before asking the model", async () => {
@@ -165,38 +155,6 @@ describe("localizing an accepted foreign record", () => {
     });
     await expect(localizeRecord(never, w.kgd, w.files, recordTarget({ ...record, kind: "theorem" }), input))
       .resolves.toMatchObject({ localized: false, report: "The kind theorem is not one of this source's document type ai-research." });
-    expect(w.changes).toEqual([]);
-  });
-});
-
-describe("localizing a foreign draft", () => {
-  it("rewrites the draft file in place", async () => {
-    const w = world(0, { [DRAFT]: FOREIGN_TEXT });
-    await expect(localizeRecord(model(same).complete, w.kgd, w.files, draftTarget(draft), input)).resolves.toEqual({
-      localized: true, uid: "papers:block-wise-masking", label: "Block-wise masking", report: "同一概念。",
-    });
-    expect(w.written.get(DRAFT)).toBe(localized("yes", ""));
-    expect(w.changes).toEqual([`remove ${DRAFT}`, `create ${DRAFT}`]);
-  });
-
-  it("restores the old draft when kgd accept would refuse the localized one", async () => {
-    const w = world(1, { [DRAFT]: FOREIGN_TEXT });
-    const { complete, requests } = model(same, { same: false, reason: "放弃。" });
-    await expect(localizeRecord(complete, w.kgd, w.files, draftTarget(draft), input)).resolves.toMatchObject({ localized: false, report: "放弃。" });
-    expect(requests[1]!.messages.at(-1)!.content).toBe(
-      "error: kgd accept would refuse the localized record: evidence: quote 1 is not in lines 3. Correct the evidence and call localize again.");
-    expect(w.written.get(DRAFT)).toBe(FOREIGN_TEXT);
-    expect(w.changes).toEqual([`remove ${DRAFT}`, `create ${DRAFT}`, `remove ${DRAFT}`, `create ${DRAFT}`]);
-  });
-
-  it("refuses evidence the passage does not hold", async () => {
-    const w = world(0, { [DRAFT]: FOREIGN_TEXT });
-    const { complete, requests } = model({ ...same, evidence: [{ lines: "4", quote: "MAE invented block-wise masking" }] }, { ...same, evidence: [] }, same);
-    await expect(localizeRecord(complete, w.kgd, w.files, draftTarget(draft), input)).resolves.toMatchObject({ localized: true });
-    expect(requests.slice(1).map((request) => request.messages.at(-1)!.content)).toEqual([
-      expect.stringMatching(/^error: quote 1: .*; copy it from the numbered passage$/),
-      "error: evidence needs at least one quote of the passage",
-    ]);
-    expect(w.written.get(DRAFT)).toBe(localized("yes", ""));
+    expect(w.commands.filter((args) => args[0] === "relocate")).toEqual([]);
   });
 });

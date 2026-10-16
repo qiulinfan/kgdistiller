@@ -309,6 +309,22 @@ describe("capturing a selection", () => {
     expect(requests[0]!.messages[0]!.content).not.toContain(SIDE_SYSTEM);
   });
 
+  it("adds the source's name to a label a record of another meaning already has", async () => {
+    const w = world({ senses: { "Random sampling is best for MAE": [summary("notes:random-sampling-is-best-for-mae", "Random sampling is best for MAE")] } });
+    const { complete, requests } = model(comparison, comparison);
+    const result = await capture(w, complete);
+    expect(seen(requests)[0]).toContain("Not filed yet. These names belong to records or drafts you had not seen:");
+    expect(result).toMatchObject({ decision: "new", uid: "papers:random-sampling-is-best-for-mae-mae-ch", label: "Random sampling is best for MAE (mae_ch)" });
+    expect(w.written.get("/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-mae-ch.md"))
+      .toContain("label: \"Random sampling is best for MAE (mae_ch)\"");
+  });
+
+  it("adds the source's name when a draft already has the label", async () => {
+    const w = world({ named: [draft("notes:random-sampling", "Random sampling is best for MAE")] });
+    const { complete } = model(comparison, comparison);
+    await expect(capture(w, complete)).resolves.toMatchObject({ label: "Random sampling is best for MAE (mae_ch)" });
+  });
+
   it("refuses a value that is not a link to a shown record or draft", async () => {
     const w = world();
     const plain = { ...comparison, roles: { ...comparison.roles, baseline: ["block-wise masking"] } };

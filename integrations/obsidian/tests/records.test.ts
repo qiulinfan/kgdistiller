@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { entryId, entryPath, firstLine, fold } from "../src/records";
+import { entryId, entryPath, firstLine, fold, labelSuffix, nameKey } from "../src/records";
 
 describe("knowledge paths", () => {
   it("reads an accepted record's id, and only an accepted record's", () => {
@@ -37,5 +37,18 @@ describe("case folding parity with kgd", () => {
     const stable = Object.entries(table).filter(([char]) => char.normalize("NFKC") === char);
     expect(stable.length).toBeGreaterThan(200);
     for (const [char, folded] of stable) expect(fold(char)).toBe(folded);
+  });
+});
+
+describe("names and source suffixes", () => {
+  it("keys names as kgd does", () => {
+    expect(nameKey("  Masked-Autoencoder (MAE)! ")).toBe("masked autoencoder mae");
+    expect(nameKey("ＭＡＥ 掩码自编码器")).toBe("mae 掩码自编码器");
+  });
+
+  it("names a source by its file without the extension, or a page by its last path segment", () => {
+    expect(labelSuffix("notes/ml/Autoencoder&VAE.md")).toBe("Autoencoder&VAE");
+    expect(labelSuffix("https://en.wikipedia.org/wiki/BERT_(language_model)#History")).toBe("BERT (language model)");
+    expect(labelSuffix("https://arxiv.org/abs/2010.11929")).toBe("2010.11929");
   });
 });

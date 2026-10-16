@@ -20,6 +20,32 @@ export function entryId(path: string): string | undefined {
 
 export const entryPath = (id: string): string => `${ENTRIES_DIRECTORY}/${id}.md`;
 
+/** kgd's name key: the NFKC casefold's runs of letters and digits, joined by single spaces. */
+export function nameKey(text: string): string {
+  return (fold(text).match(/[\p{L}\p{N}]+/gu) ?? []).join(" ");
+}
+
+/**
+ * What a same-named concept of another meaning adds to its label, as kgd's
+ * `label_suffix`: its source file's name without the extension, or a web
+ * page's last path segment, decoded, with underscores read as spaces.
+ */
+export function labelSuffix(source: string): string {
+  if (/^https?:\/\//.test(source)) {
+    const segment = source.split("?")[0]!.split("#")[0]!.replace(/\/+$/, "").split("/").pop() ?? "";
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      decoded = segment;
+    }
+    return decoded.replace(/_/g, " ") || source;
+  }
+  const name = source.split("/").pop() ?? source;
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
+}
+
 const RANGE_RE = /^(\d+)(?:-(\d+))?$/;
 
 /**

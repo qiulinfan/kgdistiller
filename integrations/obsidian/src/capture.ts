@@ -22,7 +22,7 @@ import type { DraftsResult } from "./drafts";
 import { foreignPages, pageQuotes, pagesText, type ForeignPage } from "./foreign";
 import type { GetResult, RecordSummary, ResolveResult, SearchResult } from "./lookup-model";
 import { findOrigin, type OriginServices } from "./origin";
-import { fold } from "./records";
+import { fold, labelSuffix, nameKey } from "./records";
 import { citedReferences, sourceOpening } from "./sources";
 
 /** What `kgd source SOURCE` reports about a source: its base, document type and the records and drafts citing it. */
@@ -518,11 +518,12 @@ async function file(kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices
     const current = await kgd.call<GetResult>("kg_get", { uids: [recorded] });
     return writeDraft(kgd, files, state, path, recorded, text(current.records[0]?.understanding), { item, decision, uid: recorded, label: drafted.label, draft: true, replaces: true, report });
   }
-  const id = freeId(drafted.label, await files.ids(state.root));
+  const named = await distinctLabel(kgd, drafted, profile.source);
+  const id = freeId(named.label, await files.ids(state.root));
   if (!id) return "error: the label gives an empty id; use a label with letters or digits";
   const uid = `${profile.base}:${id}`;
   return writeDraft(kgd, files, state, `${state.root}/.knowledge/drafts/${id}.md`, uid,
-    recordFile(drafted, profile.source, placed.ranges, placed.quotes), { item, decision, uid, label: drafted.label, draft: true, report });
+    recordFile(named, profile.source, placed.ranges, placed.quotes), { item, decision, uid, label: named.label, draft: true, report });
 }
 
 /**
@@ -558,11 +559,29 @@ async function fileForeign(kgd: CaptureKgd, files: CaptureFiles, origin: OriginS
   if (typeof drafted === "string") return drafted;
   const quotes = pageQuotes(drafted.evidence.map((quote) => quote.quote), page);
   if (typeof quotes === "string") return `error: ${quotes}`;
-  const id = freeId(drafted.label, await files.ids(state.root));
+  const named = await distinctLabel(kgd, drafted, page.url);
+  const id = freeId(named.label, await files.ids(state.root));
   if (!id) return "error: the label gives an empty id; use a label with letters or digits";
   const uid = `${profile.base}:${id}`;
-  return writeDraft(kgd, files, state, `${state.root}/.knowledge/drafts/${id}.md`, uid, recordFile(drafted, page.url, undefined, quotes),
-    { item, decision: "borrowed", uid, label: drafted.label, draft: true, foreign: true, report });
+  return writeDraft(kgd, files, state, `${state.root}/.knowledge/drafts/${id}.md`, uid, recordFile(named, page.url, undefined, quotes),
+    { item, decision: "borrowed", uid, label: named.label, draft: true, foreign: true, report });
+}
+
+/**
+ * A label names one concept across every base (docs/model.md, "Labels"): the
+ * model drafts a new concept only after the lookup found no record of the same
+ * meaning, so a record or draft that already has its label means another
+ * concept, and the new one adds its source's name, as `Label (source)`.
+ */
+async function distinctLabel(kgd: CaptureKgd, draft: Draft, source: string): Promise<Draft> {
+  const key = nameKey(draft.label);
+  const [resolved, drafts] = await Promise.all([
+    kgd.call<ResolveResult>("kg_resolve", { terms: [draft.label] }),
+    kgd.call<DraftsResult>("kg_drafts", { names: [draft.label] }),
+  ]);
+  const taken = resolved.terms.some((term) => term.senses.some((sense) => nameKey(sense.label) === key))
+    || drafts.drafts.some((other) => other.label !== null && nameKey(other.label) === key);
+  return taken ? { ...draft, label: `${draft.label} (${labelSuffix(source)})` } : draft;
 }
 
 /** Write a draft, keeping it only when `kg_drafts` finds nothing `kgd accept` would refuse. */
