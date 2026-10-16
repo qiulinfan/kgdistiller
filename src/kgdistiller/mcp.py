@@ -1,11 +1,12 @@
-"""Read-only MCP JSON-RPC server over stdio with seven tools.
+"""Read-only MCP JSON-RPC server over stdio with eight tools.
 
 The tools are ``kg_search``, ``kg_resolve``, ``kg_get``, ``kg_neighbors``,
-``kg_browse``, ``kg_pack`` and ``kg_drafts``. The server is read-only and
+``kg_browse``, ``kg_pack``, ``kg_drafts`` and ``kg_find``. The server is read-only and
 serves the whole home. Every retrieval call goes through ``retrieve``, which
 opens a fresh read-only connection to the derived database, so a call sees the
 latest ``kgd index`` and never writes anything; ``kg_drafts`` reads the draft
-files instead, as ``kgd accept`` would validate them, and takes no lock. The
+files instead, as ``kgd accept`` would validate them, and takes no lock; ``kg_find`` reads
+the registered sources. The
 server loads no model: ``kg_search``'s dense lane asks the user's one
 embedding process (``adapters/embed_service.py``).
 """
@@ -20,6 +21,7 @@ from typing import Any, TextIO
 
 from . import __version__
 from .home import KnowledgeError
+from .locate import FIND_LIMIT, find
 from .records import UNDERSTANDING
 from .retrieve import (
     CLASSES,
@@ -46,7 +48,7 @@ MAX_TOOL_RESPONSE_BYTES = 8 * 1024 * 1024
 READ_ONLY_ANNOTATIONS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 INSTRUCTIONS = (
     "Read-only access to every base registered in the kgdistiller home: source-backed records and "
-    "role-bound relations. Same name is not same concept; compare senses before assuming identity, and "
+    "role-bound relations. A label names one record; aliases are shared, so compare senses before assuming identity, and "
     "deliver source:lines with the evidence quotes. Every result reports lag; when lag.changed_files > 0, "
     "run `kgd index --no-embed` and repeat the call. lag.unembedded > 0 or lag.embedding_changed means weaker "
     "dense coverage until the owner re-embeds; never re-embed unasked. If kg_search reports "
@@ -54,7 +56,8 @@ INSTRUCTIONS = (
     "role requires, claims citing a record with dir in), kg_browse lists bases, source trees, a source's records "
     "by kind or every record of a kind, and kg_pack returns whole records within a byte budget with shared "
     "relations and typed gaps. kg_drafts lists the drafts awaiting acceptance, read from their files; drafts "
-    "are not knowledge and no other tool returns them."
+    "are not knowledge and no other tool returns them. kg_find finds a passage or a name in the registered "
+    "sources, such as where a concept is defined or where a moved passage now lies."
 )
 
 
@@ -162,6 +165,19 @@ TOOL_DEFINITIONS = [
         "would accept them. base and source (path prefixes) narrow the listing; names keeps the drafts whose label "
         "or an alias has one of those names.",
         _object_schema({"base": _strings(64, 32), "source": _strings(4096, 32), "names": _strings(4096, 128)}, []),
+    ),
+    _tool(
+        "kg_find", "Find Text in Sources",
+        "Find where a text occurs in the registered source files, read live: a passage, matched by its words in "
+        "order with line breaks ignored and, for eight words or more, a quarter as many other words allowed between "
+        "them (markup a reading view hides), or a name, matched word for word. Each match gives base, source, "
+        "lines, whether it is exact, and the matched lines' text; total counts them all. base and source (path "
+        "prefixes) narrow the search.",
+        _object_schema({
+            "text": {"type": "string", "minLength": 1, "maxLength": 20000},
+            "base": _strings(64, 32), "source": _strings(4096, 32),
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": FIND_LIMIT},
+        }, ["text"]),
     ),
 ]
 TOOL_SCHEMAS = {tool["name"]: tool["inputSchema"] for tool in TOOL_DEFINITIONS}
@@ -325,6 +341,10 @@ def call_tool(name: str, raw_arguments: Any) -> dict[str, Any]:
         )
     if name == "kg_drafts":
         return drafts(arguments.get("base", ()), arguments.get("source", ()), arguments.get("names", ()))
+    if name == "kg_find":
+        return find(
+            arguments["text"], arguments.get("base", ()), arguments.get("source", ()), arguments.get("limit", FIND_LIMIT)
+        )
     return get(arguments["uids"], source_lines=arguments.get("source_lines"))
 
 

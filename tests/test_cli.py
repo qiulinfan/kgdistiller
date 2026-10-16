@@ -15,7 +15,7 @@ from typing import Any
 from tests.knowledge_fixture import make_record_home, type_document, use_temporary_home
 
 COMMANDS = {
-    "base", "embedding", "check", "source", "drafts", "accept", "index", "search", "resolve", "get",
+    "base", "embedding", "check", "source", "find", "relocate", "drafts", "accept", "index", "search", "resolve", "get",
     "neighbors", "browse", "pack", "obsidian", "claude", "codex", "mcp",
 }
 WEB = "https://example.com/sigma-algebra"

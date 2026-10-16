@@ -136,6 +136,26 @@ def parse_args() -> argparse.Namespace:
     )
     source.add_argument("source", type=Path, help="a registered source file")
 
+    find = commands.add_parser(
+        "find", help="find a passage or a name in the registered sources, tolerant of line breaks and hidden markup"
+    )
+    find.add_argument("text", help="the text to find; - reads it from standard input")
+    find.add_argument("--base", action="append", default=[], metavar="B", help="search only this base (repeatable)")
+    find.add_argument(
+        "--source", action="append", default=[], metavar="PREFIX", help="base-relative source path prefix (repeatable)"
+    )
+    find.add_argument("--limit", type=_positive, default=20)
+
+    relocate = commands.add_parser(
+        "relocate", help="move a record's source, lines and evidence to the only passage of its base that holds a text"
+    )
+    relocate.add_argument("target", metavar="TARGET", help="base:id of an accepted record, or a record or draft file")
+    relocate.add_argument("text", help="the passage's text; - reads it from standard input")
+    relocate.add_argument(
+        "--source", action="append", default=[], metavar="PREFIX", help="look only in sources with this prefix"
+    )
+    relocate.add_argument("--dry-run", action="store_true")
+
     drafts = commands.add_parser(
         "drafts", help="list the drafts with their links and what accept would refuse; reads files, writes nothing"
     )
@@ -254,6 +274,11 @@ def _print(value: Any, *, failed: bool = False) -> int:
     return 1 if failed else 0
 
 
+def _text(value: str) -> str:
+    """A text argument, read from standard input when it is -."""
+    return sys.stdin.read() if value == "-" else value
+
+
 def _filters(args: argparse.Namespace):
     from .retrieve import Filters
 
@@ -361,6 +386,16 @@ def _command(args: argparse.Namespace) -> int:
         from .write import source
 
         return _print(source(_cwd_path(args.source)))
+    if args.command == "find":
+        from .locate import find
+
+        return _print(find(_text(args.text), args.base, args.source, args.limit))
+    if args.command == "relocate":
+        from .locate import relocate
+
+        target = args.target if ":" in args.target and "/" not in args.target else str(_cwd_path(Path(args.target)))
+        report = relocate(target, _text(args.text), args.source, args.dry_run)
+        return _print(report, failed="refused" in report)
     if args.command == "drafts":
         from .write import drafts
 

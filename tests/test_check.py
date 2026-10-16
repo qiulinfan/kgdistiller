@@ -258,6 +258,37 @@ class DraftRulesTest(CheckTestCase):
         self.assertEqual([str(draft)], self.run_check()["stale"])
 
 
+class LabelRuleTest(CheckTestCase):
+    def test_a_label_names_one_concept_across_every_base(self) -> None:
+        self.kb.write_record("subspace-2", node("subspace", "5"), "The sum.", ["The sum of two subspaces is a subspace."],
+                             base="notes")
+        self.assert_error("subspace-2.md", "label", "label 'subspace' is already the label of kb:subspace")
+        self.assert_error("subspace.md", "label", "is already the label of notes:subspace-2")
+        self.assert_error("subspace-2.md", "label", "as in 'subspace (a)'")
+
+    def test_the_source_name_tells_a_concept_of_another_meaning_apart(self) -> None:
+        self.kb.write_record("subspace-a", node("Subspace (a)", "5"), "The sum.", ["The sum of two subspaces is a subspace."],
+                             base="notes")
+        self.assertEqual([], self.errors())
+
+    def test_drafts_are_compared_with_records_and_drafts_but_a_replacement_with_its_own_record(self) -> None:
+        self.kb.write_record("subspace", node("Subspace", "4"), "Changed.", ["A subspace is closed under addition."],
+                             folder="drafts")
+        self.assertEqual([], self.errors())
+        self.kb.write_record("dimension", node("Dimension", "6"), "D.", ["Unique sentence about dimension."], folder="drafts")
+        self.kb.write_record("dimension-2", node("dimension", "6"), "D.", ["Unique sentence about dimension."],
+                             folder="drafts", base="notes")
+        self.assert_error("dimension.md", "label", "is already the label of notes:dimension-2")
+        self.kb.write_record("measure", node("Measure space", "2"), "M.", ["A measure space is a triple (X, M, mu)."],
+                             folder="drafts")
+        self.assert_error("measure.md", "label", "is already the label of kb:measure-space")
+
+    def test_a_web_page_gives_its_last_path_segment(self) -> None:
+        self.assertEqual("BERT (language model)", records.label_suffix("https://en.wikipedia.org/wiki/BERT_(language_model)#History"))
+        self.assertEqual("2010.11929", records.label_suffix("https://arxiv.org/abs/2010.11929"))
+        self.assertEqual("Autoencoder&VAE", records.label_suffix("notes/ml/Autoencoder&VAE.md"))
+
+
 class ForeignRulesTest(CheckTestCase):
     URL = "https://example.com/paper"
 

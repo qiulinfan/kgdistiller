@@ -21,8 +21,9 @@ import unicodedata
 from bisect import bisect_right
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import unquote
 
 import yaml
 
@@ -541,6 +542,7 @@ class Files:
         self._sources: dict[str, tuple[dict[str, str], dict[str, list[str]]]] = {}
         self._lines: dict[Path, list[str]] = {}
         self._names: dict[str, dict[str, list[str]]] = {}
+        self._labels: dict[tuple[str, str], dict[str, list[str]]] = {}
 
     def available(self, name: str) -> bool:
         base = self.home.bases.get(name)
@@ -581,6 +583,21 @@ class Files:
         if path not in self._lines:
             self._lines[path] = source_lines(path)
         return self._lines[path]
+
+    def labelled(self, folder: str) -> dict[str, list[str]]:
+        """Name key of each label -> the uids holding it, in one folder of every available base."""
+        from .index import name_key
+
+        key = ("", folder)
+        if key not in self._labels:
+            labels: dict[str, list[str]] = {}
+            for name in sorted(self.home.bases):
+                for identifier in sorted(self.ids(name, folder)):
+                    found = self.record(name, folder, identifier)
+                    if found is not None:
+                        labels.setdefault(name_key(found.label), []).append(found.uid)
+            self._labels[key] = labels
+        return self._labels[key]
 
     def named(self, name: str, key: str) -> list[str]:
         """Accepted records of a base whose label or an alias has this name key."""
@@ -640,6 +657,32 @@ def _kind_problems(record: Record, types: list[DocumentType], where: str) -> lis
     return problems
 
 
+def label_suffix(source: str) -> str:
+    """What a same-named concept of another meaning adds to its label: its source file's name without the
+    extension, or a web page's last path segment, decoded, with underscores read as spaces."""
+    if is_foreign(source):
+        segment = source.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+        return unquote(segment).replace("_", " ") or source
+    return PurePosixPath(source).stem
+
+
+def _label_problems(files: Files, record: Record, draft: bool) -> list[tuple[str, str]]:
+    """A label names one concept across every base: no other record, and for a draft no other draft, has its name key."""
+    from .index import name_key
+
+    key = name_key(record.label)
+    others = [uid for uid in files.labelled(ENTRIES).get(key, []) if uid != record.uid]
+    if draft:
+        others += [uid for uid in files.labelled(DRAFTS).get(key, []) if uid != record.uid]
+    if not others:
+        return []
+    return [("label", (
+        f"label {record.label!r} is already the label of {', '.join(others)}: the same name is the same concept; "
+        f"a concept of another meaning adds its source's name, as in "
+        f"{record.label + ' (' + label_suffix(record.source) + ')'!r}"
+    ))]
+
+
 def record_problems(
     files: Files, record: Record, *, draft: bool, linkable_drafts: Iterable[str] = ()
 ) -> tuple[list[tuple[str, str]], tuple[str, Ranges | None] | None]:
@@ -683,6 +726,7 @@ def record_problems(
                 problems.append(("source", f"lines {record.lines_text} exceed the {len(lines)} lines of {source}"))
             freshness = evidence_state(record.evidence, lines, record.lines)
         problems.extend(_kind_problems(record, [document_type], f"type {document_type.name}"))
+    problems.extend(_label_problems(files, record, draft))
     linkable = set(linkable_drafts)
     for role, position, value in record.values():
         where = f"{role}[{position}]"

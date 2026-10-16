@@ -1,4 +1,4 @@
-"""Exercise the installed wheel end to end: base, records (local and foreign), drafts and replacements, check, index, retrieval, link following, browse and pack."""
+"""Exercise the installed wheel end to end: base, records (local and foreign), drafts and replacements, check, index, retrieval, link following, browse, pack, find and relocate."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ SOURCE = (
     "with mu countably additive.\n"
     "测度论研究可测空间上的集合函数。\n"
 )
+PASSAGE = "A measure space is a triple (X, F, mu) with mu countably additive"
 TYPE = (
     "---\nnode_kinds: [definition, concept]\nrelation_kinds:\n  implies: [premise, conclusion]\n---\n\n"
     "Definitions are nodes; statements connecting them are relations.\n"
@@ -327,6 +328,19 @@ def main() -> int:
         require(replaced["records"][0]["body"] == "A measurable space with a measure." and
                 replaced["lag"]["changed_files"] == 0, f"replaced record was not indexed: {replaced}")
 
+        write(root / "notes/renamed.txt", "New preface\n" + source.read_text(encoding="utf-8"))
+        found = runtime.object("find", "A measure space is a triple (X, F, mu) with mu", cwd=outside)
+        require(found["total"] == 2 and [match["source"] for match in found["matches"]]
+                == ["notes/measure.txt", "notes/renamed.txt"], f"find mismatch: {found}")
+        several = json.loads(runtime.text("relocate", "smoke:measure-space", PASSAGE, cwd=outside, expect=1))
+        require(len(several["refused"]["matches"]) == 2, f"relocate did not refuse two matches: {several}")
+        relocated = runtime.object("relocate", "smoke:measure-space", PASSAGE, "--source", "notes/renamed", cwd=outside)
+        require((relocated["to"], relocated["evidence"]) == ({"source": "notes/renamed.txt", "lines": "5-6"}, "kept"),
+                f"relocate mismatch: {relocated}")
+        require('source: "notes/renamed.txt"\nlines: 5-6\n' in entry.read_text(encoding="utf-8"),
+                "relocate did not rewrite the citation")
+        require(runtime.object("check", cwd=root) == CLEAN, "check after relocate is not clean")
+
         obsidian(runtime, root, outside)
 
         require(not any(".sqlite" in path.name for path in root.rglob("*")), "the index was written into the base")
@@ -334,7 +348,8 @@ def main() -> int:
 
     print(
         "installed command, base add, embedding show and off, source, drafts and accept, check --fix-lines, index, "
-        "search (including CJK), resolve, get, neighbors, browse, pack, foreign records, accepting a replacement and "
+        "search (including CJK), resolve, get, neighbors, browse, pack, foreign records, accepting a replacement, find, "
+        "relocate and "
         "Obsidian plugin install (hidden indexing and the newLinkFormat warning) smoke passed"
     )
     return 0

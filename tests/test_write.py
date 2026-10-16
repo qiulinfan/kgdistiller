@@ -53,6 +53,15 @@ class WriteTestCase(unittest.TestCase):
 
 
 class AcceptTest(WriteTestCase):
+    def test_a_draft_named_like_a_record_is_refused_until_it_takes_its_source_name(self) -> None:
+        draft = self.draft("subspace-2", node("subspace", "6"))
+        refused = accept([str(draft)])
+        self.assertIn("is already the label of kb:subspace", refused["refused"][0]["message"])
+        self.assertIn("as in 'subspace (a)'", refused["refused"][0]["message"])
+        renamed = self.draft("subspace-a", node("subspace (a)", "6"))
+        draft.unlink()
+        self.assertEqual({"created": ["kb:subspace-a"], "updated": []}, without_index(accept([str(renamed)])))
+
     def test_accept_moves_the_draft_into_entries(self) -> None:
         draft = self.draft("dimension", node("Dimension", "6", extra="understanding: no"))
         content = draft.read_bytes()
