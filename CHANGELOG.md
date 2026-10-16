@@ -33,6 +33,11 @@ gone. Delete any `.knowledge/sheets/` folder.
   foreign knowledge and a changed meaning as a replacement, and
   `compile-knowledge-sheets` became `compile-kgdistiller`, which drafts
   replacements instead of editing records. `harvest-kgdistiller` is removed.
+- Updating a record is drawing it into a draft: **Revise as draft** in the
+  lookup sidebar, or dragging the record onto the Capture view, copies it to
+  a draft with its id, which replaces the record when accepted. A draft still
+  equal to its record is valid; accepting it only removes it and reports it
+  under `updated`.
 - A label names one concept across every base: `kgd check` (rule `label`)
   and `kgd accept` refuse a label another record, or for a draft another
   draft, already has, and suggest `Label (source)`, the source's file name or

@@ -488,6 +488,16 @@ same knowledge point replaces its record through a draft with the same id (see
 - A draft whose id does not exist in `entries/` proposes a new record. A draft
   with the id of an accepted record of its base proposes that record's
   replacement: accepting it replaces the record's file, and the id stays.
+- Updating a record is drawing it into a draft. In the owner's words
+  (2026-10-15):
+
+  > 我如果要更新一个词条, 那么我是不是得先 search 这个词条? 那么其实, all we need is: 一个把现有词条从上半边, 重新拖动进 draft 侧的功能.
+
+  The record found by a lookup is copied, byte for byte, to `drafts/<id>.md`
+  (in Obsidian, by dragging it from the lookup sidebar onto the Capture view,
+  or **Revise as draft**); the owner edits that draft and accepts it, which
+  replaces the record. Until edited, the draft equals its record and
+  accepting it only removes it.
 - A draft's local links may target accepted records or other drafts of the
   same base; its cross-base links must target accepted records. A link to an
   id that exists in `entries/` always means the accepted record. Accepted
@@ -545,7 +555,7 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | `config` | `config.json` shape, base names, root nesting, the home outside every root, every root available, no symlinked `.knowledge`, `entries/` or `drafts/`, an unknown `--base`. |
 | `type` | Each `types/*.md` obeys the type rules; every type named in `sources` exists. |
 | `source-type` | No registered file maps to two types. |
-| `id` | The stem is a valid id; ids are unique within `entries/` and within `drafts/`, case-insensitively; a draft is not identical to the accepted record with its id. |
+| `id` | The stem is a valid id; ids are unique within `entries/` and within `drafts/`, case-insensitively. |
 | `frontmatter` | The record file is a regular file, not a symlink; the frontmatter parses; required keys present with the right shapes (`lines` for a local record, none for a foreign one); every non-fixed key is a role of `kind`; `understanding` is `yes` or `no`. |
 | `source` | A local `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root, and `lines` lies within it. A foreign one is a web address and is never fetched. |
 | `kind` | `kind` belongs to the source's type, or for a foreign record to a type registered for its base (all of those declaring it alike); a node kind has no role keys; a relation kind has a non-empty role value; `epistemic` is in the type's list. |
@@ -553,11 +563,9 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | `label` | No other accepted record, in any base, has a label with the same name key; for a draft, no other draft either, and no accepted record but the one it replaces. The message suggests `Label (source)`. |
 | `body` | The body obeys the body grammar. |
 
-Drafts follow the same rules with two changes: local links may also resolve to
-drafts, while cross-base links resolve only to accepted records; and a draft
-identical to the accepted record with its id (an accept interrupted between
-its two steps) is an error whose message says that rerunning `kgd accept`
-removes it. An accepted record that links a draft is told to accept it first.
+Drafts follow the same rules with one change: local links may also resolve to
+drafts, while cross-base links resolve only to accepted records. An accepted
+record that links a draft is told to accept it first.
 
 **Evidence freshness** applies to local records; a foreign record is never
 fresh, moved or stale. Quotes and source text are compared after
@@ -643,8 +651,9 @@ or relative to the working directory.
    A draft with the id of an accepted record replaces it, refused when the
    record's file changed after the draft's (its modification time is later):
    the replacement was drafted from an older record. A draft whose text equals
-   its accepted record (an earlier accept interrupted between link and unlink)
-   is only removed.
+   its accepted record, drawn from it and left unchanged or left by an accept
+   interrupted between link and unlink, is only removed and counts as
+   updated.
 3. On any problem print `{"refused": [{"path", "message"}]}`, exit 1 and write
    nothing. Problems in other records do not block acceptance.
 4. With `--dry-run` print `{"would_create": [uid], "would_update": [uid]}`.
@@ -738,10 +747,11 @@ When to ignore, replace or relocate knowledge that is already recorded
 follows [Conflicts, updates and relocation](#conflicts-updates-and-relocation);
 this section is how such a change is written.
 
-- **Replacement.** An agent writes the changed record as a draft with the
-  record's id, from a fresh read of the record, and the owner accepts it. The
-  owner edits accepted records by hand as they like; then the Obsidian plugin,
-  or the owner, runs `kgd check --base B` and `kgd index --no-embed`. A better
+- **Replacement.** The record is drawn into a draft with its id (the owner in
+  the Capture view, or an agent from a fresh read of the record), changed
+  there, and accepted. The owner may also edit accepted records by hand; then
+  the Obsidian plugin, or the owner, runs `kgd check --base B` and
+  `kgd index --no-embed`. A better
   name goes into `label` or `aliases`; the id stays.
 - **Delete.** The owner removes the file. `kgd check` then lists every inbound
   link left dangling, in this base and others; each is removed from its

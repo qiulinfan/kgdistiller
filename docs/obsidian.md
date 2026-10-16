@@ -109,6 +109,9 @@ knowledge.
   record's base is this vault, and otherwise through an `obsidian://open?path=`
   link in the vault that holds it. A foreign record has no source file; its
   web address is a link.
+- **Revise as draft**, or dragging the record's label onto the Capture view,
+  copies the record into a draft with its id, opened there: edit it and accept
+  it to replace the record. A draft already waiting under that id is kept.
 - **Localize here** appears on a foreign record when the lookup started from a
   selection in a registered source: the agent localizes the record to that
   passage in the Capture view ([Localization](#localization)).
@@ -504,6 +507,10 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   drafts it links, and otherwise lists `kgd accept`'s refusals. The view lists
   the drafts again whenever a draft file of this vault is saved, so an edit
   made in the editor is checked as soon as it is saved.
+- A record dragged from the lookup sidebar and dropped on the view is drawn
+  into a draft for revision, as **Revise as draft** does; the view is outlined
+  while it can be dropped. Until it is edited, the draft equals the record and
+  accepting it only removes it.
 - **Accept** runs `kgd accept` on the draft and the drafts it links, which
   indexes them and embeds them; the card reads "Accepting and embedding…"
   until it returns. On 2026-10-15 checking, accepting and indexing took about
