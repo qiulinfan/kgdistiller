@@ -122,9 +122,20 @@ vi.mock("../src/lookup-view", () => ({ VIEW_TYPE_KGDISTILLER_LOOKUP: "kgdistille
     }
   } }));
 const mainDocument = { defaultView: { name: "main window" } };
-const domSelection = { text: "" };
+/** DOM nodes as Obsidian's window has them: an element knows the view leaves it lies in and the text of its block. */
+class FakeNode { parentElement: FakeElement | null = null; }
+class FakeElement extends FakeNode {
+  constructor(readonly leaves: string[], readonly block: string) { super(); }
+  closest(selector: string): unknown {
+    if (selector.includes("workspace-leaf-content")) return this.leaves.some((type) => selector.includes(`data-type="${type}"`)) ? this : null;
+    return { textContent: this.block };
+  }
+}
+const domSelection: { text: string; anchor?: FakeNode } = { text: "" };
+vi.stubGlobal("Node", FakeNode);
+vi.stubGlobal("Element", FakeElement);
 vi.stubGlobal("document", mainDocument);
-vi.stubGlobal("activeWindow", { getSelection: () => ({ toString: () => domSelection.text }) });
+vi.stubGlobal("activeWindow", { getSelection: () => ({ toString: () => domSelection.text, anchorNode: domSelection.anchor ?? null }) });
 
 import KgdistillerPlugin from "../src/main";
 import { DEFAULT_SETTINGS, KgdistillerSettingTab } from "../src/settings";
@@ -178,7 +189,7 @@ function showSettings(plugin: KgdistillerPlugin): KgdistillerSettingTab {
 }
 beforeEach(() => {
   controls.headings.length = 0; controls.commands.length = 0; controls.settings.length = 0; controls.ribbons.length = 0;
-  controls.domEvents.length = 0; domSelection.text = "";
+  controls.domEvents.length = 0; domSelection.text = ""; delete domSelection.anchor;
   controls.stored = null; controls.secrets.clear();
   vi.clearAllMocks();
   controls.configure.mockImplementation(async (enabled: boolean) => ({ state: enabled ? "enabled" : "disabled" }));
@@ -659,7 +670,28 @@ describe("the agent", () => {
     Object.assign(plugin.settings, { provider: "test", model: "test-model" });
     domSelection.text = "masked autoencoder";
     await plugin.captureSelection();
-    expect(controls.notice).toHaveBeenLastCalledWith("Select text in a source file to capture it.");
+    expect(controls.notice).toHaveBeenLastCalledWith("Select text in a source file, or a concept in the kgdistiller sidebar, to capture it.");
     expect(controls.capture).not.toHaveBeenCalled();
+    // Text selected outside the kgdistiller views, such as in another plugin's pane, is no side selection either.
+    domSelection.anchor = new FakeElement(["file-explorer"], "masked autoencoder");
+    await plugin.captureSelection();
+    expect(controls.capture).not.toHaveBeenCalled();
+  });
+
+  it("captures a concept selected in a record shown in the lookup sidebar or the Capture view", async () => {
+    controls.stored = { kgdCommand: "/bin/kgd" };
+    const plugin = pluginFixture(); await plugin.onload();
+    plugin.settings.providers = [{ name: "test", kind: "custom", baseUrl: "https://example.org/v1", format: "chat-completions", levels: [], apiKey: "" }];
+    Object.assign(plugin.settings, { provider: "test", model: "test-model" });
+    for (const leaf of ["kgdistiller-lookup", "kgdistiller-capture"]) {
+      const text = new FakeNode();
+      text.parentElement = new FakeElement([leaf], "MAE builds on the denoising autoencoder.");
+      domSelection.anchor = text;
+      domSelection.text = " denoising\nautoencoder ";
+      await plugin.captureSelection();
+      expect(controls.capture).toHaveBeenLastCalledWith("denoising autoencoder");
+    }
+    expect(controls.capture).toHaveBeenCalledTimes(2);
+    expect(controls.notice).not.toHaveBeenCalled();
   });
 });

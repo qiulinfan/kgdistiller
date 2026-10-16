@@ -34,8 +34,8 @@ describe("result shaping", () => {
     expect(linksByRole([
       { role: "subject", pos: 0, uid: "papers:mae", label: "MAE", exists: true },
       { role: "uses", pos: 0, uid: "notes:dae", label: "DAE", exists: true },
-      { role: "uses", pos: 1, term: "masking ratio" },
-      { role: "requires", pos: 0, term: "ViT" },
+      { role: "uses", pos: 1, uid: "papers:masking-ratio", label: "Masking ratio", exists: true },
+      { role: "requires", pos: 0, uid: "notes:vit", label: null, exists: false },
     ]).map((group) => [group.role, group.links.length])).toEqual([["subject", 1], ["uses", 2], ["requires", 1]]);
   });
 });
@@ -45,22 +45,22 @@ describe("the requires chain", () => {
     ({ edges, records, missing: [], lag: LAG });
   const record = (label: string, kind = "definition") => ({ label, kind, class: "node", exists: true });
 
-  it("follows requires across bases, with pending terms and missing records as leaves", () => {
+  it("follows requires across bases, with missing records as leaves", () => {
     const tree = chainTree(neighbors([
       { from: "papers:mae", role: "requires", to: "notes:autoencoder", depth: 1 },
-      { from: "papers:mae", role: "requires", term: "mask token", depth: 1 },
-      { from: "notes:autoencoder", role: "requires", term: "latent variable", depth: 2 },
+      { from: "papers:mae", role: "requires", to: "papers:mask-token", depth: 1 },
       { from: "notes:autoencoder", role: "requires", to: "notes:gone", depth: 2 },
     ], {
       "papers:mae": record("Masked autoencoder", "architecture"),
       "notes:autoencoder": record("Autoencoder", "architecture"),
+      "papers:mask-token": record("Mask token"),
       "notes:gone": { label: null, kind: null, class: null, exists: false },
     }), "papers:mae");
     expect(tree).toMatchObject({ uid: "papers:mae", label: "Masked autoencoder", exists: true });
-    expect(tree.children.map((child) => child.label)).toEqual(["Autoencoder", "mask token"]);
-    expect(tree.children[1]).toEqual({ term: "mask token", label: "mask token", exists: false, repeated: false, children: [] });
+    expect(tree.children.map((child) => child.label)).toEqual(["Autoencoder", "Mask token"]);
+    expect(tree.children[1]).toMatchObject({ uid: "papers:mask-token", exists: true, repeated: false, children: [] });
     const autoencoder = tree.children[0]!;
-    expect(autoencoder.children.map((child) => [child.label, child.exists])).toEqual([["latent variable", false], ["notes:gone", false]]);
+    expect(autoencoder.children.map((child) => [child.label, child.exists])).toEqual([["notes:gone", false]]);
   });
 
   it("expands each record once and marks later occurrences and cycles as repeated", () => {
@@ -100,14 +100,12 @@ describe("the neighbour graph", () => {
   const around: NeighborsResult = {
     edges: [
       { from: "papers:mae", role: "requires", to: "notes:ae", depth: 1 },
-      { from: "papers:mae", role: "requires", term: "mask token", depth: 1 },
       { from: "papers:form", role: "subject", to: "papers:mae", depth: 1 },
       { from: "papers:form", role: "uses", to: "notes:dae", depth: 2 },
       { from: "papers:design", role: "subject", to: "papers:mae", depth: 1 },
       { from: "papers:design", role: "uses", to: "papers:encoder", depth: 2 },
       { from: "papers:design", role: "uses", to: "papers:decoder", depth: 2 },
       { from: "papers:ratio", role: "subject", to: "papers:mae", depth: 1 },
-      { from: "papers:ratio", role: "uses", term: "masking ratio", depth: 2 },
       { from: "papers:infers", role: "subject", to: "papers:mae", depth: 1 },
       { from: "papers:reasoning", role: "subject", to: "papers:infers", depth: 2 },
       { from: "notes:dae", role: "requires", to: "notes:ae", depth: 2 },
@@ -191,14 +189,13 @@ describe("the neighbour graph", () => {
 });
 
 describe("the open file", () => {
-  it("puts an accepted record in focus and lists a source or its sheet's source", () => {
+  it("puts an accepted record in focus and lists a source", () => {
     expect(openFileTarget(".knowledge/entries/masked-autoencoder.md", "papers")).toEqual({ uid: "papers:masked-autoencoder" });
     expect(openFileTarget("papers/mae/mae_ch.md", "papers")).toEqual({ handle: "papers:papers/mae/mae_ch.md" });
-    expect(openFileTarget(".knowledge/sheets/papers/mae/mae_ch.md.md", "papers")).toEqual({ handle: "papers:papers/mae/mae_ch.md" });
   });
 
   it("brings nothing for a draft or the rest of the knowledge folder", () => {
-    for (const path of [".knowledge/drafts/masked-autoencoder.md", ".knowledge/sheets", ".knowledge", ".knowledge/notes.md"]) {
+    for (const path of [".knowledge/drafts/masked-autoencoder.md", ".knowledge/sheets/papers/mae/mae_ch.md.md", ".knowledge", ".knowledge/notes.md"]) {
       expect(openFileTarget(path, "papers")).toBeUndefined();
     }
   });

@@ -7,7 +7,7 @@
 
 import type { ElementDefinition } from "cytoscape";
 
-import { entryId, KNOWLEDGE_DIRECTORY, sourceOfSheet } from "./records";
+import { entryId, KNOWLEDGE_DIRECTORY } from "./records";
 
 export interface Lag {
   changed_files: number;
@@ -23,17 +23,13 @@ export interface RecordSummary {
   base: string;
   source: string;
   lines: string;
+  /** Whether the source is a web address: knowledge outside the owner's files. */
+  foreign?: boolean;
   gloss: string;
 }
 
-export interface PendingUse {
-  owner: string;
-  role: string;
-  term: string;
-}
-
 export interface ResolveResult {
-  terms: Array<{ term: string; senses: RecordSummary[]; pending: PendingUse[] }>;
+  terms: Array<{ term: string; senses: RecordSummary[] }>;
   lag: Lag;
 }
 
@@ -49,14 +45,13 @@ export interface SearchResult {
   lag: Lag;
 }
 
-/** One out-link of a record: a link (`uid`, with `exists`) or a pending `term`. */
+/** One out-link of a record, with whether its target exists. */
 export interface OutLink {
   role: string;
   pos: number;
-  uid?: string;
-  label?: string | null;
-  exists?: boolean;
-  term?: string;
+  uid: string;
+  label: string | null;
+  exists: boolean;
 }
 
 export interface InLink {
@@ -72,6 +67,7 @@ export interface FullRecord extends RecordSummary {
   understanding: string;
   epistemic: string | null;
   body: string;
+  search_terms: string;
   evidence: string[];
   out: OutLink[];
   in: InLink[];
@@ -84,7 +80,7 @@ export interface GetResult {
 }
 
 export interface NeighborsResult {
-  edges: Array<{ from: string; role: string; to?: string; term?: string; depth: number }>;
+  edges: Array<{ from: string; role: string; to: string; depth: number }>;
   records: Record<string, { label: string | null; kind: string | null; class: string | null; exists: boolean }>;
   missing: string[];
   lag: Lag;
@@ -101,14 +97,12 @@ export interface SourceBrowse {
 /**
  * What the file open in the editor brings to the lookup, for a vault that is
  * the registered base `base`: an accepted record is put in focus, and a source
- * or its sheet lists the source's records. Drafts are not indexed, and nothing
- * else under the knowledge folder is a source.
+ * lists the source's records. Drafts are not indexed, and nothing else under
+ * the knowledge folder is a source.
  */
 export function openFileTarget(path: string, base: string): { uid: string } | { handle: string } | undefined {
   const id = entryId(path);
   if (id !== undefined) return { uid: `${base}:${id}` };
-  const source = sourceOfSheet(path);
-  if (source !== undefined) return { handle: `${base}:${source}` };
   if (path === KNOWLEDGE_DIRECTORY || path.startsWith(`${KNOWLEDGE_DIRECTORY}/`)) return undefined;
   return { handle: `${base}:${path}` };
 }
@@ -146,8 +140,7 @@ export function linksByRole(out: readonly OutLink[]): Array<{ role: string; link
 }
 
 export interface ChainNode {
-  uid?: string;
-  term?: string;
+  uid: string;
   label: string;
   kind?: string;
   exists: boolean;
@@ -160,7 +153,7 @@ export interface ChainNode {
  * The `requires` closure of `start` as a tree, from
  * `kg_neighbors --role requires --dir out`. Each record is expanded once, at
  * its first breadth-first occurrence; later occurrences and cycles are leaves
- * marked repeated. Pending terms and missing records are leaves.
+ * marked repeated. Missing records are leaves.
  */
 export function chainTree(result: NeighborsResult, start: string): ChainNode {
   const outgoing = new Map<string, NeighborsResult["edges"]>();
@@ -184,12 +177,7 @@ export function chainTree(result: NeighborsResult, start: string): ChainNode {
   const expanded = new Set([start]);
   const queue = [root];
   for (let current = queue.shift(); current; current = queue.shift()) {
-    for (const edge of outgoing.get(current.uid ?? "") ?? []) {
-      if (edge.to === undefined) {
-        const term = edge.term ?? "";
-        current.children.push({ term, label: term, exists: false, repeated: false, children: [] });
-        continue;
-      }
+    for (const edge of outgoing.get(current.uid) ?? []) {
       const child = node(edge.to);
       if (expanded.has(edge.to)) child.repeated = true;
       else {
@@ -278,7 +266,7 @@ export interface NeighbourGraph {
  * one step apart. A relation that another record links to, and the focus,
  * stay records in their own right: diamonds with their role edges. A relation
  * about a single record is no edge and is left out (the lookup lists it under
- * About it), and so are pending terms. Node records are circles coloured by
+ * About it). Node records are circles coloured by
  * kind, missing records red, and `requires` links dashed, one step each. At
  * most `limit` vertices are drawn, the nearest first.
  */
@@ -288,7 +276,7 @@ export function neighbourGraph(
   const info = (uid: string) => result.records[uid];
   const isRelation = (uid: string): boolean => info(uid)?.class === "relation";
   const missing = (uid: string): boolean => !(info(uid)?.exists ?? false);
-  const links = result.edges.flatMap((edge) => (edge.to === undefined ? [] : [{ from: edge.from, role: edge.role, to: edge.to }]));
+  const links = result.edges.map((edge) => ({ from: edge.from, role: edge.role, to: edge.to }));
   const roleLinks = new Map<string, Array<{ role: string; to: string }>>();
   const requires = new Map<string, string[]>();
   const linkedTo = new Set<string>();

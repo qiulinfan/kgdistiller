@@ -10,7 +10,6 @@ import caseFolds from "./case-folding.json";
 /** The product's single knowledge tree at a base root. */
 export const KNOWLEDGE_DIRECTORY = ".knowledge";
 const ENTRIES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/entries`;
-const SHEETS_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/sheets`;
 
 const ENTRY_PATH_RE = /^\.knowledge\/entries\/([^/]+)\.md$/;
 
@@ -20,14 +19,6 @@ export function entryId(path: string): string | undefined {
 }
 
 export const entryPath = (id: string): string => `${ENTRIES_DIRECTORY}/${id}.md`;
-
-/** The source a sheet path belongs to, or undefined when the path is not a sheet. */
-export function sourceOfSheet(path: string): string | undefined {
-  const prefix = `${SHEETS_DIRECTORY}/`;
-  if (!path.startsWith(prefix) || !path.endsWith(".md")) return undefined;
-  const source = path.slice(prefix.length, -".md".length);
-  return source === "" ? undefined : source;
-}
 
 const RANGE_RE = /^(\d+)(?:-(\d+))?$/;
 

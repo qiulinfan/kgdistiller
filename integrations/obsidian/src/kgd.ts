@@ -2,7 +2,7 @@
  * The plugin's connection to the local kgd command. Reads go through one
  * resident `kgd mcp` process, kgd's read-only MCP server over stdio; it loads
  * no model, and dense search uses the user's shared embedding process. Short
- * commands (`kgd base list`, `kgd sheet --json`, `kgd accept`, `kgd index`,
+ * commands (`kgd base list`, `kgd source`, `kgd accept`, `kgd index`,
  * `kgd index --no-embed`, `kgd embedding`) run as separate processes. kgd
  * stays the only reader of the kgdistiller home and its database: the plugin
  * never opens either itself.
@@ -118,7 +118,7 @@ export class KgdServer {
     return this.command(["index"], INDEX_TIMEOUT_MS);
   }
 
-  /** Run one kgd command that prints a JSON report, such as `sheet --json`, `accept` or `index --no-embed`. */
+  /** Run one kgd command that prints a JSON report, such as `source`, `accept` or `index --no-embed`. */
   async command(args: string[], timeout = REQUEST_TIMEOUT_MS, online = false): Promise<{ report: Record<string, unknown>; failed: boolean }> {
     const { stdout, failed } = await this.run(args, timeout, online);
     let report: unknown;

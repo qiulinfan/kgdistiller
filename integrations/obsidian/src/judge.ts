@@ -64,7 +64,7 @@ const JUDGE_TOOL = {
 export function candidateText(candidates: JudgeInput["candidates"]): string {
   return candidates.map((record, index) => {
     const requires = "requires" in record && Array.isArray(record.requires)
-      ? (record.requires as Array<{ label?: string | null; term?: string }>).map((value) => value.label ?? value.term).filter(Boolean)
+      ? (record.requires as Array<{ label?: string | null }>).map((value) => value.label).filter(Boolean)
       : [];
     const head = `[${index + 1}] ${record.label} · ${record.kind} ${record.class} · ${record.base}`;
     return `${head}${requires.length ? ` · requires: ${requires.join(", ")}` : ""}\n    ${record.gloss}`;

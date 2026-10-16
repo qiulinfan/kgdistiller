@@ -127,8 +127,8 @@ default with a notice, and unknown keys are ignored.
 - **Look up.** Select text and hold ⌘ (Ctrl elsewhere) for 0.3 s, run **Look
   up selection**, or type into the sidebar's search box (**Open kgdistiller**
   in the ribbon or **Search knowledge** puts the cursor there). The sidebar
-  shows the records of the same name, those that use the name as a pending
-  term, the record in focus with its neighbours within 3 steps (relations as
+  shows the records of the same name, the record in focus with its
+  neighbours within 3 steps (relations as
   edges, the wheel zooming the graph, a collapsible legend), and the related
   records. Opening a record or a source in the editor focuses it too.
 - **Re-embed**, below the search box, is solid with a count while records'

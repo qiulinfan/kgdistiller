@@ -326,10 +326,10 @@ describe("native hidden knowledge indexing", () => {
 
   it("indexes the whole knowledge folder by default", async () => {
     const { indexer, disk, loaded } = fixture();
-    disk.set(".knowledge/sheets", "folder");
-    disk.set(".knowledge/sheets/chapter.tex.md", "file");
+    disk.set(".knowledge/drafts", "folder");
+    disk.set(".knowledge/drafts/measure.md", "file");
     expect((await indexer.configure(true)).state).toBe("enabled");
-    expect(loaded.has(".knowledge/sheets/chapter.tex.md")).toBe(true);
+    expect(loaded.has(".knowledge/drafts/measure.md")).toBe(true);
     expect(loaded.has(".knowledge/entries/definition.md")).toBe(true);
   });
 });

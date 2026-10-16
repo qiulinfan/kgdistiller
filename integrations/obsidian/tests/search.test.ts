@@ -54,7 +54,7 @@ describe("the search prompt", () => {
   it("gives the question, the first results and the looked-up names", () => {
     const hit = { ...mae, epistemic: null, ranks: {} };
     expect(searchUser("What is BEiT?", { query: "", lanes: [], results: [hit], lag: {} as never },
-      { terms: [{ term: "BEiT", senses: [], pending: [] }], lag: {} as never })).toBe([
+      { terms: [{ term: "BEiT", senses: [] }], lag: {} as never })).toBe([
       "Question: What is BEiT?",
       "Knowledge base search for the question:\n[papers:masked-autoencoder] Masked autoencoder · architecture node · papers — Masked autoencoder.",
       "Names in the question, looked up in every base:\n\"BEiT\":\n  - no record has this name",
@@ -63,26 +63,26 @@ describe("the search prompt", () => {
 
   it("shows whole records and links compactly", () => {
     const records: GetResult["records"] = [{
-      ...noAug, id: "x", aliases: [], understanding: "unknown", epistemic: "empirical", body: "MAE works\nwell.",
+      ...noAug, id: "x", aliases: [], understanding: "yes", search_terms: "", epistemic: "empirical", body: "MAE works\nwell.",
       evidence: ["即使没有 data augmentation，MAE 也有不错表现。"],
-      out: [{ role: "subject", pos: 0, uid: mae.uid, label: mae.label, exists: true }, { role: "uses", pos: 0, term: "data augmentation" }],
+      out: [{ role: "subject", pos: 0, uid: mae.uid, label: mae.label, exists: true }, { role: "uses", pos: 0, uid: "papers:data-augmentation", label: "Data augmentation", exists: true }],
       in: [{ uid: "papers:y", label: "Y", kind: "compares", role: "baseline" }],
     }];
     expect(recordText(records)).toBe([
       `[${noAug.uid}] MAE works without data augmentation · property relation · papers · s.md L1 · empirical`,
       "Statement: MAE works well.",
       "Evidence: 即使没有 data augmentation，MAE 也有不错表现。",
-      `Links: subject: [${mae.uid}] Masked autoencoder; uses: data augmentation (pending)`,
+      `Links: subject: [${mae.uid}] Masked autoencoder; uses: [papers:data-augmentation] Data augmentation`,
       "Linked from: baseline of [papers:y] Y (compares)",
     ].join("\n"));
     const around: NeighborsResult = {
-      edges: [{ from: mae.uid, role: "requires", to: "notes:autoencoder", depth: 1 }, { from: mae.uid, role: "requires", term: "mask token", depth: 1 }],
+      edges: [{ from: mae.uid, role: "requires", to: "notes:autoencoder", depth: 1 }, { from: mae.uid, role: "requires", to: "papers:mask-token", depth: 1 }],
       records: { [mae.uid]: { label: mae.label, kind: "architecture", class: "node", exists: true }, "notes:autoencoder": { label: "Autoencoder", kind: "architecture", class: "node", exists: true } },
       missing: [], lag: {} as never,
     };
     expect(neighborText(around)).toBe([
       `[${mae.uid}] Masked autoencoder -requires-> [notes:autoencoder] Autoencoder (depth 1)`,
-      `[${mae.uid}] Masked autoencoder -requires-> mask token (pending) (depth 1)`,
+      `[${mae.uid}] Masked autoencoder -requires-> [papers:mask-token] (depth 1)`,
     ].join("\n"));
   });
 
@@ -98,7 +98,7 @@ describe("searching", () => {
   const kgd: SearchKgd = {
     async call<T>(tool: string, args: Record<string, unknown>): Promise<T> {
       if (tool === "kg_search") return { query: args.query, lanes: ["lexical"], results: [mae], lag: {} } as T;
-      if (tool === "kg_resolve") return { terms: (args.terms as string[]).map((term) => ({ term, senses: [], pending: [] })), lag: {} } as T;
+      if (tool === "kg_resolve") return { terms: (args.terms as string[]).map((term) => ({ term, senses: [] })), lag: {} } as T;
       if (tool === "kg_get") return { records: [], missing: args.uids, lag: {} } as T;
       throw new Error(`unexpected ${tool}`);
     },

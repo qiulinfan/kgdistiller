@@ -11,7 +11,7 @@
  */
 
 import { runJob, type Complete, type Tool } from "./agent";
-import { arxivByTitle, arxivId, arxivUrl, normalizeTitle, type Encyclopedia, type Fetch, type Reference, type SourceOpening } from "./sources";
+import { arxivByTitle, arxivId, arxivUrl, normalizeTitle, wikipediaArticles, type Encyclopedia, type Fetch, type Reference, type SourceOpening } from "./sources";
 import type { WebSource } from "./web";
 
 /** Web results beyond this many are not shown to the model. */
@@ -228,4 +228,34 @@ export async function judgeOrigin(complete: Complete, fetch: Fetch, input: Origi
     ...(judged.wikipedia ? { wikipedia: judged.wikipedia } : {}),
     ...(await originWork(fetch, judged)),
   };
+}
+
+/** What finding a term's origin needs: the model, the fetcher for Wikipedia and arXiv, and the web search. */
+export interface OriginServices {
+  complete: Complete;
+  fetch: Fetch;
+  webSearch(query: string): Promise<WebSource[]>;
+}
+
+/**
+ * Where a term comes from: one web search and Wikipedia's articles, together,
+ * then the judgment among them and the references the text cites. Either
+ * service failing leaves the other's candidates to judge; `failures` says which
+ * failed.
+ */
+export async function findOrigin(services: OriginServices, input: Omit<OriginInput, "results" | "articles">):
+  Promise<{ origin: Origin; failures: string[] }> {
+  const failures: string[] = [];
+  const [results, articles] = await Promise.all([
+    services.webSearch(originQuery(input.term)).catch((error: unknown) => {
+      failures.push(`The web search failed: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }),
+    wikipediaArticles(input.term, services.fetch).catch((error: unknown) => {
+      failures.push(`Wikipedia did not answer: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }),
+  ]);
+  const origin = await judgeOrigin(services.complete, services.fetch, { ...input, results, articles });
+  return { origin, failures };
 }

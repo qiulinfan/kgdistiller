@@ -5,6 +5,7 @@ import {
   arxivByTitle,
   arxivFeed,
   arxivId,
+  arxivPaper,
   citedReferences,
   fetchError,
   findWikipedia,
@@ -17,6 +18,7 @@ import {
   wikipediaTitles,
   wikiPlain,
   wikiSection,
+  wikipediaText,
 } from "../src/sources";
 
 describe("the source being read", () => {
@@ -75,12 +77,15 @@ describe("arXiv records", () => {
   });
 
   const FEED = `<feed><entry><id>http://arxiv.org/abs/2111.06377v3</id><published>2021-11-11T18:46:40Z</published><title>Masked Autoencoders Are Scalable
-      Vision Learners</title></entry><entry><id>http://arxiv.org/abs/1312.6114v11</id><published>2013-12-20T20:58:10Z</published><title>Auto-Encoding Variational Bayes &amp; more</title></entry></feed>`;
+      Vision Learners</title><summary>  This paper shows that masked autoencoders (MAE) are
+      scalable self-supervised learners &amp; more.
+</summary></entry><entry><id>http://arxiv.org/abs/1312.6114v11</id><published>2013-12-20T20:58:10Z</published><title>Auto-Encoding Variational Bayes &amp; more</title></entry></feed>`;
 
-  it("are read from an arXiv feed with their titles and years", () => {
+  it("are read from an arXiv feed with their titles, years and abstracts", () => {
     expect(arxivFeed(FEED)).toEqual([
-      { arxiv: "2111.06377", title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021" },
-      { arxiv: "1312.6114", title: "Auto-Encoding Variational Bayes & more", year: "2013" },
+      { arxiv: "2111.06377", title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021",
+        abstract: "This paper shows that masked autoencoders (MAE) are scalable self-supervised learners & more." },
+      { arxiv: "1312.6114", title: "Auto-Encoding Variational Bayes & more", year: "2013", abstract: "" },
     ]);
     expect(arxivFeed("<feed><entry><id>http://arxiv.org/api/errors#incorrect_id_format_for_x</id><title>Error</title></entry></feed>")).toEqual([]);
   });
@@ -95,7 +100,7 @@ describe("arXiv records", () => {
     const same = arxivByTitle(fetch, "Masked autoencoders are scalable vision learners");
     const other = arxivByTitle(fetch, "Masked autoencoders");
     await vi.advanceTimersByTimeAsync(ARXIV_INTERVAL_MS);
-    await expect(same).resolves.toEqual({ arxiv: "2111.06377", title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021" });
+    await expect(same).resolves.toMatchObject({ arxiv: "2111.06377", title: "Masked Autoencoders Are Scalable Vision Learners", year: "2021" });
     await expect(other).resolves.toBeUndefined();
     expect(urls).toEqual([
       "https://export.arxiv.org/api/query?search_query=ti%3A%22Masked%20autoencoders%20are%20scalable%20vision%20learners%22&max_results=10",
@@ -118,6 +123,13 @@ describe("arXiv records", () => {
     await vi.advanceTimersByTimeAsync(1);
     await asked;
     expect(times[1]! - times[0]!).toBe(ARXIV_INTERVAL_MS);
+  });
+
+  it("are read one paper by its id", async () => {
+    const urls: string[] = [];
+    const paper = await arxivPaper(async (url) => { urls.push(url); return FEED; }, "2111.06377");
+    expect(paper).toMatchObject({ arxiv: "2111.06377", abstract: expect.stringContaining("masked autoencoders (MAE)") });
+    expect(urls).toEqual(["https://export.arxiv.org/api/query?id_list=2111.06377&max_results=1"]);
   });
 
   it("compare titles without case, punctuation or plurals", () => {
@@ -237,6 +249,22 @@ describe("finding Wikipedia's entry", () => {
     expect(urls.find((url) => url.includes("generator=search"))).toContain("gsrsearch=latent%20representation&gsrlimit=3");
     await expect(wikipediaArticles("BEiT", async (url) => JSON.stringify({ query: { pages: url.includes("generator=search") ? [] : [{ title: "BEiT", missing: true }] } })))
       .resolves.toEqual([]);
+  });
+
+  it("reads an article's text at the section a redirect points into, or else its lead", async () => {
+    const urls: string[] = [];
+    const section = await wikipediaText(async (url) => {
+      urls.push(url);
+      return JSON.stringify({ query: { pages: [{ title: "Vision transformer", revisions: [{ slots: { main: { content: VISION_TRANSFORMER } } }] }] } });
+    }, { title: "Vision transformer", url: "https://en.wikipedia.org/wiki/Vision_transformer#Masked_Autoencoder", extract: "", section: "Masked Autoencoder" });
+    expect(section).toBe("The Masked Autoencoder took inspiration from denoising autoencoders. It has two ViTs put end-to-end. Later text.");
+    const lead = await wikipediaText(async (url) => {
+      urls.push(url);
+      return JSON.stringify({ query: { pages: [{ title: "Autoencoder", extract: " An autoencoder learns codings.\n\nIt has an encoder. " }] } });
+    }, { title: "Autoencoder", url: "https://en.wikipedia.org/wiki/Autoencoder", extract: "" });
+    expect(lead).toBe("An autoencoder learns codings.\n\nIt has an encoder.");
+    expect(urls[0]).toContain("prop=revisions");
+    expect(urls[1]).toContain("prop=extracts&exintro=1&explaintext=1");
   });
 
   it("is undefined without an article, and a service's error says why", async () => {

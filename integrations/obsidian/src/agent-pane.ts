@@ -14,9 +14,9 @@ import type { ModelClient } from "./model";
 import { judgeSelection, type Judgment } from "./judge";
 import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
-import { judgeOrigin, originQuery, type Origin } from "./origin";
+import { findOrigin, type Origin, type OriginServices } from "./origin";
 import { answerMarkdown, searchKnowledge, stepText, type Reading, type SearchAnswer } from "./search";
-import { arxivId, citedReferences, sourceOpening, wikipediaArticles, type Encyclopedia, type Fetch, type Reference } from "./sources";
+import { arxivId, citedReferences, sourceOpening, type Encyclopedia, type Fetch, type Reference } from "./sources";
 import type { WebSource } from "./web";
 
 /** The selected passage a lookup started from. */
@@ -27,6 +27,8 @@ export interface Selection {
   context: string;
   /** Where the selection lies, when its source file and lines are known. */
   source?: { path: string; from: number; to: number };
+  /** The selection was made in the lookup sidebar or the Capture view, in a record or draft. */
+  side?: boolean;
 }
 
 export interface AgentHost {
@@ -69,7 +71,7 @@ export class AgentPane {
     this.request++;
     for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.sourcesEl]) element.empty();
     if (!selection || !this.host.model.configured() || question) return;
-    if (selection.source) this.button("Capture", true, (button) => this.capture(button));
+    if (selection.source || selection.side) this.button("Capture", true, (button) => this.capture(button));
     this.button("Find sources", false, (button) => this.sources(button));
   }
 
@@ -199,7 +201,7 @@ export class AgentPane {
   /** Hand the selection to the Capture view, once per lookup. */
   private async capture(button: HTMLButtonElement): Promise<void> {
     const selection = this.selection;
-    if (!selection?.source) return;
+    if (!selection?.source && !selection?.side) return;
     button.disabled = true;
     button.setText("Drafting in Capture");
     this.host.capture(selection);
@@ -226,31 +228,18 @@ export class AgentPane {
     const started = performance.now();
     const section = element.createDiv({ cls: "kgd-lookup-section" });
     section.createEl("h4", { text: "Where it comes from" });
-    const status = section.createDiv({ cls: "kgd-lookup-hint", text: "Searching the web and Wikipedia…" });
+    const status = section.createDiv({ cls: "kgd-lookup-hint", text: "Searching the web and Wikipedia, then judging…" });
     const lines = selection.source
       ? (await this.host.captureFiles.read(selection.source.path).catch(() => "")).replace(/\r\n?/g, "\n").split("\n")
       : [];
     const source = selection.source && lines.some((line) => line.trim()) ? sourceOpening(lines, selection.source.path) : undefined;
     const references = selection.source ? citedReferences(lines.slice(selection.source.from - 1, selection.source.to).join("\n"), lines) : [];
     if (references.length > 0) this.renderReferences(references);
-    // Either service failing leaves the other's candidates to judge; the sidebar says which failed.
-    const failures: string[] = [];
-    const [results, articles] = await Promise.all([
-      this.host.webSearch(originQuery(selection.text)).catch((error: unknown) => {
-        failures.push(`The web search failed: ${message(error)}`);
-        return [];
-      }),
-      wikipediaArticles(selection.text, this.host.fetchText).catch((error: unknown) => {
-        failures.push(`Wikipedia did not answer: ${message(error)}`);
-        return [];
-      }),
-    ]);
-    if (request !== this.request) return;
-    status.setText("Judging where it comes from…");
     let origin: Origin;
+    let failures: string[];
     try {
-      origin = await judgeOrigin((chat) => this.host.model.complete(chat), this.host.fetchText,
-        { term: selection.text, context: selection.context, ...(source ? { source } : {}), references, results, articles });
+      ({ origin, failures } = await findOrigin(this.originServices(),
+        { term: selection.text, context: selection.context, ...(source ? { source } : {}), references }));
     } catch (error) {
       if (request !== this.request) return;
       status.remove();
@@ -263,6 +252,10 @@ export class AgentPane {
     this.renderOrigin(section, origin, performance.now() - started);
     this.renderWikipedia(section, origin.wikipedia);
     for (const failure of failures) section.createDiv({ cls: "kgd-lookup-hint", text: failure });
+  }
+
+  private originServices(): OriginServices {
+    return { complete: (chat) => this.host.model.complete(chat), fetch: this.host.fetchText, webSearch: (query) => this.host.webSearch(query) };
   }
 
   private renderOrigin(element: HTMLElement, origin: Origin, ms: number): void {

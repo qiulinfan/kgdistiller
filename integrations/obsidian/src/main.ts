@@ -20,6 +20,8 @@ import {
   type ReasoningChoices,
 } from "./providers";
 import type { Reading } from "./search";
+import type { LocalizeInput, LocalizeTarget } from "./localize";
+import type { OriginServices } from "./origin";
 import { webSearch, type WebSource } from "./web";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
@@ -105,20 +107,39 @@ export default class KgdistillerPlugin extends Plugin {
     return webSearch(this.secret(this.settings.exaKey), query, this.api.postText);
   }
 
-  /** The registered source open in the main area's editor or reading view, from `kgd sheet --json`, which writes nothing. */
+  /** The registered source open in the main area's editor or reading view, from `kgd source`, which writes nothing. */
   async reading(): Promise<Reading | undefined> {
-    const root = this.vaultRoot();
-    // The question is typed in the sidebar, so the note being read is the main area's most recent leaf, not the active one.
-    const view = this.app.workspace.getMostRecentLeaf()?.view;
-    const file = view instanceof MarkdownView ? view.file : null;
-    if (!root || !file) return undefined;
+    const path = this.mainAreaPath();
+    if (!path) return undefined;
     try {
-      const { report, failed } = await this.kgd.command(["sheet", `${root}/${file.path}`, "--json"]);
+      const { report, failed } = await this.kgd.command(["source", path]);
       const { base, source, type } = report as Partial<Reading>;
       return !failed && base && source && type ? { base, source, type } : undefined;
     } catch {
       return undefined;
     }
+  }
+
+  /** The file open in the main area, as an absolute path: the note being read while the sidebar has focus. */
+  private mainAreaPath(): string | undefined {
+    const root = this.vaultRoot();
+    const view = this.app.workspace.getMostRecentLeaf()?.view;
+    const file = view instanceof MarkdownView ? view.file : null;
+    return root && file ? `${root}/${file.path}` : undefined;
+  }
+
+  /** The registered source being read, whose base and type a capture made in a side pane uses. */
+  async readingPath(): Promise<string | undefined> {
+    return (await this.reading()) ? this.mainAreaPath() : undefined;
+  }
+
+  /** The current selection, as a lookup reads it. */
+  currentSelection(): Promise<Selection | undefined> {
+    return this.selection();
+  }
+
+  originServices(): OriginServices {
+    return { complete: (chat) => this.model.complete(chat), fetch: this.fetchText, webSearch: (query) => this.webSearch(query) };
   }
   /** Source lookups name the plugin to Wikipedia and arXiv, as Wikimedia asks. */
   readonly fetchText: Fetch = async (url) => {
@@ -240,8 +261,8 @@ export default class KgdistillerPlugin extends Plugin {
       return;
     }
     const selection = await this.selection();
-    if (!selection?.source) {
-      new Notice("Select text in a source file to capture it.");
+    if (!selection?.source && !selection?.side) {
+      new Notice("Select text in a source file, or a concept in the kgdistiller sidebar, to capture it.");
       return;
     }
     const view = await this.lookupView();
@@ -257,6 +278,15 @@ export default class KgdistillerPlugin extends Plugin {
     const pathOf = (file: TFile | null | undefined) => (root && file ? `${root}/${file.path}` : undefined);
     const active = this.app.workspace.activeEditor;
     const editor = active?.editor;
+    const dom = activeWindow.getSelection();
+    // Text selected in the sidebar or the Capture view, in a record or a draft, is looked up like any text.
+    const side = dom?.anchorNode instanceof Node ? (dom.anchorNode instanceof Element ? dom.anchorNode : dom.anchorNode.parentElement) : null;
+    const pane = side?.closest(`.workspace-leaf-content[data-type="${VIEW_TYPE_KGDISTILLER_LOOKUP}"], .workspace-leaf-content[data-type="${VIEW_TYPE_KGDISTILLER_CAPTURE}"]`);
+    if (pane && dom?.toString().trim()) {
+      const text = lookupQuery(dom.toString());
+      const context = side?.closest(READING_BLOCKS)?.textContent ?? "";
+      return text ? { text, context, side: true } : undefined;
+    }
     const fromEditor = editor?.getSelection() ?? "";
     if (editor && fromEditor.trim()) {
       const from = editor.getCursor("from");
@@ -269,7 +299,6 @@ export default class KgdistillerPlugin extends Plugin {
     }
     const markdown = this.app.workspace.getActiveViewOfType(MarkdownView);
     const path = pathOf(markdown?.file);
-    const dom = activeWindow.getSelection();
     const reading = markdown?.getMode() === "preview" && !dom?.toString().trim() ? this.readingSelection : undefined;
     const selected = reading?.text ?? dom?.toString() ?? "";
     const text = lookupQuery(selected);
@@ -307,7 +336,12 @@ export default class KgdistillerPlugin extends Plugin {
     void this.captureView().then((view) => view?.startCapture(selection));
   }
 
-  /** A capture found the selection borrowed: the lookup sidebar still showing it finds where it comes from. */
+  /** Move a foreign record's evidence to a passage of a local source, as a draft, in the Capture view. */
+  localize(target: LocalizeTarget, input: LocalizeInput): void {
+    void this.captureView().then((view) => view?.startLocalize(target, input));
+  }
+
+  /** A capture found the selection borrowed and drafted nothing: the lookup sidebar still showing it finds where it comes from. */
   borrowed(selection: Selection): void {
     for (const view of this.lookupViews()) void view.sourcesFor(selection);
   }

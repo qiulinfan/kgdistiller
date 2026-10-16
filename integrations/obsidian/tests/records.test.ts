@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { entryId, entryPath, firstLine, fold, sourceOfSheet } from "../src/records";
+import { entryId, entryPath, firstLine, fold } from "../src/records";
 
 describe("knowledge paths", () => {
   it("reads an accepted record's id, and only an accepted record's", () => {
@@ -13,12 +13,6 @@ describe("knowledge paths", () => {
     }
   });
 
-  it("reads a sheet's source", () => {
-    expect(sourceOfSheet(".knowledge/sheets/notes/chapter.tex.md")).toBe("notes/chapter.tex");
-    expect(sourceOfSheet(".knowledge/entries/measure.md")).toBeUndefined();
-    expect(sourceOfSheet(".knowledge/sheets/notes/chapter.tex")).toBeUndefined();
-    expect(sourceOfSheet(".knowledge/sheets/.md")).toBeUndefined();
-  });
 
   it("parses the first line of a lines value", () => {
     expect(firstLine("3-7")).toBe(3);

@@ -5,7 +5,8 @@
  * related, and for the record in focus its links, the relations about it, the
  * records built on it, its `requires` chain and a typed graph of its
  * neighbours with a legend. Opening an accepted record puts it in focus, and
- * opening a source or its sheet lists the records the source defines. Every
+ * opening a source lists the records the source defines. A foreign record
+ * found while reading a local copy of its work can be localized there. Every
  * answer comes from `kgd mcp`, so it covers every registered base; same name
  * is not same concept, so name matches are shown as candidates to compare.
  * When the agent is set up, its judgment of a selection, Capture, the sources
@@ -18,6 +19,7 @@ import { Component, ItemView, MarkdownRenderer, Notice, setIcon, type App, type 
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
+import { recordTarget, type LocalizeInput, type LocalizeTarget } from "./localize";
 import { needsEmbedding, type Indexer } from "./indexing";
 import {
   chainTree,
@@ -50,8 +52,6 @@ export const VIEW_TYPE_KGDISTILLER_LOOKUP = "kgdistiller-lookup-view";
 export const LOOKUP_ICON = "scan-search";
 const SEARCH_LIMIT = 10;
 const CHAIN_DEPTH = 3;
-/** The most uids one `kg_get` call takes. */
-const MAX_UIDS = 128;
 /** The neighbour graph's styles, as its legend lists them: swatch class and meaning. */
 const LEGEND: ReadonlyArray<readonly [string, string]> = [
   ["focus", "Large circle with an accent ring: the record in focus"],
@@ -75,6 +75,8 @@ export interface LookupHost extends AgentHost {
   reasoningChoices(): ReasoningChoices;
   chooseReasoning(choice: ReasoningChoice): Promise<void>;
   indexer: Indexer;
+  /** Move a foreign record's evidence to a passage of a local source, as a draft, in the Capture view. */
+  localize(target: LocalizeTarget, input: LocalizeInput): void;
 }
 
 type Settled<T> = { value: T; error?: undefined } | { value?: undefined; error: string };
@@ -102,8 +104,6 @@ export class KgdistillerLookupView extends ItemView {
   private followed: string | undefined;
   private resolved: Settled<ResolveResult> | undefined;
   private searched: Settled<SearchResult> | undefined;
-  /** Labels of the records that use the query as a pending term; uids are never shown. */
-  private ownerLabels = new Map<string, string>();
   private focus: string | undefined;
   /** The record the lookup put in focus itself; the agent's match may replace only this one. */
   private autoFocus: string | undefined;
@@ -185,8 +185,8 @@ export class KgdistillerLookupView extends ItemView {
 
   /**
    * Follow the file open in the editor: an accepted record of this vault's
-   * base comes into focus, and a source or its sheet lists the records the
-   * source defines. A file that is neither, or a lookup started meanwhile,
+   * base comes into focus, and a source lists the records the source
+   * defines. A file that is neither, or a lookup started meanwhile,
    * leaves the sidebar as it is.
    */
   private async follow(path: string | undefined): Promise<void> {
@@ -227,7 +227,6 @@ export class KgdistillerLookupView extends ItemView {
     this.listed = browse;
     this.resolved = undefined;
     this.searched = undefined;
-    this.ownerLabels = new Map();
     this.queryEl?.setText(browse.source);
     this.agent?.reset(undefined);
     this.renderResults();
@@ -308,7 +307,6 @@ export class KgdistillerLookupView extends ItemView {
     this.focus = undefined;
     this.autoFocus = undefined;
     ++this.focusRequest;
-    this.ownerLabels = new Map();
     this.queryEl?.setText(query);
     this.agent?.reset(selection, options.question);
     if (options.capture) void this.agent?.startCapture();
@@ -319,12 +317,6 @@ export class KgdistillerLookupView extends ItemView {
     // kgd mcp answers one call at a time, so asking in this order costs nothing.
     this.resolved = await settle(this.host.kgd.call<ResolveResult>("kg_resolve", { terms: [query] }));
     if (request !== this.lookupRequest) return;
-    const owners = [...new Set((this.resolved.value?.terms[0]?.pending ?? []).map((use) => use.owner))].slice(0, MAX_UIDS);
-    if (owners.length > 0) {
-      const got = await settle(this.host.kgd.call<GetResult>("kg_get", { uids: owners }));
-      if (request !== this.lookupRequest) return;
-      this.ownerLabels = new Map((got.value?.records ?? []).map((record) => [record.uid, record.label]));
-    }
     this.renderResults();
     this.searched = await settle(this.host.kgd.call<SearchResult>("kg_search", { query, limit: SEARCH_LIMIT }));
     if (request !== this.lookupRequest) return;
@@ -373,19 +365,9 @@ export class KgdistillerLookupView extends ItemView {
     }
     if (!this.resolved) return;
     const senses = this.senses();
-    const pending = this.resolved.value?.terms[0]?.pending ?? [];
     if (senses.length > 0) {
       const section = this.section(container, "Same name", "Records whose label or alias is this name. A shared name does not make it the same concept: compare the definitions.");
       for (const record of senses) this.hit(section, record);
-    }
-    if (pending.length > 0) {
-      const section = this.section(container, "Pending", "Records that use this name as a pending term: no base defines it yet.");
-      for (const use of pending) {
-        const row = section.createDiv({ cls: "kgd-lookup-hit" });
-        row.createSpan({ cls: "kgd-lookup-label", text: this.ownerLabels.get(use.owner) ?? use.owner });
-        row.createSpan({ cls: "kgd-lookup-meta", text: ` · ${use.role}` });
-        row.addEventListener("click", () => void this.show(use.owner));
-      }
     }
     const search = this.searched?.value;
     if (search) {
@@ -395,7 +377,7 @@ export class KgdistillerLookupView extends ItemView {
         const section = this.section(relatedContainer, "Related", `Ranked by ${search.lanes.join(", ")}.`);
         for (const hit of related) this.hit(section, hit, rankText(search.lanes, hit.ranks));
       }
-      if (senses.length === 0 && pending.length === 0 && search.results.length === 0) {
+      if (senses.length === 0 && search.results.length === 0) {
         container.createDiv({ cls: "kgd-lookup-status", text: "Nothing in the knowledge base matches this selection." });
       }
     }
@@ -500,8 +482,15 @@ export class KgdistillerLookupView extends ItemView {
     pane.createDiv({ cls: `kgd-kind kgd-kind-${record.class}`, text: record.class });
     pane.createEl("h3", { text: record.label });
     this.row(pane, "Kind", record.kind);
-    this.row(pane, "Source", `${record.base} · ${record.source} · L${record.lines}`);
-    this.row(pane, "Understanding", record.understanding);
+    if (record.foreign) {
+      const row = pane.createDiv({ cls: "kgd-detail-row" });
+      row.createEl("strong", { text: "Source: " });
+      row.createSpan({ text: `${record.base} · foreign · ` });
+      row.createEl("a", { text: record.source, href: record.source });
+    } else {
+      this.row(pane, "Source", `${record.base} · ${record.source} · L${record.lines}`);
+    }
+    this.row(pane, "Understood", record.understanding);
     if (record.epistemic) this.row(pane, "Epistemic", record.epistemic);
     if (record.aliases.length > 0) this.row(pane, "Aliases", record.aliases.join(", "));
 
@@ -511,7 +500,12 @@ export class KgdistillerLookupView extends ItemView {
       button.addEventListener("click", () => void run());
     };
     action("Open record", true, () => this.openInBase(record.base, entryPath(record.id)));
-    action("Open source", false, () => this.openInBase(record.base, record.source, firstLine(record.lines)));
+    if (!record.foreign) action("Open source", false, () => this.openInBase(record.base, record.source, firstLine(record.lines)));
+    // A foreign record found from a selection in a local source can move its evidence there.
+    const at = this.selection?.source;
+    if (record.foreign && at) {
+      action("Localize here", false, async () => this.host.localize(recordTarget(record), { ...at, selection: this.selection!.text }));
+    }
 
     this.renderNeighbours(pane, around, record.uid);
 
@@ -527,8 +521,7 @@ export class KgdistillerLookupView extends ItemView {
         item.createSpan({ cls: "kgd-lookup-role", text: `${group.role}: ` });
         group.links.forEach((link, index) => {
           if (index > 0) item.createSpan({ text: ", " });
-          if (link.uid === undefined) item.createSpan({ cls: "kgd-pending-term", text: link.term ?? "" });
-          else this.recordLink(item, link.uid, link.label ?? link.uid, link.exists ?? false);
+          this.recordLink(item, link.uid, link.label ?? link.uid, link.exists);
         });
       }
     }
@@ -616,11 +609,6 @@ export class KgdistillerLookupView extends ItemView {
   private renderChain(list: HTMLElement, nodes: readonly ChainNode[]): void {
     for (const node of nodes) {
       const item = list.createEl("li");
-      if (node.uid === undefined) {
-        item.createSpan({ cls: "kgd-pending-term", text: node.label });
-        item.createSpan({ cls: "kgd-lookup-meta", text: " · pending" });
-        continue;
-      }
       this.recordLink(item, node.uid, node.label, node.exists);
       if (node.kind) item.createSpan({ cls: "kgd-lookup-meta", text: ` · ${node.kind}` });
       if (node.repeated) item.createSpan({ cls: "kgd-lookup-meta", text: " · shown above" });

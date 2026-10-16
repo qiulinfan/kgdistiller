@@ -1,23 +1,30 @@
 /**
- * The Capture view: the agent's captures while it drafts them, and every
- * draft waiting for the owner. Capture never accepts: it writes a draft, which
- * appears here in full as `kg_drafts` reads it from the file, with each value's
- * target and what `kgd accept` would refuse. Accept admits the draft with the
- * drafts it links (`kgd accept`, which indexes and embeds them); Open draft
- * opens the file beside the source for editing; Discard deletes it. The view
- * lists the drafts again whenever a draft file of this vault changes, so an
- * edit is checked as soon as it is saved. Record ids and uids are never shown.
+ * The Capture view: the agent's captures and localizations while it drafts
+ * them, and every draft waiting for the owner, listed by source. Every way
+ * knowledge enters the base ends in a draft here (docs/model.md, "Ingestion"):
+ * a capture, a compile, a replacement of a recorded item and a localization.
+ * The agent never accepts. A draft appears in full as `kg_drafts` reads it
+ * from the file, with each value's target, whether it is foreign or replaces
+ * an accepted record, and what `kgd accept` would refuse. Accept admits it
+ * with the drafts it links (`kgd accept`, which indexes and embeds them);
+ * Open draft opens the file beside the source for editing; Discard deletes
+ * it. The left of the view lists the sources the drafts cite, by file name,
+ * and every foreign draft under "foreign". The view lists the drafts again
+ * whenever a draft file of this vault changes, so an edit is checked as soon
+ * as it is saved. Record ids and uids are never shown.
  */
 
 import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, setIcon, type App, type WorkspaceLeaf } from "obsidian";
 
 import type { Selection } from "./agent-pane";
 import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
-import { acceptanceGroup, groupProblems, valuesByRole, valueText, type Draft, type DraftsResult } from "./drafts";
+import { acceptanceGroup, groupProblems, sourceGroups, valuesByRole, valueText, type Draft, type DraftsResult } from "./drafts";
 import { INDEX_TIMEOUT_MS, type KgdServer } from "./kgd";
 import type { Indexer } from "./indexing";
+import { draftTarget, localizeRecord, type LocalizeInput, type LocalizeTarget } from "./localize";
 import type { ModelClient } from "./model";
 import { openInBase } from "./open";
+import type { OriginServices } from "./origin";
 import { firstLine } from "./records";
 
 export const VIEW_TYPE_KGDISTILLER_CAPTURE = "kgdistiller-capture-view";
@@ -25,41 +32,65 @@ export const CAPTURE_ICON = "inbox";
 /** Draft files saved in quick succession are listed again once. */
 const RELIST_DELAY_MS = 300;
 const DRAFTS_FOLDER = ".knowledge/drafts/";
+/** The source list's entry for every draft. */
+const ALL = "";
 
 export interface CaptureHost {
   app: App;
   kgd: KgdServer;
   model: ModelClient;
   captureFiles: CaptureFiles;
+  /** The model, the fetcher and the web search that find where a borrowed concept comes from. */
+  originServices(): OriginServices;
+  /** The registered source open in the main area, whose base and type a side-pane capture uses. */
+  readingPath(): Promise<string | undefined>;
+  /** The current selection, as a lookup reads it. */
+  currentSelection(): Promise<Selection | undefined>;
   /** The real path of this vault's root, when the vault lives on the local filesystem. */
   vaultRoot(): string | undefined;
-  /** A capture found the item borrowed: show where it comes from in the lookup sidebar. */
+  /** A capture found the item borrowed and drafted nothing: show where it comes from in the lookup sidebar. */
   borrowed(selection: Selection): void;
   indexer: Indexer;
 }
 
-/** One capture: drafting until `result` or `error` arrives; a new draft leaves the list for the draft itself. */
+/** What a finished job says: a headline, the agent's words, and the draft it wrote, if any. */
+interface Outcome {
+  headline: string;
+  report: string;
+  /** The draft written, which takes the job's place in the list. */
+  draft?: string;
+  /** The record a changed meaning proposes when it cannot be drafted here, as a file. */
+  proposal?: string;
+}
+
+/** One capture or localization: running until `outcome` or `error` arrives. */
 interface Job {
-  selection: Selection;
+  title: string;
   started: number;
   ms?: number;
-  result?: CaptureResult;
+  outcome?: Outcome;
   error?: string;
 }
 
 /** What the agent said about a draft it wrote in this session. */
 interface Note {
-  item: string;
   report: string;
   ms: number;
 }
 
-const DECISIONS: Record<Exclude<CaptureResult["decision"], "new">, string> = {
-  unchanged: "Already recorded",
-  superseding: "Would overwrite (not written)",
-  conflicting: "Conflicts with a record (not written)",
-  borrowed: "Belongs to other work (not filed)",
-};
+/** How a capture's decision reads when it wrote no new draft of its own. */
+function captureOutcome(result: CaptureResult): Outcome {
+  const label = result.label ? `: ${result.label}` : "";
+  if (result.decision === "unchanged") {
+    return { headline: `${result.draft ? "Already a draft" : "Already recorded"}${label}`, report: result.report };
+  }
+  if (result.draft && result.uid) {
+    const what = result.foreign ? "Drafted as foreign knowledge" : result.replaces ? "Drafted a replacement" : "Drafted";
+    return { headline: `${what}${label}`, report: result.report, draft: result.uid };
+  }
+  if (result.decision === "borrowed") return { headline: `Belongs to other work, not drafted${label}`, report: result.report };
+  return { headline: `Changes a record of another base, not drafted${label}`, report: result.report, ...(result.proposal ? { proposal: result.proposal } : {}) };
+}
 
 export class KgdistillerCaptureView extends ItemView {
   private jobs: Job[] = [];
@@ -67,14 +98,17 @@ export class KgdistillerCaptureView extends ItemView {
   private listError: string | undefined;
   private readonly notes = new Map<string, Note>();
   private readonly expanded = new Set<string>();
-  /** Drafts being accepted or discarded; their buttons wait. */
+  /** Drafts being accepted, discarded or localized; their buttons wait. */
   private readonly busy = new Set<string>();
+  /** The source whose drafts are shown; ALL shows every draft. */
+  private chosen = ALL;
   private listRequest = 0;
   private relistTimer: number | undefined;
   private ticker: number | undefined;
   private renderComponent: Component | null = null;
   private countEl: HTMLElement | null = null;
   private jobsEl: HTMLElement | null = null;
+  private sourcesEl: HTMLElement | null = null;
   private draftsEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly host: CaptureHost) {
@@ -102,7 +136,9 @@ export class KgdistillerCaptureView extends ItemView {
     setIcon(relist, "refresh-cw");
     relist.addEventListener("click", () => void this.listDrafts());
     this.jobsEl = this.contentEl.createDiv({ cls: "kgd-capture-jobs" });
-    this.draftsEl = this.contentEl.createDiv({ cls: "kgd-capture-drafts" });
+    const body = this.contentEl.createDiv({ cls: "kgd-capture-body" });
+    this.sourcesEl = body.createDiv({ cls: "kgd-capture-sources" });
+    this.draftsEl = body.createDiv({ cls: "kgd-capture-drafts" });
     // A draft edited in the editor, or written or removed elsewhere in this vault, is checked again once saved.
     this.registerEvent(this.app.vault.on("create", (file) => this.draftFileChanged(file.path)));
     this.registerEvent(this.app.vault.on("modify", (file) => this.draftFileChanged(file.path)));
@@ -126,36 +162,62 @@ export class KgdistillerCaptureView extends ItemView {
     this.relistTimer = window.setTimeout(() => void this.listDrafts(), RELIST_DELAY_MS);
   }
 
-  /** Draft the selection in the background; its draft, or what the agent decided instead, appears here. */
+  /**
+   * Draft the selection in the background; its draft, or what the agent
+   * decided instead, appears here. A selection made in a source is drafted
+   * from its lines; one made in a side pane, in a record or draft, can only be
+   * drafted as foreign knowledge, in the base and type of the source being read.
+   */
   async startCapture(selection: Selection): Promise<void> {
-    if (!selection.source) return;
-    const job: Job = { selection, started: performance.now() };
+    const path = selection.source?.path ?? await this.host.readingPath();
+    if (!path) {
+      new Notice("Open the registered source you are reading in the main area to capture a selection made beside it.");
+      return;
+    }
+    const input = selection.source
+      ? { path, from: selection.source.from, to: selection.source.to, selection: selection.text }
+      : { path, selection: selection.text, context: selection.context };
+    await this.run(selection.text, async () => {
+      const result = await captureSelection((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles,
+        this.host.originServices(), input);
+      if (result.decision === "borrowed" && !result.draft) this.host.borrowed(selection);
+      return captureOutcome(result);
+    });
+  }
+
+  /** Move a foreign record's or draft's evidence to a passage of a local source, as a draft with its id. */
+  async startLocalize(target: LocalizeTarget, input: LocalizeInput): Promise<void> {
+    await this.run(`Localize ${target.label}`, async () => {
+      const result = await localizeRecord((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles, target, input);
+      if (!result.localized) return { headline: `Not localized: ${result.label}`, report: result.report };
+      return {
+        headline: `${result.replaces ? "Drafted the localized replacement" : "Localized the draft"}: ${result.label}`,
+        report: result.report, draft: result.uid,
+      };
+    });
+  }
+
+  private async run(title: string, work: () => Promise<Outcome>): Promise<void> {
+    const job: Job = { title, started: performance.now() };
     this.jobs.unshift(job);
     this.renderJobs();
     try {
-      job.result = await captureSelection((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles,
-        { ...selection.source, selection: selection.text });
-      job.ms = performance.now() - job.started;
+      job.outcome = await work();
     } catch (error) {
-      job.ms = performance.now() - job.started;
       job.error = message(error);
-      new Notice(`kgdistiller could not capture: ${job.error}`);
-      this.renderJobs();
-      return;
+      new Notice(`kgdistiller could not finish: ${job.error}`);
     }
-    const result = job.result;
-    if (result.uid && (result.decision === "new" || result.draft)) this.expanded.add(result.uid);
-    if (result.decision === "new" && result.uid) {
+    job.ms = performance.now() - job.started;
+    const outcome = job.outcome;
+    if (outcome?.draft) {
       // The draft itself takes the job's place.
-      this.notes.set(result.uid, { item: result.item, report: result.report, ms: job.ms });
+      this.notes.set(outcome.draft, { report: outcome.report, ms: job.ms });
+      this.expanded.add(outcome.draft);
       this.jobs = this.jobs.filter((other) => other !== job);
-      new Notice(`kgdistiller drafted ${result.label ?? "the selection"}; it waits for you in Capture.`);
+      new Notice(`kgdistiller: ${outcome.headline}; it waits for you in Capture.`);
       await this.listDrafts();
-    } else {
-      const label = result.draft ? `Already a draft: ${result.label}` : `${DECISIONS[result.decision as Exclude<CaptureResult["decision"], "new">]}${result.label ? `: ${result.label}` : ""}`;
-      new Notice(`kgdistiller: ${label}`);
-      if (result.decision === "borrowed") this.host.borrowed(selection);
-      if (result.draft) await this.listDrafts();
+    } else if (outcome) {
+      new Notice(`kgdistiller: ${outcome.headline}`);
     }
     this.renderJobs();
   }
@@ -188,19 +250,15 @@ export class KgdistillerCaptureView extends ItemView {
     for (const job of this.jobs) {
       const item = element.createDiv({ cls: "kgd-capture-job" });
       const line = item.createDiv({ cls: "kgd-capture-job-line" });
-      const result = job.result;
-      if (!result && !job.error) {
+      const outcome = job.outcome;
+      if (!outcome && !job.error) {
         line.createSpan({ cls: "kgd-lookup-hint", text: "Drafting: " });
-        line.createSpan({ text: excerpt(job.selection.text) });
+        line.createSpan({ text: excerpt(job.title) });
         line.createSpan({ cls: "kgd-lookup-meta", attr: { "data-started": String(job.started) }, text: ` · ${seconds(performance.now() - job.started)}` });
         continue;
       }
-      if (job.error) {
-        line.createSpan({ cls: "kgd-lookup-error", text: `Could not capture “${excerpt(job.selection.text)}”: ${job.error}` });
-      } else if (result) {
-        const head = result.draft ? "Already a draft" : DECISIONS[result.decision as Exclude<CaptureResult["decision"], "new">];
-        line.createSpan({ cls: "kgd-lookup-verdict-head", text: `${head}${result.label ? `: ${result.label}` : ""}` });
-      }
+      if (job.error) line.createSpan({ cls: "kgd-lookup-error", text: `Could not finish “${excerpt(job.title)}”: ${job.error}` });
+      else if (outcome) line.createSpan({ cls: "kgd-lookup-verdict-head", text: outcome.headline });
       line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${seconds(job.ms ?? 0)}` });
       const dismiss = line.createEl("button", { cls: "clickable-icon kgd-capture-dismiss", attr: { "aria-label": "Dismiss" } });
       setIcon(dismiss, "x");
@@ -208,15 +266,15 @@ export class KgdistillerCaptureView extends ItemView {
         this.jobs = this.jobs.filter((other) => other !== job);
         this.renderJobs();
       });
-      if (result?.report) item.createDiv({ cls: "kgd-lookup-explanation", text: result.report });
-      if (result?.proposal) {
+      if (outcome?.report) item.createDiv({ cls: "kgd-lookup-explanation", text: outcome.report });
+      if (outcome?.proposal) {
         const details = item.createEl("details", { cls: "kgd-lookup-proposal" });
         details.createEl("summary", { text: "The record this passage proposes" });
-        details.createEl("pre", { text: result.proposal });
+        details.createEl("pre", { text: outcome.proposal });
       }
     }
-    // The drafting lines count their seconds while any capture runs.
-    const drafting = this.jobs.some((job) => !job.result && !job.error);
+    // The drafting lines count their seconds while any job runs.
+    const drafting = this.jobs.some((job) => !job.outcome && !job.error);
     if (drafting && this.ticker === undefined) {
       this.ticker = window.setInterval(() => {
         for (const meta of Array.from(element.querySelectorAll<HTMLElement>("[data-started]"))) {
@@ -231,10 +289,12 @@ export class KgdistillerCaptureView extends ItemView {
 
   private renderDrafts(): void {
     const element = this.draftsEl;
-    if (!element) return;
+    const sources = this.sourcesEl;
+    if (!element || !sources) return;
     if (this.renderComponent) this.removeChild(this.renderComponent);
     this.renderComponent = this.addChild(new Component());
     element.empty();
+    sources.empty();
     const count = this.drafts.length;
     this.countEl?.setText(count === 0 ? "No drafts" : `${count} draft${count === 1 ? "" : "s"} to confirm`);
     if (this.listError) {
@@ -242,10 +302,26 @@ export class KgdistillerCaptureView extends ItemView {
       return;
     }
     if (count === 0) {
-      element.createDiv({ cls: "kgd-lookup-hint", text: "Select a passage in a source and press Capture: the agent drafts it here for you to read, edit and accept." });
+      sources.hide();
+      element.createDiv({ cls: "kgd-lookup-hint", text: "Select a passage in a source, or a concept in the sidebar, and press Capture: the agent drafts it here for you to read, edit and accept." });
       return;
     }
-    for (const draft of this.drafts) this.renderDraft(element, draft);
+    sources.show();
+    const groups = sourceGroups(this.drafts);
+    if (this.chosen !== ALL && !groups.some((group) => group.key === this.chosen)) this.chosen = ALL;
+    const entry = (key: string, name: string, title: string, size: number, foreign = false) => {
+      const row = sources.createDiv({ cls: `kgd-capture-source${key === this.chosen ? " is-active" : ""}${foreign ? " is-foreign" : ""}`, attr: { title } });
+      row.createSpan({ cls: "kgd-capture-source-name", text: name });
+      row.createSpan({ cls: "kgd-lookup-meta", text: String(size) });
+      row.addEventListener("click", () => {
+        this.chosen = key;
+        this.renderDrafts();
+      });
+    };
+    entry(ALL, "All", "Every draft", count);
+    for (const group of groups) entry(group.key, group.name, group.title, group.drafts.length, group.key === "foreign");
+    const shown = this.chosen === ALL ? this.drafts : groups.find((group) => group.key === this.chosen)?.drafts ?? [];
+    for (const draft of shown) this.renderDraft(element, draft);
   }
 
   private renderDraft(parent: HTMLElement, draft: Draft): void {
@@ -255,6 +331,8 @@ export class KgdistillerCaptureView extends ItemView {
     const head = item.createDiv({ cls: "kgd-capture-item-head" });
     head.createSpan({ cls: "kgd-capture-name", text: draft.label ?? "A draft kgd cannot read" });
     if (draft.kind) head.createSpan({ cls: `kgd-kind kgd-kind-${draft.class ?? "node"}`, text: draft.kind });
+    if (draft.foreign) head.createSpan({ cls: "kgd-capture-badge", text: "foreign" });
+    if (draft.replaces) head.createSpan({ cls: "kgd-capture-badge", text: "replaces" });
     head.createSpan({ cls: `kgd-capture-state ${problems.length ? "is-blocked" : "is-ready"}`, text: problems.length ? "needs a fix" : "ready" });
     const open = this.expanded.has(draft.uid);
     head.setAttr("aria-expanded", String(open));
@@ -271,12 +349,19 @@ export class KgdistillerCaptureView extends ItemView {
     if (draft.label !== null) {
       const where = card.createDiv({ cls: "kgd-lookup-meta" });
       where.appendText(`${draft.class === "relation" ? "Relation" : "Node"} · `);
-      const source = where.createEl("a", { text: draft.source ?? "", href: "#" });
-      source.addEventListener("click", (event) => {
-        event.preventDefault();
-        if (draft.source) void openInBase(this.app, this.host.kgd, this.host.vaultRoot(), draft.base, draft.source, { line: firstLine(draft.lines) });
-      });
-      where.appendText(` · L${draft.lines ?? ""}${this.isLocal(draft) ? "" : ` · ${draft.base}`}`);
+      if (draft.foreign) {
+        where.appendText("foreign · ");
+        where.createEl("a", { text: draft.source ?? "", href: draft.source ?? "" });
+      } else {
+        const source = where.createEl("a", { text: draft.source ?? "", href: "#" });
+        source.addEventListener("click", (event) => {
+          event.preventDefault();
+          if (draft.source) void openInBase(this.app, this.host.kgd, this.host.vaultRoot(), draft.base, draft.source, { line: firstLine(draft.lines) });
+        });
+        where.appendText(` · L${draft.lines ?? ""}`);
+      }
+      if (!this.isLocal(draft)) where.appendText(` · ${draft.base}`);
+      if (draft.replaces) card.createDiv({ cls: "kgd-capture-row", text: "Accepting it replaces the accepted record with the same name and id." });
       if (draft.aliases?.length) card.createDiv({ cls: "kgd-capture-row", text: `Also called: ${draft.aliases.join(", ")}` });
       const component = this.renderComponent!;
       if (draft.body) void MarkdownRenderer.render(this.app, draft.body, card.createDiv({ cls: "kgd-prose" }), "", component);
@@ -290,18 +375,14 @@ export class KgdistillerCaptureView extends ItemView {
         }
       }
       if (draft.evidence?.length) {
-        card.createEl("h4", { text: `Evidence · L${draft.lines ?? ""}` });
+        card.createEl("h4", { text: draft.foreign ? "Evidence · from the page" : `Evidence · L${draft.lines ?? ""}` });
         const quotes = draft.evidence.map((quote) => quote.split("\n").map((line) => `> ${line}`).join("\n")).join("\n\n");
         void MarkdownRenderer.render(this.app, quotes, card.createDiv({ cls: "kgd-evidence" }), "", component);
       }
-      const facts = [draft.epistemic ? `Epistemic: ${draft.epistemic}` : "", `Understanding: ${draft.understanding ?? "unknown"}`].filter(Boolean);
+      const facts = [draft.epistemic ? `Epistemic: ${draft.epistemic}` : "", `Understood: ${draft.understanding ?? "yes"}`].filter(Boolean);
       card.createDiv({ cls: "kgd-lookup-meta", text: facts.join(" · ") });
       const note = this.notes.get(draft.uid);
-      if (note) {
-        const said = card.createDiv({ cls: "kgd-capture-note" });
-        said.createDiv({ text: note.item });
-        if (note.report) said.createDiv({ cls: "kgd-lookup-meta", text: `${note.report} · drafted in ${seconds(note.ms)}` });
-      }
+      if (note?.report) card.createDiv({ cls: "kgd-capture-note", text: `${note.report} · drafted in ${seconds(note.ms)}` });
     }
     const check = card.createDiv({ cls: `kgd-capture-check ${problems.length ? "is-blocked" : "is-ready"}` });
     if (problems.length) {
@@ -320,12 +401,27 @@ export class KgdistillerCaptureView extends ItemView {
     accept.addEventListener("click", () => void this.acceptGroup(group));
     const edit = actions.createEl("button", { text: "Open draft" });
     edit.addEventListener("click", () => void this.openDraft(draft));
+    if (draft.foreign && draft.label !== null) {
+      const localize = actions.createEl("button", { text: "Localize to selection" });
+      localize.disabled = busy;
+      localize.addEventListener("click", () => void this.localizeDraft(draft));
+    }
     const discard = actions.createEl("button", { cls: "mod-warning", text: "Discard" });
     discard.disabled = busy;
     discard.addEventListener("click", () => new DiscardModal(this.app, draft, () => void this.discardDraft(draft)).open());
   }
 
-  /** Accept a draft with the drafts it links; `kgd accept` indexes them and embeds the records it creates. */
+  /** Localize a foreign draft to the passage selected in a local source. */
+  private async localizeDraft(draft: Draft): Promise<void> {
+    const selection = await this.host.currentSelection();
+    if (!selection?.source) {
+      new Notice("Select the concept's passage in a registered local source first, then press Localize to selection.");
+      return;
+    }
+    await this.startLocalize(draftTarget(draft), { ...selection.source, selection: selection.text });
+  }
+
+  /** Accept a draft with the drafts it links; `kgd accept` indexes them and embeds the records it creates or replaces. */
   private async acceptGroup(group: Draft[]): Promise<void> {
     for (const member of group) this.busy.add(member.uid);
     this.renderDrafts();

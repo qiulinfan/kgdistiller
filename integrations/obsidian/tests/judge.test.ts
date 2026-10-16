@@ -13,9 +13,9 @@ const claim = record("test-papers:mae-is-a-form-of-dae", "MAE is a form of denoi
 
 describe("the judge prompt", () => {
   it("numbers the candidates with kind, class, base and prerequisites", () => {
-    const hit = { ...mae, requires: [{ label: "Autoencoder", uid: "test-notes:autoencoder" }, { term: "mask token" }] };
+    const hit = { ...mae, requires: [{ label: "Autoencoder", uid: "test-notes:autoencoder" }, { label: "Mask token", uid: "test-papers:mask-token" }] };
     expect(candidateText([hit, claim])).toBe(
-      "[1] Masked autoencoder · architecture node · test-papers · requires: Autoencoder, mask token\n    Masked autoencoder gloss\n"
+      "[1] Masked autoencoder · architecture node · test-papers · requires: Autoencoder, Mask token\n    Masked autoencoder gloss\n"
       + "[2] MAE is a form of denoising autoencoding · property relation · test-papers\n    MAE is a form of denoising autoencoding gloss",
     );
   });

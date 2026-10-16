@@ -297,6 +297,7 @@ export interface ArxivEntry {
   arxiv: string;
   title: string;
   year: string;
+  abstract: string;
 }
 
 function xmlText(text: string): string {
@@ -310,7 +311,8 @@ export function arxivFeed(atom: string): ArxivEntry[] {
   for (const entry of atom.split("<entry>").slice(1)) {
     const arxiv = arxivId(/<id>([^<]+)<\/id>/.exec(entry)?.[1]);
     const title = /<title>([\s\S]*?)<\/title>/.exec(entry)?.[1];
-    if (arxiv && title) entries.push({ arxiv, title: xmlText(title), year: /<published>(\d{4})/.exec(entry)?.[1] ?? "" });
+    const abstract = /<summary>([\s\S]*?)<\/summary>/.exec(entry)?.[1] ?? "";
+    if (arxiv && title) entries.push({ arxiv, title: xmlText(title), year: /<published>(\d{4})/.exec(entry)?.[1] ?? "", abstract: xmlText(abstract) });
   }
   return entries;
 }
@@ -332,4 +334,24 @@ export async function arxivByTitle(fetch: Fetch, title: string): Promise<ArxivEn
   const wanted = normalizeTitle(title);
   const entries = await arxivQuery(fetch, { search_query: `ti:"${phrase}"`, max_results: 10 });
   return entries.find((entry) => normalizeTitle(entry.title) === wanted);
+}
+
+/** arXiv's record of one paper, with its abstract. */
+export async function arxivPaper(fetch: Fetch, id: string): Promise<ArxivEntry | undefined> {
+  return (await arxivQuery(fetch, { id_list: id, max_results: 1 }))[0];
+}
+
+/** The plain text of an article about a term: the section a redirect points into, or else the article's lead. */
+export async function wikipediaText(fetch: Fetch, article: Encyclopedia): Promise<string> {
+  if (article.section) {
+    const reply = await json<WikiReply>(fetch, `${WIKIPEDIA}?${query({
+      action: "query", format: "json", formatversion: 2, origin: "*", titles: article.title, prop: "revisions", rvprop: "content", rvslots: "main",
+    })}`);
+    const wikitext = reply?.query?.pages?.[0]?.revisions?.[0]?.slots?.main?.content ?? "";
+    return wikiPlain(wikiSection(wikitext, article.section) ?? "");
+  }
+  const reply = await json<WikiReply>(fetch, `${WIKIPEDIA}?${query({
+    action: "query", format: "json", formatversion: 2, origin: "*", titles: article.title, prop: "extracts", exintro: 1, explaintext: 1,
+  })}`);
+  return (reply?.query?.pages?.[0]?.extract ?? "").trim();
 }

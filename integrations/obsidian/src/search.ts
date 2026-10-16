@@ -27,7 +27,7 @@ export interface SearchKgd {
 
 export type SearchWeb = (query: string) => Promise<WebSource[]>;
 
-/** The registered source the owner is reading, as `kgd sheet --json` reports it. */
+/** The registered source the owner is reading, as `kgd source` reports it. */
 export interface Reading {
   base: string;
   source: string;
@@ -170,7 +170,7 @@ export function searchUser(question: string, first: SearchResult, named: Resolve
 
 export function recordText(records: GetResult["records"]): string {
   return records.map((record) => {
-    const links = record.out.map((link) => `${link.role}: ${link.uid ? `[${link.uid}] ${link.label ?? ""}`.trim() : `${link.term} (pending)`}`);
+    const links = record.out.map((link) => `${link.role}: ${`[${link.uid}] ${link.label ?? ""}`.trim()}`);
     const inbound = record.in.slice(0, 12).map((link) => `${link.role} of [${link.uid}] ${link.label} (${link.kind})`);
     return [
       `[${record.uid}] ${record.label} · ${record.kind} ${record.class} · ${record.base} · ${record.source} L${record.lines}${record.epistemic ? ` · ${record.epistemic}` : ""}`,
@@ -185,7 +185,7 @@ export function recordText(records: GetResult["records"]): string {
 export function neighborText(result: NeighborsResult): string {
   if (result.edges.length === 0) return "No links.";
   const label = (uid: string) => `[${uid}] ${result.records[uid]?.label ?? ""}`.trim();
-  return result.edges.map((edge) => `${label(edge.from)} -${edge.role}-> ${edge.to ? label(edge.to) : `${edge.term} (pending)`} (depth ${edge.depth})`).join("\n");
+  return result.edges.map((edge) => `${label(edge.from)} -${edge.role}-> ${label(edge.to)} (depth ${edge.depth})`).join("\n");
 }
 
 const CITATION = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|\[W(\d+)\]/g;
