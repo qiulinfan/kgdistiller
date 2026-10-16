@@ -517,7 +517,7 @@ class EmbeddingTest(IndexTestCase):
         self.assertEqual(["notes:measure"], nulls)
         self.assertEqual(1, self.lag()["unembedded"])
 
-    def test_id_rename_reuses_its_vector(self) -> None:
+    def test_a_record_under_another_uid_reuses_its_vector(self) -> None:
         with fake_encoder():
             index()
             before = self.rows()["kb:sum-is-subspace"]

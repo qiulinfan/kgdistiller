@@ -317,7 +317,7 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
         rows = _rows(connection, chosen)
         out_links = _links_out(connection, chosen)
         in_links = _links_in(connection, chosen)
-        labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
+        labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links))
         degrees = _degrees(connection, chosen)
         results = []
         for uid in chosen:
@@ -480,7 +480,7 @@ def get(uids: Iterable[str], source_lines: int | None = None) -> dict[str, Any]:
         rows = _rows(connection, found)
         out_links = _links_out(connection, found)
         in_links = _links_in(connection, found)
-        labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
+        labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links))
         degrees = _degrees(connection, found)
         found_records = []
         for uid in found:
@@ -695,7 +695,7 @@ def _browse_source(connection: sqlite3.Connection, base: str, source: str, filte
     ).fetchall()
     uids = [row["uid"] for row in rows]
     out_links = _links_out(connection, uids)
-    labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
+    labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links))
     kinds: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         kinds[row["kind"]].append({
@@ -722,7 +722,7 @@ def _browse_kind(connection: sqlite3.Connection, base: str | None, path: str, fi
         [*scope_parameters, *parameters],
     ).fetchall()
     out_links = _links_out(connection, [row["uid"] for row in rows])
-    labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
+    labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links))
     return [
         {
             "uid": row["uid"],
@@ -844,7 +844,7 @@ def pack(
             nonlocal size
             rows = _rows(connection, uids_to_add)
             links = _links_out(connection, uids_to_add)
-            labels.update(_labels(connection, (link["dst"] for items in links.values() for link in items if link["dst"])))
+            labels.update(_labels(connection, (link["dst"] for items in links.values() for link in items)))
             for uid in uids_to_add:
                 out_links[uid] = links[uid]
                 record = _record(rows[uid], links[uid], labels)

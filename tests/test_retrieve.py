@@ -69,7 +69,8 @@ class RetrieveTestCase(unittest.TestCase):
             "Normalizing the measure gives a probability space.", ["A probability space"],
         )
         self.kb.write_record("analysis", node("Analysis", "4", kind="theorem"), "测度论研究可测空间。", ["测度论"])
-        self.kb.write_record("measure", node("Measure", "3", kind="theorem"), "A homonym in another base.", ["A measure"], base="notes")
+        self.kb.write_record("measure", node("Measure (c)", "3", kind="theorem", extra="aliases: [Measure]"), "A homonym in another base.",
+                             ["A measure"], base="notes")
         index()
 
 
@@ -532,7 +533,7 @@ class GraphTestCase(unittest.TestCase):
             ("r2", "X contrasts with Y", 9, "contrasts", 'subject: ["[[x]]"]\ncontrast: ["[[y]]"]\nwitness: ["[[r1]]"]'),
             ("r3", "X equivalent to Y", 10, "equivalent", 'side: ["[[x]]", "[[y]]"]'),
             ("e1", "Example of X", 11, "example", 'uses: ["[[x]]"]\nsetting: ["[[z]]"]'),
-            ("linear-probing-2", "Linear probing", 12, "definition", ""),
+            ("linear-probing-2", "Linear probing (g)", 12, "definition", "aliases: [Linear probing]"),
             ("linear-probing", "Linear probing", 13, "definition", ""),
             ("linear-probing-hash-table", "Linear probing hash table", 14, "concept", ""),
             ("big", "Big", 15, "concept", ""),

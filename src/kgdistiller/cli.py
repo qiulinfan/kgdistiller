@@ -224,7 +224,7 @@ def parse_args() -> argparse.Namespace:
     browse.add_argument("handle", nargs="?", metavar="HANDLE", help="base, base:dir/ or base:path/file")
 
     pack = commands.add_parser(
-        "pack", parents=[filters], help="pack whole records within a byte budget, with shared relations and typed gaps"
+        "pack", parents=[filters], help="pack whole records within a byte budget, with the records linking several of them and typed gaps"
     )
     pack.add_argument("uids", nargs="+", metavar="UID", help="base:id, or a bare id held by exactly one base")
     pack.add_argument(

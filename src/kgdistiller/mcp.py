@@ -77,7 +77,7 @@ FILTER_PROPERTIES = {
     "kind": _strings(64, 32),
     "class": _strings(16, 2, enum=CLASSES),
     "source": _strings(4096, 32),
-    "understanding": _strings(32, 3, enum=UNDERSTANDING),
+    "understanding": _strings(32, len(UNDERSTANDING), enum=UNDERSTANDING),
 }
 
 

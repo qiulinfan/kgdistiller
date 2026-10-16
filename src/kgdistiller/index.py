@@ -10,13 +10,14 @@ model. ``index`` runs in two phases:
   rows so rowids stay stable, and recomputes every record's unified text so
   label changes cascade without special logic. Vectors of deleted rows and of
   changed texts go into a pool keyed by text; a row whose new text is in the
-  pool takes that vector, so an id rename keeps its vector, and any other
-  changed row gets ``vec = NULL``. ``--rebuild`` re-derives every row in place
+  pool takes that vector, so a record moved to another base keeps its
+  vector, and any other changed row gets ``vec = NULL``. ``--rebuild`` re-derives every row in place
   inside the same transaction, with every current vector in the pool; the
   database file is never swapped.
 - The embedding phase, after that commit, asks the shared embedding process
   to encode the rows whose ``vec`` is NULL (with ``only``, just those uids, as
-  ``accept`` passes the records it created) in batches ordered by rowid, and
+  ``accept`` passes the records it created or replaced) in batches ordered by
+  rowid, and
   only when such rows exist.
   Each batch commits with an UPDATE guarded by the row's text and by
   ``meta.embedding``, so a concurrent text or model change makes the write a
@@ -343,7 +344,7 @@ def _refresh_texts(connection: sqlite3.Connection, pool: dict[str, bytes]) -> in
     for source, role, destination in connection.execute("SELECT src, role, dst FROM link ORDER BY src, role, pos"):
         values[source].append((role, destination))
     rows = connection.execute(
-        "SELECT rowid, uid, label, aliases, kind, epistemic, body, search_terms, evidence, source, text FROM record"
+        "SELECT rowid, uid, label, aliases, kind, epistemic, body, search_terms, evidence, text FROM record"
     ).fetchall()
     changed: dict[int, str] = {}
     for row in rows:

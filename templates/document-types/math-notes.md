@@ -6,7 +6,6 @@ node_kinds:
   example: [uses, setting]
 relation_kinds:
   implies: [premise, conclusion]
-  requires-for: [prerequisite, dependent]
 epistemic: [proved, stated]
 ---
 This is a starting profile for mathematics notes. The owner may edit its
@@ -27,9 +26,10 @@ record of the graph. A connection inferred by combining passages is not a relati
 these notes. A concept these notes use but define elsewhere is a link to its
 defining record, never a second node.
 
-Use implies for a stated implication between results and requires-for for a
-stated proof or derivation dependency. Bind all jointly required premises to
-the same relation; do not replace a joint premise with separate implications.
+Use implies for a stated implication between results, a stated proof or
+derivation dependency included: the results a proof uses are the premises of
+the result it proves. Bind all jointly required premises to the same relation;
+do not replace a joint premise with separate implications.
 An example or counterexample is an example node: uses links the objects it
 illustrates, setting the space, structure or object it works in, and the
 concrete construction and outcome stay in its prose. Role values are always knowledge references,

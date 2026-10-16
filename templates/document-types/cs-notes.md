@@ -4,31 +4,30 @@ node_kinds:
   algorithm: []
   data-structure: []
   architecture: []
+  theorem: [about]
   invariant: [about]
   example: [uses, setting]
 relation_kinds:
-  requires-for: [prerequisite, dependent]
   implements: [implementation, specification]
-  complexity-bound: [subject, resource]
 epistemic: [proved, stated, empirical]
 ---
 This is a starting profile for computer-science notes. The owner may edit its
 kinds, roles and guidance before registering sources with it.
 
 Retain defined concepts, algorithms, data structures, architectures,
-precisely stated invariants (about the records they hold for) and worked
-examples (uses and setting). Preserve preconditions, input/output contracts,
-state transitions, pseudocode or formulas needed to understand each record.
-Do not create a node from a term that is only named or cited. A connection
-the notes state between two or more records, such as an implementation of a
-specification or a resource bound of an algorithm, is a relation, itself a
-record of the graph; a stated invariant is a node whose about links every
-record it holds for, at least one.
+precisely stated results and invariants (about the records they hold for) and
+worked examples (uses and setting). Preserve preconditions, input/output
+contracts, state transitions, pseudocode or formulas needed to understand each
+record. Do not create a node from a term that is only named or cited. A
+result the notes state, such as a resource bound of an algorithm or a
+correctness property, is a theorem node whose about links every record it
+concerns, at least one; a stated invariant is a node the same way. A
+connection the notes state between records, such as an implementation of a
+specification, is a relation, itself a record of the graph.
 
-Use requires-for for an explicit dependency and implements for an explicit
-implementation/specification connection. Use complexity-bound for a stated
-resource bound: resource binds the resource concept, and the formula,
-input-size definition, computation model and worst-case, expected or
+Use implements for an explicit implementation/specification connection. A
+resource bound is a theorem about the algorithm and the resource concept; the
+formula, input-size definition, computation model and worst-case, expected or
 amortized qualification stay in the prose. Separate measured timings from
 proved bounds. An example binds the concept it works in as setting and keeps
 the concrete input and result in its prose. Role values are always knowledge

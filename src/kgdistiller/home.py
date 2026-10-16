@@ -14,7 +14,7 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
@@ -290,18 +290,28 @@ def _read_config(home: Path) -> Any:
         raise KnowledgeError(f"{home / CONFIG_FILENAME}: invalid JSON: {error}") from error
 
 
-def _load_types(home: Path) -> dict[str, DocumentType]:
+def _load_types(home: Path, names: Iterable[str]) -> dict[str, DocumentType]:
+    """The document types ``names`` that exist in ``types/``; `kgd check` reads every type file on its own."""
     directory = home / TYPES_DIRECTORY
     if not directory.is_dir():
         raise KnowledgeError(f"missing document type directory: {directory}")
-    return {path.stem: load_type(path) for path in sorted(directory.glob("*.md"))}
+    paths = {name: directory / f"{name}.md" for name in sorted(set(names))}
+    return {name: load_type(path) for name, path in paths.items() if path.is_file()}
+
+
+def _parsed(home: Path, payload: Any) -> Home:
+    """``payload`` validated with the document types its bases' sources name."""
+    named = [name for base in _parse_config(home, payload, None).bases.values() for name in base.sources.values()]
+    return _parse_config(home, payload, _load_types(home, named))
 
 
 def load_home(home: Path, *, types: bool = True) -> Home:
-    """The validated home; ``types=False`` reads config.json only, for the derived index and its reads."""
+    """The validated home with the document types its bases' sources name; ``types=False`` reads config.json
+    only, for the derived index and its reads."""
     if not (home / CONFIG_FILENAME).is_file():
         raise _missing_home(home)
-    return _parse_config(home, _read_config(home), _load_types(home) if types else None)
+    payload = _read_config(home)
+    return _parsed(home, payload) if types else _parse_config(home, payload, None)
 
 
 def registered_bases() -> dict[str, Base]:
@@ -428,7 +438,7 @@ def add_base(path: Path | str, name: str | None = None) -> dict[str, Any]:
     with lock():
         _create_missing_home_files(home)
         payload = _read_config(home)
-        current = _parse_config(home, payload, _load_types(home))
+        current = _parsed(home, payload)
         if base_name in current.bases:
             raise KnowledgeError(f"base name {base_name!r} is already registered")
         for other in current.bases.values():
@@ -450,7 +460,7 @@ def remove_base(name: str) -> dict[str, Any]:
     load_home(home)
     with lock():
         payload = _read_config(home)
-        current = _parse_config(home, payload, _load_types(home))
+        current = _parsed(home, payload)
         if name not in current.bases:
             registered = ", ".join(sorted(current.bases)) or "(none)"
             raise KnowledgeError(f"unknown base {name!r}; registered bases: {registered}")
@@ -467,7 +477,7 @@ def set_embedding(model: str | None) -> None:
     with lock():
         payload = _read_config(home)
         payload["embedding"] = model
-        _parse_config(home, payload, _load_types(home))
+        _parsed(home, payload)
         atomic_write_text(home / CONFIG_FILENAME, _render_config(payload))
 
 

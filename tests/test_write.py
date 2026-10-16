@@ -525,11 +525,28 @@ class EditTest(WriteTestCase):
         replacement.write_bytes(self.kb.path("subspace").read_bytes())
         self.assertNotIn("renamed_from", edit(replacement, "label", ["Linear subspace"]))
 
+    def test_a_draft_linked_from_another_base_keeps_its_id(self) -> None:
+        draft = self.draft("dimension", node("Dimension", "6"))
+        self.kb.write_source(SOURCE, "\n".join(LINES) + "\n", base="notes")
+        self.kb.write_record("rank", node("Rank", "6", extra='requires: ["[[kb:dimension]]"]'), "R.",
+                             ["Unique sentence about dimension."], folder="drafts", base="notes")
+        report = edit(draft, "label", ["Vector space dimension"])
+        self.assertNotIn("renamed_from", report)
+        self.assertTrue(draft.exists())
+
+    def test_a_foreign_drafts_web_address_is_edited(self) -> None:
+        draft = self.draft("dimension", "label: Dimension\nkind: definition\nsource: https://example.com/wrong")
+        edit(draft, "source", [" https://en.wikipedia.org/wiki/Dimension "])
+        self.assertEqual("https://en.wikipedia.org/wiki/Dimension", parse_record(draft, "kb").source)
+        self.assertIn('source: "https://en.wikipedia.org/wiki/Dimension"\n', draft.read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(KnowledgeError, "source takes one web address"):
+            edit(draft, "source", [SOURCE])
+
     def test_refusals_change_nothing(self) -> None:
         draft = self.draft("dimension", node("Dimension", "6"))
         before = draft.read_bytes()
-        for key, values in (("requires", ["plain text"]), ("source", ["x"]), ("lines", ["1"]), ("label", []),
-                            ("kind", ["a", "b"]), ("tags", ["x"])):
+        for key, values in (("requires", ["plain text"]), ("source", ["x"]), ("source", ["https://example.com/d"]),
+                            ("lines", ["1"]), ("label", []), ("kind", ["a", "b"]), ("tags", ["x"])):
             with self.subTest(key=key), self.assertRaises(KnowledgeError):
                 edit(draft, key, values)
         with self.assertRaises(KnowledgeError):

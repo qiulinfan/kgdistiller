@@ -46,6 +46,7 @@ from .records import (
     fold,
     format_ranges,
     gloss,
+    is_foreign,
     parse_record,
     parse_text,
     read_text,
@@ -368,7 +369,7 @@ def drafts(bases: Iterable[str] = (), sources: Iterable[str] = (), names: Iterab
 
 # ---------------------------------------------------------------- edit
 
-SCALAR_FIELDS = ("label", "kind", "epistemic", "understanding")
+SCALAR_FIELDS = ("label", "kind", "epistemic", "understanding", "source")
 BODY = "body"
 _KEY_RE = re.compile(r"^([^\s#:][^:]*?)[ \t]*:")
 
@@ -404,12 +405,13 @@ def _with_body(text: str, prose: str) -> str:
 
 
 def _links_into(files: Files, base: Base, identifier: str) -> bool:
-    """Whether another draft of the base links the draft ``identifier``."""
+    """Whether another draft, of any base, links the draft ``identifier``."""
     uid = f"{base.name}:{fold(identifier)}"
-    for other in files.ids(base.name, DRAFTS):
-        record = files.record(base.name, DRAFTS, other)
-        if record is not None and record.id != identifier and any(value.uid == uid for _, _, value in record.values()):
-            return True
+    for name in files.home.bases:
+        for other in files.ids(name, DRAFTS):
+            record = files.record(name, DRAFTS, other)
+            if record is not None and f"{name}:{fold(record.id)}" != uid and any(value.uid == uid for _, _, value in record.values()):
+                return True
     return False
 
 
@@ -419,7 +421,8 @@ def edit(path: Path | str, key: str, values: Iterable[str]) -> dict[str, Any]:
     The rest of the file is kept as it is. A changed label of a new draft that
     no other draft links also renames the draft to the label's id. The result
     must still parse; whether ``kgd accept`` would take it is what ``drafts``
-    reports. ``source`` and ``lines`` move with ``kgd relocate``.
+    reports. A foreign draft's ``source`` takes another web address; a local
+    citation, and ``lines``, move with ``kgd relocate``.
     """
     home = load_home(home_directory())
     base, identifier, problem = _locate_draft(home, path)
@@ -428,8 +431,10 @@ def edit(path: Path | str, key: str, values: Iterable[str]) -> dict[str, Any]:
     assert base is not None
     draft = base.root / KNOWLEDGE_DIRECTORY / DRAFTS / f"{identifier}.md"
     values = [value for value in values]
-    if key in ("source", "lines"):
-        raise KnowledgeError(f"{key} moves with `kgd relocate`, not `kgd edit`")
+    if key == "lines":
+        raise KnowledgeError("lines move with `kgd relocate`, not `kgd edit`")
+    if key == "source" and not (len(values) == 1 and is_foreign(values[0].strip())):
+        raise KnowledgeError("source takes one web address; a local passage is cited with `kgd relocate`")
     if key in ("tags", "cssclasses"):
         raise KnowledgeError(f"{key} is Obsidian's own property; edit it in Obsidian")
     if key in SCALAR_FIELDS and len(values) > 1:
@@ -441,6 +446,14 @@ def edit(path: Path | str, key: str, values: Iterable[str]) -> dict[str, Any]:
     if key == "epistemic" and values and not values[0].strip():
         values = []
     before = read_text(draft)
+    if key == "source":
+        values = [values[0].strip()]
+        try:
+            foreign = parse_text(before, base.name, identifier, draft).foreign
+        except RecordError as error:
+            raise KnowledgeError(f"the draft does not parse: {error.message}") from error
+        if not foreign:
+            raise KnowledgeError("a local draft's source moves with `kgd relocate`, not `kgd edit`")
     try:
         after = _with_body(before, values[0] if values else "") if key == BODY else _with_field(before, key, values)
         record = parse_text(after, base.name, identifier, draft)
@@ -500,6 +513,7 @@ def source(path: Path | str) -> dict[str, Any]:
     """The extraction profile of one registered source and the records and drafts citing it; writes nothing."""
     home = load_home(home_directory())
     base, relative, document_type = _source(home, path)
+    relations = base_relation_kinds(home)
     return {
         "base": base.name,
         "source": relative,
@@ -513,7 +527,7 @@ def source(path: Path | str) -> dict[str, Any]:
             "uid": record.uid,
             "label": record.label,
             "kind": record.kind,
-            "class": "relation" if record.kind in document_type.relation_kinds else "node",
+            "class": record_class(relations, base.name, record.kind),
             "lines": record.lines_text,
             "understanding": record.understanding,
             "gloss": gloss(record.body),
@@ -522,7 +536,7 @@ def source(path: Path | str) -> dict[str, Any]:
             "id": record.id,
             "label": record.label,
             "kind": record.kind,
-            "class": "relation" if record.kind in document_type.relation_kinds else "node",
+            "class": record_class(relations, base.name, record.kind),
             "lines": record.lines_text,
         } for record in _records(base, DRAFTS, relative)],
     }

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import unittest
 
-from kgdistiller.home import KnowledgeError
+from kgdistiller.home import KnowledgeError, add_base
 from kgdistiller.locate import find, match_tokens, relocate
 from kgdistiller.mcp import call_tool
 from kgdistiller.records import check, parse_record
@@ -162,6 +162,35 @@ class RelocateTest(LocateTestCase):
         self.assertIn('requires: ["[[notes:loose]]"]', user.read_text(encoding="utf-8"))
         self.assertTrue(self.kb.path("loose", folder="drafts", base="notes").exists())
         self.assertEqual([], check()["errors"])
+
+    def test_a_replacement_draft_stays_in_its_records_base(self) -> None:
+        self.kb.write_source("notes/elsewhere.txt", "Only another base holds this sentence.\n", base="notes")
+        self.kb.write_record("token", node("Token", "https://example.com/token", None), "T.", ["a token"])
+        user = self.kb.write_record("user", node("User", PAPER, "5") + 'requires: ["[[token]]"]\n', "U.", ["Each mask token"])
+        before = user.read_bytes()
+        draft = self.kb.write_record("token", node("Token", "https://example.com/token", None), "T2.", ["a token"],
+                                     folder="drafts")
+        with self.assertRaisesRegex(KnowledgeError, "replaces the accepted record kb:token and stays in its base"):
+            relocate(str(draft), "Only another base holds this sentence.")
+        self.assertEqual(before, user.read_bytes())
+        self.assertTrue(draft.exists())
+
+    def test_a_move_across_bases_needs_every_base_and_skips_files_check_reports(self) -> None:
+        self.kb.write_source("notes/elsewhere.txt", "Only another base holds this sentence.\n", base="notes")
+        self.kb.write_record("token", node("Token", "https://example.com/token", None), "T.", ["a token"])
+        broken = self.kb.path("broken", folder="drafts", base="notes")
+        broken.parent.mkdir(parents=True, exist_ok=True)
+        broken.write_text('---\nlabel: Broken\nrequires: ["[[kb:token]]"]\n', encoding="utf-8")
+        latin = self.kb.path("latin", folder="drafts", base="notes")
+        latin.write_bytes("---\nlabel: token \xe9\n---\n".encode("latin-1"))
+        report = relocate("kb:token", "Only another base holds this sentence.", dry_run=True)
+        self.assertEqual([], report["relinked"])
+        third = self.kb.home.parent / "third"
+        third.mkdir()
+        add_base(third)
+        third.rename(self.kb.home.parent / "third-away")
+        with self.assertRaisesRegex(KnowledgeError, "base third is unavailable; its links to kb:token could not be rewritten"):
+            relocate("kb:token", "Only another base holds this sentence.")
 
     def test_dry_run_writes_nothing_and_unknown_targets_are_errors(self) -> None:
         path = self.kb.write_record("token", node("Token", "https://example.com/token", None), "T.", ["token"])

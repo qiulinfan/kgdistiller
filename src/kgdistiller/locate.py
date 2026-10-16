@@ -298,18 +298,23 @@ def _relinked(raw: str, read: str, write: str, moved: tuple[str, str] | None) ->
 
 
 def _inbound(files: Files, old: str, new: str, skip: Path) -> list[tuple[Path, str, str]]:
-    """(file, its text, the text relinked) for every record and draft of an available base that links ``old``."""
+    """(file, its text, the text relinked) for every record and draft of every base that links ``old``.
+
+    A file that is not UTF-8 or has no closed frontmatter is left to ``check``, as ``links_into`` does.
+    """
     identifier = old.split(":", 1)[1]
     found: list[tuple[Path, str, str]] = []
     for name in sorted(files.home.bases):
-        if not files.available(name):
-            continue
         for folder in (ENTRIES, DRAFTS):
             for path in record_files(files.home.bases[name].root, folder):
                 if path == skip:
                     continue
-                raw = path.read_bytes().decode("utf-8")
-                if identifier not in fold(raw):
+                try:
+                    raw = path.read_bytes().decode("utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                lines = re.split(r"\r\n|\r|\n", raw)
+                if identifier not in fold(raw) or lines[0] != "---" or "---" not in lines[1:]:
                     continue
                 relinked = _relinked(raw, name, name, (old, new))
                 if relinked != raw:
@@ -351,8 +356,14 @@ def relocate(
         if match.base != name:
             folder = DRAFTS if draft else ENTRIES
             destination = home.bases[match.base].root / KNOWLEDGE_DIRECTORY / folder / path.name
+            unavailable = sorted(other for other in home.bases if not files.available(other))
+            if unavailable:
+                raise KnowledgeError(f"base {unavailable[0]} is unavailable; its links to {old} could not be rewritten")
             if fold(path.stem) in files.ids(match.base, ENTRIES) or fold(path.stem) in files.ids(match.base, DRAFTS):
                 raise KnowledgeError(f"base {match.base} already has a record or draft {path.stem}; it cannot move there")
+            if draft and fold(path.stem) in files.ids(name, ENTRIES):
+                raise KnowledgeError(f"{path.name} replaces the accepted record {old} and stays in its base; "
+                                     "relocate the record, or accept or discard the draft first")
             if not draft and fold(path.stem) in files.ids(name, DRAFTS):
                 raise KnowledgeError(f"a replacement draft of {old} waits; accept or discard it before moving the record")
             relinked = _inbound(files, old, new, path)

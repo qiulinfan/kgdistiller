@@ -260,10 +260,13 @@ class TypeLoadingTest(HomeTestCase):
             with self.subTest(name=name), self.assertRaisesRegex(KnowledgeError, "slug"):
                 self.load(TYPE_TEXT, name)
 
-    def test_home_loads_every_type(self) -> None:
+    def test_home_loads_the_types_its_sources_name(self) -> None:
+        root = self.directory("notes")
         self.write_type("good")
         self.write_type("broken", "---\nnode_kinds: [a]\n---\nBody.\n")
-        self.write_config({"bases": {}, "embedding": None})
+        self.write_config({"bases": {"notes": {"path": str(root), "sources": {"*.md": "good"}}}, "embedding": None})
+        self.assertEqual(["good"], sorted(load_home(self.home).types))
+        self.write_config({"bases": {"notes": {"path": str(root), "sources": {"*.md": "broken"}}}, "embedding": None})
         with self.assertRaisesRegex(KnowledgeError, "broken"):
             load_home(self.home)
 
