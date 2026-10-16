@@ -1,30 +1,35 @@
 ---
-node_kinds: [definition, axiom, theorem]
+node_kinds:
+  definition: []
+  axiom: []
+  theorem: [about]
+  example: [uses, setting]
 relation_kinds:
   implies: [premise, conclusion]
   requires-for: [prerequisite, dependent]
-  example: [uses, setting]
 epistemic: [proved, stated]
 ---
 This is a starting profile for mathematics notes. The owner may edit its
 kinds, roles and guidance before registering sources with it.
 
-Retain explicitly defined mathematical objects, stated axioms and precisely
-stated theorems. Keep domains, hypotheses, quantifiers, notation conventions,
-formulas and conclusions together in the record's prose. Use a theorem node
-for a reusable precise result. Any other statement that can be true or false,
-such as a proposition, remark or consequence, is a relation binding the
-records it connects, recorded when the source explicitly supplies that
-connection. A connection inferred by combining passages is not a relation of
+Retain explicitly defined mathematical objects, stated axioms, precisely
+stated results and worked examples. Keep domains, hypotheses, quantifiers,
+notation conventions, formulas and conclusions together in the record's
+prose. Every precisely stated result is a theorem node, whatever the notes
+call it (theorem, proposition, lemma, corollary, remark); its label may keep
+that name, and about links the objects it is a statement about. How important
+a result is follows from how many records it connects, never from its kind.
+A relation records a connection the notes state between two or more records,
+such as one result implying another, and is itself a record of the graph. A connection inferred by combining passages is not a relation of
 these notes. A concept these notes use but define elsewhere is a link to its
 defining record, never a second node.
 
-Use implies for a stated implication and requires-for for a stated proof or
-derivation dependency. Bind all jointly required premises to the same relation;
-do not replace a joint premise with separate implications. Examples and
-counterexamples use example: setting binds the space, structure or object the
-example works in, as a link, and the concrete construction
-and outcome stay in the prose. Role values are always knowledge references,
+Use implies for a stated implication between results and requires-for for a
+stated proof or derivation dependency. Bind all jointly required premises to
+the same relation; do not replace a joint premise with separate implications.
+An example or counterexample is an example node: uses links the objects it
+illustrates, setting the space, structure or object it works in, and the
+concrete construction and outcome stay in its prose. Role values are always knowledge references,
 never literal descriptions.
 
 Read relevant proofs and examples when they establish conditions or scope.

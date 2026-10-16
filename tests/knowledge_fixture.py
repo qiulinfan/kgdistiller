@@ -25,7 +25,10 @@ BASE_NAME = "kb"
 
 def type_document(spec: dict[str, Any]) -> str:
     """Render a document type file; JSON flow collections are valid YAML."""
-    lines = ["---", f"node_kinds: {json.dumps(spec['node_kinds'])}"]
+    node_kinds = spec["node_kinds"]
+    if isinstance(node_kinds, list):
+        node_kinds = {kind: [] for kind in node_kinds}
+    lines = ["---", f"node_kinds: {json.dumps(node_kinds)}"]
     if "relation_kinds" in spec:
         lines.append(f"relation_kinds: {json.dumps(spec['relation_kinds'])}")
     if "epistemic" in spec:

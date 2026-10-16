@@ -34,6 +34,9 @@ def run(*arguments: str) -> tuple[int, Any]:
 
 class EmbeddingCommandTest(unittest.TestCase):
     def setUp(self) -> None:
+        empty = patch("kgdistiller.adapters.embedding.cached_models", list)
+        empty.start()
+        self.addCleanup(empty.stop)
         self.kb = make_record_home(self)
         self.kb.write_source("notes/a.txt", "Title\nA measure space is a triple.\n")
         self.kb.write_record("measure-space", "label: Measure space\nkind: definition\nsource: notes/a.txt\nlines: 2",
@@ -46,7 +49,7 @@ class EmbeddingCommandTest(unittest.TestCase):
         status, shown = run("embedding")
         self.assertEqual(0, status)
         self.assertEqual({"embedding": None, "precision": None, "vectors": None, "unembedded": 0,
-                          "embedding_changed": False}, {key: shown[key] for key in shown if key != "home"})
+                          "embedding_changed": False, "cached": []}, {key: shown[key] for key in shown if key != "home"})
         self.kb.embedding = "fake/model"
         self.kb.write_config()
         with fake_encoder():
@@ -88,3 +91,39 @@ class EmbeddingCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CachedModelsTest(unittest.TestCase):
+    """The runnable models of the Hugging Face cache, read from its files: XLM-RoBERTa with a tokenizer, pooling and weights."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.cache = Path(directory.name)
+        environment = patch.dict("os.environ", {"HF_HUB_CACHE": str(self.cache)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def model(self, name: str, files: dict[str, str], revisions: int = 1) -> None:
+        names = list(files)
+        for revision in range(revisions):
+            snapshot = self.cache / f"models--{name.replace('/', '--')}" / "snapshots" / f"r{revision}"
+            for file in names[revision::revisions]:
+                (snapshot / file).parent.mkdir(parents=True, exist_ok=True)
+                (snapshot / file).write_text(files[file], encoding="utf-8")
+
+    def test_only_runnable_xlm_roberta_encoders_are_listed(self) -> None:
+        from kgdistiller.adapters.embedding import cached_models
+
+        encoder = {"config.json": json.dumps({"model_type": "xlm-roberta"}), "sentencepiece.bpe.model": "",
+                   "1_Pooling/config.json": "{}", "model.safetensors": ""}
+        self.model("BAAI/bge-m3", encoder, revisions=2)
+        self.model("BAAI/bge-reranker", {name: text for name, text in encoder.items() if name != "1_Pooling/config.json"})
+        self.model("Qwen/embedding", {**encoder, "config.json": json.dumps({"model_type": "qwen3"})})
+        self.model("x/no-weights", {name: text for name, text in encoder.items() if name != "model.safetensors"})
+        self.assertEqual(["BAAI/bge-m3"], cached_models())
+        status, report = run("embedding")
+        self.assertEqual((1, "kgdistiller-error"), (status, report["kind"]), "no home: the command reports it")
+

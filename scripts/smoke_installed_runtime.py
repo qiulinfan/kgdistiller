@@ -18,7 +18,7 @@ SOURCE = (
 )
 PASSAGE = "A measure space is a triple (X, F, mu) with mu countably additive"
 TYPE = (
-    "---\nnode_kinds: [definition, concept]\nrelation_kinds:\n  implies: [premise, conclusion]\n---\n\n"
+    "---\nnode_kinds:\n  definition: []\n  concept: []\nrelation_kinds:\n  implies: [premise, conclusion]\n---\n\n"
     "Definitions are nodes; statements connecting them are relations.\n"
 )
 MEASURE_SPACE = """---
@@ -153,7 +153,7 @@ def register(runtime: Runtime, root: Path, outside: Path) -> None:
 def embedding(runtime: Runtime, outside: Path) -> None:
     """Show the home's embedding model and turn it off; neither downloads a model."""
     expected = {"home": str(runtime.home), "embedding": None, "precision": None, "vectors": None, "unembedded": 0,
-                "embedding_changed": False}
+                "embedding_changed": False, "cached": []}
     shown = runtime.object("embedding", cwd=outside)
     require(shown == expected, f"embedding status mismatch: {shown}")
     off = runtime.object("embedding", "off", cwd=outside)
@@ -255,6 +255,7 @@ def main() -> int:
         require(profile["type"] == "smoke-notes" and profile["line_count"] == 4, f"source profile: {profile}")
         require(sorted(profile) == ["base", "drafts", "epistemic", "guidance", "line_count", "node_kinds",
                                     "records", "relation_kinds", "source", "type"], f"source profile keys: {profile}")
+        require(profile["node_kinds"] == {"definition": [], "concept": []}, f"source node kinds: {profile}")
         require([row["class"] for row in profile["records"]] == ["node", "relation"], "source records mismatch")
         require([row["id"] for row in profile["drafts"]] == ["measure-theory"], "source drafts mismatch")
         require(runtime.object("source", "notes/measure.txt", cwd=root) == profile, "source differs by cwd")
@@ -313,6 +314,7 @@ def main() -> int:
         require(record["source_text"] is not None and record["source_text"].startswith("3\t"),
                 f"get --source-lines failed: {record.get('source_text')}")
         require([link["role"] for link in record["in"]] == ["premise"], "get in-links mismatch")
+        require((record["class"], record["degree"]) == ("node", 1), f"get class or degree mismatch: {record}")
         foreign = runtime.object("get", "countable-additivity", "--source-lines", "1", cwd=outside)["records"][0]
         require((foreign["foreign"], foreign["lines"], foreign["source_text"]) == (True, "", None),
                 f"get of a foreign record mismatch: {foreign}")

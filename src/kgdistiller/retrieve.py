@@ -29,7 +29,14 @@ from typing import Any
 
 from . import records
 from .adapters import embedding as embedding_adapter
-from .home import Home, KnowledgeError, home_directory, load_home
+from .home import (
+    Home,
+    KnowledgeError,
+    base_relation_kinds,
+    home_directory,
+    load_home,
+    record_class,
+)
 from .index import is_cjk, lag, meta_embedding, name_key, open_read_only, tokens
 from .records import UNDERSTANDING, fold, gloss, is_foreign
 
@@ -67,10 +74,11 @@ class Filters:
         clauses: list[str] = []
         parameters: list[str] = []
         for column, values in (
-            ("base", self.base), ("kind", self.kind), ("class", self.class_), ("understanding", self.understanding),
+            (f"{alias}.base", self.base), (f"{alias}.kind", self.kind), (f"kgd_class({alias}.base, {alias}.kind)", self.class_),
+            (f"{alias}.understanding", self.understanding),
         ):
             if values:
-                clauses.append(f"{alias}.{column} IN ({', '.join('?' for _ in values)})")
+                clauses.append(f"{column} IN ({', '.join('?' for _ in values)})")
                 parameters.extend(values)
         if self.source:
             clauses.append("(" + " OR ".join(f"substr({alias}.source, 1, length(?)) = ?" for _ in self.source) + ")")
@@ -90,6 +98,10 @@ def _session() -> tuple[sqlite3.Connection, Home]:
     home = load_home(home_directory(), types=False)
     connection = open_read_only()
     connection.row_factory = sqlite3.Row
+    # A record is a relation when a document type of its base declares its kind one; the types are read here,
+    # not stored in the index, so editing types/ never forces re-indexing.
+    relations = base_relation_kinds(home)
+    connection.create_function("kgd_class", 2, lambda base, kind: record_class(relations, base, kind), deterministic=True)
     # One read transaction per call, so meta.embedding and the vectors come
     # from the same commit even while `kgd index` writes.
     connection.execute("BEGIN")
@@ -101,9 +113,21 @@ def _rows(connection: sqlite3.Connection, uids: Sequence[str]) -> dict[str, sqli
     rows: dict[str, sqlite3.Row] = {}
     for start in range(0, len(uids), _CHUNK):
         chunk = list(uids[start : start + _CHUNK])
-        for row in connection.execute(f"SELECT * FROM record WHERE uid IN ({', '.join('?' for _ in chunk)})", chunk):
+        for row in connection.execute(f"SELECT *, kgd_class(base, kind) AS class FROM record WHERE uid IN ({', '.join('?' for _ in chunk)})", chunk):
             rows[row["uid"]] = row
     return rows
+
+
+def _degrees(connection: sqlite3.Connection, uids: Iterable[str]) -> dict[str, int]:
+    """How many other records each record links or is linked by: how central it is, derived from the links alone."""
+    wanted = json.dumps(sorted(set(uids)))
+    return dict(connection.execute(
+        "SELECT uid, COUNT(DISTINCT other) FROM ("
+        " SELECT src AS uid, dst AS other FROM link WHERE src IN (SELECT value FROM json_each(?))"
+        " UNION SELECT dst, src FROM link WHERE dst IN (SELECT value FROM json_each(?))"
+        ") GROUP BY uid",
+        (wanted, wanted),
+    ).fetchall())
 
 
 def _labels(connection: sqlite3.Connection, uids: Iterable[str]) -> dict[str, str]:
@@ -291,26 +315,27 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
         out_links = _links_out(connection, chosen)
         in_links = _links_in(connection, chosen)
         labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
+        degrees = _degrees(connection, chosen)
         results = []
         for uid in chosen:
             row = rows[uid]
             requires = [_reference(link, labels) for link in out_links[uid] if link["role"] == "requires"]
             participants: dict[str, list[dict[str, Any]]] = {}
             dropped = 0
-            if row["class"] == "relation":
-                grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-                for link in out_links[uid]:
-                    if link["role"] != "requires":
-                        grouped[link["role"]].append(_reference(link, labels))
-                for role in sorted(grouped):
-                    participants[role], extra = _capped(grouped[role])
-                    dropped += extra
+            grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for link in out_links[uid]:
+                if link["role"] != "requires":
+                    grouped[link["role"]].append(_reference(link, labels))
+            for role in sorted(grouped):
+                participants[role], extra = _capped(grouped[role])
+                dropped += extra
             requires, requires_dropped = _capped(requires)
             incoming, incoming_dropped = _capped(
                 [{"uid": item["uid"], "kind": item["kind"], "role": item["role"]} for item in in_links[uid]]
             )
             results.append({
                 "uid": uid,
+                "degree": degrees.get(uid, 0),
                 "class": row["class"],
                 "kind": row["kind"],
                 "label": row["label"],
@@ -352,7 +377,7 @@ def resolve(terms: Iterable[str], filters: Filters = NO_FILTERS) -> dict[str, An
             if key:
                 cjk = any(is_cjk(char) for char in key)
                 for row in connection.execute(
-                    f"SELECT n.key AS name, r.* FROM name n JOIN record r ON r.uid = n.uid "
+                    f"SELECT n.key AS name, r.*, kgd_class(r.base, r.kind) AS class FROM name n JOIN record r ON r.uid = n.uid "
                     f"WHERE instr(n.key, ?) > 0{clause}",
                     [key, *parameters],
                 ):
@@ -453,10 +478,12 @@ def get(uids: Iterable[str], source_lines: int | None = None) -> dict[str, Any]:
         out_links = _links_out(connection, found)
         in_links = _links_in(connection, found)
         labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
+        degrees = _degrees(connection, found)
         found_records = []
         for uid in found:
             record = _record(rows[uid], out_links[uid], labels)
             record["in"] = in_links[uid]
+            record["degree"] = degrees.get(uid, 0)
             if source_lines is not None:
                 record["source_text"] = _source_text(home, rows[uid], source_lines)
             found_records.append(record)
@@ -582,10 +609,12 @@ def neighbors(
                 found.items(), key=lambda entry: (entry[1][0], entry[0][0], entry[0][1] == "requires", *entry[0][1:]),
             )
         ]
+        degrees = _degrees(connection, rows)
         records = {
             uid: (
-                {"label": rows[uid]["label"], "kind": rows[uid]["kind"], "class": rows[uid]["class"], "exists": True}
-                if uid in rows else {"label": None, "kind": None, "class": None, "exists": False}
+                {"label": rows[uid]["label"], "kind": rows[uid]["kind"], "class": rows[uid]["class"], "exists": True,
+                 "degree": degrees.get(uid, 0)}
+                if uid in rows else {"label": None, "kind": None, "class": None, "exists": False, "degree": 0}
             )
             for uid in sorted(visited, key=lambda uid: (visited[uid], uid))
         }
@@ -612,7 +641,7 @@ def _browse_bases(connection: sqlite3.Connection, home: Home, filters: Filters) 
     clause, parameters = filters.sql()
     counts = {
         row[0]: (row[1], row[2]) for row in connection.execute(
-            f"SELECT r.base, COUNT(*), SUM(r.class = 'relation') FROM record r WHERE 1{clause} GROUP BY r.base",
+            f"SELECT r.base, COUNT(*), SUM(kgd_class(r.base, r.kind) = 'relation') FROM record r WHERE 1{clause} GROUP BY r.base",
             parameters,
         )
     }
@@ -644,7 +673,8 @@ def _browse_directory(connection: sqlite3.Connection, base: str, prefix: str, fi
         return entries.setdefault(path, {"path": path, "type": kind, "records": 0, "relations": 0})
 
     for source, class_, count in connection.execute(
-        f"SELECT r.source, r.class, COUNT(*) FROM record r WHERE 1{scope}{clause} GROUP BY r.source, r.class",
+        f"SELECT r.source, kgd_class(r.base, r.kind), COUNT(*) FROM record r WHERE 1{scope}{clause} "
+        f"GROUP BY r.source, kgd_class(r.base, r.kind)",
         [*scope_parameters, *parameters],
     ):
         item = entry(source)
@@ -658,7 +688,7 @@ def _browse_source(connection: sqlite3.Connection, base: str, source: str, filte
     scope, scope_parameters = _scope_sql(base, source)
     clause, parameters = filters.sql()
     rows = connection.execute(
-        f"SELECT * FROM record r WHERE 1{scope}{clause} ORDER BY r.line_start, r.uid", [*scope_parameters, *parameters]
+        f"SELECT r.*, kgd_class(r.base, r.kind) AS class FROM record r WHERE 1{scope}{clause} ORDER BY r.line_start, r.uid", [*scope_parameters, *parameters]
     ).fetchall()
     uids = [row["uid"] for row in rows]
     out_links = _links_out(connection, uids)
@@ -685,7 +715,7 @@ def _browse_kind(connection: sqlite3.Connection, base: str | None, path: str, fi
     scope, scope_parameters = _scope_sql(base, path)
     clause, parameters = filters.sql()
     rows = connection.execute(
-        f"SELECT * FROM record r WHERE 1{scope}{clause} ORDER BY r.base, r.source, r.line_start, r.uid",
+        f"SELECT r.*, kgd_class(r.base, r.kind) AS class FROM record r WHERE 1{scope}{clause} ORDER BY r.base, r.source, r.line_start, r.uid",
         [*scope_parameters, *parameters],
     ).fetchall()
     out_links = _links_out(connection, [row["uid"] for row in rows])
@@ -828,7 +858,7 @@ def pack(
         shared = [
             row[0] for row in connection.execute(
                 f"SELECT l.src, COUNT(DISTINCT l.dst) AS packed FROM link l JOIN record r ON r.uid = l.src "
-                f"WHERE r.class = 'relation' AND l.role != 'requires' AND l.dst IN (SELECT value FROM json_each(?)){clause} "
+                f"WHERE kgd_class(r.base, r.kind) = 'relation' AND l.role != 'requires' AND l.dst IN (SELECT value FROM json_each(?)){clause} "
                 f"GROUP BY l.src HAVING packed >= 2 ORDER BY packed DESC, l.src",
                 [json.dumps(sorted(packed_uids)), *parameters],
             )

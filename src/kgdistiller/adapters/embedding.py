@@ -106,6 +106,38 @@ class _Weights:
         return self.prefix + name in self.keys
 
 
+def cache_directory() -> Path:
+    """The Hugging Face hub cache, as huggingface_hub finds it."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
+    home = os.environ.get("HF_HOME") or os.path.join(os.environ.get("XDG_CACHE_HOME") or "~/.cache", "huggingface")
+    return Path(home).expanduser() / "hub"
+
+
+def cached_models() -> list[str]:
+    """The models in the local Hugging Face cache that kgdistiller can run, read from the cache's files alone:
+    an XLM-RoBERTa configuration, sentencepiece.bpe.model, a pooling configuration and weights."""
+    found: list[str] = []
+    root = cache_directory()
+    if not root.is_dir():
+        return found
+    for repository in sorted(root.glob("models--*")):
+        names: dict[str, Path] = {}
+        for snapshot in sorted((repository / "snapshots").glob("*")):
+            for path in snapshot.rglob("*"):
+                if path.is_file():
+                    names.setdefault(path.relative_to(snapshot).as_posix(), path)
+        if not all(name in names for name in CONFIG_FILES) or not any(name in names for name in WEIGHT_FILES):
+            continue
+        try:
+            if json.loads(names["config.json"].read_text(encoding="utf-8")).get("model_type") != "xlm-roberta":
+                continue
+        except (OSError, ValueError):
+            continue
+        found.append(repository.name.removeprefix("models--").replace("--", "/"))
+    return found
+
+
 @dataclass(frozen=True)
 class Description:
     """What a model's files say about it, checked; nothing is loaded."""

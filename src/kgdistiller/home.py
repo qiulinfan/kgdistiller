@@ -87,10 +87,14 @@ def _contains(root: Path, path: Path) -> bool:
 @dataclass(frozen=True)
 class DocumentType:
     name: str
-    node_kinds: tuple[str, ...]
+    node_kinds: dict[str, tuple[str, ...]]
     relation_kinds: dict[str, tuple[str, ...]]
     epistemic: tuple[str, ...]
     guidance: str
+
+    def roles(self, kind: str) -> tuple[str, ...] | None:
+        """The roles ``kind`` declares, or None when this type does not declare the kind."""
+        return self.node_kinds.get(kind, self.relation_kinds.get(kind))
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,23 @@ def _slug_list(value: Any, label: str, pattern: re.Pattern[str], *, required: bo
     return tuple(value)
 
 
+def _kinds(value: Any, label: str, *, required: bool, roles_required: bool) -> dict[str, tuple[str, ...]]:
+    """A mapping of kind slugs to their roles: a node kind's roles may be empty, a relation kind's may not."""
+    if not isinstance(value, dict) or (required and not value):
+        raise KnowledgeError(f"{label} must {'be a non-empty mapping' if required else 'map'} each kind to its roles")
+    kinds: dict[str, tuple[str, ...]] = {}
+    for kind, roles in value.items():
+        if not isinstance(kind, str) or not SLUG_RE.fullmatch(kind):
+            raise KnowledgeError(f"{label} has an invalid slug: {kind!r}")
+        if roles == "" and not roles_required:
+            roles = []
+        kinds[kind] = _slug_list(roles, f"{label}: roles of {kind}", ROLE_RE, required=roles_required)
+        fixed = sorted(FIXED_KEYS.intersection(kinds[kind]))
+        if fixed:
+            raise KnowledgeError(f"{label}: role {fixed[0]!r} of {kind} is a fixed record key")
+    return kinds
+
+
 def load_type(path: Path) -> DocumentType:
     name = path.stem
     where = f"document type {path}"
@@ -170,25 +191,44 @@ def load_type(path: Path) -> DocumentType:
     unknown = sorted(set(data) - TYPE_KEYS)
     if unknown:
         raise KnowledgeError(f"{where}: unknown frontmatter key {unknown[0]!r}")
-    node_kinds = _slug_list(data.get("node_kinds"), f"{where}: node_kinds", SLUG_RE, required=True)
-    raw_relations = data.get("relation_kinds", {})
-    if not isinstance(raw_relations, dict):
-        raise KnowledgeError(f"{where}: relation_kinds must map each kind to its roles")
-    relation_kinds: dict[str, tuple[str, ...]] = {}
-    for kind, roles in raw_relations.items():
-        if not SLUG_RE.fullmatch(kind):
-            raise KnowledgeError(f"{where}: relation_kinds has an invalid slug: {kind!r}")
-        if kind in node_kinds:
-            raise KnowledgeError(f"{where}: {kind!r} is both a node kind and a relation kind")
-        relation_kinds[kind] = _slug_list(roles, f"{where}: roles of {kind}", ROLE_RE, required=True)
-        fixed = sorted(FIXED_KEYS.intersection(relation_kinds[kind]))
-        if fixed:
-            raise KnowledgeError(f"{where}: role {fixed[0]!r} of {kind} is a fixed record key")
+    node_kinds = _kinds(data.get("node_kinds"), f"{where}: node_kinds", required=True, roles_required=False)
+    relation_kinds = _kinds(data.get("relation_kinds", {}), f"{where}: relation_kinds", required=False, roles_required=True)
+    both = sorted(set(node_kinds) & set(relation_kinds))
+    if both:
+        raise KnowledgeError(f"{where}: {both[0]!r} is both a node kind and a relation kind")
     epistemic = _slug_list(data.get("epistemic", []), f"{where}: epistemic", SLUG_RE, required=False)
     guidance = "\n".join(lines[end + 1 :]).strip()
     if not guidance:
         raise KnowledgeError(f"{where}: the body (the extraction guidance) must not be empty")
     return DocumentType(name, node_kinds, relation_kinds, epistemic, guidance)
+
+
+def base_relation_kinds(home: Home) -> dict[str, frozenset[str]]:
+    """The relation kinds of each base's document types; a type file that does not load declares none.
+
+    Whether a record is a node or a relation follows its kind; reads take it from here, so a broken type file
+    never stops retrieval, and `kgd check` reports a kind two types of one base declare differently.
+    """
+    loaded: dict[str, DocumentType | None] = dict(home.types)
+    found: dict[str, frozenset[str]] = {}
+    for name, base in home.bases.items():
+        kinds: set[str] = set()
+        for type_name in set(base.sources.values()):
+            if type_name not in loaded:
+                try:
+                    loaded[type_name] = load_type(home.directory / TYPES_DIRECTORY / f"{type_name}.md")
+                except (KnowledgeError, OSError, UnicodeDecodeError, yaml.YAMLError):
+                    loaded[type_name] = None
+            document_type = loaded[type_name]
+            if document_type is not None:
+                kinds.update(document_type.relation_kinds)
+        found[name] = frozenset(kinds)
+    return found
+
+
+def record_class(relations: dict[str, frozenset[str]], base: str, kind: str) -> str:
+    """``relation`` when a document type of the base declares the kind a relation kind, otherwise ``node``."""
+    return "relation" if kind in relations.get(base, frozenset()) else "node"
 
 
 def _missing_home(home: Path) -> KnowledgeError:

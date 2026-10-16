@@ -8,6 +8,7 @@ import struct
 import sys
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 from kgdistiller import retrieve
@@ -83,10 +84,12 @@ class SearchTest(RetrieveTestCase):
         self.assertEqual(1, top["ranks"]["name"])
         self.assertEqual(["lexical", "name"], list(top["ranks"]))
         self.assertEqual(
-            ["uid", "class", "kind", "label", "base", "source", "lines", "foreign", "understanding", "epistemic", "gloss",
-             "ranks", "requires", "participants", "in", "truncated"],
+            ["uid", "degree", "class", "kind", "label", "base", "source", "lines", "foreign", "understanding", "epistemic",
+             "gloss", "ranks", "requires", "participants", "in", "truncated"],
             list(top),
         )
+        # Three requires links out (one to a missing record) and one relation citing it.
+        self.assertEqual(4, top["degree"])
         self.assertEqual(
             {"class": "node", "kind": "definition", "label": "Measure space", "base": "kb", "source": "notes/a.txt",
              "lines": "2-2", "foreign": False, "understanding": "no", "epistemic": None, "gloss": "三元组 (X, M, μ)。"},
@@ -217,7 +220,7 @@ class DenseLaneTest(RetrieveTestCase):
         self.encoders.loads.clear()
 
     def dense(self, query: str = QUERY, filters: Filters = retrieve.NO_FILTERS) -> list[str]:
-        connection = retrieve.open_read_only()
+        connection, _ = retrieve._session()
         self.addCleanup(connection.close)
         return retrieve._dense(connection, query, filters, self.MODEL)
 
@@ -437,6 +440,8 @@ class GetTest(RetrieveTestCase):
     def test_a_broken_document_type_does_not_stop_reads_or_index(self) -> None:
         (self.kb.home / "types/math.md").write_text("---\nnode_kinds: definition\n---\nGuidance.\n", encoding="utf-8")
         self.assertEqual("kb:measure-space", search("measure space")["results"][0]["uid"])
+        # A type file that does not load declares no relation kinds.
+        self.assertEqual("node", get(["kb:space-implies-probability"])["records"][0]["class"])
         self.assertEqual(["kb:measure"], [sense["uid"] for sense in resolve(["测度"])["terms"][0]["senses"]])
         self.assertIsNotNone(get(["kb:measure"], source_lines=0)["records"][0]["source_text"])
         self.assertEqual({}, {name: counts["unparseable"] for name, counts in index()["bases"].items() if counts["unparseable"]})
@@ -447,6 +452,44 @@ class GetTest(RetrieveTestCase):
             get(["measure"])
         self.assertIn("kb:measure, notes:measure", str(caught.exception))
         self.assertEqual(["nothing"], get(["nothing"])["missing"])
+
+
+class ReadTimeClassTest(RetrieveTestCase):
+    """A record's class follows its kind through the home's current types; the index stores none."""
+
+    def classes(self) -> dict[str, str]:
+        uids = ["kb:space-implies-probability", "kb:analysis", "kb:measure", "notes:measure"]
+        return {record["uid"]: record["class"] for record in get(uids)["records"]}
+
+    def test_editing_a_type_changes_the_class_without_re_indexing(self) -> None:
+        self.assertEqual({"kb:space-implies-probability": "relation", "kb:analysis": "node", "kb:measure": "node",
+                          "notes:measure": "node"}, self.classes())
+        database = retrieve.open_read_only()
+        before = database.execute("SELECT uid, kind, text FROM record ORDER BY uid").fetchall()
+        database.close()
+        math = self.kb.types["math"]
+        relations = {kind: roles for kind, roles in math["relation_kinds"].items() if kind != "implies"}
+        self.kb.types["math"] = {
+            **math, "node_kinds": {"definition": [], "concept": [], "implies": ["premise", "conclusion"]},
+            "relation_kinds": {**relations, "theorem": ["about"]},
+        }
+        self.kb.write_config()
+        self.assertEqual({"kb:space-implies-probability": "node", "kb:analysis": "relation", "kb:measure": "node",
+                          "notes:measure": "relation"}, self.classes())
+        relations_found = {item["uid"] for item in search("measure", filters=Filters(class_=("relation",)))["results"]}
+        self.assertIn("notes:measure", relations_found)
+        self.assertNotIn("kb:space-implies-probability", relations_found)
+        self.assertEqual("relation", next(item for item in search("measure")["results"] if item["uid"] == "notes:measure")["class"])
+        database = retrieve.open_read_only()
+        self.addCleanup(database.close)
+        self.assertEqual(before, database.execute("SELECT uid, kind, text FROM record ORDER BY uid").fetchall())
+
+    def test_the_class_follows_the_types_of_the_record_base(self) -> None:
+        self.kb.types["papers"] = {"node_kinds": ["model"], "relation_kinds": {"theorem": ["about"]}, "guidance": "Papers."}
+        self.kb.sources["notes"]["papers/*.pdf"] = "papers"
+        self.kb.write_config()
+        self.assertEqual("node", self.classes()["kb:analysis"])
+        self.assertEqual("relation", self.classes()["notes:measure"])
 
 
 # ---------------------------------------------------------------- links, browse and pack
@@ -506,6 +549,36 @@ class GraphTestCase(unittest.TestCase):
         self.assertEqual({}, {name: counts["unparseable"] for name, counts in report["bases"].items() if counts["unparseable"]})
 
 
+class DegreeTest(GraphTestCase):
+    """A record's degree counts the distinct other records it links or is linked by, in any role."""
+
+    EXPECTED: ClassVar[dict[str, int]] = {
+        "kb:x": 4,  # cited by r1, r2, r3 and e1
+        "kb:y": 3,  # cited by r1, r2 and r3
+        "kb:r1": 3,  # links x and y, cited by r2
+        "kb:r3": 2,  # side x and y
+        "kb:a": 2,  # requires b and the missing loose-term
+        "kb:b": 1,  # requires a, which also requires b: one other record
+        "kb:d": 2,  # required by c and h
+        "kb:big": 0,
+    }
+
+    def test_get(self) -> None:
+        records = get(list(self.EXPECTED))["records"]
+        self.assertEqual(self.EXPECTED, {record["uid"]: record["degree"] for record in records})
+
+    def test_search(self) -> None:
+        results = search("X")["results"]
+        self.assertTrue(results)
+        degrees = {record["uid"]: record["degree"] for record in get([item["uid"] for item in results])["records"]}
+        self.assertEqual(degrees, {item["uid"]: item["degree"] for item in results})
+        self.assertEqual(4, next(item["degree"] for item in results if item["uid"] == "kb:x"))
+
+    def test_neighbors(self) -> None:
+        result = neighbors(["kb:e1"], direction="out")
+        self.assertEqual({"kb:e1": 2, "kb:x": 4, "kb:z": 0}, {uid: record["degree"] for uid, record in result["records"].items()})
+
+
 def edge(source: str, role: str, target: str, depth: int) -> dict[str, object]:
     return {"from": source, "role": role, "to": target, "depth": depth}
 
@@ -520,9 +593,9 @@ class NeighborsTest(GraphTestCase):
             result["edges"],
         )
         self.assertEqual(
-            {"kb:a": {"label": "A", "kind": "definition", "class": "node", "exists": True},
-             "kb:b": {"label": "B", "kind": "definition", "class": "node", "exists": True},
-             "kb:loose-term": {"label": None, "kind": None, "class": None, "exists": False}},
+            {"kb:a": {"label": "A", "kind": "definition", "class": "node", "exists": True, "degree": 2},
+             "kb:b": {"label": "B", "kind": "definition", "class": "node", "exists": True, "degree": 1},
+             "kb:loose-term": {"label": None, "kind": None, "class": None, "exists": False, "degree": 0}},
             result["records"],
         )
         self.assertEqual([], result["missing"])
@@ -552,8 +625,10 @@ class NeighborsTest(GraphTestCase):
             ],
             closure["edges"],
         )
-        self.assertEqual({"label": None, "kind": None, "class": None, "exists": False}, closure["records"]["kb:z"])
-        self.assertEqual({"label": "Y", "kind": "theorem", "class": "node", "exists": True}, closure["records"]["kb:y"])
+        self.assertEqual({"label": None, "kind": None, "class": None, "exists": False, "degree": 0}, closure["records"]["kb:z"])
+        self.assertEqual({"label": "Y", "kind": "theorem", "class": "node", "exists": True, "degree": 3},
+                         closure["records"]["kb:y"])
+        self.assertEqual("relation", closure["records"]["kb:r2"]["class"])
         self.assertEqual({"kb:x", "kb:y", "kb:z", "kb:r1", "kb:r2", "kb:r3", "kb:e1"}, set(closure["records"]))
 
     def test_applications_by_kind(self) -> None:
@@ -676,7 +751,7 @@ def packed(result: dict[str, object]) -> list[str]:
 
 def packed_record(uid: str) -> dict[str, object]:
     record = get([uid])["records"][0]
-    del record["in"], record["search_terms"]
+    del record["in"], record["search_terms"], record["degree"]
     return record
 
 
@@ -723,11 +798,12 @@ class PackTest(GraphTestCase):
             result["gaps"],
         )
 
-    def test_records_are_get_records_without_in_and_search_terms(self) -> None:
+    def test_records_are_get_records_without_in_search_terms_and_degree(self) -> None:
         result = pack(["kb:r2", "kb:a"], requires_depth=0)
         for record in result["records"]:
             self.assertNotIn("in", record)
             self.assertNotIn("search_terms", record)
+            self.assertNotIn("degree", record)
             self.assertEqual(packed_record(record["uid"]), record)
 
     def test_filters_restrict_only_what_pack_adds(self) -> None:

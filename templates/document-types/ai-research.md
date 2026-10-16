@@ -1,20 +1,28 @@
 ---
-node_kinds: [definition, algorithm, architecture, objective, theorem]
+node_kinds:
+  definition: []
+  algorithm: []
+  architecture: []
+  objective: []
+  theorem: [about]
+  finding: [about]
+  example: [uses, setting]
 relation_kinds:
   implies: [premise, conclusion]
   requires-for: [prerequisite, dependent]
   compares: [baseline, candidate, setting]
   evaluates: [method, setting, metric]
-  property: [subject, uses]
-  example: [uses, setting]
 epistemic: [proved, empirical, stated, conjectured]
 ---
 This is a starting profile for AI research sources. The owner may edit its
 kinds, roles and guidance before registering sources with it.
 
-Nodes are the noun-like objects the source defines: concepts, algorithms,
-architectures, objective functions and quantities, plus theorems the source
-states precisely. Preserve mathematical definitions, input/output contracts,
+Nodes are the objects the source defines (concepts, algorithms,
+architectures, objective functions and quantities) and the statements it
+makes about them. A precisely stated result is a theorem, whatever the paper
+calls it; a measured result, ablation finding, limitation or hypothesis about
+a method is a finding; a worked example is an example. Each links what it is
+about through about (uses and setting for an example). Preserve mathematical definitions, input/output contracts,
 update rules and the scope in which they apply. Each concept has one record,
 owned by the paper that defines or originates it. A concept this source only
 uses, such as a standard metric or an earlier method, is never a node of this
@@ -23,18 +31,20 @@ the owner captures it, draft it as foreign knowledge from the defining paper. A 
 about twenty concept nodes; when a pass proposes more, re-check each for a
 fact turned into a noun, a needless split or a borrowed concept.
 
-A statement that can be true or false is a relation, not a node: measured
-results, comparisons, ablation findings, limitations and explanatory
-hypotheses bind their participants to roles. Use compares for a source-backed
-comparison, evaluates for a reported evaluation and property for a finding
-about one concept, which may be its only participant. An ablation or
-limitation that changes a result's meaning is knowledge too.
+A relation records a connection the source states between two or more
+records, and is a record of the graph like any node: compares for a
+source-backed comparison, evaluates for a reported evaluation of a method on
+a setting with a metric, implies and requires-for for stated implications and
+dependencies. A statement about one record is a node, never a relation. How
+important a node is follows from how many records it connects, never from
+its kind. An ablation or limitation that changes a result's meaning is
+knowledge too.
 
 Role values are knowledge references: links to records or drafts; a concept
 nothing records is left out of the values. Datasets, tasks and metrics are concepts and may
 fill setting and metric. Resolutions, splits, training settings,
 hyperparameters, units, uncertainty and measured values belong in the
-relation's prose and evidence, never in a role; numbers are never structured,
+record's prose and evidence, never in a role; numbers are never structured,
 and comparing them means reading the cited passages.
 
 The reader has already judged the source worth studying. General motivation,

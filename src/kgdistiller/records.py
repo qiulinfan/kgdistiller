@@ -3,8 +3,8 @@
 A record is ``<root>/.knowledge/entries/<id>.md`` (accepted) or
 ``<root>/.knowledge/drafts/<id>.md`` (proposed): YAML frontmatter read with
 PyYAML ``BaseLoader`` followed by a Markdown body that ends with an
-``## Evidence`` section of verbatim source quotes. A record whose non-fixed
-keys hold a non-empty list is a relation; any other record is a node. A record
+``## Evidence`` section of verbatim source quotes. A record is a relation when
+its document type declares its kind a relation kind, and a node otherwise. A record
 whose ``source`` is a web address is foreign: its evidence lies outside the
 owner's files, so it has no ``lines``.
 
@@ -317,7 +317,6 @@ class Record:
     body: str
     search_terms: str
     evidence: tuple[str, ...]
-    class_: str
 
     @property
     def uid(self) -> str:
@@ -370,13 +369,6 @@ def _single_line(key: str, value: str) -> str:
     if "\n" in value:
         raise RecordError("frontmatter", f"{key} must be a single line")
     return value
-
-
-def record_class(frontmatter: dict[str, Any]) -> str:
-    """The shared class rule: a relation iff a non-fixed key holds a non-empty list."""
-    return "relation" if any(
-        isinstance(value, list) and value for key, value in frontmatter.items() if key not in FIXED_KEYS
-    ) else "node"
 
 
 def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
@@ -460,7 +452,6 @@ def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
         body=prose,
         search_terms=search_terms,
         evidence=quotes,
-        class_=record_class(data),
     )
 
 
@@ -636,26 +627,27 @@ def _base_types(home: Home, base: Base) -> list[DocumentType]:
 
 
 def _kind_problems(record: Record, types: list[DocumentType], where: str) -> list[tuple[str, str]]:
-    """The kind rule against the types that may declare ``record.kind``: one for a local record, the base's for a foreign one."""
-    declaring = [kind_type for kind_type in types if record.kind in kind_type.node_kinds or record.kind in kind_type.relation_kinds]
+    """The kind rule against the types that may declare ``record.kind``: one for a local record, the base's for a foreign one.
+
+    A kind declares its roles, a node kind as a relation kind does; a relation binds at least two records.
+    """
+    declaring = [kind_type for kind_type in types if kind_type.roles(record.kind) is not None]
     if not declaring:
         return [("kind", f"kind {record.kind!r} is not a node or relation kind of {where}")]
-    shapes = {kind_type.relation_kinds.get(record.kind) for kind_type in declaring}
+    shapes = {(record.kind in kind_type.relation_kinds, kind_type.roles(record.kind)) for kind_type in declaring}
     if len(shapes) > 1:
         names = ", ".join(kind_type.name for kind_type in declaring)
         return [("kind", f"kind {record.kind!r} is declared differently by the types {names}")]
     problems: list[tuple[str, str]] = []
-    declared = shapes.pop()
-    role_keys = [role for role, _ in record.roles]
-    if declared is None:
-        if role_keys:
-            problems.append(("kind", f"{record.kind} is a node kind; remove the keys {', '.join(role_keys)}"))
-    else:
-        for role in role_keys:
-            if role not in declared:
-                problems.append(("frontmatter", f"{role} is not a role of {record.kind}; its roles are {', '.join(declared)}"))
-        if record.class_ != "relation":
-            problems.append(("kind", f"the relation {record.kind} needs at least one participant"))
+    relation, declared = shapes.pop()
+    for role, _ in record.roles:
+        if role not in (declared or ()):
+            roles = f"its roles are {', '.join(declared)}" if declared else "it declares no roles"
+            problems.append(("frontmatter", f"{role} is not a role of {record.kind}; {roles}"))
+    if relation and sum(len(values) for _, values in record.roles) < 2:
+        problems.append(("kind", (
+            f"the relation {record.kind} binds at least two records; a statement about one record is a node"
+        )))
     allowed = sorted({value for kind_type in declaring for value in kind_type.epistemic})
     if record.epistemic is not None and record.epistemic not in allowed:
         problems.append(("kind", f"epistemic {record.epistemic!r} is not allowed for {record.kind} ({', '.join(allowed) or 'no epistemic values'})"))
@@ -814,6 +806,15 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
         _, conflicts = files.sources(base)
         for relative, type_names in sorted(conflicts.items()):
             error(base.root / relative, "source-type", f"{relative} matches globs of several types: {', '.join(type_names)}")
+        shapes: dict[str, dict[tuple[bool, tuple[str, ...]], list[str]]] = {}
+        for kind_type in _base_types(home, base):
+            for kind in (*kind_type.node_kinds, *kind_type.relation_kinds):
+                shape = (kind in kind_type.relation_kinds, kind_type.roles(kind) or ())
+                shapes.setdefault(kind, {}).setdefault(shape, []).append(kind_type.name)
+        for kind, declared in sorted(shapes.items()):
+            if len(declared) > 1:
+                names = ", ".join(sorted(name for names in declared.values() for name in names))
+                error(home_dir / CONFIG_FILENAME, "type", f"kind {kind!r} is declared differently by the types {names} of base {name}")
         draft_ids = files.ids(name, DRAFTS)
         for folder in (ENTRIES, DRAFTS):
             draft = folder == DRAFTS

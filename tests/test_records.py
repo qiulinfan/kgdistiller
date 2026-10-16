@@ -8,6 +8,7 @@ import unicodedata
 import unittest
 from pathlib import Path
 
+from kgdistiller.home import record_class
 from kgdistiller.records import (
     MAX_ID_LENGTH,
     UNDERSTANDING,
@@ -20,7 +21,6 @@ from kgdistiller.records import (
     parse_text,
     parse_value,
     read_text,
-    record_class,
     slug,
     source_lines,
     valid_id,
@@ -71,7 +71,6 @@ class FrontmatterTest(unittest.TestCase):
         self.assertEqual((("premise", ()),), parsed.roles)
         self.assertEqual("yes", parsed.understanding)
         self.assertIsNone(parsed.epistemic)
-        self.assertEqual("node", parsed.class_)
 
     def test_unquoted_wikilink_is_reported_with_the_quoting_fix(self) -> None:
         for line in ("premise: [[subspace]]", "requires:\n  - [[subspace]]"):
@@ -109,9 +108,8 @@ class FrontmatterTest(unittest.TestCase):
 
     def test_tags_and_cssclasses_are_accepted_and_ignored(self) -> None:
         parsed = record(FRONTMATTER + "\ntags: [a, b]\ncssclasses: wide\n")
-        self.assertEqual("node", parsed.class_)
         self.assertEqual((), parsed.roles)
-        self.assertEqual("node", record(FRONTMATTER + "\ntags:\n  - [[x]]").class_)
+        self.assertEqual((), record(FRONTMATTER + "\ntags:\n  - [[x]]").roles)
 
     def test_frontmatter_delimiters(self) -> None:
         for text in ("label: x\n---\nbody", "---\nlabel: x\nbody", "---\nlabel: x\n--- \nbody"):
@@ -142,7 +140,6 @@ class FrontmatterTest(unittest.TestCase):
             [(role, position, value.uid) for role, position, value in parsed.values()],
         )
         self.assertEqual(("kb", "dimension"), (parsed.requires[1].base, parsed.requires[1].id))
-        self.assertEqual("relation", parsed.class_)
 
 
 class ValueGrammarTest(unittest.TestCase):
@@ -294,13 +291,17 @@ class IdTest(unittest.TestCase):
 
 
 class ClassRuleTest(unittest.TestCase):
-    def test_relation_iff_a_non_fixed_key_holds_a_non_empty_list(self) -> None:
-        self.assertEqual("node", record_class({"label": "x", "requires": ["[[a]]"], "aliases": ["b"]}))
-        self.assertEqual("node", record_class({"label": "x", "premise": []}))
-        self.assertEqual("relation", record_class({"label": "x", "premise": ["a"]}))
-        self.assertEqual("relation", record_class({"tags": [], "side": ["[[a]]", "[[b]]"]}))
-        self.assertEqual("node", record_class({"tags": ["a"], "cssclasses": ["b"]}))
-        self.assertEqual("relation", record(FRONTMATTER + '\nuses: ["[[dimension]]"]').class_)
+    def test_a_relation_iff_a_type_of_its_base_declares_its_kind_a_relation_kind(self) -> None:
+        relations = {"kb": frozenset({"implies"}), "other": frozenset()}
+        self.assertEqual("relation", record_class(relations, "kb", "implies"))
+        self.assertEqual("node", record_class(relations, "kb", "definition"))
+        self.assertEqual("node", record_class(relations, "other", "implies"))
+        self.assertEqual("node", record_class(relations, "missing", "implies"))
+
+    def test_role_values_do_not_make_a_record_a_relation(self) -> None:
+        parsed = record(FRONTMATTER + '\nuses: ["[[dimension]]"]')
+        self.assertEqual((("uses", ("kb:dimension",)),), tuple((role, tuple(v.uid for v in values)) for role, values in parsed.roles))
+        self.assertFalse(hasattr(parsed, "class_"))
 
 
 class TextReadingTest(unittest.TestCase):

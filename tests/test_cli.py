@@ -69,7 +69,7 @@ class BaseAddTest(unittest.TestCase):
                          ("papers", "papers/paper.tex", "papers", 2))
         self.assertEqual(set(profile), {"base", "source", "type", "node_kinds", "relation_kinds", "epistemic",
                                         "guidance", "line_count", "records", "drafts"})
-        self.assertEqual((profile["node_kinds"], profile["records"], profile["drafts"]), (["definition"], [], []))
+        self.assertEqual((profile["node_kinds"], profile["records"], profile["drafts"]), ({"definition": []}, [], []))
         self.assertEqual(output(kgdistiller("source", str(root / "papers/paper.tex"), cwd=self.tmp)), profile)
         self.assertFalse((root / ".knowledge/sheets").exists())
         unregistered = kgdistiller("source", "notes.txt", cwd=root)

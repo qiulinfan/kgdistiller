@@ -54,7 +54,7 @@ from .records import (
 )
 
 DATABASE_FILENAME = "index.sqlite"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 BUSY_TIMEOUT_SECONDS = 30
 EMBED_BATCH = 64
 SCHEMA = """
@@ -67,7 +67,6 @@ CREATE TABLE record(
   uid           TEXT NOT NULL UNIQUE,
   base          TEXT NOT NULL,
   id            TEXT NOT NULL,
-  class         TEXT NOT NULL CHECK (class IN ('node','relation')),
   kind          TEXT NOT NULL,
   label         TEXT NOT NULL,
   aliases       TEXT NOT NULL,
@@ -105,11 +104,11 @@ CREATE TABLE name(
 CREATE VIRTUAL TABLE fts USING fts5(tokens, tokenize = 'unicode61 remove_diacritics 0');
 
 INSERT INTO meta(key, value) VALUES ('embedding', '');
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 """
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 _RECORD_COLUMNS = (
-    "uid", "base", "id", "class", "kind", "label", "aliases", "source", "line_start", "line_end", "lines",
+    "uid", "base", "id", "kind", "label", "aliases", "source", "line_start", "line_end", "lines",
     "understanding", "epistemic", "body", "search_terms", "evidence", "mtime_ns", "size",
 )
 _UPSERT = (
@@ -207,17 +206,42 @@ def _usable(path: Path) -> sqlite3.Connection | None:
     return None
 
 
-def open_for_write() -> tuple[sqlite3.Connection, bool]:
-    """Open the database for ``index``; recreate it when missing, unopenable or of another version."""
+def _carried(path: Path) -> tuple[str, dict[str, bytes]]:
+    """The model and the vectors by text of a database about to be recreated, when it still reads; else nothing.
+
+    Vectors depend only on a record's unified text and the model, so a database of another schema version
+    hands them to the new one, which takes each for the row whose text is the same.
+    """
+    if not path.is_file():
+        return "", {}
+    try:
+        old = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=BUSY_TIMEOUT_SECONDS)
+    except sqlite3.Error:
+        return "", {}
+    try:
+        model = old.execute("SELECT value FROM meta WHERE key = 'embedding'").fetchone()[0]
+        return model, dict(old.execute("SELECT text, vec FROM record WHERE vec IS NOT NULL"))
+    except (sqlite3.Error, TypeError):
+        return "", {}
+    finally:
+        old.close()
+
+
+def open_for_write() -> tuple[sqlite3.Connection, bool, tuple[str, dict[str, bytes]]]:
+    """Open the database for ``index``; recreate it when missing, unopenable or of another version.
+
+    A recreated database comes with the model and vectors by text the old file held, if it could be read.
+    """
     require_fts5()
     path = database_path()
     connection = _usable(path)
     if connection is not None:
-        return connection, False
+        return connection, False, ("", {})
+    carried = _carried(path)
     _remove_database(path)
     connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
     connection.executescript(SCHEMA)
-    return connection, True
+    return connection, True, carried
 
 
 def open_read_only() -> sqlite3.Connection:
@@ -310,7 +334,7 @@ def _drop(connection: sqlite3.Connection, uid: str, rowid: int, pool: dict[str, 
 
 def _store(connection: sqlite3.Connection, record: Record, stat: os.stat_result) -> None:
     connection.execute(_UPSERT, (
-        record.uid, record.base, record.id, record.class_, record.kind, record.label,
+        record.uid, record.base, record.id, record.kind, record.label,
         json.dumps(list(record.aliases), ensure_ascii=False), record.source, record.first_line, record.last_line,
         record.lines_text,
         record.understanding, record.epistemic, record.body, record.search_terms,
@@ -383,7 +407,7 @@ def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None 
     """
     home = load_home(home_directory(), types=False)
     available, unavailable = _available(home)
-    connection, created = open_for_write()
+    connection, created, (carried_model, carried) = open_for_write()
     connection.row_factory = sqlite3.Row
     report: dict[str, Any] = {
         "created": created,
@@ -403,7 +427,8 @@ def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None 
         if model != meta_embedding(connection):
             connection.execute("UPDATE record SET vec = NULL")
             connection.execute("UPDATE meta SET value = ? WHERE key = 'embedding'", (model,))
-        pool: dict[str, bytes] = {}
+        # Vectors of a database of another schema, computed by the model the home still uses, are reused by text.
+        pool: dict[str, bytes] = dict(carried) if model and carried_model == model else {}
         if rebuild:
             for row in connection.execute("SELECT rowid, uid, base FROM record").fetchall():
                 if row["base"] not in unavailable:
@@ -577,6 +602,7 @@ def embedding_status(home: Home) -> dict[str, Any]:
             "vectors": recorded or None,
             "unembedded": _unembedded(connection),
             "embedding_changed": wanted_embedding(home) != recorded,
+            "cached": embedding_adapter.cached_models(),
         }
     finally:
         if connection is not None:

@@ -34,7 +34,7 @@ from kgdistiller.home import (
 )
 from tests.knowledge_fixture import use_temporary_home
 
-TYPE_TEXT = "---\nnode_kinds: [definition, theorem]\n---\nNodes are definitions and theorems.\n"
+TYPE_TEXT = "---\nnode_kinds:\n  definition: []\n  theorem: []\n---\nNodes are definitions and theorems.\n"
 SYMLINKS = unittest.skipIf(os.name == "nt", "directory symlinks need extra privileges on Windows")
 
 
@@ -156,7 +156,7 @@ class ConfigValidationTest(HomeTestCase):
         loaded = load_home(self.home)
         self.assertEqual(loaded.bases["kb"].root, self.root)
         self.assertEqual(loaded.bases["kb"].sources, {"notes/*.md": "notes-type"})
-        self.assertEqual(loaded.types["notes-type"].node_kinds, ("definition", "theorem"))
+        self.assertEqual(loaded.types["notes-type"].node_kinds, {"definition": (), "theorem": ()})
         self.assertIsNone(loaded.embedding)
 
     def test_shape_errors(self) -> None:
@@ -200,42 +200,56 @@ class TypeLoadingTest(HomeTestCase):
 
     def test_full_type_is_parsed(self) -> None:
         loaded = self.load(
-            "---\nnode_kinds: [definition, theorem]\nrelation_kinds:\n  implies: [premise, conclusion]\n"
-            "  equivalent: [side]\nepistemic: [proved, stated]\n---\n\nGuidance text.\n\n"
+            "---\nnode_kinds:\n  definition: []\n  theorem: [about]\n  remark:\nrelation_kinds:\n"
+            "  implies: [premise, conclusion]\n  equivalent: [side]\nepistemic: [proved, stated]\n---\n\nGuidance text.\n\n"
         )
         self.assertEqual(loaded.name, "sample")
-        self.assertEqual(loaded.node_kinds, ("definition", "theorem"))
+        self.assertEqual(loaded.node_kinds, {"definition": (), "theorem": ("about",), "remark": ()})
         self.assertEqual(loaded.relation_kinds, {"implies": ("premise", "conclusion"), "equivalent": ("side",)})
         self.assertEqual(loaded.epistemic, ("proved", "stated"))
         self.assertEqual(loaded.guidance, "Guidance text.")
+        self.assertEqual(loaded.roles("theorem"), ("about",))
+        self.assertEqual(loaded.roles("definition"), ())
+        self.assertEqual(loaded.roles("implies"), ("premise", "conclusion"))
+        self.assertIsNone(loaded.roles("missing"))
 
     def test_base_loader_keeps_strings(self) -> None:
-        loaded = self.load("---\nnode_kinds: [on, yes, 1]\n---\nBody.\n")
-        self.assertEqual(loaded.node_kinds, ("on", "yes", "1"))
+        loaded = self.load("---\nnode_kinds:\n  on: []\n  yes: []\n  1: []\n---\nBody.\n")
+        self.assertEqual(loaded.node_kinds, {"on": (), "yes": (), "1": ()})
         self.assertEqual(loaded.relation_kinds, {})
         self.assertEqual(loaded.epistemic, ())
 
     def test_invalid_types(self) -> None:
+        mapping = "node_kinds must be a non-empty mapping"
         cases = {
-            "missing node_kinds": ("---\nepistemic: [proved]\n---\nBody.\n", "node_kinds must be a non-empty list"),
-            "empty node_kinds": ("---\nnode_kinds: []\n---\nBody.\n", "node_kinds must be a non-empty list"),
-            "duplicate kinds": ("---\nnode_kinds: [a, a]\n---\nBody.\n", "must not repeat"),
-            "node and relation": ("---\nnode_kinds: [a]\nrelation_kinds:\n  a: [x]\n---\nBody.\n",
+            "missing node_kinds": ("---\nepistemic: [proved]\n---\nBody.\n", mapping),
+            "list node_kinds": ("---\nnode_kinds: [a, b]\n---\nBody.\n", mapping),
+            "empty list node_kinds": ("---\nnode_kinds: []\n---\nBody.\n", mapping),
+            "empty node_kinds": ("---\nnode_kinds: {}\n---\nBody.\n", mapping),
+            "plain node_kinds": ("---\nnode_kinds: a\n---\nBody.\n", mapping),
+            "invalid node kind": ("---\nnode_kinds:\n  A: []\n---\nBody.\n", "node_kinds has an invalid slug"),
+            "node and relation": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  a: [x, y]\n---\nBody.\n",
                                   "both a node kind and a relation kind"),
-            "dotted role": ("---\nnode_kinds: [a]\nrelation_kinds:\n  r: [x.y]\n---\nBody.\n", "invalid slug"),
-            "uppercase role": ("---\nnode_kinds: [a]\nrelation_kinds:\n  r: [Role]\n---\nBody.\n", "invalid slug"),
-            "digit role": ("---\nnode_kinds: [a]\nrelation_kinds:\n  r: [1st]\n---\nBody.\n", "invalid slug"),
-            "fixed key role": ("---\nnode_kinds: [a]\nrelation_kinds:\n  r: [subject, source]\n---\nBody.\n",
+            "list relation_kinds": ("---\nnode_kinds:\n  a: []\nrelation_kinds: [r]\n---\nBody.\n",
+                                    "relation_kinds must map each kind to its roles"),
+            "dotted role": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r: [x.y]\n---\nBody.\n", "invalid slug"),
+            "uppercase role": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r: [Role]\n---\nBody.\n", "invalid slug"),
+            "digit role": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r: [1st]\n---\nBody.\n", "invalid slug"),
+            "invalid node role": ("---\nnode_kinds:\n  a: [About]\n---\nBody.\n", "roles of a.*invalid slug"),
+            "fixed key role": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r: [subject, source]\n---\nBody.\n",
                                "'source' of r is a fixed record key"),
-            "empty roles": ("---\nnode_kinds: [a]\nrelation_kinds:\n  r: []\n---\nBody.\n", "non-empty list"),
-            "duplicate roles": ("---\nnode_kinds: [a]\nrelation_kinds:\n  r: [x, x]\n---\nBody.\n", "must not repeat"),
-            "duplicate epistemic": ("---\nnode_kinds: [a]\nepistemic: [p, p]\n---\nBody.\n", "must not repeat"),
-            "empty body": ("---\nnode_kinds: [a]\n---\n  \n\n", "body"),
-            "unknown key": ("---\nnode_kinds: [a]\nguidance: x\n---\nBody.\n", "unknown frontmatter key"),
-            "no frontmatter": ("node_kinds: [a]\n", "frontmatter"),
-            "unterminated": ("---\nnode_kinds: [a]\nBody.\n", "frontmatter"),
+            "fixed key node role": ("---\nnode_kinds:\n  a: [kind]\n---\nBody.\n", "'kind' of a is a fixed record key"),
+            "empty roles": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r: []\n---\nBody.\n", "non-empty list"),
+            "missing roles": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r:\n---\nBody.\n", "non-empty list"),
+            "duplicate roles": ("---\nnode_kinds:\n  a: []\nrelation_kinds:\n  r: [x, x]\n---\nBody.\n", "must not repeat"),
+            "duplicate node roles": ("---\nnode_kinds:\n  a: [x, x]\n---\nBody.\n", "must not repeat"),
+            "duplicate epistemic": ("---\nnode_kinds:\n  a: []\nepistemic: [p, p]\n---\nBody.\n", "must not repeat"),
+            "empty body": ("---\nnode_kinds:\n  a: []\n---\n  \n\n", "body"),
+            "unknown key": ("---\nnode_kinds:\n  a: []\nguidance: x\n---\nBody.\n", "unknown frontmatter key"),
+            "no frontmatter": ("node_kinds:\n  a: []\n", "frontmatter"),
+            "unterminated": ("---\nnode_kinds:\n  a: []\nBody.\n", "frontmatter"),
             "not a mapping": ("---\n- a\n---\nBody.\n", "mapping"),
-            "bad yaml": ("---\nnode_kinds: [a\n---\nBody.\n", "invalid frontmatter"),
+            "bad yaml": ("---\nnode_kinds: {a\n---\nBody.\n", "invalid frontmatter"),
         }
         for label, (text, message) in cases.items():
             with self.subTest(label), self.assertRaisesRegex(KnowledgeError, message):
@@ -248,7 +262,7 @@ class TypeLoadingTest(HomeTestCase):
 
     def test_home_loads_every_type(self) -> None:
         self.write_type("good")
-        self.write_type("broken", "---\nnode_kinds: []\n---\nBody.\n")
+        self.write_type("broken", "---\nnode_kinds: [a]\n---\nBody.\n")
         self.write_config({"bases": {}, "embedding": None})
         with self.assertRaisesRegex(KnowledgeError, "broken"):
             load_home(self.home)

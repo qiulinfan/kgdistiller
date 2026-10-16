@@ -27,9 +27,11 @@ from .home import (
     KnowledgeError,
     atomic_write_text,
     base_for_path,
+    base_relation_kinds,
     home_directory,
     load_home,
     lock,
+    record_class,
 )
 from .index import index, name_key
 from .records import (
@@ -238,7 +240,7 @@ def _draft_value(files: Files, record: Record, role: str, position: int, value: 
 
 def _choices(files: Files, base: Base, record: Record) -> dict[str, Any] | None:
     """What a draft's kind, roles and epistemic may be: its source's type, or for a foreign draft every type
-    registered for its base, a kind two of them declare differently left out; None when the source has no type."""
+    registered for its base, which `kgd check` keeps from declaring a kind differently; None when there is none."""
     if record.foreign:
         types = [files.home.types[name] for name in sorted(set(base.sources.values())) if name in files.home.types]
     else:
@@ -247,25 +249,17 @@ def _choices(files: Files, base: Base, record: Record) -> dict[str, Any] | None:
         types = [files.home.types[name]] if name in files.home.types else []
     if not types:
         return None
-    node_kinds: list[str] = []
+    node_kinds: dict[str, list[str]] = {}
     relation_kinds: dict[str, list[str]] = {}
-    clashing: set[str] = set()
     for kind_type in types:
-        for kind in kind_type.node_kinds:
-            if kind in relation_kinds:
-                clashing.add(kind)
-            elif kind not in node_kinds:
-                node_kinds.append(kind)
+        for kind, roles in kind_type.node_kinds.items():
+            node_kinds.setdefault(kind, list(roles))
         for kind, roles in kind_type.relation_kinds.items():
-            if kind in node_kinds or relation_kinds.get(kind, list(roles)) != list(roles):
-                clashing.add(kind)
-            else:
-                relation_kinds[kind] = list(roles)
-    epistemic = list(dict.fromkeys(value for kind_type in types for value in kind_type.epistemic))
+            relation_kinds.setdefault(kind, list(roles))
     return {
-        "node_kinds": [kind for kind in node_kinds if kind not in clashing],
-        "relation_kinds": {kind: roles for kind, roles in relation_kinds.items() if kind not in clashing},
-        "epistemic": epistemic,
+        "node_kinds": node_kinds,
+        "relation_kinds": relation_kinds,
+        "epistemic": list(dict.fromkeys(value for kind_type in types for value in kind_type.epistemic)),
     }
 
 
@@ -295,6 +289,7 @@ def drafts(bases: Iterable[str] = (), sources: Iterable[str] = (), names: Iterab
     """
     home = load_home(home_directory())
     files = Files(home)
+    relations = base_relation_kinds(home)
     wanted = set(bases)
     prefixes = tuple(sources)
     keys = {name_key(name) for name in names} - {""}
@@ -352,7 +347,7 @@ def drafts(bases: Iterable[str] = (), sources: Iterable[str] = (), names: Iterab
                 "path": str(path),
                 "replaces": uid if key in entries else None,
                 "foreign": record.foreign,
-                "class": record.class_,
+                "class": record_class(relations, name, record.kind),
                 "kind": record.kind,
                 "label": record.label,
                 "aliases": list(record.aliases),
@@ -512,7 +507,7 @@ def source(path: Path | str) -> dict[str, Any]:
         "base": base.name,
         "source": relative,
         "type": document_type.name,
-        "node_kinds": list(document_type.node_kinds),
+        "node_kinds": {kind: list(roles) for kind, roles in document_type.node_kinds.items()},
         "relation_kinds": {kind: list(roles) for kind, roles in document_type.relation_kinds.items()},
         "epistemic": list(document_type.epistemic),
         "guidance": document_type.guidance,
@@ -521,7 +516,7 @@ def source(path: Path | str) -> dict[str, Any]:
             "uid": record.uid,
             "label": record.label,
             "kind": record.kind,
-            "class": record.class_,
+            "class": "relation" if record.kind in document_type.relation_kinds else "node",
             "lines": record.lines_text,
             "understanding": record.understanding,
             "gloss": gloss(record.body),
@@ -530,7 +525,7 @@ def source(path: Path | str) -> dict[str, Any]:
             "id": record.id,
             "label": record.label,
             "kind": record.kind,
-            "class": record.class_,
+            "class": "relation" if record.kind in document_type.relation_kinds else "node",
             "lines": record.lines_text,
         } for record in _records(base, DRAFTS, relative)],
     }

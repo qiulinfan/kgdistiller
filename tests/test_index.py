@@ -51,7 +51,7 @@ def dump() -> dict[str, Any]:
     connection = open_read_only()
     try:
         columns = [
-            "uid", "base", "id", "class", "kind", "label", "aliases", "source", "line_start", "line_end", "lines",
+            "uid", "base", "id", "kind", "label", "aliases", "source", "line_start", "line_end", "lines",
             "understanding", "epistemic", "body", "search_terms", "evidence", "text", "vec",
         ]
         return {
@@ -134,9 +134,11 @@ class SchemaTest(IndexTestCase):
         self.assertTrue(report["created"])
         connection = sqlite3.connect(database_path())
         try:
-            self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(4, connection.execute("PRAGMA user_version").fetchone()[0])
             columns = [row[1] for row in connection.execute("PRAGMA table_info(link)")]
             self.assertEqual(["src", "role", "pos", "dst"], columns)
+            # A record's class follows its kind through the home's types at read time; the index stores none.
+            self.assertNotIn("class", [row[1] for row in connection.execute("PRAGMA table_info(record)")])
             self.assertEqual("wal", connection.execute("PRAGMA journal_mode").fetchone()[0])
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'fts_%'")}
             self.assertEqual({"meta", "record", "link", "name", "fts"}, tables)
@@ -175,8 +177,8 @@ class SchemaTest(IndexTestCase):
                 "> The sum of two subspaces\nnotes/a.txt",
                 row["text"],
             )
-            self.assertEqual(("relation", "yes", 4, 4, "4-4"),
-                             (row["class"], row["understanding"], row["line_start"], row["line_end"], row["lines"]))
+            self.assertEqual(("implies", "yes", 4, 4, "4-4"),
+                             (row["kind"], row["understanding"], row["line_start"], row["line_end"], row["lines"]))
             links = connection.execute("SELECT role, pos, dst FROM link WHERE src = 'kb:sum-is-subspace' ORDER BY role, pos").fetchall()
             self.assertEqual(
                 [("conclusion", 0, "notes:measure"), ("conclusion", 1, "kb:dimension"),
@@ -264,7 +266,7 @@ class InvariantTest(IndexTestCase):
         self.assertEqual(first, third)
         self.assertEqual([("embedding", "fake/model int8")], first["meta"])
         for row in first["record"]:
-            self.assertEqual(FakeEncoder.vector(row[16]), row[17], row[0])
+            self.assertEqual(FakeEncoder.vector(row[15]), row[16], row[0])
 
     def rowids(self) -> dict[str, int]:
         connection = open_read_only()
@@ -540,6 +542,50 @@ class EmbeddingTest(IndexTestCase):
             self.assertEqual([self.MODEL, "other/model"], fake.loads)
         self.assertEqual([("embedding", "other/model int8")], dump()["meta"])
         self.assert_all_encoded()
+
+    def set_schema_version(self, version: int) -> None:
+        connection = sqlite3.connect(database_path())
+        try:
+            connection.execute(f"PRAGMA user_version = {version}")
+        finally:
+            connection.close()
+
+    def test_another_schema_version_hands_its_vectors_to_the_new_database(self) -> None:
+        with fake_encoder() as fake:
+            index()
+            before = self.rows()
+            self.set_schema_version(3)
+            report = index()
+            self.assertTrue(report["created"])
+            self.assertEqual((3, 0, 0), (report["reused"], report["embedded"], report["unembedded"]))
+            self.assertEqual([self.MODEL], fake.loads)
+        self.assertEqual(before, self.rows())
+        self.assertEqual([("embedding", f"{self.MODEL} int8")], dump()["meta"])
+        self.assert_all_encoded()
+
+    def test_another_schema_version_of_another_model_hands_on_no_vectors(self) -> None:
+        with fake_encoder() as fake:
+            index()
+            self.set_schema_version(3)
+            self.kb.embedding = "other/model"
+            self.kb.write_config()
+            report = index()
+            self.assertTrue(report["created"])
+            self.assertEqual((0, 3, 0), (report["reused"], report["embedded"], report["unembedded"]))
+            self.assertEqual([self.MODEL, "other/model"], fake.loads)
+        self.assertEqual([("embedding", "other/model int8")], dump()["meta"])
+        self.assert_all_encoded()
+
+    def test_carried_vectors_need_no_embedding_run(self) -> None:
+        with fake_encoder() as fake:
+            index()
+            before = self.rows()
+            self.set_schema_version(3)
+            report = index(embed=False)
+            self.assertEqual([self.MODEL], fake.loads)
+        self.assertTrue(report["created"])
+        self.assertEqual((3, 0, 0), (report["reused"], report["embedded"], report["unembedded"]))
+        self.assertEqual(before, self.rows())
 
     def test_stale_write_is_a_no_op(self) -> None:
         tampered: list[str] = []

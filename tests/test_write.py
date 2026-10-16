@@ -109,7 +109,7 @@ class AcceptTest(WriteTestCase):
         self.assertIn("found at lines 6-6", accept([draft])["refused"][0]["message"])
 
     def test_linked_drafts_must_be_selected_together(self) -> None:
-        first = self.draft("first", node("First", "6", kind="implies", extra='premise: ["[[second]]"]'))
+        first = self.draft("first", node("First", "6", kind="implies", extra='premise: ["[[second]]"]\nconclusion: ["[[subspace]]"]'))
         second = self.draft("second", node("Second", "6"))
         receipt = accept([first])
         self.assertEqual([{"path": str(first), "message": "premise[0]: select [[second]] too"}], receipt["refused"])
@@ -119,9 +119,12 @@ class AcceptTest(WriteTestCase):
 
     def test_validation_follows_check_rules(self) -> None:
         cases = {
-            "dangling": (node("D", "6", kind="implies", extra='premise: ["[[nowhere]]"]'), "dangling link"),
+            "dangling": (node("D", "6", kind="implies", extra='premise: ["[[nowhere]]"]\nconclusion: ["[[subspace]]"]'),
+                         "dangling link"),
+            "one-participant": (node("O", "6", kind="implies", extra='premise: ["[[subspace]]"]'), "binds at least two records"),
             "bad-kind": (node("K", "6", kind="lemma"), "not a node or relation kind"),
-            "foreign-draft": (node("F", "6", kind="implies", extra='premise: ["[[notes:x]]"]'), "links a draft of base notes"),
+            "foreign-draft": (node("F", "6", kind="implies", extra='premise: ["[[notes:x]]"]\nconclusion: ["[[subspace]]"]'),
+                              "links a draft of base notes"),
         }
         self.kb.write_record("x", node("X", "1"), "X.", ["Title line"], folder="drafts", base="notes")
         self.kb.write_source(SOURCE, "\n".join(LINES) + "\n", base="notes")
@@ -208,7 +211,7 @@ class DraftsTest(WriteTestCase):
                 {"role": "requires", "pos": 1, "uid": "notes:rank", "state": "missing", "label": None},
             ],
             "choices": {
-                "node_kinds": ["definition", "theorem", "concept"],
+                "node_kinds": {"definition": [], "theorem": [], "concept": []},
                 "relation_kinds": {"implies": ["premise", "conclusion"], "equivalent": ["side"],
                                    "example": ["uses", "setting"], "contrasts": ["subject", "contrast", "witness"]},
                 "epistemic": ["proved", "stated"],
@@ -217,8 +220,8 @@ class DraftsTest(WriteTestCase):
         }], "unavailable_bases": []}, drafts())
 
     def test_linked_drafts_name_what_they_are_accepted_with(self) -> None:
-        first = self.draft("first", node("First", "6", kind="implies", extra='premise: ["[[second]]"]'))
-        second = self.draft("second", node("Second", "6", kind="implies", extra='premise: ["[[third]]"]'))
+        first = self.draft("first", node("First", "6", kind="implies", extra='premise: ["[[second]]"]\nconclusion: ["[[subspace]]"]'))
+        second = self.draft("second", node("Second", "6", kind="implies", extra='premise: ["[[third]]"]\nconclusion: ["[[subspace]]"]'))
         third = self.draft("third", node("Third", "6"))
         listed = {item["id"]: item for item in drafts()["drafts"]}
         self.assertEqual((["kb:second", "kb:third"], [], []), (listed["first"]["with"], listed["first"]["linked_by"], listed["first"]["problems"]))
@@ -366,7 +369,7 @@ class UpdateDraftTest(WriteTestCase):
 
     def test_a_link_to_a_replaced_id_targets_the_accepted_record(self) -> None:
         self.replacement()
-        self.draft("dimension", node("Dimension", "6", kind="implies", extra='premise: ["[[subspace]]"]'))
+        self.draft("dimension", node("Dimension", "6", kind="implies", extra='premise: ["[[subspace]]"]\nconclusion: ["[[subspace]]"]'))
         listed = {item["id"]: item for item in drafts()["drafts"]}
         self.assertEqual(
             {"role": "premise", "pos": 0, "uid": "kb:subspace", "state": "accepted", "label": "Subspace",
@@ -409,7 +412,7 @@ class SourceTest(WriteTestCase):
             list(profile),
         )
         self.assertEqual(("kb", SOURCE, "math", 6), (profile["base"], profile["source"], profile["type"], profile["line_count"]))
-        self.assertEqual(["definition", "theorem", "concept"], profile["node_kinds"])
+        self.assertEqual({"definition": [], "theorem": [], "concept": []}, profile["node_kinds"])
         self.assertEqual(["premise", "conclusion"], profile["relation_kinds"]["implies"])
         self.assertEqual(["proved", "stated"], profile["epistemic"])
         self.assertEqual(
@@ -424,6 +427,25 @@ class SourceTest(WriteTestCase):
              {"id": "criterion", "label": "Criterion", "kind": "implies", "class": "relation", "lines": "6-6"}],
             profile["drafts"],
         )
+
+    def test_node_kinds_map_each_kind_to_its_roles(self) -> None:
+        math = self.kb.types["math"]
+        self.kb.types["math"] = {**math, "node_kinds": {"definition": [], "theorem": ["about"], "concept": []}}
+        self.kb.write_config()
+        self.assertEqual({"definition": [], "theorem": ["about"], "concept": []}, source(self.source)["node_kinds"])
+        listed = {item["id"]: item for item in drafts()["drafts"]}
+        self.assertEqual({"definition": [], "theorem": ["about"], "concept": []}, listed["criterion"]["choices"]["node_kinds"])
+
+    def test_class_follows_the_type_of_the_kind(self) -> None:
+        math = self.kb.types["math"]
+        relations = {kind: roles for kind, roles in math["relation_kinds"].items() if kind != "implies"}
+        self.kb.types["math"] = {**math, "node_kinds": {"definition": [], "theorem": [], "concept": [], "implies": ["premise"]},
+                                 "relation_kinds": relations}
+        self.kb.write_config()
+        [criterion] = [item for item in source(self.source)["drafts"] if item["id"] == "criterion"]
+        self.assertEqual("node", criterion["class"])
+        listed = {item["id"]: item for item in drafts()["drafts"]}
+        self.assertEqual(("node", []), (listed["criterion"]["class"], listed["criterion"]["problems"]))
 
     def test_line_count_reads_bom_and_crlf_like_check(self) -> None:
         self.source.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(LINES).encode() + b"\r\n")

@@ -180,11 +180,56 @@ class RecordRulesTest(CheckTestCase):
         self.kb.write_record("bad-kind", node("K", "1", kind="lemma"), "Text.", ["Title line"])
         self.kb.write_record("node-roles", node("N", "1", extra='premise: ["[[subspace]]"]'), "Text.", ["Title line"])
         self.relation("empty-relation", "premise: []")
-        self.relation("bad-epistemic", 'premise: ["[[subspace]]"]\nepistemic: rumoured')
+        self.relation("one-participant", 'premise: ["[[subspace]]"]\nconclusion: []')
+        self.relation("two-in-one-role", 'premise: ["[[subspace]]", "[[measure-space]]"]')
+        self.relation("bad-epistemic", 'premise: ["[[subspace]]"]\nconclusion: ["[[measure-space]]"]\nepistemic: rumoured')
         self.assert_error("bad-kind.md", "kind", "not a node or relation kind of type math")
-        self.assert_error("node-roles.md", "kind", "definition is a node kind; remove the keys premise")
-        self.assert_error("empty-relation.md", "kind", "needs at least one participant")
+        self.assert_error("node-roles.md", "frontmatter", "premise is not a role of definition; it declares no roles")
+        two = "the relation implies binds at least two records; a statement about one record is a node"
+        self.assert_error("empty-relation.md", "kind", two)
+        self.assert_error("one-participant.md", "kind", two)
         self.assert_error("bad-epistemic.md", "kind", "epistemic 'rumoured'")
+        found = self.errors()
+        self.assertNotIn("two-in-one-role.md", [item[0] for item in found])
+        self.assertNotIn(("bad-epistemic.md", "kind", two), found)
+
+    def test_a_node_kind_may_declare_roles(self) -> None:
+        math = self.kb.types["math"]
+        self.kb.types["math"] = {**math, "node_kinds": {"definition": [], "theorem": ["about"], "concept": []}}
+        self.kb.write_config()
+        self.kb.write_record("about-one", node("A", "1", kind="theorem", extra='about: ["[[subspace]]"]'), "Text.", ["Title line"])
+        self.kb.write_record(
+            "about-two", node("B", "1", kind="theorem", extra='about: ["[[subspace]]", "[[measure-space]]"]'),
+            "Text.", ["Title line"],
+        )
+        self.kb.write_record("about-none", node("C", "1", kind="theorem"), "Text.", ["Title line"])
+        self.kb.write_record(
+            "undeclared", node("D", "1", kind="theorem", extra='about: ["[[subspace]]"]\npremise: ["[[subspace]]"]'),
+            "Text.", ["Title line"],
+        )
+        self.kb.write_record("about-dangling", node("E", "1", kind="theorem", extra='about: ["[[nowhere]]"]'), "Text.", ["Title line"])
+        self.assertEqual(
+            [("about-dangling.md", "link"), ("undeclared.md", "frontmatter")], sorted(item[:2] for item in self.errors()),
+        )
+        self.assert_error("about-dangling.md", "link", "about[0]: dangling link [[nowhere]]")
+        self.assert_error("undeclared.md", "frontmatter", "premise is not a role of theorem; its roles are about")
+
+    def test_class_follows_the_kind_not_the_frontmatter(self) -> None:
+        math = self.kb.types["math"]
+        self.kb.types["math"] = {**math, "relation_kinds": {**math["relation_kinds"], "characterizes": ["about"]}}
+        self.kb.write_config()
+        self.kb.write_record(
+            "characterization", node("C", "1", kind="characterizes", extra='about: ["[[subspace]]"]'), "Text.", ["Title line"],
+        )
+        self.assert_error("characterization.md", "kind",
+                          "the relation characterizes binds at least two records; a statement about one record is a node")
+        relations = dict(math["relation_kinds"])
+        self.kb.types["math"] = {
+            **math, "node_kinds": {"definition": [], "theorem": [], "concept": [], "characterizes": ["about"]},
+            "relation_kinds": relations,
+        }
+        self.kb.write_config()
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
 
     def test_link_rules(self) -> None:
         self.relation("dangling", 'premise: ["[[linear-subspace]]"]')
@@ -217,7 +262,7 @@ class RecordRulesTest(CheckTestCase):
 
 class DraftRulesTest(CheckTestCase):
     def test_drafts_may_link_drafts_of_their_base(self) -> None:
-        self.relation("first", 'premise: ["[[second]]"]', folder="drafts")
+        self.relation("first", 'premise: ["[[second]]"]\nconclusion: ["[[subspace]]"]', folder="drafts")
         self.kb.write_record("second", node("Second", "1"), "Text.", ["Title line"], folder="drafts")
         self.assertEqual([], self.errors())
 
@@ -317,10 +362,11 @@ class ForeignRulesTest(CheckTestCase):
         self.foreign("lemma", kind="lemma")
         self.foreign("node-roles", extra='premise: ["[[subspace]]"]')
         self.foreign("implication", kind="implies", extra='premise: ["[[subspace]]"]\nconclusion: ["[[measure-space]]"]\nepistemic: stated')
-        self.foreign("bad-epistemic", kind="implies", extra='premise: ["[[subspace]]"]\nepistemic: rumoured')
+        self.foreign("bad-epistemic", kind="implies",
+                     extra='premise: ["[[subspace]]"]\nconclusion: ["[[measure-space]]"]\nepistemic: rumoured')
         self.foreign("bad-role", kind="implies", extra='witness: ["[[subspace]]"]')
         self.assert_error("lemma.md", "kind", "kind 'lemma' is not a node or relation kind of the types of base kb")
-        self.assert_error("node-roles.md", "kind", "concept is a node kind; remove the keys premise")
+        self.assert_error("node-roles.md", "frontmatter", "premise is not a role of concept; it declares no roles")
         self.assert_error("bad-epistemic.md", "kind", "epistemic 'rumoured' is not allowed for implies (proved, stated)")
         self.assert_error("bad-role.md", "frontmatter", "witness is not a role of implies")
         self.assertNotIn("implication.md", [item[0] for item in self.errors()])
@@ -350,14 +396,54 @@ class ForeignRulesTest(CheckTestCase):
         names = [item[0] for item in self.errors()]
         self.assertNotIn("shared-node.md", names)
         self.assertNotIn("claimed.md", names)
+        self.assertIn(("config.json", "type", "kind 'implies' is declared differently by the types math, papers of base kb"),
+                      self.errors())
+
 
     def test_foreign_records_link_and_are_linked_like_any_record(self) -> None:
         self.foreign("attention", extra='requires: ["[[subspace]]", "[[notes:sigma]]"]')
         self.kb.write_record("sigma", node("Sigma", "1"), "Text.", ["Title line"], base="notes")
-        self.relation("uses-attention", 'premise: ["[[attention]]"]')
+        self.relation("uses-attention", 'premise: ["[[attention]]"]\nconclusion: ["[[notes:sigma]]"]')
         self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
         self.foreign("dangling", extra='requires: ["[[nowhere]]"]')
         self.assert_error("dangling.md", "link", "dangling link [[nowhere]]")
+
+
+class BaseKindTest(CheckTestCase):
+    """A base's document types must agree on each kind they share: node or relation, and its roles."""
+
+    def type_errors(self) -> list[dict[str, Any]]:
+        return [item for item in self.run_check()["errors"] if item["rule"] == "type"]
+
+    def register(self, spec: dict[str, Any], base: str = "kb") -> None:
+        self.kb.types["papers"] = {"guidance": "Papers.", **spec}
+        self.kb.sources[base]["papers/*.pdf"] = "papers"
+        self.kb.write_config()
+
+    def test_agreeing_types_are_clean(self) -> None:
+        self.register({"node_kinds": ["concept", "model"], "relation_kinds": {"implies": ["premise", "conclusion"]}})
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+
+    def test_node_versus_relation_kind(self) -> None:
+        self.register({"node_kinds": ["implies"]})
+        self.assertEqual(
+            [{"path": str(self.kb.home / "config.json"), "rule": "type",
+              "message": "kind 'implies' is declared differently by the types math, papers of base kb"}],
+            self.type_errors(),
+        )
+
+    def test_different_roles(self) -> None:
+        self.register({"node_kinds": {"concept": ["about"]}, "relation_kinds": {"equivalent": ["left", "right"]}})
+        self.assertEqual(
+            ["kind 'concept' is declared differently by the types math, papers of base kb",
+             "kind 'equivalent' is declared differently by the types math, papers of base kb"],
+            [item["message"] for item in self.type_errors()],
+        )
+
+    def test_types_of_different_bases_may_differ(self) -> None:
+        self.kb.sources["notes"] = {}
+        self.register({"node_kinds": ["implies"]}, base="notes")
+        self.assertEqual([], self.type_errors())
 
 
 class FreshnessTest(CheckTestCase):

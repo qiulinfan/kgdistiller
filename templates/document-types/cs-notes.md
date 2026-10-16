@@ -1,29 +1,36 @@
 ---
-node_kinds: [definition, algorithm, data-structure, architecture, invariant]
+node_kinds:
+  definition: []
+  algorithm: []
+  data-structure: []
+  architecture: []
+  invariant: [about]
+  example: [uses, setting]
 relation_kinds:
   requires-for: [prerequisite, dependent]
   implements: [implementation, specification]
   complexity-bound: [subject, resource]
-  example: [uses, setting]
 epistemic: [proved, stated, empirical]
 ---
 This is a starting profile for computer-science notes. The owner may edit its
 kinds, roles and guidance before registering sources with it.
 
-Retain defined concepts, algorithms, data structures, architectures and
-precisely stated invariants. Preserve preconditions, input/output contracts,
+Retain defined concepts, algorithms, data structures, architectures,
+precisely stated invariants (about the records they hold for) and worked
+examples (uses and setting). Preserve preconditions, input/output contracts,
 state transitions, pseudocode or formulas needed to understand each record.
-Do not create a node from a term that is only named or cited. Any other
-statement that can be true or false, such as a measured behaviour or a
-comparison, is a relation binding the records it concerns, not a node.
+Do not create a node from a term that is only named or cited. A connection
+the notes state between two or more records, such as an implementation of a
+specification or a resource bound of an algorithm, is a relation, itself a
+record of the graph; a statement about one record is a node.
 
 Use requires-for for an explicit dependency and implements for an explicit
 implementation/specification connection. Use complexity-bound for a stated
 resource bound: resource binds the resource concept, and the formula,
 input-size definition, computation model and worst-case, expected or
 amortized qualification stay in the prose. Separate measured timings from
-proved bounds. Examples bind the concept they work in as setting and keep the
-concrete input and result in the prose. Role values are always knowledge
+proved bounds. An example binds the concept it works in as setting and keeps
+the concrete input and result in its prose. Role values are always knowledge
 references, never literal descriptions.
 
 The graph holds the knowledge the reader wants to retain from a source
