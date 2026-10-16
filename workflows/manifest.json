@@ -74,7 +74,7 @@
     },
     {
       "id": "relocate-knowledge",
-      "description": "Move one record's citation to a passage the owner gives: find the record from the knowledge's name in one lookup turn, then run kgd relocate with the passage's text, which finds it in the registered sources and rewrites only the record's source, lines and, when needed, Evidence.",
+      "description": "Move one record's citation to a passage the owner gives: find the record from the knowledge's name in one lookup turn, then run kgd relocate with the passage's text, which finds it in the registered sources of every base and rewrites only the record's source, lines and, when needed, Evidence, moving the record with its id into the passage's base when that is another one and rewriting every link to it.",
       "steps": [
         {
           "id": "relocate",

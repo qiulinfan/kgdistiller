@@ -297,9 +297,8 @@ while the owner keeps reading:
   returns any the model had not seen. It drops a relation's aliases.
 - Drafts are not knowledge yet, but the model sees the source's drafts and
   those that share a name. A value may link a draft of any base, which is
-  then accepted together with it. When the selection is a draft's item the
-  decision is unchanged, and the Capture view opens that draft. A draft is
-  never superseded or contradicted: the owner edits it instead.
+  then accepted together with it. A draft is never superseded or
+  contradicted: the owner edits it instead.
 - Evidence holds only the source's text. A quote is kept when it is verbatim
   in its lines after collapsing whitespace, as `kgd check` compares; moved to
   its only occurrence in the source when the lines were wrong; and replaced
@@ -517,14 +516,16 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   with its base when that is another one), a draft, or a missing record. Ids
   and uids are never shown. A draft the agent wrote in this session also shows
   its report.
-- Every field is edited on the card: the label (renaming a new draft no other
-  draft links to its label's id), the kind (from its document type), its
+- Every field is edited on the card: the label (renaming a new draft that no
+  draft of any base links to its label's id), the kind (from its document type), its
   other names, the epistemic label, whether it is understood, and the
   statement (the pencil turns it into a text box). Each value of a role or of
-  `requires` has × to remove it, and each row + to link a record or a draft,
-  of any base, found by name or words. Every change runs `kgd edit` on that
-  one field and lists the drafts again, so what `kgd accept` would refuse
-  shows at once; the evidence and the source change only by relocation.
+  `requires` has × to remove it, and each row + to link a record, found by
+  name or words, or a draft, found by name, of any base. Every change runs
+  `kgd edit` on that one field and lists the drafts again, so what
+  `kgd accept` would refuse shows at once. A foreign draft's web address is
+  edited there too; a local citation and the evidence change only by
+  relocation.
 - Every draft says whether `kgd accept` would take it, together with the
   drafts it links, and otherwise lists `kgd accept`'s refusals. The view lists
   the drafts again whenever a draft file of this vault is saved, so an edit

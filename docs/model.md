@@ -83,7 +83,7 @@ it concerns, such as `theorem: [about]`, and a role may hold several values:
 subspace and sum of subspaces, not an implication. A node kind that declares
 roles links at least one record in them. A relation is a connection the
 source states between records, of a kind the type declares: an implication
-between results, a comparison, a prerequisite, a generalization. It binds at
+between results, a comparison, a generalization. It binds at
 least two values (a participant may repeat), and it is itself a record, a
 vertex of the graph that other records may link. How important a record is is
 not its kind but its connectivity: retrieval reports its `degree`, the number
@@ -309,10 +309,10 @@ The rules that follow from these statements:
 | Document type | `types/<name>.md`: `node_kinds` and `relation_kinds`, each a mapping of kinds to their ordered roles (a node kind's may be empty), and optional `epistemic`; the body is guidance. |
 | Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. It is local or foreign by its `source`. |
 | Node | A record whose kind is a node kind: a concept, or a result a source states, such as a theorem, a finding or an example, whose roles link every record it concerns (at least one when its kind declares roles). |
-| Relation | A record whose kind is a relation kind: a connection between records, binding at least two values to that kind's roles. Arity is unbounded beyond that; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
+| Relation | A record whose kind is a relation kind: a connection between records, binding at least two values to that kind's roles. Arity is unbounded beyond that; a binary relation binds exactly two values, in two roles or in one symmetric role. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
 | Application / example | A node of a kind the owner registers for it, such as `example: [uses, setting]`. |
 | Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`; every value is a link. A role value is a knowledge reference, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role, and a concept without a record is captured before it is linked. |
-| `requires` | A list on every record holding links to its direct understanding prerequisites. Proof or derivation dependencies are relations. |
+| `requires` | A list on every record holding links to its direct understanding prerequisites, the one form of a prerequisite. A proof or derivation dependency the source states is a relation between results, such as `implies` with the results a proof uses as premises. |
 | Evidence | `source` + `lines` (one or more ranges) + one or more verbatim quotes in the body's final `## Evidence` section; a foreign record has quotes of its web page and no `lines`. The quotes are the anchor; each lies inside one cited range of a local source. |
 | Understanding | `yes` or `no`; absent means `yes`. Independent of coverage and evidence. |
 | Epistemic | Optional; a value from the type's `epistemic` list stating how the cited passage itself supports the record, such as proved or measured there, or only stated. A result the source reports from other work is stated. It is never a verdict of the whole knowledge base. |
@@ -638,15 +638,15 @@ SQLite's own locking.
 ### `kgd drafts [--base B]... [--source PREFIX]... [--name NAME]...`
 
 Lists the drafts of the available bases, read from files: it writes nothing,
-takes no lock and opens no database. Each draft has its record fields as
-`kgd get` gives them (without `in`), plus:
+takes no lock and opens no database. Each draft has the record fields of
+`kgd get` except `degree`, `in` and `source_text`, with `out` as below, plus:
 
 - `path`: the draft file;
 - `replaces`: the uid of the accepted record this draft would replace, or
   `null` for a new record;
-- `out`: every value as a link with the `state` of its target: `accepted`
-  (with the record's `label` and `understanding`), `draft` (a draft of any
-  base) or `missing`;
+- `out`: every value as a link with the `state` of its target, in place of
+  `kgd get`'s `exists`: `accepted` (with the record's `label` and
+  `understanding`), `draft` (a draft of any base) or `missing`;
 - `with`: the drafts, of any base, that it links, directly or through other
   drafts, which `kgd accept` must be given with it;
 - `linked_by`: the drafts, of any base, that link it;
@@ -666,6 +666,8 @@ takes no lock and opens no database. Each draft has its record fields as
    "out": [{"role": "about", "pos": 0, "uid": "notes:direct-sum", "state": "draft", "label": "Direct sum"},
            {"role": "about", "pos": 1, "uid": "notes:subspace", "state": "accepted", "label": "Subspace",
             "understanding": "yes"}],
+   "choices": {"node_kinds": {"definition": [], "theorem": ["about"]},
+               "relation_kinds": {"implies": ["premise", "conclusion"]}, "epistemic": ["proved", "stated"]},
    "with": ["notes:direct-sum"], "linked_by": [], "problems": []}],
  "unavailable_bases": []}
 ```
@@ -686,13 +688,14 @@ last two, and `understanding` `yes` is written as absent), `aliases`,
 `requires` or a role (any number of values, each a link for the last two;
 none removes the field), or `body`, the prose before `## Search terms` and
 `## Evidence` (`-` as its only value reads standard input); `--` before the
-values keeps one that starts with `-` from reading as an option. `source` and
-`lines` change only with `kgd relocate`. Only that field's lines change: a
+values keeps one that starts with `-` from reading as an option. A foreign
+draft's `source` takes another web address (one value); a local citation, and
+`lines`, change only with `kgd relocate`. Only that field's lines change: a
 value is written as a JSON string, a missing field is added before the closing
 `---`, and the rest of the file stays as it is. The result must still parse;
 whether `kgd accept` would take it is what `kgd drafts` reports. A new label of
-a new draft that no other draft links renames the draft to the label's id
-(numbered like any new id), so the id still describes it. Prints
+a new draft that no draft of any base links renames the draft to the label's
+id (numbered like any new id), so the id still describes it. Prints
 `{"draft": path, "uid": uid}`, with `renamed_from` when renamed; it takes no
 lock, and refuses, writing nothing, when the draft changed meanwhile.
 

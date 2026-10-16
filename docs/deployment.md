@@ -245,11 +245,12 @@ unavailable or embedding failed. With `embedding` set, an embedding phase
 follows: the rows whose vector is NULL (new or changed text, or every row
 after a model change) are encoded in batches of 64. The model loads only when such a row exists, so an
 up-to-date index runs in well under a second. The report adds `reused`
-(vectors kept by text, such as an id rename), `embedded`, `unembedded` and
-`truncated` (texts longer than the model's input limit, embedded from their
-leading part and listed rather than cut silently) and `embedding_error`
-(`null`, or why the embedding phase failed). `--no-embed` skips the
-embedding phase and leaves changed rows unembedded until the next run.
+(vectors kept by text, such as a record moved to another base), `embedded`,
+`unembedded` and `truncated` (texts longer than the model's input limit,
+embedded from their leading part and listed rather than cut silently) and
+`embedding_error` (`null`, or why the embedding phase failed). `--no-embed`
+skips the embedding phase and leaves changed rows unembedded until the next
+run.
 `kgd accept` runs the index itself and embeds only the records it creates or
 replaces; an edited record is re-embedded only by a plain
 `kgd index` the owner runs.

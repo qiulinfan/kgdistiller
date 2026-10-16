@@ -148,16 +148,17 @@ rejects. Report the warning to the owner; never edit `app.json` unasked. Unset
 ## 7. Agent runtimes
 
 ```sh
-kgd claude doctor
 kgd claude link
-kgd codex doctor
+kgd claude doctor
 kgd codex link
+kgd codex doctor
 ```
 
-Run the matching `doctor` first. Installed copies are product-owned: relinking
-replaces a copy that `doctor` reports as differing and removes retired Skills
-and presets, discarding local edits to installed files. Report such a copy
-before relinking, then run `doctor` again.
+`doctor` verifies a linked installation and fails before the first `link`.
+Installed copies are product-owned: relinking replaces a copy that `doctor`
+reports as differing and removes retired Skills and presets, discarding local
+edits to installed files. When the product is already linked, run `doctor`
+first and report such a copy before relinking, then run `doctor` again.
 
 Other MCP-capable runtimes, such as OMP, register `kgd mcp` (command `kgd`,
 argument `mcp`, `HF_HUB_OFFLINE=1` in its environment) in their own MCP

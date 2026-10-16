@@ -156,7 +156,7 @@ Obsidian vault, is a base. A base keeps its knowledge as Markdown records
 in `.knowledge/entries/` and proposals awaiting your acceptance in
 `.knowledge/drafts/`. A record is either a node (a concept, or a precisely
 stated result whose roles link what it is about) or a relation whose role
-keys bind two or more records. Every record
+keys bind at least two values. Every record
 cites a source file of its base by path, line range and verbatim quotes, or,
 as foreign knowledge, the web page of an outside work it quotes. Sources are plain text in any format; kgdistiller reads them as
 numbered lines and never parses their syntax.
@@ -232,7 +232,6 @@ node_kinds:
   theorem: [about]
   example: [uses, setting]
 relation_kinds:
-  requires-for: [prerequisite, dependent]
   implies: [premise, conclusion]
 epistemic: [proved, stated]
 ---
@@ -310,8 +309,8 @@ Templates:
 | Template | Knowledge to retain |
 |---|---|
 | [math-notes](templates/document-types/math-notes.md) | Definitions, axioms and precise theorems, with derivations and examples. |
-| [ai-research](templates/document-types/ai-research.md) | Defined concepts, algorithms, architectures, objectives and precise results, with comparisons and evaluations. |
-| [cs-notes](templates/document-types/cs-notes.md) | Definitions, algorithms, data structures, architectures and invariants, with implementation and complexity relations. |
+| [ai-research](templates/document-types/ai-research.md) | Defined concepts, algorithms, architectures, objectives, precise results and findings, with comparisons and implications. |
+| [cs-notes](templates/document-types/cs-notes.md) | Definitions, algorithms, data structures, architectures, results such as complexity bounds and invariants, with implementation relations. |
 
 Copy a chosen file into `$KGDISTILLER_HOME/types/`, edit its vocabulary and
 guidance, then map the relevant source globs to its file stem. These are
@@ -332,8 +331,6 @@ aliases:
   - σ-algebra
 source: notes/measure.md
 lines: 3-4
-requires:
-  - "[[set]]"
 ---
 A sigma-algebra on a set X is a collection of subsets of X closed under complements and countable unions.
 
@@ -343,26 +340,26 @@ A sigma-algebra on a set X is a collection of subsets of X closed under compleme
 > and is closed under complements and countable unions.
 ```
 
-A relation of the kind `requires-for`, whose roles come from the document
-type:
+A relation of the kind `implies`, whose roles come from the document type
+and whose quote states the connection:
 
 ```markdown
 ---
-label: Sigma-algebra is required for measure space
-kind: requires-for
-prerequisite:
-  - "[[sigma-algebra]]"
-dependent:
-  - "[[measure-space]]"
+label: Hahn decomposition implies Jordan decomposition
+kind: implies
+premise:
+  - "[[hahn-decomposition-theorem]]"
+conclusion:
+  - "[[jordan-decomposition-theorem]]"
 epistemic: stated
 source: notes/measure.md
-lines: 6-7
+lines: 41
 ---
-A measure space is defined over a sigma-algebra.
+The Hahn decomposition theorem implies the Jordan decomposition theorem.
 
 ## Evidence
 
-> F is a sigma-algebra on X
+> The Jordan decomposition theorem follows from the Hahn decomposition theorem.
 ```
 
 - `label`, `kind`, `source` (path relative to the base root) and `lines`
@@ -436,10 +433,12 @@ kgd drafts --source notes/measure.md
 kgd accept .knowledge/drafts/measure-space.md
 ```
 
-`kgd accept` admits the drafts given and the drafts they link, all or
-nothing, and indexes and embeds them. If a draft links a draft you did not
-give, it refuses and changes nothing, with a message such as
-`select [[measure-space]] too`. To reject a draft, delete its file.
+Edit a draft's fields and links on its Capture view card or with
+`kgd edit`. `kgd accept` admits exactly the drafts given, all or nothing, and
+indexes and embeds them. If a draft links a draft you did not give, it refuses
+and changes nothing, with a message such as `select [[sigma-algebra]] too`:
+give that draft as well (the Capture view passes a draft's linked drafts
+together). To reject a draft, delete its file.
 
 ## Agent integration
 

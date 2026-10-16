@@ -90,11 +90,12 @@ and no document-type or class column, so editing `types/` never forces
 re-indexing. A record's class is read at query time from the types of its
 base: it is `relation` when one of them declares its kind under
 `relation_kinds`, and `node` otherwise ([model.md](model.md) "Class rule").
-`kgd index` and `kgd base list` load `config.json` only, and the reads
-(`search`, `resolve`, `get`, `neighbors`, `browse`, `pack`, `drafts` and
-`source`) also load the types for the class: a type file a base's sources name
-that does not load fails them with an error naming the file, while
-`kgd index` still runs.
+`kgd index` and `kgd base list` load `config.json` only. Every command that
+needs document types, the reads (`search`, `resolve`, `get`, `neighbors`,
+`browse`, `pack`, `drafts` and `source`) included for the class, loads only
+the types a base's sources name: one that does not load fails the command
+with an error naming the file, while `kgd index` still runs and `kgd check`
+reports every type file.
 
 ## Unified text
 
@@ -170,8 +171,9 @@ timeout:
    Where it differs from the stored text, put the old `(text, vec)` into the
    pool, rewrite the `fts` row (delete and insert by rowid) and set
    `vec = pool[new text]`, or NULL when the pool has no vector for that text.
-   The text contains no id, so a renamed record keeps its vector; these rows
-   are counted as `reused`.
+   The text contains no id and no source, so a record moved to another base,
+   whose uid changes, keeps its vector; these rows are counted as `reused`.
+   Changing a label changes the text.
 8. Commit.
 
 **Embedding phase**, after that commit. It is skipped with `--no-embed` or
@@ -242,8 +244,9 @@ unified text its vector was computed from, and the lexical phase sets `vec`
 to NULL only when that text changes (step 7), so `unembedded` counts exactly
 the records whose embedding input changed. Touching a file, or changing a
 field the unified text leaves out such as `understanding`, `source` or
-`lines`, leaves the vector current; renaming a record that others require changes their text
-too, since it carries the required labels. The Obsidian plugin's Re-embed
+`lines`, or moving the record to another base, leaves the vector current;
+changing the label of a record that others require changes their text too,
+since it carries the required labels. The Obsidian plugin's Re-embed
 button is solid with that count while it is above 0 or the model changed, and
 grey otherwise. See "The embedding process" for what an embedding costs.
 
@@ -377,8 +380,8 @@ exactly those keys; with `--no-dense`, or when `meta.embedding` is `''`
    "gloss": "…", "degree": 14,
    "ranks": {"lexical": 26, "dense": 1, "name": 1},
    "requires": [], "participants": {},
-   "in": [{"uid": "notes:complete-measure-space-derived-from-measure-space", "kind": "derived-from", "role": "origin"},
-          {"uid": "notes:every-measure-space-can-be-completed-derived-from-measure-space", "kind": "derived-from", "role": "origin"}],
+   "in": [{"uid": "notes:every-measure-space-can-be-completed", "kind": "theorem", "role": "about"},
+          {"uid": "notes:caratheodory-extension-theorem", "kind": "theorem", "role": "about"}],
    "truncated": {"requires": 0, "participants": 0, "in": 0}}]}
 ```
 
@@ -465,15 +468,15 @@ never read). This is the only read of source text; no passages are stored.
   `--depth` at least 1.
 
 ```json
-{"edges": [{"from": "notes:hahn-decomposition-theorem-prerequisite-for-jordan-decomposition-theorem",
-            "role": "prerequisite", "to": "notes:hahn-decomposition-theorem", "depth": 1},
-           {"from": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
-            "role": "prerequisite", "to": "notes:hahn-decomposition-theorem", "depth": 1},
-           {"from": "notes:signed-measure-prerequisite-for-hahn-decomposition-theorem",
-            "role": "dependent", "to": "notes:hahn-decomposition-theorem", "depth": 1}],
+{"edges": [{"from": "notes:hahn-decomposition-theorem-implies-jordan-decomposition-theorem",
+            "role": "premise", "to": "notes:hahn-decomposition-theorem", "depth": 1},
+           {"from": "notes:hahn-decomposition-theorem-implies-radon-nikodym-theorem",
+            "role": "premise", "to": "notes:hahn-decomposition-theorem", "depth": 1},
+           {"from": "notes:hahn-lemma-implies-hahn-decomposition-theorem",
+            "role": "conclusion", "to": "notes:hahn-decomposition-theorem", "depth": 1}],
  "records": {"notes:hahn-decomposition-theorem": {"label": "Hahn Decomposition Theorem", "kind": "theorem",
                                                   "class": "node", "degree": 5, "exists": true},
-             "notes:hahn-decomposition-theorem-prerequisite-for-jordan-decomposition-theorem": {"…": "…"}},
+             "notes:hahn-decomposition-theorem-implies-jordan-decomposition-theorem": {"…": "…"}},
  "missing": [],
  "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
 ```
@@ -486,7 +489,7 @@ The usual walks:
 - **What links a record:** `--dir in` lists the statement nodes and relations
   that link it, with the role it plays in each; `--dir both --depth 2` adds
   what else they link, including relation-to-relation hops such as a relation
-  that is the witness of another.
+  one of whose values is another relation.
 - **Examples:** `--dir in --kind example` lists the example records about a
   node. The kind filter prunes the walk, so only examples are entered.
 
@@ -563,18 +566,18 @@ a closure record they exclude shows up as `not-packed`. `--budget` must be at
 least 1 and `--requires-depth` at least 0.
 
 ```json
-{"records": [{"uid": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
-              "class": "relation", "kind": "prerequisite-for", "…": "…",
-              "out": [{"role": "dependent", "pos": 0, "uid": "notes:radon-nikodym-theorem",
+{"records": [{"uid": "notes:hahn-decomposition-theorem-implies-radon-nikodym-theorem",
+              "class": "relation", "kind": "implies", "…": "…",
+              "out": [{"role": "conclusion", "pos": 0, "uid": "notes:radon-nikodym-theorem",
                        "label": "Radon-Nikodym Theorem", "exists": true},
-                      {"role": "prerequisite", "pos": 0, "uid": "notes:hahn-decomposition-theorem",
+                      {"role": "premise", "pos": 0, "uid": "notes:hahn-decomposition-theorem",
                        "label": "Hahn Decomposition Theorem", "exists": true}]}],
  "bytes": 1372, "budget": 60000,
  "gaps": [{"reason": "unknown-uid", "uid": "notes:nothing"},
-          {"reason": "not-packed", "from": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
-           "role": "dependent", "uid": "notes:radon-nikodym-theorem"},
-          {"reason": "not-packed", "from": "notes:hahn-decomposition-theorem-prerequisite-for-radon-nikodym-theorem",
-           "role": "prerequisite", "uid": "notes:hahn-decomposition-theorem"}],
+          {"reason": "not-packed", "from": "notes:hahn-decomposition-theorem-implies-radon-nikodym-theorem",
+           "role": "conclusion", "uid": "notes:radon-nikodym-theorem"},
+          {"reason": "not-packed", "from": "notes:hahn-decomposition-theorem-implies-radon-nikodym-theorem",
+           "role": "premise", "uid": "notes:hahn-decomposition-theorem"}],
  "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
 ```
 

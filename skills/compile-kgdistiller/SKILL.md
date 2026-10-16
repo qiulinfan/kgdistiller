@@ -39,14 +39,15 @@ claims completeness.
 kgd source SOURCE
 ```
 
-It returns the base, the document type with its `node_kinds`,
-`relation_kinds` (kinds with ordered roles), `epistemic` list and guidance,
-`line_count`, and the accepted records and drafts that already cite this
-source. Follow the type's guidance; do not infer kinds from the file extension
-or impose a built-in catalog. Read the source text with your own tools. An
-unregistered file is an error that asks for a glob in
-`$KGDISTILLER_HOME/config.json`: propose the glob and its type to the owner
-instead of registering it.
+It returns the base, the `source` path relative to the base root (`REL`
+below: `--source` takes this value, never an absolute path), the document
+type with its `node_kinds`, `relation_kinds` (kinds with ordered roles),
+`epistemic` list and guidance, `line_count`, and the accepted records and
+drafts that already cite this source. Follow the type's guidance; do not infer
+kinds from the file extension or impose a built-in catalog. Read the source
+text with your own tools. An unregistered file is an error that asks for a
+glob in `$KGDISTILLER_HOME/config.json`: propose the glob and its type to the
+owner instead of registering it.
 
 ## 3. Establish identity
 
@@ -116,8 +117,8 @@ scope:
   theorem about subspace and sum of subspaces, not an implication); a node
   kind that declares roles links at least one record;
 - relations for the connections the source states between records, of the
-  kinds the type declares, such as implications between results, comparisons
-  and evaluations, with every participant bound to a declared role and at
+  kinds the type declares, such as implications between results and
+  comparisons, with every participant bound to a declared role and at
   least two values; relations about relations are allowed;
 - for each relation, an Evidence quote that itself states the relation; a
   connection you infer by combining passages, or with another source this one
@@ -141,17 +142,16 @@ Drafts may link accepted records and each other. Leave `understanding` out
 kgd relocate UID - <<'PASSAGE'
 THE PASSAGE THAT STATES IT
 PASSAGE
-kgd drafts --source SOURCE
+kgd drafts --source REL
 ```
 
 Add one `kgd relocate` for each unchanged knowledge point whose citation no
 longer verifies, with the passage of this source that states it; it rewrites
 only the record's `source`, `lines` and, when needed, Evidence, and when the
 record lies in another base it moves the record into this source's base and
-rewrites every link to it. Pass `--base` or `--source` when the passage occurs
-more than once. Every draft
-you wrote must have empty `problems`: they are what `kgd accept` would refuse.
-Fix the drafts and run the command again. Pre-existing problems of other
+rewrites every link to it. Pass `--base` or `--source REL` when the passage
+occurs more than once. Every draft you wrote must have empty `problems`: they
+are what `kgd accept` would refuse. Fix the drafts and run the command again. Pre-existing problems of other
 drafts are reported, not repaired.
 
 ## 6. Report

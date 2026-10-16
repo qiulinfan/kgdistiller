@@ -131,11 +131,11 @@ conclusion: ["[[sum-of-two-subspaces-is-a-subspace]]"]
 kind: equivalent
 side: ["[[a]]", "[[b]]"]
 
-# a relation about a relation: the witness is itself a record;
-# the two contrasted records swap freely, so they share one role
+# a relation about a relation: the implication above is itself a record
+# (id direct-sum-implies-subspace), so it can be a value; the two contrasted
+# implications swap freely, so they share one role
 kind: contrasts
-side: ["[[direct-sum]]", "[[sum-of-subspaces]]"]
-witness: ["[[subspace-sum-with-itself]]"]
+side: ["[[direct-sum-implies-subspace]]", "[[span-implies-subspace]]"]
 ```
 
 ## Value grammar
@@ -248,8 +248,8 @@ Follow the source's document type: its `node_kinds`, `relation_kinds`,
   node here: link its record, or, when the owner asks to capture it, draft it
   as foreign knowledge from the page that originates or explains it.
 - **Relations** are connections the source states between records:
-  implications between results, comparisons, generalizations, derivations,
-  evaluations. Bind each participant to the role the type declares; arity is
+  implications between results, comparisons, generalizations, derivations.
+  Bind each participant to the role the type declares; arity is
   unbounded, a binary relation is the 2-role case, and a participant may itself
   be a relation. A result the source states is a node, however many records it
   is about.

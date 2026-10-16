@@ -74,7 +74,7 @@ kgdistiller 原创代码采用 [MIT](LICENSE)，版权 2026 Qiulin Fan，允许�
 
 ## 核心概念
 
-kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，等你确认的草稿在 `.knowledge/drafts/`。记录分两类：node（一个概念，或一条表述精确的结论，用 role 链接它所涉及的记录），以及 relation（用 role 键绑定两条或更多记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文；foreign（外部）知识则引用外部作品的网页地址和该网页的原文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
+kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，等你确认的草稿在 `.knowledge/drafts/`。记录分两类：node（一个概念，或一条表述精确的结论，用 role 链接它所涉及的记录），以及 relation（用 role 键绑定至少两个值）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文；foreign（外部）知识则引用外部作品的网页地址和该网页的原文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
 
 全局 home 是 `$KGDISTILLER_HOME`（默认 `~/.knowledge`），负责注册 base、把 source glob 映射到你定义的 document type，并保存派生数据库 `index.sqlite`：
 
@@ -126,7 +126,6 @@ node_kinds:
   theorem: [about]
   example: [uses, setting]
 relation_kinds:
-  requires-for: [prerequisite, dependent]
   implies: [premise, conclusion]
 epistemic: [proved, stated]
 ---
@@ -185,8 +184,8 @@ Capture 和 compile 在提出记录之前，通过 `kgd source SOURCE` 读取这
 | 模板 | 保留的知识 |
 |---|---|
 | [math-notes](templates/document-types/math-notes.md) | 定义、公理、精确陈述的定理，以及推导关系和例子。 |
-| [ai-research](templates/document-types/ai-research.md) | 有定义的概念、算法、架构、目标函数和精确结果，以及比较与评测关系。 |
-| [cs-notes](templates/document-types/cs-notes.md) | 定义、算法、数据结构、架构和不变量，以及实现和复杂度关系。 |
+| [ai-research](templates/document-types/ai-research.md) | 有定义的概念、算法、架构、目标函数、精确结果和实验发现，以及比较与蕴含关系。 |
+| [cs-notes](templates/document-types/cs-notes.md) | 定义、算法、数据结构、架构、复杂度界等结果和不变量，以及实现关系。 |
 
 把选择的文件复制到 `$KGDISTILLER_HOME/types/`，修改其中的分类、角色和指引，再将相应 source glob 映射到文件名。它们是起始模板；安装和 `kgd base add` 都把正式启用的类型目录留给你定义。Python 包中也附带这些模板，位于 `kgdistiller/product/templates/document-types/`。
 
@@ -202,8 +201,6 @@ aliases:
   - σ-algebra
 source: notes/measure.md
 lines: 3-4
-requires:
-  - "[[set]]"
 ---
 A sigma-algebra on a set X is a collection of subsets of X closed under complements and countable unions.
 
@@ -213,25 +210,25 @@ A sigma-algebra on a set X is a collection of subsets of X closed under compleme
 > and is closed under complements and countable unions.
 ```
 
-一个 kind 为 `requires-for` 的 relation，role 来自 document type：
+一个 kind 为 `implies` 的 relation，role 来自 document type，引文本身陈述了这条关系：
 
 ```markdown
 ---
-label: Sigma-algebra is required for measure space
-kind: requires-for
-prerequisite:
-  - "[[sigma-algebra]]"
-dependent:
-  - "[[measure-space]]"
+label: Hahn decomposition implies Jordan decomposition
+kind: implies
+premise:
+  - "[[hahn-decomposition-theorem]]"
+conclusion:
+  - "[[jordan-decomposition-theorem]]"
 epistemic: stated
 source: notes/measure.md
-lines: 6-7
+lines: 41
 ---
-A measure space is defined over a sigma-algebra.
+The Hahn decomposition theorem implies the Jordan decomposition theorem.
 
 ## Evidence
 
-> F is a sigma-algebra on X
+> The Jordan decomposition theorem follows from the Hahn decomposition theorem.
 ```
 
 - 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。label 在所有 base 中只指一个概念：名字已被占用、意义不同的新概念，在名字后加上来源文件名，例如 `Autoencoder (Autoencoder&VAE)`。foreign 记录的 `source` 是它引用的外部作品的网页地址，没有 `lines`。可选：`aliases`、`understanding`（`yes` 或 `no`，默认 `yes`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
@@ -277,7 +274,7 @@ kgd drafts --source notes/measure.md
 kgd accept .knowledge/drafts/measure-space.md
 ```
 
-`kgd accept` 一次性接受给出的草稿及它们链接的草稿，要么全部成功，要么什么都不改，并为它们建索引、算向量。如果某条草稿链接到一条你没给出的草稿，它会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的草稿，直接删掉文件即可。
+草稿的字段和链接可以在它的 Capture 视图卡片上修改，也可以用 `kgd edit` 修改。`kgd accept` 只接受给出的那些草稿，要么全部成功，要么什么都不改，并为它们建索引、算向量。如果某条草稿链接到一条你没给出的草稿，它会拒绝执行、不做任何改动，并给出类似 `select [[sigma-algebra]] too` 的提示：把那条草稿也一起给出（Capture 视图会把一条草稿链接的草稿一起传入）。不要的草稿，直接删掉文件即可。
 
 ## Agent 集成
 

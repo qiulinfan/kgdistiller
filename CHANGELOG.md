@@ -17,8 +17,14 @@ Run `kgd claude link` or `kgd codex link` again for the updated Skills.
   id, rewrites the record's own links for that base and every role and
   `requires` link to it in every base's records and drafts, and reports
   `moved` and `relinked`; `relocated` is the new uid. It refuses when that
-  base already has the id or a replacement draft of the record waits. The
-  old path of drafting the record in the other base is gone.
+  base already has the id, a replacement draft of the record waits, the
+  draft is itself a replacement (it stays in its record's base) or any
+  registered base is unavailable; while relinking it skips files that cannot
+  be read or parsed, which `kgd check` reports. It refreshes the keyword
+  index only when it wrote an accepted record. The old path of drafting the
+  record in the other base is gone.
+- `kgd edit` renames a new draft whose label changed only when no draft of
+  any base links it.
 - Drafts link drafts of every base: `kgd check` and `kgd accept` resolve a
   draft's links to drafts of any base, `kgd accept` takes drafts of several
   bases together, and `kgd drafts` reports `with`, `linked_by` and a value's
@@ -28,13 +34,25 @@ Run `kgd claude link` or `kgd codex link` again for the updated Skills.
   not an implication; a relation connects records, such as one result and
   another. A node kind that declares roles links at least one record in
   them (`kgd check` rule `kind`), and a relation binds at least two values.
+- A prerequisite has one form, a record's `requires`. The templates drop
+  `requires-for`, and a stated proof or derivation dependency is an
+  `implies` whose premises are the results the proof uses. They also drop
+  `evaluates` and `complexity-bound`: a reported evaluation is a finding and
+  a stated resource bound a theorem, and cs-notes gains `theorem: [about]`.
+  A type copied from an earlier template keeps these kinds until its owner
+  removes them.
+- `kgd edit DRAFT source URL` gives a foreign draft another web address; the
+  Capture card edits it too. A local citation still moves only with
+  `kgd relocate`.
 - `degree` counts only the other records that exist; a link to a missing
   record counts for nothing.
 - `pack` adds every record with role links to at least two packed records,
   statement nodes as well as relations.
-- A document type that a base's sources name and that does not load makes
-  the reads (`search`, `resolve`, `get`, `neighbors`, `browse`, `pack`,
-  `drafts`, `source`) fail with an error naming it; `kgd index` still runs.
+- Commands that need document types, the reads (`search`, `resolve`, `get`,
+  `neighbors`, `browse`, `pack`, `drafts`, `source`) included, load only the
+  types a base's sources name; one that does not load fails them with an
+  error naming it. `kgd index` still runs, and `kgd check` reports every
+  type file.
 - `kgd index` carries no vectors over from a database of another schema
   version, and its report no longer has `understanding_changed`.
 - The unified text no longer ends with the record's `source`, so relocating
@@ -44,6 +62,8 @@ Run `kgd claude link` or `kgd codex link` again for the updated Skills.
   card's + finds records and drafts of every base, and capture may link a
   draft of any base. The plugin passes `--` before the values of
   `kgd edit` and `kgd relocate`, so a value starting with `-` stays a value.
+  It shows `kgd`'s own error messages, and follows a localized record to its
+  new uid.
 
 ## 2.0.0 — 2026-10-16
 

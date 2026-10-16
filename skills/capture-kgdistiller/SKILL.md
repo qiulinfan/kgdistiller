@@ -29,9 +29,11 @@ kgd search "DEFINING PHRASE" --limit 5 --no-dense
 kgd drafts --name "NAME" --name "CONCEPT" ...
 ```
 
-- `source` gives the source's base and document type: `node_kinds`,
-  `relation_kinds` with their roles, `epistemic` and the guidance, plus the
-  records and drafts already citing the source. An unregistered file is an
+- `source` gives the source's base, its `source` path relative to the base
+  root (`REL` below: `--source` takes this value, never an absolute path) and
+  its document type: `node_kinds`, `relation_kinds` with their roles,
+  `epistemic` and the guidance, plus the records and drafts already citing
+  the source. An unregistered file is an
   error: report the glob it asks for; do not register it.
 - `resolve` takes the item's names, in the source's language and in English,
   and every concept the record will link as a participant or prerequisite.
@@ -62,7 +64,7 @@ path segment).
   nothing, unless that record's citation no longer verifies and this passage
   states the item: then move the citation here with
   `kgd relocate UID - <<'PASSAGE'` and the selected text (add
-  `--source SOURCE` when it occurs elsewhere too), which rewrites only its
+  `--source REL` when it occurs elsewhere too), which rewrites only its
   `source`, `lines` and, when needed, Evidence, and moves a record of another
   base into this source's base with every link to it.
 - **changed**: a record holds it with a different meaning. Draft its
@@ -112,7 +114,7 @@ A measure space is a triple $(X,\mathcal M,\mu)$ with a σ-algebra $\mathcal M$ 
 
 > 我们称 \((X,\mathcal{M},\mu)\) 为一个 measure space.
 RECORD
-kgd drafts --source SOURCE
+kgd drafts --source REL
 ```
 
 - `ID` is `slug(label)` (lowercase, non-alphanumerics to `-`; append `-2` on a
@@ -143,7 +145,7 @@ kgd drafts --source SOURCE
 - The complete format is
   [references/record-format.md](references/record-format.md).
 
-`kgd drafts --source SOURCE` (for a foreign draft, `--name LABEL`) lists the
+`kgd drafts --source REL` (for a foreign draft, `--name LABEL`) lists the
 draft with its `problems`, what `kgd accept` would refuse. Fix the draft until
 they are empty. The owner's capture request is the consent; do not ask again.
 

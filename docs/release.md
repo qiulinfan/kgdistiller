@@ -77,8 +77,8 @@ Then verify that:
   database; a wrong `user_version` or a damaged file is recreated; no module
   imports `hashlib`;
 - the embedding phase passes its fake-encoder tests: a text change sets `vec`
-  to NULL, an id rename re-uses the vector, a model change invalidates every
-  vector, a stale batch write is a no-op, `--rebuild` re-uses vectors by text
+  to NULL, a record under another uid re-uses the vector, a model change
+  invalidates every vector, a stale batch write is a no-op, `--rebuild` re-uses vectors by text
   without loading the model, batches hold 64 rows, over-length texts are
   listed under `truncated`, and every non-NULL `vec` encodes its row's text
   under `meta.embedding`; `index --no-embed` leaves changed rows unembedded;
@@ -94,9 +94,9 @@ Then verify that:
   still fit, adds every record, relation or statement node alike, with role
   links to at least two packed records, ordered by packed targets, reports
   every gap reason, and its `bytes` equals the
-  UTF-8 length of the compact JSON of its records; `resolve` separates
-  homonyms within and across bases from mentions; and the MCP server exposes
-  exactly the eight read-only tools;
+  UTF-8 length of the compact JSON of its records; `resolve` separates a
+  name's senses, the records whose label or alias has it, from mentions; and
+  the MCP server exposes exactly the eight read-only tools;
 - the embedding adapter takes a model id only and has no reranker, default
   model or revision pin; at most one embedding process runs per user;
 - the home lock serializes `accept`, `relocate`, `check --fix-lines`, `base add|rm` and

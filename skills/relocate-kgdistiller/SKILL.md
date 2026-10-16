@@ -48,16 +48,21 @@ exactly one match:
   `--source PREFIX` naming the right file, from the matches it lists;
 - `refused` with no match: say so.
 
+`--source` takes a base-relative path prefix, the `source` value `kgd source`
+prints, never an absolute path.
+
 When the passage lies in another base, the record moves there with its id (an
 accepted record into its `entries/`, a draft into its `drafts/`), and every
 role and `requires` link to it, in every base's records and drafts, is
-rewritten to its new uid; body-prose wikilinks are not. It refuses when that
-base already has a record or draft with the id, or while a replacement draft
-of the record waits: report that to the owner.
+rewritten to its new uid; body-prose wikilinks are not. Any other refusal is
+an error: the target base already has a record or draft with the id, a
+replacement draft of the record waits, the draft is itself a replacement
+(it lives in its record's base), the result would not pass check, or a
+registered base is unavailable. Report it to the owner as `kgd` states it.
 
-On success it rewrites the files under the home lock and refreshes the
-keyword index. The owner's request is the consent; do not ask again, and never
-edit the record yourself.
+On success it rewrites the files under the home lock, and refreshes the
+keyword index when it wrote an accepted record. The owner's request is the
+consent; do not ask again, and never edit the record yourself.
 
 ## 3. Report
 

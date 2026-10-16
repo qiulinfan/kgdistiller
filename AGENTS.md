@@ -71,13 +71,14 @@
   batches: one lookup turn (one `kgd resolve` and one `kgd drafts --name` of
   every name, `kgd search --limit 5` only where needed), one write turn, then
   one `kgd drafts` that lists the drafts with what `kgd accept` would refuse.
-  A capture's lookup loads no embedding model (`search --no-dense`); the
-  owner's `kgd accept` embeds the admitted records through the shared
-  embedding process, 0.15 s when it is warm and about 2 s more when it must
-  load. The
-  `capture-writer` presets run it in the background on a small model
-  at low reasoning effort, since model reasoning, not `kgd`, dominates capture
-  time. `kgd index` never invokes a generative model; its only model is the
+  The capture Skill's lookup (and so the `capture-writer` presets') loads no
+  embedding model (`search --no-dense`), while the plugin's capture searches
+  with `kg_search` and its dense lane; the owner's `kgd accept` embeds the
+  admitted records through the shared embedding process, 0.15 s when it is
+  warm and about 2 s more when it must load. The `capture-writer` presets run
+  the capture Skill in the background on a small model at low reasoning
+  effort, since model reasoning, not `kgd`, dominates capture time.
+  `kgd index` never invokes a generative model; its only model is the
   embedding encoder.
 - A record asserts only what its cited text states: a relation citing a paper
   or note quotes text stating that relation, and a connection no source states

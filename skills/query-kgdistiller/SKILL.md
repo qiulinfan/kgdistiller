@@ -16,7 +16,7 @@ unchanged.
 Knowledge is records: nodes, the concepts and the results a source states
 (theorems, findings, examples), whose roles link what they are about, and
 relations, connections between records bound to named roles (an implication
-between results, a comparison, a prerequisite). Every record has a uid `<base>:<id>`, a `source`
+between results, a comparison). Every record has a uid `<base>:<id>`, a `source`
 and verbatim Evidence quotes: a local record's `source` is a base-relative path
 with a `lines` range, and a foreign record's is the web address of the outside
 work it quotes, with no lines (`foreign: true`). Every value is a link to
