@@ -20,7 +20,8 @@ export interface DraftValue {
 
 /** What a draft's kind, roles and epistemic label may be, from its source's document type. */
 export interface Choices {
-  node_kinds: string[];
+  /** Each node kind with its roles, which may be none. */
+  node_kinds: Record<string, string[]>;
   relation_kinds: Record<string, string[]>;
   epistemic: string[];
 }
@@ -190,7 +191,7 @@ export function roleLinks(draft: Draft, role: string, drop?: number): string[] {
  * kind its type lacks, the roles it holds), in order, then `requires`.
  */
 export function editableRoles(draft: Draft): string[] {
-  const declared = draft.choices?.relation_kinds[draft.kind ?? ""];
+  const declared = draft.choices?.node_kinds[draft.kind ?? ""] ?? draft.choices?.relation_kinds[draft.kind ?? ""];
   const held = [...new Set((draft.out ?? []).map((value) => value.role))].filter((role) => role !== "requires");
   return [...new Set([...(declared ?? held), ...held]), "requires"];
 }

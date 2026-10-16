@@ -71,6 +71,8 @@ export interface FullRecord extends RecordSummary {
   evidence: string[];
   out: OutLink[];
   in: InLink[];
+  /** How many other records it links or is linked by: how central it is. */
+  degree: number;
 }
 
 export interface GetResult {
@@ -264,9 +266,9 @@ export interface NeighbourGraph {
  * is one edge between them labelled with its kind; one with more values, or
  * with `requires` links, is a diamond joining them, and its participants are
  * one step apart. A relation that another record links to, and the focus,
- * stay records in their own right: diamonds with their role edges. A relation
- * about a single record is no edge and is left out (the lookup lists it under
- * About it). Node records are circles coloured by
+ * stay records in their own right: diamonds with their role edges. A
+ * statement about one record, such as a theorem, is a node joined to it by its
+ * role edge. Node records are circles coloured by
  * kind, missing records red, and `requires` links dashed, one step each. At
  * most `limit` vertices are drawn, the nearest first.
  */

@@ -456,7 +456,7 @@ export class KgdistillerCaptureView extends ItemView {
       if (event.key === "Enter") label.blur();
     });
     label.addEventListener("blur", saveLabel);
-    const kinds = [...(choices?.node_kinds ?? []), ...Object.keys(choices?.relation_kinds ?? {})];
+    const kinds = [...Object.keys(choices?.node_kinds ?? {}), ...Object.keys(choices?.relation_kinds ?? {})];
     const kind = field("kind").createEl("select", { cls: "dropdown" });
     for (const name of new Set([...kinds, draft.kind ?? ""])) {
       if (!name) continue;

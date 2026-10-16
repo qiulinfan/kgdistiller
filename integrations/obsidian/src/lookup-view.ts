@@ -15,13 +15,13 @@
  */
 
 import cytoscape, { type Core, type EventObject } from "cytoscape";
-import { Component, ItemView, MarkdownRenderer, Notice, setIcon, type App, type WorkspaceLeaf } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, setIcon, type App, type WorkspaceLeaf } from "obsidian";
 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
 import { recordTarget, type LocalizeInput, type LocalizeTarget } from "./localize";
 import { RECORD_DRAG_TYPE } from "./drafts";
-import { needsEmbedding, type Indexer } from "./indexing";
+import { embeddingChoices, embeddingSummary, needsEmbedding, type EmbeddingStatus, type Indexer } from "./indexing";
 import {
   chainTree,
   inboundGroups,
@@ -53,6 +53,9 @@ export const VIEW_TYPE_KGDISTILLER_LOOKUP = "kgdistiller-lookup-view";
 export const LOOKUP_ICON = "scan-search";
 const SEARCH_LIMIT = 10;
 const CHAIN_DEPTH = 3;
+/** The embedding picker's choice that asks for a model by name. */
+const OTHER_MODEL = "\u0000other";
+
 /** The neighbour graph's styles, as its legend lists them: swatch class and meaning. */
 const LEGEND: ReadonlyArray<readonly [string, string]> = [
   ["focus", "Large circle with an accent ring: the record in focus"],
@@ -67,6 +70,10 @@ const AUTO_REASONING = "Reasoning effort. Auto: none to judge selections and ans
 
 export interface LookupHost extends AgentHost {
   app: App;
+  /** The home's embedding model, its vectors and the runnable models in the local cache, from `kgd embedding`. */
+  embeddingStatus(): Promise<EmbeddingStatus>;
+  /** Make a model the home's embedding model, downloading it if needed, or turn the dense lane off with null. */
+  setEmbedding(model: string | null): Promise<EmbeddingStatus>;
   /** The real path of this vault's root, when the vault lives on the local filesystem. */
   vaultRoot(): string | undefined;
   /** Every provider's detected models and the model in use; `refresh` detects them all again. */
@@ -93,6 +100,9 @@ export class KgdistillerLookupView extends ItemView {
   private reasoningEl: HTMLSelectElement | null = null;
   private searchEl: HTMLInputElement | null = null;
   private reembedEl: HTMLButtonElement | null = null;
+  private embeddingEl: HTMLSelectElement | null = null;
+  /** The embedding model the picker shows as chosen; a cancelled switch returns to it. */
+  private embeddingChosen = "";
   private queryEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private agent: AgentPane | null = null;
@@ -168,9 +178,16 @@ export class KgdistillerLookupView extends ItemView {
       if (text) void this.lookup({ text, context: "" }, { question: true });
     });
     this.searchEl = search;
-    const reembed = this.contentEl.createEl("button", { cls: "kgd-lookup-reembed" });
+    // The home's embedding model, seen and switched here as the agent's model is, beside Re-embed.
+    const embedding = this.contentEl.createDiv({ cls: "kgd-lookup-model kgd-lookup-embedding" });
+    setIcon(embedding.createSpan({ cls: "kgd-lookup-reasoning-icon", attr: { "aria-label": "Embedding model" } }), "binary");
+    const models = embedding.createEl("select", { cls: "dropdown", attr: { "aria-label": "Embedding model" } });
+    models.addEventListener("change", () => void this.switchEmbedding(models.value));
+    this.embeddingEl = models;
+    const reembed = embedding.createEl("button", { cls: "kgd-lookup-reembed" });
     reembed.addEventListener("click", () => void this.reembed());
     this.reembedEl = reembed;
+    void this.listEmbedding();
     this.renderReembed();
     this.register(this.host.indexer.onChange(() => this.renderReembed()));
     this.queryEl = this.contentEl.createDiv({ cls: "kgd-lookup-query" });
@@ -414,6 +431,73 @@ export class KgdistillerLookupView extends ItemView {
         : "Every record's vector matches its text");
   }
 
+  /** Fill the embedding picker from `kgd embedding`: the cached models kgdistiller can run, the one in use, off, and another. */
+  private async listEmbedding(): Promise<void> {
+    const select = this.embeddingEl;
+    if (!select) return;
+    select.empty();
+    if (!this.host.kgd.configured()) {
+      select.createEl("option", { text: "Set the kgd executable to choose an embedding model", value: "" });
+      select.disabled = true;
+      return;
+    }
+    let status: EmbeddingStatus;
+    try {
+      status = await this.host.embeddingStatus();
+    } catch (error) {
+      select.createEl("option", { text: "kgd embedding failed", value: "" });
+      select.title = error instanceof Error ? error.message : String(error);
+      select.disabled = true;
+      return;
+    }
+    this.showEmbedding(status);
+  }
+
+  /** Show the home's embedding model in the picker, as any `kgd embedding` run reported it. */
+  showEmbedding(status: EmbeddingStatus): void {
+    const select = this.embeddingEl;
+    if (!select) return;
+    select.empty();
+    select.disabled = false;
+    for (const choice of embeddingChoices(status)) select.createEl("option", { text: choice.label, value: choice.value });
+    select.createEl("option", { text: "Another model…", value: OTHER_MODEL });
+    this.embeddingChosen = status.embedding ?? "";
+    select.value = this.embeddingChosen;
+    select.title = embeddingSummary(status);
+  }
+
+  /**
+   * Make the chosen model the home's embedding model after the owner confirms,
+   * since every record must then be embedded again; another model is named in
+   * a prompt. `kgd embedding set` downloads a model missing from the cache.
+   */
+  private async switchEmbedding(value: string): Promise<void> {
+    const select = this.embeddingEl;
+    const restore = () => {
+      if (select) select.value = this.embeddingChosen;
+    };
+    const switchTo = async (model: string): Promise<void> => {
+      if (model === this.embeddingChosen) return restore();
+      if (select) select.disabled = true;
+      const notice = new Notice(model ? `Checking ${model}; a model missing from the cache is downloaded first…` : "Turning the dense lane off…", 0);
+      try {
+        const status = await this.host.setEmbedding(model || null);
+        new Notice(status.embedding ? `${status.embedding} is the embedding model; Re-embed embeds every record with it.` : "The dense lane is off.");
+      } catch (error) {
+        new Notice(`kgd embedding failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        notice.hide();
+        await this.listEmbedding();
+      }
+    };
+    if (value === OTHER_MODEL) {
+      restore();
+      new EmbeddingModal(this.app, null, (model) => void switchTo(model)).open();
+      return;
+    }
+    new EmbeddingModal(this.app, value, (model) => void switchTo(model), restore).open();
+  }
+
   private async reembed(): Promise<void> {
     const started = performance.now();
     try {
@@ -500,6 +584,7 @@ export class KgdistillerLookupView extends ItemView {
       this.row(pane, "Source", `${record.base} · ${record.source} · L${record.lines}`);
     }
     this.row(pane, "Understood", record.understanding);
+    this.row(pane, "Connections", String(record.degree));
     if (record.epistemic) this.row(pane, "Epistemic", record.epistemic);
     if (record.aliases.length > 0) this.row(pane, "Aliases", record.aliases.join(", "));
 
@@ -538,7 +623,7 @@ export class KgdistillerLookupView extends ItemView {
     const inbound = inboundGroups(record.in);
     if (inbound.about.length > 0) {
       pane.createEl("h4", { text: "About it" });
-      pane.createDiv({ cls: "kgd-lookup-hint", text: "Relations it takes part in, by kind, with its role in each." });
+      pane.createDiv({ cls: "kgd-lookup-hint", text: "Statements about it and relations it takes part in, by kind, with its role in each." });
       const list = pane.createEl("ul", { cls: "kgd-lookup-links" });
       for (const group of inbound.about) {
         const item = list.createEl("li");
@@ -584,7 +669,7 @@ export class KgdistillerLookupView extends ItemView {
     const shown = graph.shown < graph.total ? `The ${graph.shown} nearest of ${graph.total} records. ` : "";
     pane.createDiv({
       cls: "kgd-lookup-hint",
-      text: `${shown}A relation is an edge; statements about one record are under About it. Click a record or an edge to look at it; scroll over the graph to zoom.`,
+      text: `${shown}A relation between two records is an edge; a statement about one record is a circle joined to it. Click a record or an edge to look at it; scroll over the graph to zoom.`,
     });
     const container = pane.createDiv({ cls: "kgd-lookup-graph" });
     this.neighbours = cytoscape({
@@ -662,3 +747,46 @@ export class KgdistillerLookupView extends ItemView {
     return openInBase(this.app, this.host.kgd, this.host.vaultRoot(), base, path, { line });
   }
 }
+
+/**
+ * Confirms a switch of the home's embedding model, which every vault and agent
+ * using the home shares and after which every record is embedded again; with
+ * no model given it asks for a Hugging Face id first.
+ */
+class EmbeddingModal extends Modal {
+  private confirmed = false;
+
+  constructor(app: App, private readonly model: string | null, private readonly chosen: (model: string) => void,
+    private readonly cancelled: () => void = () => undefined) {
+    super(app);
+  }
+
+  onOpen(): void {
+    let model = this.model ?? "";
+    this.setTitle(this.model === "" ? "Turn the dense lane off?" : this.model ? `Embed with ${this.model}?` : "Embed with another model");
+    this.contentEl.createEl("p", {
+      text: this.model === ""
+        ? "Search then uses keywords and names only, in every vault and agent that uses this knowledge home."
+        : "Every vault and agent that uses this knowledge home switches, and every record must be embedded again with Re-embed. "
+          + "A model missing from the Hugging Face cache is downloaded first (BAAI/bge-m3 is about 2.3 GB).",
+    });
+    if (this.model === null) {
+      new Setting(this.contentEl).setName("Hugging Face id").setDesc("An XLM-RoBERTa sentence encoder that ships sentencepiece.bpe.model.")
+        .addText((text) => text.setPlaceholder("BAAI/bge-m3").onChange((value) => { model = value.trim(); }));
+    }
+    new Setting(this.contentEl)
+      .addButton((button) => button.setButtonText(this.model === "" ? "Turn off" : "Switch").setCta().onClick(() => {
+        if (this.model === null && !model) return;
+        this.confirmed = true;
+        this.close();
+        this.chosen(model);
+      }))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    if (!this.confirmed) this.cancelled();
+  }
+}
+

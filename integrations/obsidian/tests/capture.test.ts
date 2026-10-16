@@ -38,7 +38,7 @@ const profile: Profile = {
   base: "papers",
   source: "papers/mae/mae_ch.md",
   type: "ai-research",
-  node_kinds: ["definition", "algorithm", "architecture"],
+  node_kinds: { definition: [], algorithm: [], architecture: [], finding: ["about"] },
   relation_kinds: { compares: ["baseline", "candidate", "setting"], property: ["subject", "uses"] },
   epistemic: ["empirical", "stated"],
   guidance: "Nodes are noun-like objects.",
@@ -404,8 +404,8 @@ describe("capturing a selection", () => {
     await capture(world(), complete);
     const refusals = seen(requests);
     expect(refusals[0]).toBe("error: [[papers:invented]] is not a record or draft shown to you; link only shown uids; "
-      + "compares has no role \"winner\"; its roles are baseline, candidate, setting; a compares relation needs at least one role value");
-    expect(refusals[1]).toMatch(/^error: kind must be one of definition, algorithm, architecture, compares, property$/);
+      + "compares has no role \"winner\"; its roles are baseline, candidate, setting; a compares relation binds at least two records; a statement about one record is a node");
+    expect(refusals[1]).toMatch(/^error: kind must be one of definition, algorithm, architecture, finding, compares, property$/);
     expect(refusals[2]).toBe(`error: evidence must be copied verbatim from the source.\nquote 1: it is not verbatim in lines 5. Those lines read:\n5| ${lines[4]}`);
   });
 
@@ -544,3 +544,21 @@ describe("a selection made in a side pane", () => {
     expect(drafts(w)).toEqual([]);
   });
 });
+
+describe("statements about one record", () => {
+  it("are nodes whose roles link what they are about, and a relation needs two records", async () => {
+    const w = world();
+    const finding = {
+      item: "MAE works without data augmentation.", decision: "new", label: "MAE works without data augmentation", kind: "finding",
+      roles: { about: ["[[papers:masked-autoencoder]]"] }, statement: "MAE 不依赖 data augmentation。",
+      evidence: [{ lines: "5", quote: "简单的 random sampling 对 MAE 最好" }], epistemic: "empirical", report: "已收录。",
+    };
+    const single = { ...finding, kind: "compares", roles: { candidate: ["[[papers:masked-autoencoder]]"] } };
+    const { complete, requests } = model(single, finding);
+    await expect(capture(w, complete)).resolves.toMatchObject({ decision: "new", draft: true });
+    expect(seen(requests)[0]).toBe("error: a compares relation binds at least two records; a statement about one record is a node");
+    expect(drafts(w)[0]![1]).toContain("epistemic: \"empirical\"\nabout:\n  - \"[[masked-autoencoder]]\"");
+    expect(requests[0]!.messages[0]!.content).toContain("Node kinds and their roles: definition; algorithm; architecture; finding (about)");
+  });
+});
+

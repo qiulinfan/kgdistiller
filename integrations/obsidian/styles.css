@@ -229,8 +229,12 @@ SOFTWARE.
   margin-top: 6px;
 }
 
-.kgd-lookup-reembed {
+.kgd-lookup-embedding {
   margin-bottom: 8px;
+}
+
+.kgd-lookup-reembed {
+  flex: none;
 }
 
 .kgd-lookup-section h4,

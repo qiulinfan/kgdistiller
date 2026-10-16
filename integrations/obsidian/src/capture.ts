@@ -30,7 +30,8 @@ export interface Profile {
   base: string;
   source: string;
   type: string;
-  node_kinds: string[];
+  /** Each node kind with its roles, which may be none. */
+  node_kinds: Record<string, string[]>;
   relation_kinds: Record<string, string[]>;
   epistemic: string[];
   guidance: string;
@@ -102,11 +103,11 @@ const SEARCH_LIMIT = 8;
 const LOOKUP_SEARCH_LIMIT = 5;
 const MAX_ID_LENGTH = 80;
 
-export const CAPTURE_SYSTEM = `You file one knowledge item that the owner selected while reading into their kgdistiller knowledge base, by calling submit. The item is exactly what the selected text names or states; the rest of the passage is context for understanding it, never something else to file. When the selected text makes a statement, the item is that statement, a relation, even when it cites other work. When it names a concept, the item is that concept. File that one item alone: never merge it with neighbouring sentences into a broader record. The names in the selection have been looked up for you; when you will write another name or term that the records shown do not cover, call lookup first, once, with all of them.
+export const CAPTURE_SYSTEM = `You file one knowledge item that the owner selected while reading into their kgdistiller knowledge base, by calling submit. The item is exactly what the selected text names or states; the rest of the passage is context for understanding it, never something else to file. When the selected text makes a statement, the item is that statement, even when it cites other work: a node when it is about one record, a relation when it connects two or more. When it names a concept, the item is that concept. File that one item alone: never merge it with neighbouring sentences into a broader record. The names in the selection have been looked up for you; when you will write another name or term that the records shown do not cover, call lookup first, once, with all of them.
 
 The knowledge model:
-- A node is a noun-like object this source defines or originates, such as a concept, method, architecture or objective, or a theorem it states precisely.
-- Every other statement that can be true or false, such as a result, comparison, finding or limitation, is a relation: it binds its participants to the roles of its kind, and its evidence itself states it.
+- A node is an object this source defines or originates, such as a concept, method, architecture or objective, or a statement it makes about one: a theorem (any precisely stated result, whatever the source calls it), a finding or an example. Its roles link what it is about.
+- A relation is a connection this source states between two or more records, such as an implication, a comparison or a generalization: it binds at least two records to the roles of its kind, and its evidence itself states it. A statement about one record is a node, never a relation.
 - Each concept has exactly one record, owned by the source that defines or originates it. A concept this source only uses, or credits to other work (a citation, "proposed by", "as in", "earlier work used"), is never a node of this source, even when the passage explains it.
 - Every value is a link "[[uid]]" to a record or draft shown in this conversation. A value names a concept that has its own record, such as a method, model, dataset, task or metric. A concept no record or draft shown holds is left out of the values; the statement may still name it. Configurations, quantities and conditions, such as "fine-tune one block" or "75% masking", are never values: they stay in the statement and the evidence.
 - A draft awaits the owner's review and is not knowledge yet. A value may still link a draft shown to you of this source's base, and when the item is a draft's item, decide unchanged with that draft's uid.
@@ -123,8 +124,8 @@ For unchanged, superseding and conflicting, give that record's uid. For supersed
 The submission, for new, superseding, conflicting and a borrowed concept's page:
 - label: a short name in English, or for a relation a short English statement.
 - aliases: a node's other names, including those the source uses in its own language. A relation has none.
-- kind: one of the kinds below. A relation fills the roles of its kind; a node has none.
-- requires: for a node, the direct prerequisites needed to understand it, as values. A relation's participants are its role values, so it rarely needs requires.
+- kind: one of the kinds below; fill the roles it declares.
+- requires: the direct prerequisites needed to understand it, as values, beyond those its roles already link.
 - statement: one or two sentences in the source's language that open with the knowledge itself, then its conditions.
 - evidence: the selected text itself first, then other short quotes only when the item cannot be understood without them; each with its line or line range from the numbered passage, copied character for character, inline citation markup included. For a borrowed concept: one to three short quotes of the chosen page that define it, copied character for character, with empty lines.
 - epistemic: how the cited passage itself supports it, from the list below; a result this source only reports from other work is stated.
@@ -305,10 +306,12 @@ function summaryLine(record: { uid: string; label: string; kind: string; class?:
 }
 
 export function typeText(profile: Profile): string {
-  const roles = Object.entries(profile.relation_kinds).map(([kind, names]) => `${kind} (${names.join(", ")})`).join("; ");
+  const withRoles = (kinds: Record<string, string[]>) =>
+    Object.entries(kinds).map(([kind, names]) => (names.length ? `${kind} (${names.join(", ")})` : kind)).join("; ");
+  const roles = withRoles(profile.relation_kinds);
   return [
     `Document type ${profile.type}:`,
-    `Node kinds: ${profile.node_kinds.join(", ")}`,
+    `Node kinds and their roles: ${withRoles(profile.node_kinds)}`,
     `Relation kinds and their roles: ${roles}`,
     `Epistemic values: ${profile.epistemic.join(", ")}`,
     `Guidance:\n${profile.guidance.trim()}`,
@@ -632,9 +635,9 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): Draft | st
   if (!label || /[\r\n]/.test(label)) return "error: label must be one non-empty line";
   if (!statement) return "error: statement is required";
   if (/^##\s/m.test(statement)) return "error: statement must not contain level-2 headings";
-  const isNode = profile.node_kinds.includes(kind);
-  const roleNames = profile.relation_kinds[kind];
-  if (!isNode && !roleNames) return `error: kind must be one of ${[...profile.node_kinds, ...Object.keys(profile.relation_kinds)].join(", ")}`;
+  const isNode = kind in profile.node_kinds;
+  const roleNames = profile.node_kinds[kind] ?? profile.relation_kinds[kind];
+  if (!roleNames) return `error: kind must be one of ${[...Object.keys(profile.node_kinds), ...Object.keys(profile.relation_kinds)].join(", ")}`;
   const epistemic = typeof args.epistemic === "string" && args.epistemic.trim() ? args.epistemic.trim() : undefined;
   if (epistemic && !profile.epistemic.includes(epistemic)) return `error: epistemic must be one of ${profile.epistemic.join(", ")}`;
   const rawRoles = args.roles && typeof args.roles === "object" && !Array.isArray(args.roles) ? args.roles as Record<string, unknown> : {};
@@ -660,14 +663,16 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): Draft | st
   };
   const convert = (items: unknown): string[] => strings(items).map(link).filter((value): value is string => value !== undefined);
   for (const [role, items] of Object.entries(rawRoles)) {
-    if (!roleNames?.includes(role)) {
-      errors.push(isNode ? `a ${kind} node has no roles; drop "${role}"` : `${kind} has no role "${role}"; its roles are ${roleNames?.join(", ")}`);
+    if (!roleNames.includes(role)) {
+      errors.push(roleNames.length ? `${kind} has no role "${role}"; its roles are ${roleNames.join(", ")}` : `a ${kind} has no roles; drop "${role}"`);
       continue;
     }
     const converted = convert(items);
     if (converted.length) roles[role] = converted;
   }
-  if (roleNames && Object.keys(roles).length === 0) errors.push(`a ${kind} relation needs at least one role value`);
+  if (!isNode && Object.values(roles).flat().length < 2) {
+    errors.push(`a ${kind} relation binds at least two records; a statement about one record is a node`);
+  }
   const requires = convert(args.requires);
   const evidence = Array.isArray(args.evidence)
     ? (args.evidence as Array<{ lines?: unknown; quote?: unknown }>).filter((item) => item && typeof item === "object")

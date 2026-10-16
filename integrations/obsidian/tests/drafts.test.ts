@@ -124,7 +124,7 @@ describe("drawing a record into a draft", () => {
 describe("editing a draft's values", () => {
   const relation = draft("kb:sum", {
     kind: "implies",
-    choices: { node_kinds: ["definition"], relation_kinds: { implies: ["premise", "conclusion"] }, epistemic: ["stated"] },
+    choices: { node_kinds: { definition: [], theorem: ["about"] }, relation_kinds: { implies: ["premise", "conclusion"] }, epistemic: ["stated"] },
     out: [
       { role: "premise", pos: 0, uid: "kb:subspace", state: "accepted", label: "Subspace" },
       { role: "premise", pos: 1, uid: "notes:span", state: "accepted", label: "Span" },

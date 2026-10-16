@@ -50,12 +50,12 @@ describe("accepting a judgment", () => {
     expect(acceptJudgment({ verdict: "unmatched", candidates: [] }, candidates)).toBe("error: selection must be concept or statement");
   });
 
-  it("refuses to match a concept to a relation or a statement to a node", () => {
+  it("refuses to match a concept to a relation, and lets a statement match a node or a relation", () => {
     expect(acceptJudgment({ selection: "concept", verdict: "matched", candidates: [3] }, candidates)).toBe(
       "error: the selection is a concept, so it can only be a node; MAE is a form of denoising autoencoding is a relation. "
       + "Judge again: a record that only mentions it is related, not the same.");
-    expect(acceptJudgment({ selection: "statement", verdict: "ambiguous", candidates: [3, 1] }, candidates)).toMatch(
-      /^error: the selection is a statement, so it can only be a relation; Masked autoencoder is a node\./);
+    expect(acceptJudgment({ selection: "statement", verdict: "ambiguous", candidates: [3, 1] }, candidates)).toMatchObject(
+      { verdict: "ambiguous", records: ["test-papers:mae-is-a-form-of-dae", "test-papers:masked-autoencoder"] });
   });
 });
 

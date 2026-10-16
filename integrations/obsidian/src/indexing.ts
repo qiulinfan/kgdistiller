@@ -31,6 +31,14 @@ export interface EmbeddingStatus {
   vectors: string | null;
   unembedded: number;
   embedding_changed: boolean;
+  /** The models in the local Hugging Face cache that kgdistiller can run. */
+  cached?: string[];
+}
+
+/** The choices of the sidebar's embedding picker: the cached models and the one in use, then off ("" ). */
+export function embeddingChoices(status: EmbeddingStatus): Array<{ value: string; label: string }> {
+  const models = [...new Set([...(status.cached ?? []), ...(status.embedding ? [status.embedding] : [])])].sort();
+  return [...models.map((model) => ({ value: model, label: model })), { value: "", label: "Off (keywords and names)" }];
 }
 
 /** One sentence about the home's embedding model for the settings. */

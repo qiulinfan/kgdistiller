@@ -28,10 +28,10 @@ export interface Judgment {
   explanation: string;
 }
 
-export const JUDGE_SYSTEM = `You judge whether a passage the owner selected while reading names knowledge already recorded in their kgdistiller knowledge base. You see the selection, the text around it, and numbered candidate records found by name and by search. Nodes are concepts; relations are statements about them. Answer by calling judge.
+export const JUDGE_SYSTEM = `You judge whether a passage the owner selected while reading names knowledge already recorded in their kgdistiller knowledge base. You see the selection, the text around it, and numbered candidate records found by name and by search. Nodes are concepts and the statements made about one record, such as theorems and findings; relations are connections stated between two or more records. Answer by calling judge.
 
 First decide what the selection means in the text around it: a concept, or a statement.
-- matched: one candidate is that same concept or statement. Judge by meaning: compare definitions and conditions. A shared name does not make the same concept: a general term used in its general sense is not a specific record that happens to share the word, and a broader or narrower concept is not a match. A concept is a node, never a relation that merely mentions it; a relation matches only a selection that states it.
+- matched: one candidate is that same concept or statement. Judge by meaning: compare definitions and conditions. A shared name does not make the same concept: a general term used in its general sense is not a specific record that happens to share the word, and a broader or narrower concept is not a match. A concept is a node that defines it, never a statement or relation that merely mentions it; a statement matches only a record that states it.
 - ambiguous: two or more candidates are each that same concept or statement under some reading of the text.
 - unmatched: no candidate is it.
 
@@ -91,12 +91,11 @@ export function acceptJudgment(args: Record<string, unknown>, candidates: JudgeI
   if (verdict === "matched" && records.length !== 1) return "error: matched names exactly one candidate";
   if (verdict === "ambiguous" && records.length < 2) return "error: ambiguous names at least two candidates; with one, decide matched or unmatched";
   if (verdict === "unmatched" && records.length > 0) return "error: unmatched names no candidate";
-  // A concept is a node and a statement is a relation (docs/model.md), so a match must have the selection's class.
-  const wanted = args.selection === "statement" ? "relation" : args.selection === "concept" ? "node" : undefined;
-  if (!wanted) return "error: selection must be concept or statement";
-  const other = chosen.find((record) => record.class !== wanted);
-  if (other) {
-    return `error: the selection is a ${args.selection}, so it can only be a ${wanted}; ${other.label} is a ${other.class}. `
+  // A concept is a node (docs/model.md), so a concept matches no relation; a statement may be either.
+  if (args.selection !== "concept" && args.selection !== "statement") return "error: selection must be concept or statement";
+  const relation = args.selection === "concept" ? chosen.find((record) => record.class === "relation") : undefined;
+  if (relation) {
+    return `error: the selection is a concept, so it can only be a node; ${relation.label} is a relation. `
       + "Judge again: a record that only mentions it is related, not the same.";
   }
   const explanation = typeof args.explanation === "string" ? args.explanation.trim() : "";

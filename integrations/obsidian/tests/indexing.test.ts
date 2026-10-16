@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { embeddingSummary, Indexer, needsEmbedding } from "../src/indexing";
+import { embeddingChoices, embeddingSummary, Indexer, needsEmbedding } from "../src/indexing";
 
 const lag = (changed: number, unembedded: number, embeddingChanged = false) =>
   ({ changed_files: changed, unembedded, embedding_changed: embeddingChanged });
@@ -89,5 +89,17 @@ describe("embeddingSummary", () => {
     const indexer = new Indexer({ configured: () => true, command: vi.fn(), index: vi.fn() }, vi.fn());
     indexer.observeStatus({ ...base, embedding_changed: true });
     expect(needsEmbedding(indexer.state)).toBe(true);
+  });
+});
+
+describe("the sidebar's embedding choices", () => {
+  it("lists the cached models with the one in use, then off", () => {
+    const status = { embedding: "BAAI/bge-m3", precision: "int8", vectors: null, unembedded: 0, embedding_changed: true, cached: ["intfloat/multilingual-e5-large", "BAAI/bge-m3"] };
+    expect(embeddingChoices(status)).toEqual([
+      { value: "BAAI/bge-m3", label: "BAAI/bge-m3" },
+      { value: "intfloat/multilingual-e5-large", label: "intfloat/multilingual-e5-large" },
+      { value: "", label: "Off (keywords and names)" },
+    ]);
+    expect(embeddingChoices({ ...status, embedding: "x/uncached", cached: [] }).map((choice) => choice.value)).toEqual(["x/uncached", ""]);
   });
 });

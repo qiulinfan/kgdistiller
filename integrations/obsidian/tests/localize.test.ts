@@ -20,7 +20,7 @@ const profile: Profile = {
   base: "papers",
   source: "papers/beit/beit.md",
   type: "ai-research",
-  node_kinds: ["definition", "algorithm"],
+  node_kinds: { definition: [], algorithm: [] },
   relation_kinds: { property: ["subject", "uses"] },
   epistemic: ["empirical", "stated"],
   guidance: "",
@@ -38,7 +38,7 @@ const record: FullRecord = {
     { role: "requires", pos: 0, uid: "papers:masked-autoencoder", label: "Masked autoencoder", exists: true },
     { role: "requires", pos: 1, uid: "notes:autoencoder", label: "Autoencoder", exists: true },
   ],
-  in: [],
+  in: [], degree: 0,
 };
 
 const input: LocalizeInput = { path: LOCAL, from: 3, to: 3, selection: "Block-wise masking masks a block of patches" };

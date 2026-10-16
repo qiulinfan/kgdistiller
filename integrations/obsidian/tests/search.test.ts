@@ -66,7 +66,7 @@ describe("the search prompt", () => {
       ...noAug, id: "x", aliases: [], understanding: "yes", search_terms: "", epistemic: "empirical", body: "MAE works\nwell.",
       evidence: ["即使没有 data augmentation，MAE 也有不错表现。"],
       out: [{ role: "subject", pos: 0, uid: mae.uid, label: mae.label, exists: true }, { role: "uses", pos: 0, uid: "papers:data-augmentation", label: "Data augmentation", exists: true }],
-      in: [{ uid: "papers:y", label: "Y", kind: "compares", role: "baseline" }],
+      in: [{ uid: "papers:y", label: "Y", kind: "compares", role: "baseline" }], degree: 3,
     }];
     expect(recordText(records)).toBe([
       `[${noAug.uid}] MAE works without data augmentation · property relation · papers · s.md L1 · empirical`,

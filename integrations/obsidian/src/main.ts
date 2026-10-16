@@ -428,6 +428,8 @@ export default class KgdistillerPlugin extends Plugin {
     if (failed) throw new Error(typeof report.message === "string" ? report.message : `kgd ${args.join(" ")} failed`);
     const status = report as unknown as EmbeddingStatus;
     this.indexer.observeStatus(status);
+    // The settings and the sidebar both change it; every lookup sidebar shows the result.
+    for (const view of this.lookupViews()) view.showEmbedding(status);
     return status;
   }
 

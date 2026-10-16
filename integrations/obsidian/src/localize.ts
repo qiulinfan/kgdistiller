@@ -97,7 +97,7 @@ export async function localizeRecord(complete: Complete, kgd: CaptureKgd, files:
   if (profile.base !== base) {
     return done(false, `This source belongs to base ${profile.base}, the record to base ${base}; moving a record across bases is the compile Skill's relocation.`);
   }
-  if (!profile.node_kinds.includes(target.kind) && !(target.kind in profile.relation_kinds)) {
+  if (!(target.kind in profile.node_kinds) && !(target.kind in profile.relation_kinds)) {
     return done(false, `The kind ${target.kind} is not one of this source's document type ${profile.type}.`);
   }
   const lines = (await files.read(input.path)).replace(/\r\n?/g, "\n").split("\n");
