@@ -1,4 +1,4 @@
-"""The write path: ``drafts``, ``accept``, ``sheet`` (file and JSON) and ``harvest``."""
+"""The write path: ``drafts``, ``accept`` of new and replacing drafts, and the ``source`` profile."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest.mock import patch
 from kgdistiller import write
 from kgdistiller.home import KnowledgeError, LockConflict, lock
 from kgdistiller.index import index, open_read_only
-from kgdistiller.write import accept, drafts, harvest, sheet, sheet_json
+from kgdistiller.write import accept, drafts, source
 from tests.knowledge_fixture import fake_encoder, make_record_home
 
 SOURCE = "notes/a.txt"
@@ -40,7 +40,7 @@ class WriteTestCase(unittest.TestCase):
         self.kb = make_record_home(self, bases=("kb", "notes"))
         self.kb.write_source(SOURCE, "\n".join(LINES) + "\n")
         self.kb.write_record(
-            "subspace", node("Subspace", "4", extra='understanding: understood\nrequires: ["vector space"]'),
+            "subspace", node("Subspace", "4", extra="understanding: no"),
             "A subspace is closed under addition. More text.", ["A subspace is closed under addition."],
         )
 
@@ -54,25 +54,35 @@ class WriteTestCase(unittest.TestCase):
 
 class AcceptTest(WriteTestCase):
     def test_accept_moves_the_draft_into_entries(self) -> None:
-        draft = self.draft("dimension", node("Dimension", "6", extra="understanding: not-yet-understood"))
+        draft = self.draft("dimension", node("Dimension", "6", extra="understanding: no"))
         content = draft.read_bytes()
-        receipt = accept([draft])
-        self.assertEqual(
-            {"created": ["kb:dimension"], "understanding_set": [{"uid": "kb:dimension", "value": "not-yet-understood"}]},
-            without_index(receipt),
-        )
+        receipt = accept([str(draft)])
+        self.assertEqual({"created": ["kb:dimension"], "updated": []}, without_index(receipt))
         self.assertFalse(draft.exists())
         self.assertEqual(content, self.kb.path("dimension").read_bytes())
-
-    def test_unknown_understanding_is_not_listed(self) -> None:
-        draft = self.draft("dimension", node("Dimension", "6"))
-        self.assertEqual({"created": ["kb:dimension"], "understanding_set": []}, without_index(accept([str(draft)])))
 
     def test_dry_run_writes_nothing(self) -> None:
         draft = self.draft("dimension", node("Dimension", "6"))
         before = self.snapshot()
-        self.assertEqual({"would_create": ["kb:dimension"]}, accept([draft], dry_run=True))
+        self.assertEqual({"would_create": ["kb:dimension"], "would_update": []}, accept([draft], dry_run=True))
         self.assertEqual(before, self.snapshot())
+
+    def test_a_foreign_draft_is_accepted_without_freshness(self) -> None:
+        draft = self.kb.write_record(
+            "attention", "label: Attention\nkind: concept\nsource: https://example.com/paper\nrequires: [\"[[subspace]]\"]",
+            "Attention.", ["Quoted from the paper, not from a local file."], folder="drafts",
+        )
+        self.assertEqual({"created": ["kb:attention"], "updated": []}, without_index(accept([draft])))
+        self.assertTrue(self.kb.path("attention").is_file())
+        lined = self.kb.write_record(
+            "lined", "label: Lined\nkind: concept\nsource: https://example.com/paper\nlines: 2", "L.", ["Q."],
+            folder="drafts",
+        )
+        self.assertIn("has no lines", accept([lined])["refused"][0]["message"])
+
+    def test_a_plain_value_is_refused(self) -> None:
+        draft = self.draft("dimension", node("Dimension", "6", extra="requires: [vector space]"))
+        self.assertIn("'vector space' is not a link", accept([draft])["refused"][0]["message"])
 
     def test_any_refusal_writes_nothing(self) -> None:
         good = self.draft("dimension", node("Dimension", "6"))
@@ -122,17 +132,11 @@ class AcceptTest(WriteTestCase):
             with self.subTest(path=path):
                 self.assertIn(fragment, accept([path])["refused"][0]["message"])
 
-    def test_an_existing_id_is_refused(self) -> None:
-        draft = self.draft("subspace", node("Other subspace", "6"))
-        self.assertIn("already exists in entries/", accept([draft])["refused"][0]["message"])
-
     def test_identical_entry_finishes_an_interrupted_accept(self) -> None:
-        draft = self.draft("dimension", node("Dimension", "6", extra="understanding: understood"))
+        draft = self.draft("dimension", node("Dimension", "6"))
         os.link(draft, self.kb.path("dimension"))
-        self.assertEqual(
-            {"created": ["kb:dimension"], "understanding_set": [{"uid": "kb:dimension", "value": "understood"}]},
-            without_index(accept([draft])),
-        )
+        self.assertEqual({"would_create": ["kb:dimension"], "would_update": []}, accept([draft], dry_run=True))
+        self.assertEqual({"created": ["kb:dimension"], "updated": []}, without_index(accept([draft])))
         self.assertFalse(draft.exists())
         self.assertTrue(self.kb.path("dimension").exists())
 
@@ -142,7 +146,7 @@ class AcceptTest(WriteTestCase):
         with fake_encoder():
             index()
             self.kb.write_record(
-                "subspace", node("Subspace", "4", extra='understanding: understood\nrequires: ["vector space"]'),
+                "subspace", node("Subspace", "4", extra="understanding: no"),
                 "An edited body.", ["A subspace is closed under addition."],
             )
             receipt = accept([self.draft("dimension", node("Dimension", "6"))])
@@ -181,18 +185,19 @@ class AcceptTest(WriteTestCase):
 
 class DraftsTest(WriteTestCase):
     def test_lists_a_draft_with_its_fields_values_and_acceptance(self) -> None:
-        path = self.draft("dimension", node("Dimension", "6", extra='aliases: [维数]\nrequires: ["[[subspace]]", vector space]'))
+        path = self.draft("dimension", node("Dimension", "6", extra='aliases: [维数]\nrequires: ["[[subspace]]", "[[notes:rank]]"]'))
         self.assertEqual({"drafts": [{
             "uid": "kb:dimension", "base": "kb", "id": "dimension", "path": str(path),
+            "replaces": None, "foreign": False,
             "class": "node", "kind": "definition", "label": "Dimension", "aliases": ["维数"],
-            "source": SOURCE, "lines": "6-6", "understanding": "unknown", "epistemic": None,
+            "source": SOURCE, "lines": "6-6", "understanding": "yes", "epistemic": None,
             "gloss": "Text.", "body": "Text.", "search_terms": "", "evidence": ["Unique sentence about dimension."],
             "out": [
                 {"role": "requires", "pos": 0, "uid": "kb:subspace", "state": "accepted", "label": "Subspace",
-                 "understanding": "understood"},
-                {"role": "requires", "pos": 1, "term": "vector space"},
+                 "understanding": "no"},
+                {"role": "requires", "pos": 1, "uid": "notes:rank", "state": "missing", "label": None},
             ],
-            "with": [], "linked_by": [], "problems": [],
+            "with": [], "linked_by": [], "problems": ["requires[1]: dangling link [[notes:rank]]"],
         }], "unavailable_bases": []}, drafts())
 
     def test_linked_drafts_name_what_they_are_accepted_with(self) -> None:
@@ -204,19 +209,25 @@ class DraftsTest(WriteTestCase):
         self.assertEqual((["kb:third"], ["kb:first"]), (listed["second"]["with"], listed["second"]["linked_by"]))
         self.assertEqual(([], ["kb:second"]), (listed["third"]["with"], listed["third"]["linked_by"]))
         self.assertEqual({"role": "premise", "pos": 0, "uid": "kb:second", "state": "draft", "label": "Second"}, listed["first"]["out"][0])
-        self.assertEqual(["would_create"], list(accept([first, second, third], dry_run=True)))
+        self.assertEqual(
+            {"would_create": ["kb:first", "kb:second", "kb:third"], "would_update": []},
+            accept([first, second, third], dry_run=True),
+        )
 
     def test_problems_are_what_accept_refuses(self) -> None:
         self.draft("stale", node("Stale", "1"), quote="Not in the source.")
         self.draft("dangling", node("Dangling", "6", kind="implies", extra='premise: ["[[nowhere]]"]'))
-        self.draft("taken", node("Taken", "6"))
-        self.kb.write_record("taken", node("Taken", "6"), "Other.", ["Unique sentence about dimension."])
+        taken = self.draft("taken", node("Taken", "6"))
+        entry = self.kb.write_record("taken", node("Taken", "6"), "Other.", ["Unique sentence about dimension."])
+        later = taken.stat().st_mtime_ns + 1_000_000_000
+        os.utime(entry, ns=(later, later))
         listed = {item["id"]: item for item in drafts()["drafts"]}
         for item in listed.values():
             with self.subTest(item["id"]):
                 refused = accept([item["path"]], dry_run=True)["refused"]
                 self.assertEqual([entry["message"] for entry in refused], item["problems"])
         self.assertIn("evidence is stale", listed["stale"]["problems"][0])
+        self.assertIn("changed after this replacement was drafted", listed["taken"]["problems"][0])
         self.assertEqual({"role": "premise", "pos": 0, "uid": "kb:nowhere", "state": "missing", "label": None},
                          listed["dangling"]["out"][0])
 
@@ -249,188 +260,172 @@ class DraftsTest(WriteTestCase):
             self.assertEqual(["kb:dimension"], [item["uid"] for item in drafts()["drafts"]])
 
 
-EXPECTED_SHEET = """<!-- generated by kgd sheet; only draft checkboxes are read back -->
-# notes/a.txt
+class UpdateDraftTest(WriteTestCase):
+    """A draft under the id of an accepted record of its base proposes replacing that record."""
 
-[[notes/a.txt]] · type math · 4 accepted · 2 drafts
+    def replacement(self, body: str = "A subspace is closed under addition and scaling.", extra: str = "understanding: yes") -> Path:
+        draft = self.kb.write_record(
+            "subspace", node("Subspace", "4", extra=extra), body, ["A subspace is closed under addition."], folder="drafts",
+        )
+        entry = self.kb.path("subspace")
+        earlier = draft.stat().st_mtime_ns - 1_000_000_000
+        os.utime(entry, ns=(earlier, earlier))
+        return draft
 
-## definition
-- [[.knowledge/entries/measure-space|Measure space]] · L2-3 — 三元组。
-- [[.knowledge/entries/subspace|Subspace]] · L4-4 · understood — A subspace is closed under addition.
+    def test_accept_replaces_the_entry_and_reports_it_updated(self) -> None:
+        draft = self.replacement()
+        content = draft.read_bytes()
+        self.assertEqual({"would_create": [], "would_update": ["kb:subspace"]}, accept([draft], dry_run=True))
+        self.assertTrue(draft.exists())
+        receipt = accept([draft])
+        self.assertEqual({"created": [], "updated": ["kb:subspace"]}, without_index(receipt))
+        self.assertFalse(draft.exists())
+        self.assertEqual(content, self.kb.path("subspace").read_bytes())
 
-## implies
-- [[.knowledge/entries/sum-is-subspace|Sum  is  a subspace]] · L5-5 · premise: Subspace · conclusion: Sum of subspaces, Vector Space, missing — Sum | is [closed].
+    def test_new_and_replacing_drafts_are_accepted_together(self) -> None:
+        replacing = self.replacement()
+        new = self.draft("dimension", node("Dimension", "6", extra='requires: ["[[subspace]]"]'))
+        self.assertEqual(
+            {"created": ["kb:dimension"], "updated": ["kb:subspace"]}, without_index(accept([new, replacing])),
+        )
 
-## other
-- [[.knowledge/entries/odd|Odd]] · L6-6 — Odd.
+    def test_a_replacement_is_validated_like_any_draft(self) -> None:
+        draft = self.replacement()
+        draft.write_text(draft.read_text(encoding="utf-8").replace("addition.\n", "nothing.\n"), encoding="utf-8")
+        entry = self.kb.path("subspace")
+        earlier = draft.stat().st_mtime_ns - 1_000_000_000
+        os.utime(entry, ns=(earlier, earlier))
+        before = self.snapshot()
+        self.assertIn("evidence is stale", accept([draft])["refused"][0]["message"])
+        self.assertEqual(before, self.snapshot())
 
-## Pending
-- measurable space — Measure space (requires)
-- vector space — Subspace (requires), Sum  is  a subspace (conclusion)
+    def test_an_entry_changed_after_the_draft_is_refused(self) -> None:
+        draft = self.replacement()
+        entry = self.kb.path("subspace")
+        later = draft.stat().st_mtime_ns + 1_000_000_000
+        os.utime(entry, ns=(later, later))
+        before = self.snapshot()
+        receipt = accept([draft])
+        self.assertEqual([{
+            "path": str(draft),
+            "message": f"{entry} changed after this replacement was drafted; draft it again from the record",
+        }], receipt["refused"])
+        self.assertEqual(before, self.snapshot())
 
-## Drafts
-- [ ] [[.knowledge/drafts/direct-sum|Direct sum]] · definition · L5-5 — Direct.
-- [ ] [[.knowledge/drafts/criterion|Criterion]] · implies · L6-6 · premise: Direct sum · conclusion: dimension — Crit.
-"""
+    def test_a_draft_identical_to_its_entry_is_removed(self) -> None:
+        draft = self.kb.path("subspace", "drafts")
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_bytes(self.kb.path("subspace").read_bytes())
+        content = draft.read_bytes()
+        receipt = accept([draft])
+        self.assertEqual(["kb:subspace"], receipt["created"])
+        self.assertFalse(draft.exists())
+        self.assertEqual(content, self.kb.path("subspace").read_bytes())
+
+    def test_accept_embeds_the_replaced_record(self) -> None:
+        self.kb.embedding = "fake-model"
+        self.kb.write_config()
+        self.kb.write_record("rank", node("Rank", "6"), "Rank.", ["Unique sentence about dimension."])
+        with fake_encoder():
+            index()
+            self.kb.write_record("rank", node("Rank", "6"), "Rank, edited.", ["Unique sentence about dimension."])
+            receipt = accept([self.replacement(body="A replaced body.")])
+        self.assertEqual((1, 1), (receipt["index"]["embedded"], receipt["index"]["unembedded"]))
+        connection = open_read_only()
+        try:
+            bodies = dict(connection.execute("SELECT uid, body FROM record"))
+        finally:
+            connection.close()
+        self.assertEqual("A replaced body.", bodies["kb:subspace"])
+
+    def test_drafts_lists_what_a_draft_replaces(self) -> None:
+        self.replacement()
+        self.draft("dimension", node("Dimension", "6"))
+        listed = {item["id"]: item for item in drafts()["drafts"]}
+        self.assertEqual("kb:subspace", listed["subspace"]["replaces"])
+        self.assertIsNone(listed["dimension"]["replaces"])
+        self.assertEqual([], listed["subspace"]["problems"])
+
+    def test_a_link_to_a_replaced_id_targets_the_accepted_record(self) -> None:
+        self.replacement()
+        self.draft("dimension", node("Dimension", "6", kind="implies", extra='premise: ["[[subspace]]"]'))
+        listed = {item["id"]: item for item in drafts()["drafts"]}
+        self.assertEqual(
+            {"role": "premise", "pos": 0, "uid": "kb:subspace", "state": "accepted", "label": "Subspace",
+             "understanding": "no"},
+            listed["dimension"]["out"][0],
+        )
+        self.assertEqual(([], []), (listed["dimension"]["with"], listed["subspace"]["linked_by"]))
+        self.assertEqual([], listed["dimension"]["problems"])
+        self.assertEqual({"created": ["kb:dimension"], "updated": []},
+                         without_index(accept([listed["dimension"]["path"]])))
+
+    def test_drafts_marks_foreign_drafts(self) -> None:
+        self.kb.write_record(
+            "attention", "label: Attention\nkind: concept\nsource: https://example.com/paper", "A.", ["Q."], folder="drafts",
+        )
+        [item] = drafts()["drafts"]
+        self.assertEqual((True, "", [], None), (item["foreign"], item["lines"], item["problems"], item["replaces"]))
 
 
-class SheetTestCase(WriteTestCase):
+class SourceTest(WriteTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.kb.write_record(
-            "measure-space", node("Measure space", "2-3", extra='aliases: [测度空间]\nrequires: ["[[subspace]]", measurable space]'),
+            "measure-space", node("Measure space", "2-3", extra='aliases: [测度空间]\nrequires: ["[[subspace]]"]'),
             "三元组。其余。", ["A measure space is a triple (X, M, mu)."],
         )
-        self.kb.write_record(
-            "sum-is-subspace",
-            node("Sum [is] a|subspace", "5", kind="implies",
-                 extra='premise: ["[[subspace]]"]\nconclusion: ["[[notes:sum]]", Vector Space, "[[missing]]"]'),
-            "Sum | is [closed].", ["The sum of two subspaces is a subspace."],
-        )
-        self.kb.write_record("odd", node("Odd", "6", kind="lemma"), "Odd.", ["Unique sentence about dimension."])
-        self.kb.write_source(SOURCE, "\n".join(LINES) + "\n", base="notes")
-        self.kb.write_record("sum", node("Sum of subspaces", "5"), "Sum.", ["The sum of two"], base="notes")
         self.draft("direct-sum", node("Direct sum", "5"), quote="The sum of two subspaces", body="Direct.")
-        self.draft("criterion", node("Criterion", "6", kind="implies", extra='premise: ["[[direct-sum]]"]\nconclusion: [dimension]'), body="Crit.")
+        self.draft("criterion", node("Criterion", "6", kind="implies", extra='premise: ["[[direct-sum]]"]'), body="Crit.")
         self.kb.write_record("elsewhere", node("Elsewhere", "1").replace(SOURCE, "notes/b.txt"), "E.", ["x"])
         self.source = self.kb.root / SOURCE
-        self.sheet = self.kb.root / ".knowledge/sheets/notes/a.txt.md"
 
-    def tick(self, identifier: str) -> None:
-        text = self.sheet.read_text(encoding="utf-8")
-        self.sheet.write_text(text.replace(f"- [ ] [[.knowledge/drafts/{identifier}|", f"- [x] [[.knowledge/drafts/{identifier}|"), encoding="utf-8")
-
-
-class SheetTest(SheetTestCase):
-    def test_exact_sheet(self) -> None:
-        self.assertEqual({"sheet": str(self.sheet)}, sheet(self.source))
-        self.assertEqual(EXPECTED_SHEET, self.sheet.read_text(encoding="utf-8"))
-
-    def test_display_text_is_sanitized_in_roles_and_pending(self) -> None:
-        self.kb.write_record("weird", node('"Weird [w] | x"', "6"), "W.", ["Unique sentence about dimension."])
-        self.kb.write_record(
-            "weird-rel",
-            node("Weird rel", "6", kind="implies", extra='premise: ["[[weird]]"]\nconclusion: ["odd|term"]'),
-            "R.", ["Unique sentence about dimension."],
-        )
-        sheet(self.source)
-        text = self.sheet.read_text(encoding="utf-8")
-        self.assertIn("- [[.knowledge/entries/weird-rel|Weird rel]] · L6-6 · premise: Weird  w    x · conclusion: odd term — R.", text)
-        self.assertIn("- odd term — Weird rel (conclusion)", text)
-        self.assertNotIn("[w]", text)
-        self.assertNotIn("odd|term", text)
-
-    def test_ticks_survive_regeneration_while_their_draft_exists(self) -> None:
-        sheet(self.source)
-        self.tick("criterion")
-        self.tick("direct-sum")
-        self.kb.path("direct-sum", "drafts").unlink()
-        self.draft("later", node("Later", "1"), quote="Title line")
-        sheet(self.source)
-        text = self.sheet.read_text(encoding="utf-8")
-        self.assertIn("- [x] [[.knowledge/drafts/criterion|Criterion]]", text)
-        self.assertIn("- [ ] [[.knowledge/drafts/later|Later]]", text)
-        self.assertNotIn("drafts/direct-sum", text)
-        self.assertIn("premise: direct-sum ·", text)
-
-    def test_json_profile_and_inventory_write_nothing(self) -> None:
-        profile = sheet_json(self.source)
-        self.assertFalse(self.sheet.exists())
+    def test_profile_and_inventory_write_nothing(self) -> None:
+        before = self.snapshot()
+        profile = source(self.source)
+        self.assertEqual(before, self.snapshot())
+        self.assertFalse((self.kb.root / ".knowledge/sheets").exists())
         self.assertEqual(
             ["base", "source", "type", "node_kinds", "relation_kinds", "epistemic", "guidance", "line_count",
-             "records", "drafts", "pending"],
+             "records", "drafts"],
             list(profile),
         )
         self.assertEqual(("kb", SOURCE, "math", 6), (profile["base"], profile["source"], profile["type"], profile["line_count"]))
+        self.assertEqual(["definition", "theorem", "concept"], profile["node_kinds"])
         self.assertEqual(["premise", "conclusion"], profile["relation_kinds"]["implies"])
+        self.assertEqual(["proved", "stated"], profile["epistemic"])
         self.assertEqual(
-            {"uid": "kb:subspace", "label": "Subspace", "kind": "definition", "class": "node", "lines": "4-4",
-             "understanding": "understood", "gloss": "A subspace is closed under addition."},
-            profile["records"][1],
+            [{"uid": "kb:measure-space", "label": "Measure space", "kind": "definition", "class": "node", "lines": "2-3",
+              "understanding": "yes", "gloss": "三元组。"},
+             {"uid": "kb:subspace", "label": "Subspace", "kind": "definition", "class": "node", "lines": "4-4",
+              "understanding": "no", "gloss": "A subspace is closed under addition."}],
+            profile["records"],
         )
         self.assertEqual(
             [{"id": "direct-sum", "label": "Direct sum", "kind": "definition", "class": "node", "lines": "5-5"},
              {"id": "criterion", "label": "Criterion", "kind": "implies", "class": "relation", "lines": "6-6"}],
             profile["drafts"],
         )
-        self.assertEqual(
-            {"term": "vector space", "owners": [{"uid": "kb:subspace", "role": "requires"},
-                                               {"uid": "kb:sum-is-subspace", "role": "conclusion"}]},
-            profile["pending"][1],
-        )
 
     def test_line_count_reads_bom_and_crlf_like_check(self) -> None:
         self.source.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(LINES).encode() + b"\r\n")
-        self.assertEqual(6, sheet_json(self.source)["line_count"])
+        self.assertEqual(6, source(self.source)["line_count"])
 
     def test_unregistered_source_asks_for_a_glob(self) -> None:
         other = self.kb.write_source("other/c.md", "text\n")
         with self.assertRaises(KnowledgeError) as caught:
-            sheet(other)
+            source(other)
         self.assertIn("add a glob", str(caught.exception))
         outside = self.kb.home.parent / "x.txt"
         outside.write_text("x", encoding="utf-8")
         with self.assertRaises(KnowledgeError):
-            sheet_json(outside)
-
-
-class HarvestTest(SheetTestCase):
-    def test_harvest_accepts_ticked_drafts_and_regenerates(self) -> None:
-        sheet(self.source)
-        self.tick("direct-sum")
-        self.tick("criterion")
-        receipt = harvest(self.sheet)
-        self.assertEqual({"created": ["kb:direct-sum", "kb:criterion"], "understanding_set": []}, without_index(receipt))
-        text = self.sheet.read_text(encoding="utf-8")
-        self.assertIn("· 6 accepted · 0 drafts", text)
-        self.assertIn("- [[.knowledge/entries/direct-sum|Direct sum]] · L5-5 — Direct.", text)
-        self.assertNotIn("## Drafts", text)
-
-    def test_unticked_drafts_keep_their_state(self) -> None:
-        sheet(self.source)
-        self.tick("direct-sum")
-        harvest(self.sheet)
-        text = self.sheet.read_text(encoding="utf-8")
-        self.assertIn("- [ ] [[.knowledge/drafts/criterion|Criterion]]", text)
-
-    def test_refusal_and_dry_run_change_nothing(self) -> None:
-        sheet(self.source)
-        self.tick("criterion")
-        before = self.snapshot()
-        refused = harvest(self.sheet)
-        self.assertEqual("premise[0]: select [[direct-sum]] too", refused["refused"][0]["message"])
-        self.assertEqual(before, self.snapshot())
-        self.tick("direct-sum")
-        before = self.snapshot()
-        self.assertEqual({"would_create": ["kb:direct-sum", "kb:criterion"]}, harvest(self.sheet, dry_run=True))
-        self.assertEqual(before, self.snapshot())
-
-    def test_ticked_rows_whose_draft_is_gone_are_skipped(self) -> None:
-        sheet(self.source)
-        self.tick("direct-sum")
-        self.kb.path("direct-sum", "drafts").unlink()
-        self.assertEqual({"created": [], "understanding_set": []}, harvest(self.sheet))
-
-    def test_only_rows_under_drafts_count(self) -> None:
-        sheet(self.source)
-        text = self.sheet.read_text(encoding="utf-8")
-        self.sheet.write_text(text.replace("## Pending", "- [x] [[.knowledge/drafts/direct-sum]]\n\n## Pending"), encoding="utf-8")
-        self.assertEqual({"created": [], "understanding_set": []}, harvest(self.sheet))
-
-    def test_the_sheet_must_live_under_sheets(self) -> None:
+            source(outside)
         with self.assertRaises(KnowledgeError):
-            harvest(self.source)
+            source(self.kb.root / "notes/missing.txt")
 
-    def test_an_unregistered_source_is_refused_before_accepting(self) -> None:
-        sheet(self.source)
-        self.tick("direct-sum")
-        self.kb.sources["kb"] = {}
-        self.kb.write_config()
-        before = self.snapshot()
-        with self.assertRaises(KnowledgeError):
-            harvest(self.sheet)
-        self.assertEqual(before, self.snapshot())
-
+    def test_sheet_and_harvest_are_gone(self) -> None:
+        for name in ("sheet", "sheet_json", "harvest", "render_sheet"):
+            self.assertFalse(hasattr(write, name), name)
 
 if __name__ == "__main__":
     unittest.main()

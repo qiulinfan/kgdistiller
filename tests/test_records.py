@@ -11,9 +11,11 @@ from pathlib import Path
 from kgdistiller.records import (
     MAX_ID_LENGTH,
     UNDERSTANDING,
+    UNDERSTOOD,
     Record,
     RecordError,
     gloss,
+    is_foreign,
     parse_body,
     parse_text,
     parse_value,
@@ -67,7 +69,7 @@ class FrontmatterTest(unittest.TestCase):
         self.assertEqual((), parsed.aliases)
         self.assertEqual((), parsed.requires)
         self.assertEqual((("premise", ()),), parsed.roles)
-        self.assertEqual("unknown", parsed.understanding)
+        self.assertEqual("yes", parsed.understanding)
         self.assertIsNone(parsed.epistemic)
         self.assertEqual("node", parsed.class_)
 
@@ -94,9 +96,16 @@ class FrontmatterTest(unittest.TestCase):
                 record(frontmatter)
             self.assertEqual("frontmatter", caught.exception.rule)
 
-    def test_understanding_values(self) -> None:
+    def test_understanding_is_yes_or_no_and_absent_means_yes(self) -> None:
+        self.assertEqual(("yes", "no"), UNDERSTANDING)
+        self.assertEqual(UNDERSTOOD, record().understanding)
         for value in UNDERSTANDING:
             self.assertEqual(value, record(FRONTMATTER + f"\nunderstanding: {value}").understanding)
+        for value in ("unknown", "not-yet-understood", "understood", "Yes", "true"):
+            with self.subTest(value=value), self.assertRaises(RecordError) as caught:
+                record(FRONTMATTER + f"\nunderstanding: {value}")
+            self.assertEqual("frontmatter", caught.exception.rule)
+            self.assertIn("yes or no", caught.exception.message)
 
     def test_tags_and_cssclasses_are_accepted_and_ignored(self) -> None:
         parsed = record(FRONTMATTER + "\ntags: [a, b]\ncssclasses: wide\n")
@@ -124,15 +133,15 @@ class FrontmatterTest(unittest.TestCase):
     def test_values_keep_frontmatter_role_order_then_requires(self) -> None:
         parsed = record(
             "label: Sum is a subspace\nkind: implies\nsource: notes/a.txt\nlines: 3\n"
-            'requires: ["[[vector-space]]", dimension]\n'
+            'requires: ["[[vector-space]]", "[[dimension]]"]\n'
             'premise: ["[[subspace]]", "[[subspace]]"]\nconclusion: ["[[notes:sum]]"]'
         )
         self.assertEqual(
             [("premise", 0, "kb:subspace"), ("premise", 1, "kb:subspace"), ("conclusion", 0, "notes:sum"),
-             ("requires", 0, "kb:vector-space"), ("requires", 1, None)],
+             ("requires", 0, "kb:vector-space"), ("requires", 1, "kb:dimension")],
             [(role, position, value.uid) for role, position, value in parsed.values()],
         )
-        self.assertEqual("dimension", parsed.requires[1].term)
+        self.assertEqual(("kb", "dimension"), (parsed.requires[1].base, parsed.requires[1].id))
         self.assertEqual("relation", parsed.class_)
 
 
@@ -148,7 +157,7 @@ class ValueGrammarTest(unittest.TestCase):
                     self.assertEqual("link", error.rule)
                     got = {"error": error.reason}
                 else:
-                    got = {"uid": value.uid} if value.uid is not None else {"term": value.term}
+                    got = {"uid": value.uid}
                 self.assertEqual(case["expect"], got)
 
     def test_plugin_case_folding_table_is_python_casefold(self) -> None:
@@ -163,10 +172,52 @@ class ValueGrammarTest(unittest.TestCase):
         assigned = {char: folded for char, folded in table.items() if unicodedata.category(char) != "Cn"}
         self.assertEqual(expected, assigned)
 
+    def test_a_plain_string_value_is_not_a_link(self) -> None:
+        for line in ("requires: [dimension]", "uses: [dimension]", 'premise: ["[[subspace]]", vector space]'):
+            with self.subTest(line=line), self.assertRaises(RecordError) as caught:
+                record(FRONTMATTER + "\n" + line)
+            self.assertEqual(("link", "not-link"), (caught.exception.rule, caught.exception.reason))
+            self.assertIn('"[[id]]"', caught.exception.message)
+
     def test_record_values_are_parsed_with_the_record_base(self) -> None:
         with self.assertRaises(RecordError) as caught:
             record(FRONTMATTER + '\nrequires: ["[[kb:subspace]]"]')
         self.assertEqual("own-base", caught.exception.reason)
+
+
+class ForeignRecordTest(unittest.TestCase):
+    FOREIGN = "label: Transformer\nkind: concept\nsource: https://arxiv.org/abs/1706.03762"
+
+    def test_is_foreign_is_a_web_address(self) -> None:
+        for source in ("https://arxiv.org/abs/1706.03762", "http://example.com", "https://example.com/a?b=c#d"):
+            self.assertTrue(is_foreign(source), source)
+        for source in ("notes/a.txt", "https://", "ftp://example.com/a", "https://exa mple.com", "www.example.com"):
+            self.assertFalse(is_foreign(source), source)
+
+    def test_a_foreign_record_has_no_lines(self) -> None:
+        parsed = record(self.FOREIGN)
+        self.assertTrue(parsed.foreign)
+        self.assertEqual((), parsed.lines)
+        self.assertEqual((0, 0, ""), (parsed.first_line, parsed.last_line, parsed.lines_text))
+        self.assertEqual(("quoted text",), parsed.evidence)
+        self.assertFalse(record().foreign)
+
+    def test_a_foreign_record_with_lines_is_an_error(self) -> None:
+        with self.assertRaises(RecordError) as caught:
+            record(self.FOREIGN + "\nlines: 3-4")
+        self.assertEqual("frontmatter", caught.exception.rule)
+        self.assertIn("a foreign record (its source is a web address) has no lines", caught.exception.message)
+
+    def test_a_local_record_still_needs_lines(self) -> None:
+        with self.assertRaises(RecordError) as caught:
+            record(FRONTMATTER.replace("\nlines: 3-4", ""))
+        self.assertEqual("frontmatter", caught.exception.rule)
+        self.assertIn("lines", caught.exception.message)
+
+    def test_a_foreign_record_still_needs_evidence(self) -> None:
+        with self.assertRaises(RecordError) as caught:
+            record(self.FOREIGN, quotes=())
+        self.assertEqual("body", caught.exception.rule)
 
 
 class BodyGrammarTest(unittest.TestCase):
@@ -249,7 +300,7 @@ class ClassRuleTest(unittest.TestCase):
         self.assertEqual("relation", record_class({"label": "x", "premise": ["a"]}))
         self.assertEqual("relation", record_class({"tags": [], "side": ["[[a]]", "[[b]]"]}))
         self.assertEqual("node", record_class({"tags": ["a"], "cssclasses": ["b"]}))
-        self.assertEqual("relation", record(FRONTMATTER + "\nuses: [dimension]").class_)
+        self.assertEqual("relation", record(FRONTMATTER + '\nuses: ["[[dimension]]"]').class_)
 
 
 class TextReadingTest(unittest.TestCase):

@@ -1,8 +1,7 @@
 """The user's one embedding process.
 
-Every kgdistiller process that needs vectors, ``kgd index``, ``kgd accept``,
-``kgd harvest`` and the dense lane of every ``kgd search`` and ``kgd mcp``,
-asks this process instead of loading the model itself, so at most one model is
+Every kgdistiller process that needs vectors, ``kgd index``, ``kgd accept``
+and the dense lane of every ``kgd search`` and ``kgd mcp``, asks this process instead of loading the model itself, so at most one model is
 in memory per user, whatever the number of Obsidian windows and agent
 sessions. The first request starts it; it loads the model on its first request
 for that model and answers one request at a time; it exits 15 minutes after

@@ -101,8 +101,8 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "kg_resolve", "Resolve Knowledge Terms",
-        "For each term list its senses (records named exactly so), mentions (records whose name contains "
-        "it) and pending uses. Names never establish identity.",
+        "For each term list its senses (records named exactly so), and mentions (records whose name "
+        "contains it). Names never establish identity.",
         _object_schema({"terms": _strings(4096, 128, min_items=1), **FILTER_PROPERTIES}, ["terms"]),
     ),
     _tool(
@@ -121,7 +121,7 @@ TOOL_DEFINITIONS = [
         "follows a record's own links, in the links citing it (claims and applications), both either. role "
         "restricts the roles followed at every hop (role requires gives the dependency closure). depth limits "
         "the hops and so cuts cycles. Filters restrict the records the walk may enter; start uids always count, "
-        "and pending terms and missing targets are reported as leaves.",
+        "and missing targets are reported as leaves.",
         _object_schema({
             "uids": _strings(256, 128, min_items=1),
             "role": _strings(64, 32),
@@ -132,9 +132,10 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "kg_browse", "Browse Knowledge",
-        "Without handle list every base with record, relation and pending-term counts. handle 'base' or "
-        "'base:dir/' lists that directory's subdirectories and sources with counts; 'base:path/file' lists the "
-        "source's records grouped by kind with its pending terms. Only sources with indexed records appear. A "
+        "Without handle list every base with record and relation counts. handle 'base' or "
+        "'base:dir/' lists that directory's subdirectories and sources with counts, and at the base root the web "
+        "addresses of its foreign records; 'base:path/file' or 'base:<web address>' lists that source's records "
+        "grouped by kind. Only sources with indexed records appear. A "
         "kind filter switches any scope to a listing of every matching record with its links by role.",
         _object_schema({"handle": {"type": "string", "minLength": 1, "maxLength": 4096}, **FILTER_PROPERTIES}, []),
     ),
@@ -143,7 +144,7 @@ TOOL_DEFINITIONS = [
         "Pack whole records, never truncated, within budget bytes (the UTF-8 length of the compact JSON of the "
         "records list): the given uids, then their requires closure breadth-first up to requires_depth, then "
         "relations linking at least two packed records. A record that does not fit is an over-budget gap and "
-        "later smaller ones may still fit. Gaps also report unknown uids, pending terms, missing targets and "
+        "later smaller ones may still fit. Gaps also report unknown uids, missing targets and "
         "linked records not packed. Filters restrict only the records pack adds itself.",
         _object_schema({
             "uids": _strings(256, 128, min_items=1),
@@ -154,8 +155,9 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "kg_drafts", "List Knowledge Drafts",
-        "List the drafts awaiting acceptance, read from their files, not the index: each draft's fields, every "
-        "value's target (an accepted record, a draft of its base, a missing record or a pending term), the drafts "
+        "List the drafts awaiting acceptance, read from their files, not the index: each draft's fields, the "
+        "accepted record it replaces if any, every value's target (an accepted record, a draft of its base or a "
+        "missing record), the drafts "
         "it must be accepted with, the drafts linking it, and the problems kgd accept would refuse, empty when it "
         "would accept them. base and source (path prefixes) narrow the listing; names keeps the drafts whose label "
         "or an alias has one of those names.",

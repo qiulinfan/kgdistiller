@@ -1,5 +1,5 @@
 {
-  "description": "Record value grammar checked by tests/test_records.py. Each case gives a frontmatter value, the base of the record holding it, and the expected uid, term, or error reason.",
+  "description": "Record value grammar checked by tests/test_records.py. Each case gives a frontmatter value, the base of the record holding it, and the expected uid or error reason.",
   "cases": [
     {"value": "[[measure-space]]", "base": "kb", "expect": {"uid": "kb:measure-space"}},
     {"value": "  [[measure-space]]  ", "base": "kb", "expect": {"uid": "kb:measure-space"}},
@@ -29,9 +29,9 @@
     {"value": "[[.knowledge/drafts/measure-space]]", "base": "kb", "expect": {"error": "path-form"}},
     {"value": "[[../entries/measure-space]]", "base": "kb", "expect": {"error": "path-form"}},
     {"value": "[[.knowledge/entries/]]", "base": "kb", "expect": {"error": "path-form"}},
-    {"value": "[[notes:]]", "base": "kb", "expect": {"error": "foreign-form"}},
-    {"value": "[[Two Words:x]]", "base": "kb", "expect": {"error": "foreign-form"}},
-    {"value": "[[a:b:c]]", "base": "kb", "expect": {"error": "foreign-form"}},
+    {"value": "[[notes:]]", "base": "kb", "expect": {"error": "base-form"}},
+    {"value": "[[Two Words:x]]", "base": "kb", "expect": {"error": "base-form"}},
+    {"value": "[[a:b:c]]", "base": "kb", "expect": {"error": "base-form"}},
     {"value": "[[measure-space]] and more", "base": "kb", "expect": {"error": "stray-brackets"}},
     {"value": "see [[measure-space", "base": "kb", "expect": {"error": "stray-brackets"}},
     {"value": "measure-space]]", "base": "kb", "expect": {"error": "stray-brackets"}},
@@ -42,12 +42,12 @@
     {"value": "", "base": "kb", "expect": {"error": "empty"}},
     {"value": "   ", "base": "kb", "expect": {"error": "empty"}},
     {"value": "two\nlines", "base": "kb", "expect": {"error": "multiline"}},
-    {"value": "vector space", "base": "kb", "expect": {"term": "vector space"}},
-    {"value": "  measurable space  ", "base": "kb", "expect": {"term": "measurable space"}},
-    {"value": "F^n with the standard basis", "base": "kb", "expect": {"term": "F^n with the standard basis"}},
-    {"value": "Hom(V, W) | linear maps", "base": "kb", "expect": {"term": "Hom(V, W) | linear maps"}},
-    {"value": "section #3 of the notes", "base": "kb", "expect": {"term": "section #3 of the notes"}},
-    {"value": "测度", "base": "kb", "expect": {"term": "测度"}},
-    {"value": "[x]", "base": "kb", "expect": {"term": "[x]"}}
+    {"value": "vector space", "base": "kb", "expect": {"error": "not-link"}},
+    {"value": "  measurable space  ", "base": "kb", "expect": {"error": "not-link"}},
+    {"value": "F^n with the standard basis", "base": "kb", "expect": {"error": "not-link"}},
+    {"value": "Hom(V, W) | linear maps", "base": "kb", "expect": {"error": "not-link"}},
+    {"value": "section #3 of the notes", "base": "kb", "expect": {"error": "not-link"}},
+    {"value": "测度", "base": "kb", "expect": {"error": "not-link"}},
+    {"value": "[x]", "base": "kb", "expect": {"error": "not-link"}}
   ]
 }

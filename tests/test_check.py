@@ -182,7 +182,7 @@ class RecordRulesTest(CheckTestCase):
         self.relation("empty-relation", "premise: []")
         self.relation("bad-epistemic", 'premise: ["[[subspace]]"]\nepistemic: rumoured')
         self.assert_error("bad-kind.md", "kind", "not a node or relation kind of type math")
-        self.assert_error("node-roles.md", "kind", "is a node kind of math")
+        self.assert_error("node-roles.md", "kind", "definition is a node kind; remove the keys premise")
         self.assert_error("empty-relation.md", "kind", "needs at least one participant")
         self.assert_error("bad-epistemic.md", "kind", "epistemic 'rumoured'")
 
@@ -190,12 +190,18 @@ class RecordRulesTest(CheckTestCase):
         self.relation("dangling", 'premise: ["[[linear-subspace]]"]')
         self.relation("self", 'premise: ["[[self]]"]')
         self.relation("unregistered-base", 'premise: ["[[papers:x]]"]')
-        self.relation("foreign-ok", 'premise: ["[[notes:sigma]]"]\nconclusion: ["[[subspace]]", plain term]')
+        self.relation("foreign-ok", 'premise: ["[[notes:sigma]]"]\nconclusion: ["[[subspace]]", "[[measure-space]]"]')
         self.kb.write_record("sigma", node("Sigma", "1"), "Text.", ["Title line"], base="notes")
         self.assert_error("dangling.md", "link", "records named so: kb:subspace")
         self.assert_error("self.md", "link", "links the record itself")
         self.assert_error("unregistered-base.md", "link", "links base papers, which is not registered")
         self.assertNotIn("foreign-ok.md", [item[0] for item in self.errors()])
+
+    def test_a_plain_value_is_not_a_link(self) -> None:
+        self.relation("plain-term", 'premise: ["[[subspace]]"]\nconclusion: [plain term]')
+        self.kb.write_record("plain-requires", node("P", "1", extra="requires: [dimension]"), "Text.", ["Title line"])
+        self.assert_error("plain-term.md", "link", "'plain term' is not a link")
+        self.assert_error("plain-requires.md", "link", "'dimension' is not a link")
 
     def test_quoted_link_errors_are_link_rule(self) -> None:
         self.relation("own-base", 'premise: ["[[kb:subspace]]"]')
@@ -225,18 +231,106 @@ class DraftRulesTest(CheckTestCase):
         self.relation("asks-draft", 'premise: ["[[notes:foreign-draft]]"]', folder="drafts")
         self.assert_error("asks-draft.md", "link", "links a draft of base notes")
 
-    def test_a_draft_id_must_not_exist_in_entries(self) -> None:
-        self.kb.write_record("subspace", node("Other", "1"), "Text.", ["Title line"], folder="drafts")
-        self.assert_error("subspace.md", "id", "already exists in entries/")
+    def test_a_draft_with_an_accepted_id_is_an_update_checked_like_any_draft(self) -> None:
+        self.kb.write_record(
+            "subspace", node("Subspace", "4", extra="aliases: [linear subspace]"),
+            "A subspace is closed under addition and scaling.", ["A subspace is closed under addition."],
+            folder="drafts",
+        )
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.kb.write_record("subspace", node("Subspace", "1", kind="lemma"), "Text.", ["Nowhere."], folder="drafts")
+        report = self.run_check()
+        self.assertEqual([str(self.kb.path("subspace", "drafts"))], report["stale"])
+        self.assert_error("subspace.md", "kind", "kind 'lemma'")
 
-    def test_identical_file_in_entries_is_an_interrupted_accept(self) -> None:
-        self.kb.path("subspace", "drafts").parent.mkdir(parents=True, exist_ok=True)
-        self.kb.path("subspace", "drafts").write_bytes(self.subspace.read_bytes())
-        self.assert_error("subspace.md", "id", "rerun `kgd accept")
+    def test_a_draft_equal_to_its_entry_is_reported_for_removal(self) -> None:
+        draft = self.kb.path("subspace", "drafts")
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_bytes(self.subspace.read_bytes())
+        report = self.run_check()
+        self.assertEqual([{
+            "path": str(draft), "rule": "id",
+            "message": f"this draft equals {self.subspace}; rerun `kgd accept {draft}` to remove it",
+        }], report["errors"])
 
     def test_drafts_are_checked_for_freshness(self) -> None:
         draft = self.kb.write_record("stale-draft", node("S", "1"), "Text.", ["Not in the source."], folder="drafts")
         self.assertEqual([str(draft)], self.run_check()["stale"])
+
+
+class ForeignRulesTest(CheckTestCase):
+    URL = "https://example.com/paper"
+
+    def foreign(self, identifier: str, kind: str = "concept", extra: str = "", quotes: tuple[str, ...] = ("Quoted elsewhere.",),
+                folder: str = "entries", base: str = "kb") -> Path:
+        frontmatter = f"label: {identifier.title()}\nkind: {kind}\nsource: {self.URL}\n{extra}".rstrip("\n")
+        return self.kb.write_record(identifier, frontmatter, "Text.", list(quotes), folder=folder, base=base)
+
+    def test_a_foreign_record_has_no_freshness(self) -> None:
+        self.foreign("attention", quotes=("Not in any local source.",))
+        self.foreign("draft-attention", quotes=("Nor this.",), folder="drafts")
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+
+    def test_fix_lines_leaves_a_foreign_record_alone(self) -> None:
+        path = self.foreign("attention")
+        before = path.read_bytes()
+        report = fix_lines()
+        self.assertEqual(([], [], []), (report["fixed"], report["skipped"], report["moved"]))
+        self.assertEqual(before, path.read_bytes())
+
+    def test_a_foreign_record_with_lines_is_a_frontmatter_error(self) -> None:
+        self.foreign("lined", extra="lines: 2")
+        self.assert_error("lined.md", "frontmatter", "a foreign record (its source is a web address) has no lines")
+
+    def test_a_non_web_address_is_still_a_local_path(self) -> None:
+        self.kb.write_record("ftp", node("F", "1").replace(SOURCE, "ftp://example.com/a"), "Text.", ["Title line"])
+        self.assert_error("ftp.md", "source", "POSIX path relative to the base root or a web address")
+
+    def test_the_kind_must_be_declared_by_a_type_of_the_base(self) -> None:
+        self.foreign("lemma", kind="lemma")
+        self.foreign("node-roles", extra='premise: ["[[subspace]]"]')
+        self.foreign("implication", kind="implies", extra='premise: ["[[subspace]]"]\nconclusion: ["[[measure-space]]"]\nepistemic: stated')
+        self.foreign("bad-epistemic", kind="implies", extra='premise: ["[[subspace]]"]\nepistemic: rumoured')
+        self.foreign("bad-role", kind="implies", extra='witness: ["[[subspace]]"]')
+        self.assert_error("lemma.md", "kind", "kind 'lemma' is not a node or relation kind of the types of base kb")
+        self.assert_error("node-roles.md", "kind", "concept is a node kind; remove the keys premise")
+        self.assert_error("bad-epistemic.md", "kind", "epistemic 'rumoured' is not allowed for implies (proved, stated)")
+        self.assert_error("bad-role.md", "frontmatter", "witness is not a role of implies")
+        self.assertNotIn("implication.md", [item[0] for item in self.errors()])
+
+    def test_only_the_types_registered_for_the_base_count(self) -> None:
+        self.kb.types["papers"] = {"node_kinds": ["model"], "guidance": "Papers."}
+        self.kb.write_config()
+        self.foreign("unregistered-kind", kind="model")
+        self.assert_error("unregistered-kind.md", "kind", "kind 'model' is not a node or relation kind of the types of base kb")
+        self.kb.sources["kb"]["papers/*.pdf"] = "papers"
+        self.kb.write_config()
+        self.assertNotIn("unregistered-kind.md", [item[0] for item in self.errors()])
+
+    def test_a_kind_declared_differently_by_two_types_is_ambiguous(self) -> None:
+        self.kb.types["papers"] = {
+            "node_kinds": ["concept"],
+            "relation_kinds": {"implies": ["because"]},
+            "epistemic": ["claimed"],
+            "guidance": "Papers.",
+        }
+        self.kb.sources["kb"]["papers/*.pdf"] = "papers"
+        self.kb.write_config()
+        self.foreign("shared-node")
+        self.foreign("ambiguous", kind="implies", extra='premise: ["[[subspace]]"]')
+        self.foreign("claimed", kind="concept", extra="epistemic: claimed")
+        self.assert_error("ambiguous.md", "kind", "kind 'implies' is declared differently by the types math, papers")
+        names = [item[0] for item in self.errors()]
+        self.assertNotIn("shared-node.md", names)
+        self.assertNotIn("claimed.md", names)
+
+    def test_foreign_records_link_and_are_linked_like_any_record(self) -> None:
+        self.foreign("attention", extra='requires: ["[[subspace]]", "[[notes:sigma]]"]')
+        self.kb.write_record("sigma", node("Sigma", "1"), "Text.", ["Title line"], base="notes")
+        self.relation("uses-attention", 'premise: ["[[attention]]"]')
+        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.foreign("dangling", extra='requires: ["[[nowhere]]"]')
+        self.assert_error("dangling.md", "link", "dangling link [[nowhere]]")
 
 
 class FreshnessTest(CheckTestCase):

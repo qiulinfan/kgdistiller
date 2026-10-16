@@ -4,12 +4,14 @@ A record is ``<root>/.knowledge/entries/<id>.md`` (accepted) or
 ``<root>/.knowledge/drafts/<id>.md`` (proposed): YAML frontmatter read with
 PyYAML ``BaseLoader`` followed by a Markdown body that ends with an
 ``## Evidence`` section of verbatim source quotes. A record whose non-fixed
-keys hold a non-empty list is a relation; any other record is a node.
+keys hold a non-empty list is a relation; any other record is a node. A record
+whose ``source`` is a web address is foreign: its evidence lies outside the
+owner's files, so it has no ``lines``.
 
 ``check`` reads files only. Evidence freshness compares whitespace-normalized
-quote text with the cited source lines; nothing is hashed. The product never
-re-serializes frontmatter: ``fix_lines`` rewrites the one ``lines:`` line
-textually.
+quote text with the cited source lines of a local record; nothing is hashed.
+The product never re-serializes frontmatter: ``fix_lines`` rewrites the one
+``lines:`` line textually.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from .home import (
     SLUG_RE,
     TYPES_DIRECTORY,
     Base,
+    DocumentType,
     Home,
     KnowledgeError,
     atomic_write_text,
@@ -40,10 +43,10 @@ from .home import (
     lock,
 )
 
-UNDERSTANDING = ("unknown", "not-yet-understood", "understood")
+UNDERSTANDING = ("yes", "no")
+UNDERSTOOD = "yes"
 ENTRIES = "entries"
 DRAFTS = "drafts"
-SHEETS = "sheets"
 SEARCH_TERMS = "Search terms"
 EVIDENCE = "Evidence"
 MAX_ID_LENGTH = 80
@@ -52,7 +55,8 @@ GLOSS_LIMIT = 240
 IGNORED_KEYS = frozenset({"tags", "cssclasses"})
 LIST_KEYS = frozenset({"aliases", "requires"})
 SCALAR_KEYS = FIXED_KEYS - LIST_KEYS - IGNORED_KEYS
-REQUIRED_KEYS = ("label", "kind", "source", "lines")
+REQUIRED_KEYS = ("label", "kind", "source")
+FOREIGN_RE = re.compile(r"^https?://[^\s/?#]+[^\s]*$")
 ID_RE = re.compile(r"^[^\W_]+(?:-[^\W_]+)*$")
 RANGE_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 LINK_RE = re.compile(r"\[\[([^\[\]]*)\]\]")
@@ -135,6 +139,11 @@ def fold(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold()
 
 
+def is_foreign(source: str) -> bool:
+    """Whether a ``source`` is a web address: the record's evidence lies outside the owner's files."""
+    return bool(FOREIGN_RE.fullmatch(source))
+
+
 # ---------------------------------------------------------------- ids
 
 
@@ -156,19 +165,18 @@ def slug(label: str) -> str:
 
 @dataclass(frozen=True)
 class Value:
-    """One value of ``requires`` or a role: a link resolved textually to a uid, or a pending term."""
+    """One value of ``requires`` or a role: a link, resolved textually to a uid."""
 
     raw: str
-    uid: str | None = None
-    term: str | None = None
+    uid: str
 
     @property
-    def base(self) -> str | None:
-        return self.uid.split(":", 1)[0] if self.uid else None
+    def base(self) -> str:
+        return self.uid.split(":", 1)[0]
 
     @property
-    def id(self) -> str | None:
-        return self.uid.split(":", 1)[1] if self.uid else None
+    def id(self) -> str:
+        return self.uid.split(":", 1)[1]
 
 
 def _value_error(reason: str, message: str) -> RecordError:
@@ -180,10 +188,12 @@ def parse_value(raw: str, base: str) -> Value:
     text = raw.strip()
     if "\n" in text:
         raise _value_error("multiline", f"value {raw!r} must be a single line")
+    if not text:
+        raise _value_error("empty", "a value must not be empty")
     if "[[" not in text and "]]" not in text:
-        if not text:
-            raise _value_error("empty", "a value must not be empty")
-        return Value(raw, term=text)
+        raise _value_error(
+            "not-link", f'{raw!r} is not a link; a value links a record or draft, written "[[id]]"'
+        )
     match = LINK_RE.fullmatch(text)
     if match is None:
         raise _value_error("stray-brackets", f"{raw!r} has '[[' or ']]' but is not one whole link")
@@ -201,12 +211,12 @@ def parse_value(raw: str, base: str) -> Value:
             )
         return Value(raw, uid=f"{base}:{identifier}")
     if ":" in target:
-        foreign, identifier = target.split(":", 1)
-        if foreign == base:
+        other, identifier = target.split(":", 1)
+        if other == base:
             raise _value_error("own-base", f"{raw!r} prefixes a local link with its own base; write [[{identifier}]]")
-        if not SLUG_RE.fullmatch(foreign) or not identifier or ":" in identifier:
-            raise _value_error("foreign-form", f"{raw!r} is not a [[base:id]] link")
-        return Value(raw, uid=f"{foreign}:{identifier}")
+        if not SLUG_RE.fullmatch(other) or not identifier or ":" in identifier:
+            raise _value_error("base-form", f"{raw!r} is not a [[base:id]] link")
+        return Value(raw, uid=f"{other}:{identifier}")
     return Value(raw, uid=f"{base}:{target}")
 
 
@@ -312,12 +322,17 @@ class Record:
         return format_ranges(self.lines)
 
     @property
+    def foreign(self) -> bool:
+        return is_foreign(self.source)
+
+    @property
     def first_line(self) -> int:
-        return self.lines[0][0]
+        """The first cited line; 0 for a foreign record."""
+        return self.lines[0][0] if self.lines else 0
 
     @property
     def last_line(self) -> int:
-        return self.lines[-1][1]
+        return self.lines[-1][1] if self.lines else 0
 
     def values(self) -> Iterator[tuple[str, int, Value]]:
         """Every value as (role, position, value): roles in frontmatter order, then requires."""
@@ -407,10 +422,17 @@ def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
     for key in REQUIRED_KEYS:
         if not scalars.get(key):
             raise RecordError("frontmatter", f"the frontmatter needs a non-empty {key}")
-    ranges = parse_ranges(scalars["lines"])
-    understanding = scalars.get("understanding") or "unknown"
+    if is_foreign(scalars["source"]):
+        if scalars.get("lines"):
+            raise RecordError("frontmatter", "a foreign record (its source is a web address) has no lines")
+        ranges: Ranges = ()
+    elif not scalars.get("lines"):
+        raise RecordError("frontmatter", "the frontmatter needs a non-empty lines")
+    else:
+        ranges = parse_ranges(scalars["lines"])
+    understanding = scalars.get("understanding") or UNDERSTOOD
     if understanding not in UNDERSTANDING:
-        raise RecordError("frontmatter", f"understanding must be one of {', '.join(UNDERSTANDING)}")
+        raise RecordError("frontmatter", f"understanding must be {' or '.join(UNDERSTANDING)}")
     aliases = tuple(_single_line("aliases", alias) for alias in lists.get("aliases", []))
     if any(not alias for alias in aliases):
         raise RecordError("frontmatter", "aliases must not be empty")
@@ -580,10 +602,42 @@ def _dangling(files: Files, value: Value) -> str:
     from .index import name_key
 
     message = f"dangling link {value.raw.strip()}"
-    owners = files.named(value.base, name_key(value.id)) if value.base and files.available(value.base) else []
+    owners = files.named(value.base, name_key(value.id)) if files.available(value.base) else []
     if owners:
         message += "; records named so: " + ", ".join(owners) + " (link them by id)"
     return message
+
+
+def _base_types(home: Home, base: Base) -> list[DocumentType]:
+    """The document types a base's sources are registered with."""
+    return [home.types[name] for name in sorted(set(base.sources.values())) if name in home.types]
+
+
+def _kind_problems(record: Record, types: list[DocumentType], where: str) -> list[tuple[str, str]]:
+    """The kind rule against the types that may declare ``record.kind``: one for a local record, the base's for a foreign one."""
+    declaring = [kind_type for kind_type in types if record.kind in kind_type.node_kinds or record.kind in kind_type.relation_kinds]
+    if not declaring:
+        return [("kind", f"kind {record.kind!r} is not a node or relation kind of {where}")]
+    shapes = {kind_type.relation_kinds.get(record.kind) for kind_type in declaring}
+    if len(shapes) > 1:
+        names = ", ".join(kind_type.name for kind_type in declaring)
+        return [("kind", f"kind {record.kind!r} is declared differently by the types {names}")]
+    problems: list[tuple[str, str]] = []
+    declared = shapes.pop()
+    role_keys = [role for role, _ in record.roles]
+    if declared is None:
+        if role_keys:
+            problems.append(("kind", f"{record.kind} is a node kind; remove the keys {', '.join(role_keys)}"))
+    else:
+        for role in role_keys:
+            if role not in declared:
+                problems.append(("frontmatter", f"{role} is not a role of {record.kind}; its roles are {', '.join(declared)}"))
+        if record.class_ != "relation":
+            problems.append(("kind", f"the relation {record.kind} needs at least one participant"))
+    allowed = sorted({value for kind_type in declaring for value in kind_type.epistemic})
+    if record.epistemic is not None and record.epistemic not in allowed:
+        problems.append(("kind", f"epistemic {record.epistemic!r} is not allowed for {record.kind} ({', '.join(allowed) or 'no epistemic values'})"))
+    return problems
 
 
 def record_problems(
@@ -593,15 +647,18 @@ def record_problems(
 
     ``linkable_drafts`` are the folded ids of same-base drafts this record may
     link: none for an accepted record, every draft in ``check``, and the
-    selected drafts in ``accept``.
+    selected drafts in ``accept``. A foreign record has no freshness: its
+    evidence lies outside the owner's files.
     """
     problems: list[tuple[str, str]] = []
     freshness: tuple[str, Ranges | None] | None = None
     base = files.home.bases[record.base]
     mapping, conflicts = files.sources(base)
     source = record.source
-    if not valid_source_path(source):
-        problems.append(("source", f"source {source!r} must be a POSIX path relative to the base root"))
+    if record.foreign:
+        problems.extend(_kind_problems(record, _base_types(files.home, base), f"the types of base {base.name}"))
+    elif not valid_source_path(source):
+        problems.append(("source", f"source {source!r} must be a POSIX path relative to the base root or a web address"))
     elif source in conflicts:
         problems.append(("source", f"source {source} matches globs of several types: {', '.join(conflicts[source])}"))
     elif source not in mapping and not (base.root / source).exists():
@@ -625,29 +682,9 @@ def record_problems(
             if record.last_line > len(lines):
                 problems.append(("source", f"lines {record.lines_text} exceed the {len(lines)} lines of {source}"))
             freshness = evidence_state(record.evidence, lines, record.lines)
-        role_keys = [role for role, _ in record.roles]
-        if record.kind in document_type.node_kinds:
-            if role_keys:
-                problems.append(("kind", f"{record.kind} is a node kind of {document_type.name}; remove the keys {', '.join(role_keys)}"))
-        elif record.kind in document_type.relation_kinds:
-            declared = document_type.relation_kinds[record.kind]
-            for role in role_keys:
-                if role not in declared:
-                    problems.append((
-                        "frontmatter",
-                        f"{role} is not a role of {record.kind}; its roles are {', '.join(declared)}",
-                    ))
-            if record.class_ != "relation":
-                problems.append(("kind", f"the relation {record.kind} needs at least one participant"))
-        else:
-            problems.append(("kind", f"kind {record.kind!r} is not a node or relation kind of type {document_type.name}"))
-        if record.epistemic is not None and record.epistemic not in document_type.epistemic:
-            allowed = ", ".join(document_type.epistemic) or "no epistemic values"
-            problems.append(("kind", f"epistemic {record.epistemic!r} is not allowed by {document_type.name} ({allowed})"))
+        problems.extend(_kind_problems(record, [document_type], f"type {document_type.name}"))
     linkable = set(linkable_drafts)
     for role, position, value in record.values():
-        if value.uid is None:
-            continue
         where = f"{role}[{position}]"
         if value.uid == record.uid:
             problems.append(("link", f"{where} links the record itself"))
@@ -661,7 +698,7 @@ def record_problems(
             continue
         elif target in files.ids(target_base, DRAFTS):
             if target_base != record.base:
-                problems.append(("link", f"{where} links a draft of base {target_base}; foreign links must target accepted records"))
+                problems.append(("link", f"{where} links a draft of base {target_base}; cross-base links must target accepted records"))
             elif draft:
                 problems.append(("link", f"{where}: select [[{target}]] too"))
             else:
@@ -756,10 +793,8 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
                     except (OSError, UnicodeDecodeError):
                         identical = False
                     if identical:
-                        error(path, "id", f"an interrupted accept left this draft beside {accepted}; rerun `kgd accept {path}` to finish it")
-                    else:
-                        error(path, "id", f"id {path.stem} already exists in {ENTRIES}/; edit that record in place or choose a new id")
-                    continue
+                        error(path, "id", f"this draft equals {accepted}; rerun `kgd accept {path}` to remove it")
+                        continue
                 try:
                     record = parse_text(text, name, path.stem, path)
                 except RecordError as problem:

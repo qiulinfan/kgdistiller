@@ -1,4 +1,4 @@
-"""Exercise the installed wheel end to end: base, records, drafts, check, index, retrieval, link following, browse and pack."""
+"""Exercise the installed wheel end to end: base, records (local and foreign), drafts and replacements, check, index, retrieval, link following, browse and pack."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ kind: implies
 source: notes/measure.txt
 lines: 3
 premise: ["[[measure-space]]"]
-conclusion: [countable additivity]
+conclusion: ["[[countable-additivity]]"]
 ---
 The measure of a measure space is countably additive.
 
@@ -48,11 +48,24 @@ The measure of a measure space is countably additive.
 
 > with mu countably additive.
 """
+WEB = "https://en.wikipedia.org/wiki/Sigma-additive_set_function"
+COUNTABLE_ADDITIVITY = f"""---
+label: Countable additivity
+kind: concept
+source: {WEB}
+---
+A set function is countably additive when it adds over countable disjoint unions.
+
+## Evidence
+
+> the measure of a countable disjoint union is the sum of the measures
+"""
 MEASURE_THEORY = """---
 label: 测度论
 kind: concept
 source: notes/measure.txt
 lines: 4
+understanding: no
 ---
 The study of set functions on measurable spaces.
 
@@ -162,16 +175,18 @@ def follow_links(runtime: Runtime, root: Path, outside: Path) -> None:
             f"neighbors --dir in edges mismatch: {cited['edges']}")
     require(cited["records"][relation]["exists"] and cited["missing"] == [], f"neighbors records mismatch: {cited}")
     bases = runtime.object("browse", cwd=outside)["bases"]
-    require(bases == [{"name": "smoke", "available": True, "records": 3, "relations": 1, "pending": 1}],
+    require(bases == [{"name": "smoke", "available": True, "records": 4, "relations": 1}],
             f"browse bases mismatch: {bases}")
     entries = runtime.object("browse", "smoke", cwd=outside)["entries"]
-    require(entries == [{"path": "notes/", "type": "dir", "records": 3, "relations": 1, "pending": 1}],
+    require(entries == [{"path": WEB, "type": "foreign", "records": 1, "relations": 0},
+                        {"path": "notes/", "type": "dir", "records": 3, "relations": 1}],
             f"browse base entries mismatch: {entries}")
-    sheet = runtime.object("browse", "smoke:notes/measure.txt", cwd=root)
-    require([group["kind"] for group in sheet["kinds"]] == ["concept", "definition", "implies"],
-            f"browse source kinds mismatch: {sheet['kinds']}")
-    require([item["term"] for item in sheet["pending"]] == ["countable additivity"],
-            f"browse source pending terms mismatch: {sheet['pending']}")
+    by_kind = runtime.object("browse", "smoke:notes/measure.txt", cwd=root)
+    require([group["kind"] for group in by_kind["kinds"]] == ["concept", "definition", "implies"],
+            f"browse source kinds mismatch: {by_kind['kinds']}")
+    web = runtime.object("browse", f"smoke:{WEB}", cwd=outside)
+    require([[item["uid"] for item in group["records"]] for group in web["kinds"]] == [["smoke:countable-additivity"]],
+            f"browse foreign source mismatch: {web['kinds']}")
     listing = runtime.object("browse", "--kind", "implies", cwd=outside)["records"]
     require([item["uid"] for item in listing] == [relation], f"browse --kind listing mismatch: {listing}")
     require(sorted(listing[0]["links"]) == ["conclusion", "premise"],
@@ -179,8 +194,8 @@ def follow_links(runtime: Runtime, root: Path, outside: Path) -> None:
     packet = runtime.object("pack", relation, cwd=outside)
     require([item["uid"] for item in packet["records"]] == [relation], f"pack records mismatch: {packet['records']}")
     require(packet["bytes"] <= packet["budget"], f"pack exceeded its budget: {packet['bytes']}")
-    require({"reason": "pending", "from": relation, "role": "conclusion", "term": "countable additivity"}
-            in packet["gaps"], f"pack pending gap missing: {packet['gaps']}")
+    require({"reason": "not-packed", "from": relation, "role": "conclusion", "uid": "smoke:countable-additivity"}
+            in packet["gaps"], f"pack foreign not-packed gap missing: {packet['gaps']}")
     require({"reason": "not-packed", "from": relation, "role": "premise", "uid": "smoke:measure-space"}
             in packet["gaps"], f"pack not-packed gap missing: {packet['gaps']}")
 
@@ -232,25 +247,25 @@ def main() -> int:
         write(source, SOURCE)
         write(root / ".knowledge/entries/measure-space.md", MEASURE_SPACE)
         write(root / ".knowledge/entries/measure-space-implies-countable-additivity.md", ADDITIVITY)
+        write(root / ".knowledge/entries/countable-additivity.md", COUNTABLE_ADDITIVITY)
         write(root / ".knowledge/drafts/measure-theory.md", MEASURE_THEORY)
 
-        profile = runtime.object("sheet", "notes/measure.txt", "--json", cwd=root)
-        require(profile["type"] == "smoke-notes" and profile["line_count"] == 4, f"sheet --json profile: {profile}")
-        require([row["class"] for row in profile["records"]] == ["node", "relation"], "sheet --json records mismatch")
-        require([row["id"] for row in profile["drafts"]] == ["measure-theory"], "sheet --json drafts mismatch")
-        written = runtime.object("sheet", "measure.txt", cwd=root / "notes")
-        sheet = root / ".knowledge/sheets/notes/measure.txt.md"
-        require(written == {"sheet": str(sheet)} and sheet.is_file(), f"sheet was not written: {written}")
-        require("- [ ] [[.knowledge/drafts/measure-theory|测度论]]" in sheet.read_text(encoding="utf-8"),
-                "sheet does not list the draft")
+        profile = runtime.object("source", "measure.txt", cwd=root / "notes")
+        require(profile["type"] == "smoke-notes" and profile["line_count"] == 4, f"source profile: {profile}")
+        require(sorted(profile) == ["base", "drafts", "epistemic", "guidance", "line_count", "node_kinds",
+                                    "records", "relation_kinds", "source", "type"], f"source profile keys: {profile}")
+        require([row["class"] for row in profile["records"]] == ["node", "relation"], "source records mismatch")
+        require([row["id"] for row in profile["drafts"]] == ["measure-theory"], "source drafts mismatch")
+        require(runtime.object("source", "notes/measure.txt", cwd=root) == profile, "source differs by cwd")
+        require(not (root / ".knowledge/sheets").exists(), "source wrote a sheet")
         listed = runtime.object("drafts", cwd=outside)
-        require([(item["uid"], item["problems"], item["with"]) for item in listed["drafts"]]
-                == [("smoke:measure-theory", [], [])] and listed["unavailable_bases"] == [],
+        require([(item["uid"], item["problems"], item["with"], item["replaces"]) for item in listed["drafts"]]
+                == [("smoke:measure-theory", [], [], None)] and listed["unavailable_bases"] == [],
                 f"drafts listing mismatch: {listed}")
         receipt = runtime.object("accept", ".knowledge/drafts/measure-theory.md", cwd=root)
         indexed = receipt.pop("index", None) or {}
-        require(receipt == {"created": ["smoke:measure-theory"], "understanding_set": []}, f"accept receipt: {receipt}")
-        require(indexed.get("created") and indexed["bases"]["smoke"]["parsed"] == 3, f"accept index report: {indexed}")
+        require(receipt == {"created": ["smoke:measure-theory"], "updated": []}, f"accept receipt: {receipt}")
+        require(indexed.get("created") and indexed["bases"]["smoke"]["parsed"] == 4, f"accept index report: {indexed}")
         remaining = runtime.object("drafts", cwd=outside)
         require(remaining == {"drafts": [], "unavailable_bases": []}, f"drafts after accept: {remaining}")
 
@@ -279,17 +294,38 @@ def main() -> int:
         require(sparse["results"][0]["uid"] == "smoke:measure-space", f"search --no-dense ranking: {sparse['results'][:3]}")
         cjk = runtime.object("search", "测度", cwd=outside)
         require("smoke:measure-theory" in [row["uid"] for row in cjk["results"]], "CJK search failed")
+        unsure = runtime.object("search", "测度", "--understanding", "no", cwd=outside)
+        require([row["uid"] for row in unsure["results"]] == ["smoke:measure-theory"], "understanding filter failed")
         resolved = runtime.object("resolve", "测度空间", "countable additivity", cwd=outside)
         require([sense["uid"] for sense in resolved["terms"][0]["senses"]] == ["smoke:measure-space"],
                 "resolve senses mismatch")
-        require([item["owner"] for item in resolved["terms"][1]["pending"]]
-                == ["smoke:measure-space-implies-countable-additivity"], "resolve pending mismatch")
+        require([(sense["uid"], sense["foreign"]) for sense in resolved["terms"][1]["senses"]]
+                == [("smoke:countable-additivity", True)], f"resolve foreign sense mismatch: {resolved}")
+        require(all("pending" not in term for term in resolved["terms"]), "resolve still reports pending uses")
         got = runtime.object("get", "measure-space", "--source-lines", "1", cwd=outside)
         record = got["records"][0]
         require(record["source_text"] is not None and record["source_text"].startswith("3\t"),
                 f"get --source-lines failed: {record.get('source_text')}")
         require([link["role"] for link in record["in"]] == ["premise"], "get in-links mismatch")
+        foreign = runtime.object("get", "countable-additivity", "--source-lines", "1", cwd=outside)["records"][0]
+        require((foreign["foreign"], foreign["lines"], foreign["source_text"]) == (True, "", None),
+                f"get of a foreign record mismatch: {foreign}")
         follow_links(runtime, root, outside)
+
+        entry = root / ".knowledge/entries/measure-space.md"
+        replacement = entry.read_text(encoding="utf-8").replace(
+            "A set with a sigma-algebra and a measure.", "A measurable space with a measure.")
+        write(root / ".knowledge/drafts/measure-space.md", replacement)
+        require(runtime.object("check", cwd=root) == CLEAN, "a replacement draft did not check clean")
+        dry = runtime.object("accept", ".knowledge/drafts/measure-space.md", "--dry-run", cwd=root)
+        require(dry == {"would_create": [], "would_update": ["smoke:measure-space"]}, f"accept --dry-run: {dry}")
+        updated = runtime.object("accept", ".knowledge/drafts/measure-space.md", cwd=root)
+        updated.pop("index", None)
+        require(updated == {"created": [], "updated": ["smoke:measure-space"]}, f"replacement receipt: {updated}")
+        require(entry.read_text(encoding="utf-8") == replacement, "accept did not replace the record")
+        replaced = runtime.object("get", "measure-space", cwd=outside)
+        require(replaced["records"][0]["body"] == "A measurable space with a measure." and
+                replaced["lag"]["changed_files"] == 0, f"replaced record was not indexed: {replaced}")
 
         obsidian(runtime, root, outside)
 
@@ -297,9 +333,9 @@ def main() -> int:
         require(not (runtime.user / ".knowledge").exists(), "the runtime wrote to the default user home")
 
     print(
-        "installed command, base add, embedding show and off, sheet, drafts and accept, check --fix-lines, index, "
-        "search (including CJK), resolve, get, neighbors, browse, pack and Obsidian plugin install (hidden indexing and the "
-        "newLinkFormat warning) smoke passed"
+        "installed command, base add, embedding show and off, source, drafts and accept, check --fix-lines, index, "
+        "search (including CJK), resolve, get, neighbors, browse, pack, foreign records, accepting a replacement and "
+        "Obsidian plugin install (hidden indexing and the newLinkFormat warning) smoke passed"
     )
     return 0
 

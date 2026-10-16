@@ -54,7 +54,7 @@ from .records import (
 )
 
 DATABASE_FILENAME = "index.sqlite"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BUSY_TIMEOUT_SECONDS = 30
 EMBED_BATCH = 64
 SCHEMA = """
@@ -92,14 +92,10 @@ CREATE TABLE link(
   src      TEXT NOT NULL,
   role     TEXT NOT NULL,
   pos      INTEGER NOT NULL,
-  dst      TEXT,
-  term     TEXT,
-  term_key TEXT,
-  CHECK ((dst IS NULL) <> (term IS NULL)),
+  dst      TEXT NOT NULL,
   PRIMARY KEY (src, role, pos)
 ) WITHOUT ROWID;
 CREATE INDEX link_dst  ON link(dst);
-CREATE INDEX link_term ON link(term_key);
 
 CREATE TABLE name(
   key TEXT NOT NULL, uid TEXT NOT NULL, is_label INTEGER NOT NULL,
@@ -109,7 +105,7 @@ CREATE TABLE name(
 CREATE VIRTUAL TABLE fts USING fts5(tokens, tokenize = 'unicode61 remove_diacritics 0');
 
 INSERT INTO meta(key, value) VALUES ('embedding', '');
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 """
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 _RECORD_COLUMNS = (
@@ -246,7 +242,7 @@ def open_read_only() -> sqlite3.Connection:
 
 def unified_text(
     row: sqlite3.Row | dict[str, Any],
-    values: list[tuple[str, str | None, str | None]],
+    values: list[tuple[str, str]],
     labels: dict[str, str],
 ) -> str:
     """The one text per record, used by FTS and as the embedding input (docs/retrieval.md, "Unified text")."""
@@ -260,8 +256,8 @@ def unified_text(
     if row["search_terms"]:
         lines.append(row["search_terms"])
     roles: dict[str, list[str]] = defaultdict(list)
-    for role, destination, term in values:
-        roles[role].append(term if destination is None else labels.get(destination, destination))
+    for role, destination in values:
+        roles[role].append(labels.get(destination, destination))
     for role in sorted(name for name in roles if name != "requires"):
         lines.append(f"{role}: " + "; ".join(roles[role]))
     if "requires" in roles:
@@ -322,12 +318,10 @@ def _store(connection: sqlite3.Connection, record: Record, stat: os.stat_result)
     ))
     connection.execute("DELETE FROM link WHERE src = ?", (record.uid,))
     connection.execute("DELETE FROM name WHERE uid = ?", (record.uid,))
-    for role, position, value in record.values():
-        if value.uid is not None:
-            row = (record.uid, role, position, value.uid, None, None)
-        else:
-            row = (record.uid, role, position, None, value.term, name_key(value.term))
-        connection.execute("INSERT INTO link(src, role, pos, dst, term, term_key) VALUES (?, ?, ?, ?, ?, ?)", row)
+    connection.executemany(
+        "INSERT INTO link(src, role, pos, dst) VALUES (?, ?, ?, ?)",
+        [(record.uid, role, position, value.uid) for role, position, value in record.values()],
+    )
     names: dict[str, int] = {}
     for is_label, text in ((1, record.label), *((0, alias) for alias in record.aliases)):
         key = name_key(text)
@@ -347,11 +341,9 @@ def _refresh_texts(connection: sqlite3.Connection, pool: dict[str, bytes]) -> in
     number of changed rows that re-used a vector.
     """
     labels = dict(connection.execute("SELECT uid, label FROM record"))
-    values: dict[str, list[tuple[str, str | None, str | None]]] = defaultdict(list)
-    for source, role, destination, term in connection.execute(
-        "SELECT src, role, dst, term FROM link ORDER BY src, role, pos"
-    ):
-        values[source].append((role, destination, term))
+    values: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for source, role, destination in connection.execute("SELECT src, role, dst FROM link ORDER BY src, role, pos"):
+        values[source].append((role, destination))
     rows = connection.execute(
         "SELECT rowid, uid, label, aliases, kind, epistemic, body, search_terms, evidence, source, text FROM record"
     ).fetchall()

@@ -131,9 +131,10 @@ def parse_args() -> argparse.Namespace:
     check.add_argument("--base", action="append", default=[], metavar="B", help="check only this base (repeatable)")
     check.add_argument("--fix-lines", action="store_true", help="rewrite the lines: of every record whose evidence moved")
 
-    sheet = commands.add_parser("sheet", help="write a source's sheet of records, pending terms and drafts")
-    sheet.add_argument("source", type=Path, help="a registered source file")
-    sheet.add_argument("--json", action="store_true", help="print the extraction profile and inventory; write nothing")
+    source = commands.add_parser(
+        "source", help="print a source's extraction profile and the records and drafts citing it; writes nothing"
+    )
+    source.add_argument("source", type=Path, help="a registered source file")
 
     drafts = commands.add_parser(
         "drafts", help="list the drafts with their links and what accept would refuse; reads files, writes nothing"
@@ -148,16 +149,11 @@ def parse_args() -> argparse.Namespace:
     )
 
     accept = commands.add_parser(
-        "accept", help="promote drafts to accepted records, all or nothing, then index and embed the created records"
+        "accept",
+        help="admit drafts as new or replacing records, all or nothing, then index and embed the admitted records",
     )
     accept.add_argument("drafts", nargs="+", type=Path, metavar="DRAFT")
     accept.add_argument("--dry-run", action="store_true")
-
-    harvest = commands.add_parser(
-        "harvest", help="accept the ticked drafts of a sheet and regenerate it, then index and embed the created records"
-    )
-    harvest.add_argument("sheet", type=Path)
-    harvest.add_argument("--dry-run", action="store_true")
 
     index = commands.add_parser("index", help="bring the derived database up to date with the record files")
     index.add_argument("--rebuild", action="store_true", help="re-derive every row in place")
@@ -168,7 +164,7 @@ def parse_args() -> argparse.Namespace:
     search.add_argument("--limit", type=_positive, default=40)
     search.add_argument("--no-dense", action="store_true", help="skip the dense lane (no model load)")
 
-    resolve = commands.add_parser("resolve", parents=[filters], help="list the senses, mentions and pending uses of terms")
+    resolve = commands.add_parser("resolve", parents=[filters], help="list the senses and mentions of terms")
     resolve.add_argument("terms", nargs="+", metavar="TERM")
 
     get = commands.add_parser("get", help="read complete records with their links")
@@ -361,22 +357,18 @@ def _command(args: argparse.Namespace) -> int:
         bases = args.base or None
         report = fix_lines(bases=bases) if args.fix_lines else check(bases=bases)
         return _print(report, failed=bool(report["errors"] or report["stale"] or report["moved"]))
-    if args.command == "sheet":
-        from .write import sheet, sheet_json
+    if args.command == "source":
+        from .write import source
 
-        source = _cwd_path(args.source)
-        return _print(sheet_json(source) if args.json else sheet(source))
+        return _print(source(_cwd_path(args.source)))
     if args.command == "drafts":
         from .write import drafts
 
         return _print(drafts(args.base, args.source, args.name))
-    if args.command in {"accept", "harvest"}:
-        from .write import accept, harvest
+    if args.command == "accept":
+        from .write import accept
 
-        if args.command == "accept":
-            receipt = accept([_cwd_path(path) for path in args.drafts], args.dry_run)
-        else:
-            receipt = harvest(_cwd_path(args.sheet), args.dry_run)
+        receipt = accept([_cwd_path(path) for path in args.drafts], args.dry_run)
         return _print(receipt, failed="refused" in receipt or "aborted" in receipt)
     if args.command == "index":
         from .index import index, index_clean

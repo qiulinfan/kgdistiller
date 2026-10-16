@@ -15,9 +15,10 @@ from typing import Any
 from tests.knowledge_fixture import make_record_home, type_document, use_temporary_home
 
 COMMANDS = {
-    "base", "embedding", "check", "sheet", "drafts", "accept", "harvest", "index", "search", "resolve", "get",
+    "base", "embedding", "check", "source", "drafts", "accept", "index", "search", "resolve", "get",
     "neighbors", "browse", "pack", "obsidian", "claude", "codex", "mcp",
 }
+WEB = "https://example.com/sigma-algebra"
 SOURCE = "Chapter one\nA measure space is a triple (X, F, mu).\nA measure is countably additive.\n测度论研究可测空间。\n"
 
 
@@ -63,11 +64,16 @@ class BaseAddTest(unittest.TestCase):
         self.assertEqual((self.home / ".gitignore").read_text(encoding="utf-8"), "index.sqlite*\nlock\n")
         self.register_papers()
         self.assertEqual(output(kgdistiller("check", cwd=root / "papers")), {"errors": [], "stale": [], "moved": []})
-        profile = output(kgdistiller("sheet", "paper.tex", "--json", cwd=root / "papers"))
+        profile = output(kgdistiller("source", "paper.tex", cwd=root / "papers"))
         self.assertEqual((profile["base"], profile["source"], profile["type"], profile["line_count"]),
                          ("papers", "papers/paper.tex", "papers", 2))
-        written = output(kgdistiller("sheet", str(root / "papers/paper.tex"), cwd=self.tmp))
-        self.assertEqual(written, {"sheet": str(root / ".knowledge/sheets/papers/paper.tex.md")})
+        self.assertEqual(set(profile), {"base", "source", "type", "node_kinds", "relation_kinds", "epistemic",
+                                        "guidance", "line_count", "records", "drafts"})
+        self.assertEqual((profile["node_kinds"], profile["records"], profile["drafts"]), (["definition"], [], []))
+        self.assertEqual(output(kgdistiller("source", str(root / "papers/paper.tex"), cwd=self.tmp)), profile)
+        self.assertFalse((root / ".knowledge/sheets").exists())
+        unregistered = kgdistiller("source", "notes.txt", cwd=root)
+        self.assertEqual(unregistered.returncode, 1)
         again = kgdistiller("base", "add", str(root), "--name", "other", cwd=self.tmp)
         self.assertEqual(again.returncode, 1)
         self.assertIn("already registered", again.stderr)
@@ -76,14 +82,14 @@ class BaseAddTest(unittest.TestCase):
                          [("papers", str(root), 0)])
         self.assertEqual(output(kgdistiller("base", "rm", "papers", cwd=self.tmp))["dangling"], [])
         self.assertTrue((root / ".knowledge/entries").is_dir())
-        orphan = kgdistiller("sheet", "papers/paper.tex", cwd=root)
+        orphan = kgdistiller("source", "papers/paper.tex", cwd=root)
         self.assertEqual(orphan.returncode, 1)
         self.assertIn("not inside a registered base", orphan.stderr)
 
     def test_commands_refuse_without_a_home_and_create_nothing(self) -> None:
         for arguments in (("index",), ("search", "measure"), ("resolve", "measure"), ("get", "kb:x"),
                           ("neighbors", "kb:x"), ("browse",), ("pack", "kb:x"),
-                          ("sheet", "a.txt"), ("accept", "x.md"), ("harvest", "s.md"), ("base", "list")):
+                          ("source", "a.txt"), ("accept", "x.md"), ("drafts",), ("base", "list")):
             with self.subTest(arguments=arguments):
                 result = kgdistiller(*arguments, cwd=self.tmp)
                 self.assertEqual((result.returncode, result.stdout), (1, ""))
@@ -107,7 +113,7 @@ class ConsoleTest(unittest.TestCase):
 
     def test_json_output_is_utf_8_under_an_ansi_code_page(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "kgdistiller", "sheet", "notes/a.txt", "--json"],
+            [sys.executable, "-m", "kgdistiller", "source", "notes/a.txt"],
             capture_output=True, check=False, env=self.env, cwd=self.kb.root,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -243,8 +249,7 @@ class SymlinkedTreeTest(unittest.TestCase):
             for arguments, names_the_symlink in (
                 (("check", "--base", "kb"), True),
                 (("check", "--base", "kb", "--fix-lines"), True),
-                (("sheet", "notes/a.txt"), True),
-                (("sheet", "notes/a.txt", "--json"), True),
+                (("source", "notes/a.txt"), True),
                 (("accept", ".knowledge/drafts/measure.md"), False),
                 (("index",), True),
                 (("obsidian", "install"), True),
@@ -274,8 +279,10 @@ class EndToEndTest(unittest.TestCase):
         kb.write_source("notes/a.txt", SOURCE)
         kb.write_record("measure", node("Measure", "3", extra="aliases: [测度]"), "A countably additive set function.",
                         ["A measure is countably additive."])
-        kb.write_record("measure-space", node("Measure space", "2", extra='requires: ["[[measure]]", sigma-algebra]'),
+        kb.write_record("measure-space", node("Measure space", "2", extra='requires: ["[[measure]]", "[[sigma-algebra]]"]'),
                         "A triple (X, F, mu).", ["A measure space is a triple"], folder="drafts")
+        kb.write_record("sigma-algebra", f"label: σ-algebra\nkind: concept\nsource: {WEB}\nunderstanding: no",
+                        "A family of sets closed under complements.", ["closed under complements"], folder="drafts")
         kb.write_record(
             "space-implies-measure",
             node("Measure space implies measure", "2-3", kind="implies",
@@ -286,38 +293,46 @@ class EndToEndTest(unittest.TestCase):
 
         listed = output(kgdistiller("drafts", "--name", "measure space", cwd=root))["drafts"]
         self.assertEqual([(item["uid"], item["with"], item["problems"]) for item in listed],
-                         [("kb:measure-space", [], [])])
+                         [("kb:measure-space", ["kb:sigma-algebra"], [])])
         lone = kgdistiller("accept", ".knowledge/drafts/space-implies-measure.md", cwd=root)
         refused = output(lone, status=1)["refused"]
         self.assertTrue(any("select [[measure-space]] too" in item["message"] for item in refused), refused)
-        drafts = (".knowledge/drafts/measure-space.md", ".knowledge/drafts/space-implies-measure.md")
+        profile = output(kgdistiller("source", "notes/a.txt", cwd=root))
+        self.assertEqual(([item["uid"] for item in profile["records"]], [item["id"] for item in profile["drafts"]]),
+                         (["kb:measure"], ["measure-space", "space-implies-measure"]))
+        drafts = (".knowledge/drafts/measure-space.md", ".knowledge/drafts/sigma-algebra.md",
+                  ".knowledge/drafts/space-implies-measure.md")
+        uids = ["kb:measure-space", "kb:sigma-algebra", "kb:space-implies-measure"]
         self.assertEqual(output(kgdistiller("accept", *drafts, "--dry-run", cwd=root)),
-                         {"would_create": ["kb:measure-space", "kb:space-implies-measure"]})
+                         {"would_create": uids, "would_update": []})
         accepted = output(kgdistiller("accept", *drafts, cwd=root))
         indexed = accepted.pop("index")
-        self.assertEqual((indexed["created"], indexed["bases"]["kb"]["parsed"], indexed["unembedded"]), (True, 3, 0))
-        self.assertEqual(accepted, {"created": ["kb:measure-space", "kb:space-implies-measure"], "understanding_set": []})
+        self.assertEqual((indexed["created"], indexed["bases"]["kb"]["parsed"], indexed["unembedded"]), (True, 4, 0))
+        self.assertEqual(accepted, {"created": uids, "updated": []})
         self.assertFalse((root / ".knowledge/drafts/measure-space.md").exists())
         self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": []})
 
         report = output(kgdistiller("index", "--no-embed", cwd=root))
         self.assertEqual((report["created"], report["bases"]["kb"]["parsed"], report["unembedded"]), (False, 0, 0))
         self.assertEqual(output(kgdistiller("index", cwd=root))["bases"]["kb"]["parsed"], 0)
-        self.assertEqual(output(kgdistiller("index", "--rebuild", cwd=root))["bases"]["kb"]["parsed"], 3)
+        self.assertEqual(output(kgdistiller("index", "--rebuild", cwd=root))["bases"]["kb"]["parsed"], 4)
 
         found = output(kgdistiller("search", "measure space", cwd=root.parent))
         self.assertEqual((found["lanes"], found["results"][0]["uid"]), (["lexical", "name"], "kb:measure-space"))
-        self.assertEqual(found["lag"]["changed_files"], 0)
+        self.assertEqual((found["lag"]["changed_files"], found["results"][0]["foreign"]), (0, False))
         sparse = output(kgdistiller("search", "measure space", "--no-dense", cwd=root))
         self.assertEqual((sparse["lanes"], sparse["results"][0]["uid"]), (["lexical", "name"], "kb:measure-space"))
         relations = output(kgdistiller("search", "measure", "--class", "relation", "--limit", "5", cwd=root))
         self.assertEqual([item["uid"] for item in relations["results"]], ["kb:space-implies-measure"])
         self.assertTrue(output(kgdistiller("search", "测度", cwd=root))["results"])
+        unsure = output(kgdistiller("search", "complements", "--understanding", "no", cwd=root))["results"]
+        self.assertEqual([(item["uid"], item["foreign"]) for item in unsure], [("kb:sigma-algebra", True)])
 
-        resolved = output(kgdistiller("resolve", "measure", "sigma-algebra", cwd=root))
+        resolved = output(kgdistiller("resolve", "measure", "σ-algebra", cwd=root))
+        self.assertEqual([set(term) for term in resolved["terms"]], [{"term", "key", "senses", "mentions"}] * 2)
         self.assertEqual([sense["uid"] for sense in resolved["terms"][0]["senses"]], ["kb:measure"])
-        self.assertEqual(resolved["terms"][1]["pending"],
-                         [{"owner": "kb:measure-space", "role": "requires", "term": "sigma-algebra"}])
+        self.assertEqual([(sense["uid"], sense["foreign"], sense["source"]) for sense in resolved["terms"][1]["senses"]],
+                         [("kb:sigma-algebra", True, WEB)])
 
         got = output(kgdistiller("get", "space-implies-measure", "kb:nope", "--source-lines", "1", cwd=root))
         record = got["records"][0]
@@ -326,6 +341,8 @@ class EndToEndTest(unittest.TestCase):
                          [("conclusion", "kb:measure"), ("premise", "kb:measure-space")])
         self.assertEqual(record["source_text"].split("\n")[0], "1\tChapter one")
         self.assertEqual(len(record["source_text"].split("\n")), 4)
+        foreign = output(kgdistiller("get", "sigma-algebra", "--source-lines", "1", cwd=root))["records"][0]
+        self.assertEqual((foreign["foreign"], foreign["lines"], foreign["source_text"]), (True, "", None))
 
         cited = output(kgdistiller("neighbors", "measure", "--dir", "in", cwd=root))
         self.assertEqual(cited["edges"], [
@@ -334,26 +351,45 @@ class EndToEndTest(unittest.TestCase):
         ])
         self.assertEqual(cited["missing"], [])
         bases = output(kgdistiller("browse", cwd=root.parent))["bases"]
-        self.assertEqual(bases, [{"name": "kb", "available": True, "records": 3, "relations": 1, "pending": 1}])
-        sheet = output(kgdistiller("browse", "kb:notes/a.txt", cwd=root))
-        self.assertEqual([group["kind"] for group in sheet["kinds"]], ["definition", "implies"])
-        self.assertEqual(sheet["pending"],
-                         [{"term": "sigma-algebra", "owners": [{"uid": "kb:measure-space", "role": "requires"}]}])
+        self.assertEqual(bases, [{"name": "kb", "available": True, "records": 4, "relations": 1}])
+        self.assertEqual(output(kgdistiller("browse", "kb", cwd=root))["entries"], [
+            {"path": WEB, "type": "foreign", "records": 1, "relations": 0},
+            {"path": "notes/", "type": "dir", "records": 3, "relations": 1},
+        ])
+        by_kind = output(kgdistiller("browse", "kb:notes/a.txt", cwd=root))
+        self.assertEqual(set(by_kind), {"base", "source", "kinds", "lag"})
+        self.assertEqual([group["kind"] for group in by_kind["kinds"]], ["definition", "implies"])
+        web = output(kgdistiller("browse", f"kb:{WEB}", cwd=root))
+        self.assertEqual([(group["kind"], [item["uid"] for item in group["records"]]) for group in web["kinds"]],
+                         [("concept", ["kb:sigma-algebra"])])
         listing = output(kgdistiller("browse", "--kind", "implies", cwd=root))["records"]
         self.assertEqual([item["uid"] for item in listing], ["kb:space-implies-measure"])
         self.assertEqual({role: [link["uid"] for link in links] for role, links in listing[0]["links"].items()},
                          {"conclusion": ["kb:measure"], "premise": ["kb:measure-space"]})
         packet = output(kgdistiller("pack", "measure-space", cwd=root))
         self.assertEqual([item["uid"] for item in packet["records"]],
-                         ["kb:measure-space", "kb:measure", "kb:space-implies-measure"])
-        self.assertIn({"reason": "pending", "from": "kb:measure-space", "role": "requires", "term": "sigma-algebra"},
-                      packet["gaps"])
+                         ["kb:measure-space", "kb:measure", "kb:sigma-algebra", "kb:space-implies-measure"])
+        self.assertEqual(packet["gaps"], [])
         self.assertEqual(packet["budget"], 60000)
         self.assertLessEqual(packet["bytes"], 60000)
 
         kb.write_record("measure", node("Measure", "3", extra="aliases: [测度, mass]"), "Edited in place.",
                         ["A measure is countably additive."])
         self.assertEqual(output(kgdistiller("search", "mass", cwd=root))["lag"]["changed_files"], 1)
+
+        kb.write_record("measure", node("Measure", "3", extra="aliases: [测度, mass, 质量]"), "Replaced by a draft.",
+                        ["A measure is countably additive."], folder="drafts")
+        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": []})
+        [replacing] = output(kgdistiller("drafts", cwd=root))["drafts"]
+        self.assertEqual((replacing["replaces"], replacing["problems"]), ("kb:measure", []))
+        self.assertEqual(output(kgdistiller("accept", ".knowledge/drafts/measure.md", "--dry-run", cwd=root)),
+                         {"would_create": [], "would_update": ["kb:measure"]})
+        updated = output(kgdistiller("accept", ".knowledge/drafts/measure.md", cwd=root))
+        updated.pop("index")
+        self.assertEqual(updated, {"created": [], "updated": ["kb:measure"]})
+        self.assertIn("Replaced by a draft.", kb.path("measure").read_text(encoding="utf-8"))
+        found = output(kgdistiller("search", "质量", cwd=root))
+        self.assertEqual((found["lag"]["changed_files"], found["results"][0]["uid"]), (0, "kb:measure"))
         self.assertNotIn(".sqlite", "".join(path.name for path in root.rglob("*")))
 
 

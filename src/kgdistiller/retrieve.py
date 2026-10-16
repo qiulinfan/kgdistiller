@@ -31,7 +31,7 @@ from . import records
 from .adapters import embedding as embedding_adapter
 from .home import Home, KnowledgeError, home_directory, load_home
 from .index import is_cjk, lag, meta_embedding, name_key, open_read_only, tokens
-from .records import UNDERSTANDING, fold, gloss
+from .records import UNDERSTANDING, fold, gloss, is_foreign
 
 LANE_LIMIT = 200
 RRF_K = 60
@@ -223,7 +223,7 @@ def _links_out(connection: sqlite3.Connection, uids: Sequence[str]) -> dict[str,
     for start in range(0, len(uids), _CHUNK):
         chunk = list(uids[start : start + _CHUNK])
         for row in connection.execute(
-            f"SELECT src, role, pos, dst, term, term_key FROM link WHERE src IN ({', '.join('?' for _ in chunk)}) "
+            f"SELECT src, role, pos, dst FROM link WHERE src IN ({', '.join('?' for _ in chunk)}) "
             "ORDER BY src, role = 'requires', role, pos",
             chunk,
         ):
@@ -245,8 +245,6 @@ def _links_in(connection: sqlite3.Connection, uids: Sequence[str]) -> dict[str, 
 
 
 def _reference(row: sqlite3.Row, labels: dict[str, str]) -> dict[str, Any]:
-    if row["dst"] is None:
-        return {"term": row["term"]}
     return {"uid": row["dst"], "label": labels.get(row["dst"])}
 
 
@@ -259,6 +257,7 @@ def _summary(row: sqlite3.Row) -> dict[str, Any]:
         "base": row["base"],
         "source": row["source"],
         "lines": row["lines"],
+        "foreign": is_foreign(row["source"]),
         "gloss": gloss(row["body"]),
     }
 
@@ -318,6 +317,7 @@ def search(query: str, limit: int = 40, filters: Filters = NO_FILTERS, dense: bo
                 "base": row["base"],
                 "source": row["source"],
                 "lines": row["lines"],
+                "foreign": is_foreign(row["source"]),
                 "understanding": row["understanding"],
                 "epistemic": row["epistemic"],
                 "gloss": gloss(row["body"]),
@@ -340,7 +340,7 @@ def _order(row: sqlite3.Row) -> tuple[Any, ...]:
 
 
 def resolve(terms: Iterable[str], filters: Filters = NO_FILTERS) -> dict[str, Any]:
-    """Senses (exact name key), mentions (contained name key) and pending link rows for each term."""
+    """Senses (exact name key) and mentions (contained name key) of each term."""
     connection, home = _session()
     try:
         clause, parameters = filters.sql()
@@ -349,7 +349,6 @@ def resolve(terms: Iterable[str], filters: Filters = NO_FILTERS) -> dict[str, An
             key = name_key(term)
             senses: dict[str, sqlite3.Row] = {}
             mentions: dict[str, sqlite3.Row] = {}
-            pending: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
             if key:
                 cjk = any(is_cjk(char) for char in key)
                 for row in connection.execute(
@@ -361,15 +360,6 @@ def resolve(terms: Iterable[str], filters: Filters = NO_FILTERS) -> dict[str, An
                         senses[row["uid"]] = row
                     elif cjk or f" {key} " in f" {row['name']} ":
                         mentions[row["uid"]] = row
-                for row in connection.execute(
-                    f"SELECT l.src, l.role, l.pos, l.term, r.base, r.source, r.line_start, r.uid FROM link l "
-                    f"JOIN record r ON r.uid = l.src WHERE l.term_key = ?{clause}",
-                    [key, *parameters],
-                ):
-                    pending.append((
-                        (*_order(row), row["role"], row["pos"]),
-                        {"owner": row["src"], "role": row["role"], "term": row["term"]},
-                    ))
             answers.append({
                 "term": term,
                 "key": key,
@@ -378,7 +368,6 @@ def resolve(terms: Iterable[str], filters: Filters = NO_FILTERS) -> dict[str, An
                     _summary(row) for uid, row in sorted(mentions.items(), key=lambda item: _order(item[1]))
                     if uid not in senses
                 ],
-                "pending": [item for _, item in sorted(pending, key=lambda pair: pair[0])],
             })
         return {"terms": answers, "lag": lag(connection, home)}
     finally:
@@ -421,13 +410,10 @@ def _record(row: sqlite3.Row, out_links: Sequence[sqlite3.Row], labels: dict[str
     """A complete record with its out-links, as ``get`` returns it before ``in`` and ``source_text``."""
     out: list[dict[str, Any]] = []
     for link in out_links:
-        if link["dst"] is None:
-            out.append({"role": link["role"], "pos": link["pos"], "term": link["term"]})
-        else:
-            out.append({
-                "role": link["role"], "pos": link["pos"], "uid": link["dst"],
-                "label": labels.get(link["dst"]), "exists": link["dst"] in labels,
-            })
+        out.append({
+            "role": link["role"], "pos": link["pos"], "uid": link["dst"],
+            "label": labels.get(link["dst"]), "exists": link["dst"] in labels,
+        })
     return {
         "uid": row["uid"],
         "base": row["base"],
@@ -438,6 +424,7 @@ def _record(row: sqlite3.Row, out_links: Sequence[sqlite3.Row], labels: dict[str
         "aliases": json.loads(row["aliases"]),
         "source": row["source"],
         "lines": row["lines"],
+        "foreign": is_foreign(row["source"]),
         "understanding": row["understanding"],
         "epistemic": row["epistemic"],
         "gloss": gloss(row["body"]),
@@ -531,7 +518,7 @@ def _reach(
             SELECT {following}, walk.depth + 1, r.uid IS NOT NULL
             FROM walk JOIN link l ON {join}
             LEFT JOIN record r ON r.uid = {following}
-            WHERE walk.live AND walk.depth < ? AND l.dst IS NOT NULL{role_clause}
+            WHERE walk.live AND walk.depth < ?{role_clause}
               AND (r.uid IS NULL OR (1{filter_clause}))
         )
         SELECT uid, MIN(depth) FROM walk GROUP BY uid
@@ -551,7 +538,7 @@ def neighbors(
     """Edges reachable from ``uids`` within ``depth`` hops over ``roles``; nothing is inferred.
 
     Filters restrict the records the walk may enter; start uids always count.
-    Pending terms and missing targets are leaves. Each link is reported once,
+    Missing targets are leaves. Each link is reported once,
     in its own direction, at the minimum depth it is reached from.
     """
     if direction not in DIRECTIONS:
@@ -571,22 +558,21 @@ def neighbors(
             key = (link["src"], link["role"], link["pos"])
             if key in found and found[key][0] <= at:
                 return
-            target = {"term": link["term"]} if link["dst"] is None else {"to": link["dst"]}
-            found[key] = (at, {"from": link["src"], "role": link["role"], **target, "depth": at})
+            found[key] = (at, {"from": link["src"], "role": link["role"], "to": link["dst"], "depth": at})
 
         for start in range(0, len(expandable), _CHUNK):
             chunk = expandable[start : start + _CHUNK]
             marks = ", ".join("?" for _ in chunk)
             if direction in ("out", "both"):
                 for link in connection.execute(
-                    f"SELECT src, role, pos, dst, term FROM link l WHERE src IN ({marks}){role_clause}",
+                    f"SELECT src, role, pos, dst FROM link l WHERE src IN ({marks}){role_clause}",
                     [*chunk, *role_parameters],
                 ):
-                    if link["dst"] is None or link["dst"] in visited:
+                    if link["dst"] in visited:
                         edge(link, visited[link["src"]] + 1)
             if direction in ("in", "both"):
                 for link in connection.execute(
-                    f"SELECT src, role, pos, dst, term FROM link l WHERE dst IN ({marks}){role_clause}",
+                    f"SELECT src, role, pos, dst FROM link l WHERE dst IN ({marks}){role_clause}",
                     [*chunk, *role_parameters],
                 ):
                     if link["src"] in visited:
@@ -630,18 +616,12 @@ def _browse_bases(connection: sqlite3.Connection, home: Home, filters: Filters) 
             parameters,
         )
     }
-    pending = dict(connection.execute(
-        f"SELECT r.base, COUNT(DISTINCT l.term_key) FROM link l JOIN record r ON r.uid = l.src "
-        f"WHERE l.term_key IS NOT NULL{clause} GROUP BY r.base",
-        parameters,
-    ).fetchall())
     return [
         {
             "name": name,
             "available": home.bases[name].root.is_dir(),
             "records": counts.get(name, (0, 0))[0],
             "relations": counts.get(name, (0, 0))[1],
-            "pending": pending.get(name, 0),
         }
         for name in sorted(home.bases)
         if not filters.base or name in filters.base
@@ -652,15 +632,16 @@ def _browse_directory(connection: sqlite3.Connection, base: str, prefix: str, fi
     scope, scope_parameters = _scope_sql(base, prefix)
     clause, parameters = filters.sql()
     entries: dict[str, dict[str, Any]] = {}
-    terms: dict[str, set[str]] = defaultdict(set)
 
     def entry(source: str) -> dict[str, Any]:
         rest = source[len(prefix):]
-        if "/" in rest:
+        if is_foreign(source):
+            path, kind = source, "foreign"
+        elif "/" in rest:
             path, kind = prefix + rest.split("/", 1)[0] + "/", "dir"
         else:
             path, kind = source, "source"
-        return entries.setdefault(path, {"path": path, "type": kind, "records": 0, "relations": 0, "pending": 0})
+        return entries.setdefault(path, {"path": path, "type": kind, "records": 0, "relations": 0})
 
     for source, class_, count in connection.execute(
         f"SELECT r.source, r.class, COUNT(*) FROM record r WHERE 1{scope}{clause} GROUP BY r.source, r.class",
@@ -670,14 +651,6 @@ def _browse_directory(connection: sqlite3.Connection, base: str, prefix: str, fi
         item["records"] += count
         if class_ == "relation":
             item["relations"] += count
-    for source, term_key in connection.execute(
-        f"SELECT DISTINCT r.source, l.term_key FROM link l JOIN record r ON r.uid = l.src "
-        f"WHERE l.term_key IS NOT NULL{scope}{clause}",
-        [*scope_parameters, *parameters],
-    ):
-        terms[entry(source)["path"]].add(term_key)
-    for path, keys in terms.items():
-        entries[path]["pending"] = len(keys)
     return [entries[path] for path in sorted(entries)]
 
 
@@ -691,7 +664,6 @@ def _browse_source(connection: sqlite3.Connection, base: str, source: str, filte
     out_links = _links_out(connection, uids)
     labels = _labels(connection, (link["dst"] for links in out_links.values() for link in links if link["dst"]))
     kinds: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    pending: dict[str, tuple[str, list[dict[str, str]]]] = {}
     for row in rows:
         kinds[row["kind"]].append({
             "uid": row["uid"],
@@ -702,17 +674,10 @@ def _browse_source(connection: sqlite3.Connection, base: str, source: str, filte
             "gloss": gloss(row["body"]),
             "links": _references(out_links[row["uid"]], labels),
         })
-        for link in out_links[row["uid"]]:
-            if link["dst"] is None:
-                owners = pending.setdefault(link["term_key"], (link["term"], []))[1]
-                owner = {"uid": row["uid"], "role": link["role"]}
-                if owner not in owners:
-                    owners.append(owner)
     return {
         "base": base,
         "source": source,
         "kinds": [{"kind": kind, "records": kinds[kind]} for kind in sorted(kinds)],
-        "pending": [{"term": term, "owners": owners} for _, (term, owners) in sorted(pending.items())],
     }
 
 
@@ -756,8 +721,9 @@ def _is_directory(connection: sqlite3.Connection, base: str, path: str) -> bool:
 def browse(handle: str | None = None, filters: Filters = NO_FILTERS) -> dict[str, Any]:
     """Bases, a base's source tree, one source's records by kind, or (with a kind filter) a record listing.
 
-    ``handle`` is ``base``, ``base:dir/`` or ``base:path/file``; it splits on
-    the first ':'. Only sources with indexed records appear.
+    ``handle`` is ``base``, ``base:dir/``, ``base:path/file`` or ``base:<web
+    address>``; it splits on the first ':'. Only sources with indexed records
+    appear; a foreign record's web address is a source listed at the base root.
     """
     connection, home = _session()
     try:
@@ -771,7 +737,7 @@ def browse(handle: str | None = None, filters: Filters = NO_FILTERS) -> dict[str
             result: dict[str, Any] = {"records": _browse_kind(connection, base, path, filters)}
         elif base is None:
             result = {"bases": _browse_bases(connection, home, filters)}
-        elif path == "" or path.endswith("/") or _is_directory(connection, base, path):
+        elif not is_foreign(path) and (path == "" or path.endswith("/") or _is_directory(connection, base, path)):
             directory = path if path == "" or path.endswith("/") else path + "/"
             result = {"base": base, "dir": directory, "entries": _browse_directory(connection, base, directory, filters)}
         else:
@@ -821,7 +787,7 @@ def pack(
             links = _links_out(connection, layer)
             targets = [
                 link["dst"] for parent in layer for link in links[parent]
-                if link["role"] == "requires" and link["dst"] is not None
+                if link["role"] == "requires"
             ]
             allowed = _passing(connection, targets, filters)
             layer = []
@@ -874,9 +840,7 @@ def pack(
         for record in packed:
             for link in out_links[record["uid"]]:
                 where = {"from": record["uid"], "role": link["role"]}
-                if link["dst"] is None:
-                    gaps.append({"reason": "pending", **where, "term": link["term"]})
-                elif link["dst"] not in labels:
+                if link["dst"] not in labels:
                     gaps.append({"reason": "missing-target", **where, "uid": link["dst"]})
                 elif link["dst"] not in packed_uids:
                     gaps.append({"reason": "not-packed", **where, "uid": link["dst"]})

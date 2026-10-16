@@ -576,7 +576,7 @@ class BaseCommandTest(HomeTestCase):
         self.assertTrue((self.tmp / "kb/.knowledge/entries/measure.md").is_file())
 
     def registered_pair(self) -> Path:
-        """Bases kb and other; other's record requires kb's record through a foreign link."""
+        """Bases kb and other; other's record requires kb's record through a cross-base link."""
         roots = {name: self.directory(name) for name in ("kb", "other")}
         self.write_type("notes-type")
         for name, root in roots.items():
@@ -592,7 +592,7 @@ class BaseCommandTest(HomeTestCase):
         (roots["kb"] / ".knowledge/drafts").mkdir()
         (roots["kb"] / ".knowledge/drafts/draft.md").write_text(record.format(label="Draft", extra=""), encoding="utf-8")
         (roots["other"] / ".knowledge/entries/uses-measure.md").write_text(
-            record.format(label="Uses measure", extra='requires: ["[[kb:measure]]", plain term]\n'), encoding="utf-8")
+            record.format(label="Uses measure", extra='requires: ["[[kb:measure]]", "[[local]]"]\n'), encoding="utf-8")
         return roots["kb"]
 
 

@@ -109,8 +109,8 @@ class IndexTestCase(unittest.TestCase):
         self.sum = self.kb.write_record(
             "sum-is-subspace",
             node("Sum is a subspace", "4", kind="implies",
-                 extra='premise: ["[[subspace]]", "[[subspace]]"]\nconclusion: ["[[notes:measure]]", dimension]\n'
-                       'requires: ["[[missing]]", vector space]\nepistemic: stated'),
+                 extra='premise: ["[[subspace]]", "[[subspace]]"]\nconclusion: ["[[notes:measure]]", "[[dimension]]"]\n'
+                       'requires: ["[[missing]]", "[[notes:vector-space]]"]\nepistemic: stated'),
             "The sum is a subspace.\n\n## Search terms\n\nwhy is a sum closed", ["The sum of two subspaces"],
         )
         self.measure = self.kb.write_record(
@@ -134,7 +134,9 @@ class SchemaTest(IndexTestCase):
         self.assertTrue(report["created"])
         connection = sqlite3.connect(database_path())
         try:
-            self.assertEqual(2, connection.execute("PRAGMA user_version").fetchone()[0])
+            self.assertEqual(3, connection.execute("PRAGMA user_version").fetchone()[0])
+            columns = [row[1] for row in connection.execute("PRAGMA table_info(link)")]
+            self.assertEqual(["src", "role", "pos", "dst"], columns)
             self.assertEqual("wal", connection.execute("PRAGMA journal_mode").fetchone()[0])
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'fts_%'")}
             self.assertEqual({"meta", "record", "link", "name", "fts"}, tables)
@@ -169,23 +171,50 @@ class SchemaTest(IndexTestCase):
             row = connection.execute("SELECT * FROM record WHERE uid = 'kb:sum-is-subspace'").fetchone()
             self.assertEqual(
                 "Sum is a subspace\nimplies · stated\nThe sum is a subspace.\nwhy is a sum closed\n"
-                "conclusion: Measure; dimension\npremise: Subspace; Subspace\nrequires: kb:missing; vector space\n"
+                "conclusion: Measure; kb:dimension\npremise: Subspace; Subspace\nrequires: kb:missing; notes:vector-space\n"
                 "> The sum of two subspaces\nnotes/a.txt",
                 row["text"],
             )
-            self.assertEqual(("relation", "unknown", 4, 4, "4-4"),
+            self.assertEqual(("relation", "yes", 4, 4, "4-4"),
                              (row["class"], row["understanding"], row["line_start"], row["line_end"], row["lines"]))
-            links = connection.execute("SELECT role, pos, dst, term, term_key FROM link WHERE src = 'kb:sum-is-subspace' ORDER BY role, pos").fetchall()
+            links = connection.execute("SELECT role, pos, dst FROM link WHERE src = 'kb:sum-is-subspace' ORDER BY role, pos").fetchall()
             self.assertEqual(
-                [("conclusion", 0, "notes:measure", None, None), ("conclusion", 1, None, "dimension", "dimension"),
-                 ("premise", 0, "kb:subspace", None, None), ("premise", 1, "kb:subspace", None, None),
-                 ("requires", 0, "kb:missing", None, None), ("requires", 1, None, "vector space", "vector space")],
+                [("conclusion", 0, "notes:measure"), ("conclusion", 1, "kb:dimension"),
+                 ("premise", 0, "kb:subspace"), ("premise", 1, "kb:subspace"),
+                 ("requires", 0, "kb:missing"), ("requires", 1, "notes:vector-space")],
                 [tuple(link) for link in links],
             )
             names = connection.execute("SELECT key, is_label FROM name WHERE uid = 'kb:subspace' ORDER BY key").fetchall()
             self.assertEqual([("linear subspace", 0), ("subspace", 1), ("子空间", 0)], [tuple(name) for name in names])
         finally:
             connection.close()
+
+
+    def test_a_foreign_record_has_no_lines_in_its_row(self) -> None:
+        self.kb.write_record(
+            "attention", "label: Attention\nkind: concept\nsource: https://example.com/paper\nrequires: [\"[[subspace]]\"]",
+            "Attention weighs values.", ["Quoted from the paper."],
+        )
+        report = index()
+        self.assertEqual([], report["bases"]["kb"]["unparseable"])
+        connection = open_read_only()
+        connection.row_factory = sqlite3.Row
+        try:
+            row = connection.execute("SELECT * FROM record WHERE uid = 'kb:attention'").fetchone()
+            self.assertEqual(("https://example.com/paper", 0, 0, ""),
+                             (row["source"], row["line_start"], row["line_end"], row["lines"]))
+            self.assertTrue(row["text"].endswith("> Quoted from the paper.\nhttps://example.com/paper"), row["text"])
+            self.assertEqual([("requires", 0, "kb:subspace")],
+                             [tuple(link) for link in connection.execute("SELECT role, pos, dst FROM link WHERE src = 'kb:attention'")])
+        finally:
+            connection.close()
+
+    def test_a_plain_value_makes_the_record_unparseable(self) -> None:
+        path = self.kb.write_record("plain", node("Plain", "1", extra="requires: [vector space]"), "P.", ["Title line"])
+        report = index()
+        [item] = report["bases"]["kb"]["unparseable"]
+        self.assertEqual(str(path), item["path"])
+        self.assertNotIn("kb:plain", [row[0] for row in dump()["record"]])
 
 
 class InvariantTest(IndexTestCase):
@@ -285,8 +314,8 @@ class InvariantTest(IndexTestCase):
 
     def test_understanding_changes_are_reported(self) -> None:
         index()
-        self.edit(self.subspace, "lines: 3", "lines: 3\nunderstanding: understood")
-        self.assertEqual([{"uid": "kb:subspace", "from": "unknown", "to": "understood"}], index()["understanding_changed"])
+        self.edit(self.subspace, "lines: 3", "lines: 3\nunderstanding: no")
+        self.assertEqual([{"uid": "kb:subspace", "from": "yes", "to": "no"}], index()["understanding_changed"])
 
     def test_deleted_files_and_unregistered_bases_lose_their_rows(self) -> None:
         index()
@@ -579,11 +608,11 @@ class EmbeddingTest(IndexTestCase):
 
     def test_embedding_failure_keeps_the_rest_of_the_report(self) -> None:
         index(embed=False)
-        self.edit(self.subspace, "lines: 3", "lines: 3\nunderstanding: understood")
+        self.edit(self.subspace, "lines: 3", "lines: 3\nunderstanding: no")
         self.without_retrieval_extra()
         report = index()
         self.assertIsNotNone(report["embedding_error"])
-        self.assertEqual([{"uid": "kb:subspace", "from": "unknown", "to": "understood"}], report["understanding_changed"])
+        self.assertEqual([{"uid": "kb:subspace", "from": "yes", "to": "no"}], report["understanding_changed"])
         self.assertEqual(1, report["bases"]["kb"]["parsed"])
 
     def test_rebuild_keeps_an_unavailable_base_and_loads_no_model(self) -> None:

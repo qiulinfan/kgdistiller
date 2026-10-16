@@ -54,8 +54,8 @@ class RetrieveTestCase(unittest.TestCase):
         self.kb.write_source("notes/b/c.txt", "\n".join(LINES) + "\n")
         self.kb.write_record(
             "measure-space",
-            node("Measure space", "2", extra='aliases: [测度空间]\nunderstanding: understood\n'
-                                          'requires: ["[[sigma-algebra]]", "[[measure]]", measurable space]'),
+            node("Measure space", "2", extra='aliases: [测度空间]\nunderstanding: no\n'
+                                          'requires: ["[[sigma-algebra]]", "[[measure]]", "[[measurable-space]]"]'),
             "三元组 (X, M, μ)。不要混淆。", ["A measure space"],
         )
         self.kb.write_record("measure", node("Measure", "3", extra="aliases: [测度]"), "A countably additive set function.", ["A measure"])
@@ -64,7 +64,7 @@ class RetrieveTestCase(unittest.TestCase):
         self.kb.write_record(
             "space-implies-probability",
             node("Measure space implies probability space", "5", kind="implies",
-                 extra='premise: ["[[measure-space]]"]\nconclusion: ["[[probability-space]]", total mass]\nepistemic: stated'),
+                 extra='premise: ["[[measure-space]]"]\nconclusion: ["[[probability-space]]", "[[notes:total-mass]]"]\nepistemic: stated'),
             "Normalizing the measure gives a probability space.", ["A probability space"],
         )
         self.kb.write_record("analysis", node("Analysis", "4", kind="theorem"), "测度论研究可测空间。", ["测度论"])
@@ -83,17 +83,18 @@ class SearchTest(RetrieveTestCase):
         self.assertEqual(1, top["ranks"]["name"])
         self.assertEqual(["lexical", "name"], list(top["ranks"]))
         self.assertEqual(
-            ["uid", "class", "kind", "label", "base", "source", "lines", "understanding", "epistemic", "gloss",
+            ["uid", "class", "kind", "label", "base", "source", "lines", "foreign", "understanding", "epistemic", "gloss",
              "ranks", "requires", "participants", "in", "truncated"],
             list(top),
         )
         self.assertEqual(
             {"class": "node", "kind": "definition", "label": "Measure space", "base": "kb", "source": "notes/a.txt",
-             "lines": "2-2", "understanding": "understood", "epistemic": None, "gloss": "三元组 (X, M, μ)。"},
-            {key: top[key] for key in ("class", "kind", "label", "base", "source", "lines", "understanding", "epistemic", "gloss")},
+             "lines": "2-2", "foreign": False, "understanding": "no", "epistemic": None, "gloss": "三元组 (X, M, μ)。"},
+            {key: top[key] for key in ("class", "kind", "label", "base", "source", "lines", "foreign", "understanding", "epistemic", "gloss")},
         )
         self.assertEqual(
-            [{"uid": "kb:sigma-algebra", "label": "σ-algebra"}, {"uid": "kb:measure", "label": "Measure"}, {"term": "measurable space"}],
+            [{"uid": "kb:sigma-algebra", "label": "σ-algebra"}, {"uid": "kb:measure", "label": "Measure"},
+             {"uid": "kb:measurable-space", "label": None}],
             top["requires"],
         )
         self.assertEqual({}, top["participants"])
@@ -105,7 +106,7 @@ class SearchTest(RetrieveTestCase):
         self.assertEqual("relation", relation["class"])
         self.assertEqual("stated", relation["epistemic"])
         self.assertEqual(
-            {"conclusion": [{"uid": "kb:probability-space", "label": None}, {"term": "total mass"}],
+            {"conclusion": [{"uid": "kb:probability-space", "label": None}, {"uid": "notes:total-mass", "label": None}],
              "premise": [{"uid": "kb:measure-space", "label": "Measure space"}]},
             relation["participants"],
         )
@@ -156,7 +157,8 @@ class SearchTest(RetrieveTestCase):
         self.assertEqual(["notes:measure"], uids(base=("notes",)))
         self.assertEqual(["kb:space-implies-probability"], uids(class_=("relation",)))
         self.assertEqual(["kb:measurement"], [item["uid"] for item in search("measurement reading", filters=Filters(kind=("concept",)))["results"]])
-        self.assertEqual(["kb:measure-space"], uids(understanding=("understood",)))
+        self.assertEqual(["kb:measure-space"], uids(understanding=("no",)))
+        self.assertNotIn("kb:measure-space", uids(understanding=("yes",)))
         self.assertEqual([], uids(source=("notes/b/",)))
         self.assertEqual(["kb:sigma-algebra"], [item["uid"] for item in search("family", filters=Filters(source=("notes/b",)))["results"]])
         both = set(uids(kind=("implies", "theorem")))
@@ -165,13 +167,13 @@ class SearchTest(RetrieveTestCase):
         with self.assertRaises(KnowledgeError):
             Filters(class_=("edge",))
         with self.assertRaises(KnowledgeError):
-            Filters(understanding=("mastered",))
+            Filters(understanding=("understood",))
 
     def test_link_lists_are_capped(self) -> None:
         values = ", ".join(f'"[[hub-{number}]]"' for number in range(14))
         self.kb.write_record("hub", node("Hub", "1", extra=f"requires: [{values}]"), "Hub.", ["Title"])
-        uses = ", ".join(f"term {number}" for number in range(15))
-        self.kb.write_record("example-of-hub", node("Example of hub", "1", kind="example", extra=f"uses: [{uses}]\nsetting: [plane]"), "E.", ["Title"])
+        uses = ", ".join(f'"[[term-{number}]]"' for number in range(15))
+        self.kb.write_record("example-of-hub", node("Example of hub", "1", kind="example", extra=f'uses: [{uses}]\nsetting: ["[[plane]]"]'), "E.", ["Title"])
         for number in range(13):
             self.kb.write_record(f"needs-hub-{number}", node(f"Needs {number}", "1", extra='requires: ["[[hub]]"]'), "N.", ["Title"])
         index()
@@ -344,21 +346,20 @@ class DenseLaneTest(RetrieveTestCase):
 
 
 class ResolveTest(RetrieveTestCase):
-    def test_senses_mentions_and_pending(self) -> None:
+    def test_senses_and_mentions(self) -> None:
         result = resolve(["Measure", "measurable space"])
         self.assertEqual(["terms", "lag"], list(result))
         measure, measurable = result["terms"]
+        self.assertEqual(["term", "key", "senses", "mentions"], list(measure))
         self.assertEqual("measure", measure["key"])
         self.assertEqual(["kb:measure", "notes:measure"], [item["uid"] for item in measure["senses"]])
         self.assertEqual(
             {"uid": "kb:measure", "label": "Measure", "kind": "definition", "class": "node", "base": "kb",
-             "source": "notes/a.txt", "lines": "3-3", "gloss": "A countably additive set function."},
+             "source": "notes/a.txt", "lines": "3-3", "foreign": False, "gloss": "A countably additive set function."},
             measure["senses"][0],
         )
         self.assertEqual(["kb:measure-space", "kb:space-implies-probability"], [item["uid"] for item in measure["mentions"]])
-        self.assertEqual([], measure["pending"])
-        self.assertEqual([], measurable["senses"])
-        self.assertEqual([{"owner": "kb:measure-space", "role": "requires", "term": "measurable space"}], measurable["pending"])
+        self.assertEqual(([], []), (measurable["senses"], measurable["mentions"]))
 
     def test_cjk_terms_match_substrings(self) -> None:
         term = resolve(["测度"])["terms"][0]
@@ -380,13 +381,14 @@ class GetTest(RetrieveTestCase):
         relation, node_record = result["records"]
         self.assertEqual(
             [{"role": "conclusion", "pos": 0, "uid": "kb:probability-space", "label": None, "exists": False},
-             {"role": "conclusion", "pos": 1, "term": "total mass"},
+             {"role": "conclusion", "pos": 1, "uid": "notes:total-mass", "label": None, "exists": False},
              {"role": "premise", "pos": 0, "uid": "kb:measure-space", "label": "Measure space", "exists": True}],
             relation["out"],
         )
         self.assertEqual(["A probability space"], relation["evidence"])
         self.assertEqual("Normalizing the measure gives a probability space.", relation["body"])
         self.assertEqual("", relation["search_terms"])
+        self.assertEqual((False, "yes"), (relation["foreign"], relation["understanding"]))
         self.assertEqual(["测度空间"], node_record["aliases"])
         self.assertEqual("requires", node_record["out"][-1]["role"])
         self.assertEqual(
@@ -479,7 +481,7 @@ class GraphTestCase(unittest.TestCase):
         self.kb.write_source("notes/sub/h.txt", "\n".join(SUB_LINES) + "\n")
         self.kb.write_source("notes/g.txt", "Notes fixture\nX in notes.\n", base="notes")
         records = [
-            ("a", "A", 2, "definition", 'requires: ["[[b]]", loose term]'),
+            ("a", "A", 2, "definition", 'requires: ["[[b]]", "[[loose-term]]"]'),
             ("b", "B", 3, "definition", 'requires: ["[[a]]"]'),
             ("c", "C", 4, "definition", 'requires: ["[[d]]"]'),
             ("d", "D", 5, "definition", ""),
@@ -504,8 +506,8 @@ class GraphTestCase(unittest.TestCase):
         self.assertEqual({}, {name: counts["unparseable"] for name, counts in report["bases"].items() if counts["unparseable"]})
 
 
-def edge(source: str, role: str, target: str, depth: int, *, term: bool = False) -> dict[str, object]:
-    return {"from": source, "role": role, ("term" if term else "to"): target, "depth": depth}
+def edge(source: str, role: str, target: str, depth: int) -> dict[str, object]:
+    return {"from": source, "role": role, "to": target, "depth": depth}
 
 
 class NeighborsTest(GraphTestCase):
@@ -513,13 +515,14 @@ class NeighborsTest(GraphTestCase):
         result = neighbors(["kb:a"], roles=("requires",), direction="out", depth=3)
         self.assertEqual(["edges", "records", "missing", "lag"], list(result))
         self.assertEqual(
-            [edge("kb:a", "requires", "kb:b", 1), edge("kb:a", "requires", "loose term", 1, term=True),
+            [edge("kb:a", "requires", "kb:b", 1), edge("kb:a", "requires", "kb:loose-term", 1),
              edge("kb:b", "requires", "kb:a", 2)],
             result["edges"],
         )
         self.assertEqual(
             {"kb:a": {"label": "A", "kind": "definition", "class": "node", "exists": True},
-             "kb:b": {"label": "B", "kind": "definition", "class": "node", "exists": True}},
+             "kb:b": {"label": "B", "kind": "definition", "class": "node", "exists": True},
+             "kb:loose-term": {"label": None, "kind": None, "class": None, "exists": False}},
             result["records"],
         )
         self.assertEqual([], result["missing"])
@@ -528,10 +531,10 @@ class NeighborsTest(GraphTestCase):
     def test_depth_one_cuts_the_closure(self) -> None:
         result = neighbors(["kb:a"], roles=("requires",), depth=1)
         self.assertEqual(
-            [edge("kb:a", "requires", "kb:b", 1), edge("kb:a", "requires", "loose term", 1, term=True)],
+            [edge("kb:a", "requires", "kb:b", 1), edge("kb:a", "requires", "kb:loose-term", 1)],
             result["edges"],
         )
-        self.assertEqual(["kb:a", "kb:b"], list(result["records"]))
+        self.assertEqual(["kb:a", "kb:b", "kb:loose-term"], list(result["records"]))
 
     def test_claim_closure_across_relation_to_relation_links(self) -> None:
         citing = neighbors(["kb:x"], direction="in")
@@ -583,8 +586,8 @@ class BrowseTest(GraphTestCase):
         result = browse()
         self.assertEqual(["bases", "lag"], list(result))
         self.assertEqual(
-            [{"name": "kb", "available": True, "records": 15, "relations": 4, "pending": 1},
-             {"name": "notes", "available": True, "records": 1, "relations": 0, "pending": 0}],
+            [{"name": "kb", "available": True, "records": 15, "relations": 4},
+             {"name": "notes", "available": True, "records": 1, "relations": 0}],
             result["bases"],
         )
         self.kb.roots["notes"].rename(self.kb.roots["notes"].with_name("moved"))
@@ -596,19 +599,19 @@ class BrowseTest(GraphTestCase):
         root = browse("kb")
         self.assertEqual(["base", "dir", "entries", "lag"], list(root))
         self.assertEqual(("kb", ""), (root["base"], root["dir"]))
-        self.assertEqual([{"path": "notes/", "type": "dir", "records": 15, "relations": 4, "pending": 1}], root["entries"])
+        self.assertEqual([{"path": "notes/", "type": "dir", "records": 15, "relations": 4}], root["entries"])
         directory = browse("kb:notes/")
         self.assertEqual("notes/", directory["dir"])
         self.assertEqual(
-            [{"path": "notes/g.txt", "type": "source", "records": 14, "relations": 4, "pending": 1},
-             {"path": "notes/sub/", "type": "dir", "records": 1, "relations": 0, "pending": 0}],
+            [{"path": "notes/g.txt", "type": "source", "records": 14, "relations": 4},
+             {"path": "notes/sub/", "type": "dir", "records": 1, "relations": 0}],
             directory["entries"],
         )
         self.assertEqual([], browse("kb:elsewhere/")["entries"])
 
-    def test_source_file_by_kind_with_pending_terms(self) -> None:
+    def test_source_file_by_kind(self) -> None:
         result = browse("kb:notes/g.txt")
-        self.assertEqual(["base", "source", "kinds", "pending", "lag"], list(result))
+        self.assertEqual(["base", "source", "kinds", "lag"], list(result))
         self.assertEqual(
             ["concept", "contrasts", "definition", "equivalent", "example", "implies", "theorem"],
             [group["kind"] for group in result["kinds"]],
@@ -619,16 +622,15 @@ class BrowseTest(GraphTestCase):
             [record["uid"] for record in definitions],
         )
         self.assertEqual(
-            {"uid": "kb:a", "label": "A", "class": "node", "lines": "2-2", "understanding": "unknown", "gloss": "A.",
-             "links": {"requires": [{"uid": "kb:b", "label": "B"}, {"term": "loose term"}]}},
+            {"uid": "kb:a", "label": "A", "class": "node", "lines": "2-2", "understanding": "yes", "gloss": "A.",
+             "links": {"requires": [{"uid": "kb:b", "label": "B"}, {"uid": "kb:loose-term", "label": None}]}},
             definitions[0],
         )
         example = next(group["records"][0] for group in result["kinds"] if group["kind"] == "example")
         self.assertEqual(
             {"setting": [{"uid": "kb:z", "label": None}], "uses": [{"uid": "kb:x", "label": "X"}]}, example["links"]
         )
-        self.assertEqual([{"term": "loose term", "owners": [{"uid": "kb:a", "role": "requires"}]}], result["pending"])
-        self.assertEqual({"base": "kb", "source": "notes/none.txt", "kinds": [], "pending": [], "lag": NO_LAG},
+        self.assertEqual({"base": "kb", "source": "notes/none.txt", "kinds": [], "lag": NO_LAG},
                          browse("kb:notes/none.txt"))
 
     def test_a_kind_filter_lists_records_with_every_link(self) -> None:
@@ -636,7 +638,7 @@ class BrowseTest(GraphTestCase):
         self.assertEqual(["records", "lag"], list(result))
         self.assertEqual(
             [{"uid": "kb:r2", "label": "X contrasts with Y", "kind": "contrasts", "class": "relation", "base": "kb",
-              "source": "notes/g.txt", "lines": "9-9", "understanding": "unknown", "epistemic": None,
+              "source": "notes/g.txt", "lines": "9-9", "understanding": "yes", "epistemic": None,
               "gloss": "X contrasts with Y.",
               "links": {"contrast": [{"uid": "kb:y", "label": "Y"}], "subject": [{"uid": "kb:x", "label": "X"}],
                         "witness": [{"uid": "kb:r1", "label": "X implies Y"}]}}],
@@ -658,12 +660,12 @@ class BrowseTest(GraphTestCase):
     def test_a_class_filter_changes_the_counts(self) -> None:
         relations = Filters(class_=("relation",))
         self.assertEqual(
-            [{"name": "kb", "available": True, "records": 4, "relations": 4, "pending": 0},
-             {"name": "notes", "available": True, "records": 0, "relations": 0, "pending": 0}],
+            [{"name": "kb", "available": True, "records": 4, "relations": 4},
+             {"name": "notes", "available": True, "records": 0, "relations": 0}],
             browse(filters=relations)["bases"],
         )
         self.assertEqual(
-            [{"path": "notes/g.txt", "type": "source", "records": 4, "relations": 4, "pending": 0}],
+            [{"path": "notes/g.txt", "type": "source", "records": 4, "relations": 4}],
             browse("kb:notes/", filters=relations)["entries"],
         )
 
@@ -698,7 +700,7 @@ class PackTest(GraphTestCase):
         self.assertEqual(
             [{"reason": "not-packed", "from": "kb:c", "role": "requires", "uid": "kb:d"},
              {"reason": "not-packed", "from": "kb:a", "role": "requires", "uid": "kb:b"},
-             {"reason": "pending", "from": "kb:a", "role": "requires", "term": "loose term"}],
+             {"reason": "missing-target", "from": "kb:a", "role": "requires", "uid": "kb:loose-term"}],
             shallow["gaps"],
         )
 
@@ -715,7 +717,7 @@ class PackTest(GraphTestCase):
         self.assertEqual(
             [{"reason": "unknown-uid", "uid": "kb:nothing"},
              {"reason": "not-packed", "from": "kb:a", "role": "requires", "uid": "kb:b"},
-             {"reason": "pending", "from": "kb:a", "role": "requires", "term": "loose term"},
+             {"reason": "missing-target", "from": "kb:a", "role": "requires", "uid": "kb:loose-term"},
              {"reason": "missing-target", "from": "kb:e1", "role": "setting", "uid": "kb:z"},
              {"reason": "not-packed", "from": "kb:e1", "role": "uses", "uid": "kb:x"}],
             result["gaps"],
@@ -750,6 +752,85 @@ class HomonymTest(GraphTestCase):
         self.assertEqual(["kb:linear-probing-2", "kb:linear-probing"], [item["uid"] for item in term["senses"]])
         self.assertEqual(["12-12", "13-13"], [item["lines"] for item in term["senses"]])
         self.assertEqual(["kb:linear-probing-hash-table"], [item["uid"] for item in term["mentions"]])
+
+
+PAPER = "https://example.com/attention"
+BLOG = "https://example.org/blog/post?id=7"
+
+
+class ForeignTest(unittest.TestCase):
+    """Records whose source is a web address, beside a local record."""
+
+    def setUp(self) -> None:
+        self.kb = make_record_home(self)
+        self.kb.write_source("notes/a.txt", "\n".join(LINES) + "\n")
+        self.kb.write_record("measure", node("Measure", "3"), "A countably additive set function.", ["A measure"])
+        self.kb.write_record(
+            "attention", f"label: Attention\nkind: concept\nsource: {PAPER}\nrequires: [\"[[measure]]\"]",
+            "Attention weighs values by similarity.", ["Attention weighs values."],
+        )
+        self.kb.write_record(
+            "attention-implies-measure",
+            f"label: Attention implies measure\nkind: implies\nsource: {PAPER}\n"
+            'premise: ["[[attention]]"]\nconclusion: ["[[measure]]"]',
+            "Attention gives a measure.", ["gives a measure"],
+        )
+        self.kb.write_record("blog-term", f"label: Blog term\nkind: concept\nsource: {BLOG}", "A blog term.", ["From a blog."])
+        report = index()
+        self.assertEqual([], report["bases"]["kb"]["unparseable"])
+
+    def test_search_marks_foreign_records(self) -> None:
+        results = {item["uid"]: item for item in search("attention measure")["results"]}
+        self.assertEqual((True, PAPER, ""), (results["kb:attention"]["foreign"], results["kb:attention"]["source"],
+                                             results["kb:attention"]["lines"]))
+        self.assertFalse(results["kb:measure"]["foreign"])
+
+    def test_resolve_summaries_mark_foreign_records(self) -> None:
+        term = resolve(["attention"])["terms"][0]
+        self.assertEqual(
+            {"uid": "kb:attention", "label": "Attention", "kind": "concept", "class": "node", "base": "kb",
+             "source": PAPER, "lines": "", "foreign": True, "gloss": "Attention weighs values by similarity."},
+            term["senses"][0],
+        )
+        self.assertEqual([(True, "kb:attention-implies-measure")],
+                         [(item["foreign"], item["uid"]) for item in term["mentions"]])
+
+    def test_get_has_no_source_text_for_a_foreign_record(self) -> None:
+        foreign, local = get(["kb:attention", "kb:measure"], source_lines=1)["records"]
+        self.assertEqual((True, PAPER, "", None), (foreign["foreign"], foreign["source"], foreign["lines"], foreign["source_text"]))
+        self.assertEqual(["Attention weighs values."], foreign["evidence"])
+        self.assertEqual([{"role": "requires", "pos": 0, "uid": "kb:measure", "label": "Measure", "exists": True}], foreign["out"])
+        self.assertFalse(local["foreign"])
+        self.assertIsNotNone(local["source_text"])
+
+    def test_browse_lists_web_addresses_at_the_base_root(self) -> None:
+        self.assertEqual([{"name": "kb", "available": True, "records": 4, "relations": 1}], browse()["bases"])
+        self.assertEqual(
+            [{"path": PAPER, "type": "foreign", "records": 2, "relations": 1},
+             {"path": BLOG, "type": "foreign", "records": 1, "relations": 0},
+             {"path": "notes/", "type": "dir", "records": 1, "relations": 0}],
+            browse("kb")["entries"],
+        )
+        self.assertEqual([{"path": "notes/a.txt", "type": "source", "records": 1, "relations": 0}],
+                         browse("kb:notes/")["entries"])
+
+    def test_browse_lists_a_foreign_source_by_kind(self) -> None:
+        result = browse(f"kb:{PAPER}")
+        self.assertEqual(["base", "source", "kinds", "lag"], list(result))
+        self.assertEqual(("kb", PAPER), (result["base"], result["source"]))
+        self.assertEqual(
+            [("concept", ["kb:attention"]), ("implies", ["kb:attention-implies-measure"])],
+            [(group["kind"], [record["uid"] for record in group["records"]]) for group in result["kinds"]],
+        )
+        self.assertEqual("", result["kinds"][0]["records"][0]["lines"])
+        self.assertEqual(["kb:blog-term"], [record["uid"] for group in browse(f"kb:{BLOG}")["kinds"] for record in group["records"]])
+
+    def test_neighbors_and_pack_follow_foreign_links(self) -> None:
+        self.assertEqual(
+            [{"from": "kb:attention", "role": "requires", "to": "kb:measure", "depth": 1}],
+            neighbors(["kb:attention"], roles=("requires",), direction="out")["edges"],
+        )
+        self.assertEqual(["kb:attention", "kb:measure", "kb:attention-implies-measure"], packed(pack(["kb:attention"])))
 
 
 if __name__ == "__main__":
