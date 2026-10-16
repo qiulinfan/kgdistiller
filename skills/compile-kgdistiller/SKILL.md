@@ -11,12 +11,12 @@ knowledge model's conflict rules ("Conflicts, updates and relocation").
 Re-admitting a rewritten, renamed, merged or split note is the same request.
 Every result is a draft that the owner reviews, revises and accepts
 (`kgd accept`, or the Obsidian Capture view); never run `kgd accept` and never
-edit an accepted record.
+edit an accepted record, except to move its citation with `kgd relocate`.
 
 Work in batches, not item by item: one lookup turn for the whole candidate
-batch, one turn that writes every draft, and one command that lists the
-drafts with their problems. Look again only for a candidate whose lookup is
-genuinely ambiguous.
+batch, one turn that writes every draft, and one command that relocates the
+moved citations and lists the drafts with their problems. Look again only for
+a candidate whose lookup is genuinely ambiguous.
 
 Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 
@@ -66,8 +66,10 @@ names among the drafts awaiting the owner. Run a `search` (several in the same
 turn) only for the candidates `resolve` found no sense for, to catch the same
 knowledge point under another name or language; `kgd get UID` only when a
 returned gloss leaves the comparison open. Compare definitions and conditions
-yourself. The same name is not the same concept: a homonym gets its own
-record. A concept this source did not define or originate is not a node here,
+yourself. A label names one concept across every base: a candidate of
+another meaning whose name a record or draft already has is new, and its
+label takes this source's name, `Label (FILE NAME)`, the file's name without
+its extension. A concept this source did not define or originate is not a node here,
 even when the source explains it: link its record or draft, or leave it out of
 the values and list it. Leave ambiguous candidates out and list them. If
 `lag.changed_files` is above 0, run `kgd index --no-embed` first and repeat the
@@ -77,11 +79,12 @@ you which recorded citations no longer verify.
 
 Classify every candidate:
 
-- **new**: no record or draft holds this knowledge point, or only a homonym
-  does; it becomes a new draft (step 4).
+- **new**: no record or draft holds this knowledge point, or only one of
+  another meaning with the same name does; it becomes a new draft (step 4).
 - **unchanged**: a record or draft holds it with the same meaning. Draft
   nothing, unless that record's citation no longer verifies and this passage
-  states it: then draft its replacement with the citation moved here.
+  states it: then move the citation here with
+  `kgd relocate UID - <<'PASSAGE'` and the passage's text (step 5).
 - **changed**: a record holds it with a different meaning. Draft its
   replacement from this passage, keeping the id and `understanding`, and
   report whether the new definition is more general, corrects the recorded
@@ -128,15 +131,21 @@ scope:
 Drafts may link accepted records and each other. Leave `understanding` out
 (it is `yes`) unless the owner said they do not understand an item.
 
-## 5. List the drafts, in one command
+## 5. Relocate moved citations and list the drafts, in one command
 
 ```sh
+kgd relocate UID - <<'PASSAGE'
+THE PASSAGE THAT STATES IT
+PASSAGE
 kgd drafts --source SOURCE
 ```
 
-Every draft you wrote must have empty `problems`: they are what `kgd accept`
-would refuse. Fix the drafts and run the command again. Pre-existing problems
-of other drafts are reported, not repaired.
+Add one `kgd relocate` for each unchanged knowledge point whose citation no
+longer verifies, with the passage of this source that states it; it rewrites
+only the record's `source`, `lines` and, when needed, Evidence. Every draft
+you wrote must have empty `problems`: they are what `kgd accept` would refuse.
+Fix the drafts and run the command again. Pre-existing problems of other
+drafts are reported, not repaired.
 
 ## 6. Report
 
@@ -145,7 +154,7 @@ Report the following:
 - the scope and actual coverage;
 - the new drafts written;
 - the unchanged knowledge points with their records, marking those whose
-  citation moves by a replacement draft;
+  citation `kgd relocate` moved;
 - the replacement drafts, each with its reason (more general, a correction,
   or a conflict) and the old and new `source:lines`, and any relocation to
   another base;

@@ -94,10 +94,10 @@ Then verify that:
   packed participants, reports every gap reason, and its `bytes` equals the
   UTF-8 length of the compact JSON of its records; `resolve` separates
   homonyms within and across bases from mentions; and the MCP server exposes
-  exactly the seven read-only tools;
+  exactly the eight read-only tools;
 - the embedding adapter takes a model id only and has no reranker, default
   model or revision pin; at most one embedding process runs per user;
-- the home lock serializes `accept`, `check --fix-lines`, `base add|rm` and
+- the home lock serializes `accept`, `relocate`, `check --fix-lines`, `base add|rm` and
   `embedding set|off`: a held lock makes each fail without writing; `accept`
   replaces a record only with the replacement draft it is given, and a refusal
   writes nothing; and `--fix-lines` skips a file that changed during the run;

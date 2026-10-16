@@ -29,8 +29,9 @@ owner. Never edit a source, record or draft, never run accept or
 `check --fix-lines`, and never promote
 lexical, dense (embedding), name, translation, acronym or link similarity into
 identity. Records with stale evidence are still returned; report that when an
-answer depends on the cited passage. Keep same-named records of different
-papers or bases distinct unless an explicit relation makes them equivalent.
+answer depends on the cited passage. A label names one record; aliases and
+translations may be shared, so keep records distinct unless an explicit
+relation makes them equivalent.
 Match user-facing explanations and handoffs to the user's language unless
 requested otherwise; keep commands, identifiers, structured keys, and raw
 errors unchanged.

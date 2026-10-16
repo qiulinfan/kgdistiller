@@ -358,7 +358,9 @@ A measure space is defined over a sigma-algebra.
 ```
 
 - `label`, `kind`, `source` (path relative to the base root) and `lines`
-  (`a` or `a-b`) are required. A foreign record's `source` is the web address
+  (`a` or `a-b`) are required. A label names one concept across every base:
+  a concept of another meaning whose name is taken adds its source's file
+  name, as in `Autoencoder (Autoencoder&VAE)`. A foreign record's `source` is the web address
   of the outside work it quotes, and it has no `lines`. `aliases`,
   `understanding` (`yes` or `no`, default `yes`), `epistemic` and `requires`
   are optional; `tags` and `cssclasses` are allowed and ignored.
@@ -389,6 +391,8 @@ rules.
 | `kgd embedding`, `embedding set MODEL`, `embedding off` | Show the home's embedding model and its vectors, download and check a model and use it, or turn the dense lane off. |
 | `kgd check [--base B] [--fix-lines]` | Validate the home, records and drafts; report moved or stale evidence. |
 | `kgd source SOURCE` | Print a source's document-type profile and the records and drafts citing it. |
+| `kgd find TEXT [--base B] [--source PREFIX]` | Find a passage or a name in the registered sources, whatever its line breaks and hidden markup. |
+| `kgd relocate TARGET TEXT` | Move a record's source, lines and evidence to the only passage of its base that holds the text. |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | List the drafts with their links and what `kgd accept` would refuse; writes nothing. |
 | `kgd accept [--dry-run] DRAFT...` | Admit drafts as new records or replacements of the records with their ids, all or nothing, then index and embed them. |
 | `kgd index [--rebuild] [--no-embed]` | Bring the database up to date with the record files; `--no-embed` refreshes only the keyword index. |
@@ -426,12 +430,13 @@ give, it refuses and changes nothing, with a message such as
 
 ## Agent integration
 
-Four Skills cover the write and read workflows:
+Five Skills cover the write and read workflows:
 
 | Skill | What it does |
 |---|---|
 | `capture-kgdistiller` | Drafts one record while you read: a node, a relation or an example, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
 | `compile-kgdistiller` | Drafts records from part or all of a registered source, following its document type. Knowledge already recorded is ignored, or drafted as a replacement, by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
+| `relocate-kgdistiller` | Moves one record to the passage you paste, after a source was edited or renamed: it finds the record from the knowledge's name and runs `kgd relocate`. |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |
 | `deploy-kgdistiller` | Installs, registers bases, sources, types and the model, then checks, indexes, installs the plugin and links the runtimes. |
 

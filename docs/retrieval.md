@@ -569,7 +569,7 @@ instead packs both nodes and appends that relation as shared, with no gaps.
 ## MCP server: `kgd mcp`
 
 `kgd mcp` takes no arguments. It is a read-only stdio server over the whole
-home with seven tools that mirror the CLI and return the same JSON. Its stdin
+home with eight tools that mirror the CLI and return the same JSON. Its stdin
 and stdout, like every `kgd` command's output, are UTF-8 whatever the locale
 or Windows code page. A `query` that is empty after trimming is refused, as in
 `kgd search`.
@@ -583,11 +583,13 @@ or Windows code page. A `query` that is empty after trimming is refused, as in
 | `kg_browse` | `handle` (optional), the filters |
 | `kg_pack` | `uids` (required, 1–128), `budget` (1–4194304, default 60000), `requires_depth` (0–32, default 1), the filters |
 | `kg_drafts` | `base`, `source` (path prefixes) and `names` (arrays); the JSON of `kgd drafts` ([model.md](model.md#kgd-drafts---base-b---source-prefix---name-name)) |
+| `kg_find` | `text` (required), `base`, `source` (path prefixes, arrays), `limit` (1–200, default 20); the JSON of `kgd find` ([model.md](model.md#kgd-find-text---base-b---source-prefix---limit-20)) |
 
 Inputs are bounded and unknown arguments are rejected. Each retrieval call
 opens a fresh read-only connection, so it sees every `kgd index` that
 committed since the previous call; `kg_drafts` reads the draft files instead,
-which the database never holds, and takes no lock. The server loads no
+which the database never holds, and takes no lock, and `kg_find` reads the
+registered sources. The server loads no
 model: `kg_search`'s dense lane asks the user's one embedding process.
 `no_dense` skips the dense lane, as `--no-dense` does. A missing database is a
 tool error that says to run `kgd index`. Responses are capped at 8 MiB; the

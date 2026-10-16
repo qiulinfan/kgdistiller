@@ -229,7 +229,7 @@ A measure space is defined over a sigma-algebra.
 > F is a sigma-algebra on X
 ```
 
-- 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。foreign 记录的 `source` 是它引用的外部作品的网页地址，没有 `lines`。可选：`aliases`、`understanding`（`yes` 或 `no`，默认 `yes`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
+- 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。label 在所有 base 中只指一个概念：名字已被占用、意义不同的新概念，在名字后加上来源文件名，例如 `Autoencoder (Autoencoder&VAE)`。foreign 记录的 `source` 是它引用的外部作品的网页地址，没有 `lines`。可选：`aliases`、`understanding`（`yes` 或 `no`，默认 `yes`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
 - 其余键都是 role。至少有一个非空 role 列表的记录是 relation，否则是 node。一条 relation 的 role 数量不限。
 - 列表里的值都是链接：`"[[id]]"`、`"[[base:id]]"` 或 `"[[.knowledge/entries/id]]"`。库里还没有的概念，先单独入库（从本地 source，或作为 foreign 知识），再链接。
 - 正文依次是说明文字、可选的 `## Search terms` 小节，最后是 `## Evidence` 小节，内容是从被引用行（或网页）逐字摘出的引文。
@@ -245,6 +245,8 @@ agent 只写草稿，由你确认。已接受的记录可以手动原地修改�
 | `kgd embedding`、`embedding set MODEL`、`embedding off` | 显示 home 的 embedding 模型和向量状态；下载、检查并启用一个模型；或关闭 dense 检索。 |
 | `kgd check [--base B] [--fix-lines]` | 校验 home、记录和草稿，报告移动或过期的 evidence。 |
 | `kgd source SOURCE` | 打印某个 source 的 document type profile，以及引用它的记录和草稿。 |
+| `kgd find TEXT [--base B] [--source PREFIX]` | 在已注册的 source 里查找一段文字或一个名字，不受换行和阅读视图隐藏的标记影响。 |
+| `kgd relocate TARGET TEXT` | 把一条记录的 source、行号和引文移到它所在 base 里唯一包含这段文字的段落。 |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | 列出草稿、它们的链接，以及 `kgd accept` 会拒绝的原因；不写任何东西。 |
 | `kgd accept [--dry-run] DRAFT...` | 把草稿转为新记录，或替换 id 相同的已接受记录，全部成功或全部不改，然后建索引并算向量。 |
 | `kgd index [--rebuild] [--no-embed]` | 让数据库与记录文件同步；`--no-embed` 只刷新关键词索引。 |
@@ -273,12 +275,13 @@ kgd accept .knowledge/drafts/measure-space.md
 
 ## Agent 集成
 
-四个 Skill 覆盖写入和查询流程：
+五个 Skill 覆盖写入和查询流程：
 
 | Skill | 作用 |
 |---|---|
 | `capture-kgdistiller` | 边读边把一条知识起草成草稿（node、relation 或例子），带上引文；借用的概念则从其出处网页起草成 foreign 知识。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
 | `compile-kgdistiller` | 按 document type 从已注册 source 的一部分或全部起草草稿。已记录的知识按 [docs/model.md](docs/model.md#conflicts-updates-and-relocation) 的冲突规则忽略，或起草替换草稿。 |
+| `relocate-kgdistiller` | source 改动或改名后，把一条记录移到你贴出的段落：按知识名找到记录，再运行 `kgd relocate`。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |
 | `deploy-kgdistiller` | 安装 kgdistiller，注册 base、source、document type 和模型，然后检查、建索引、安装插件、链接 runtime。 |
 

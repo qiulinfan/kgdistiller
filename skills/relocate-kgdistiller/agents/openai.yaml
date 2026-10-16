@@ -1,0 +1,4 @@
+interface:
+  display_name: "Relocate Knowledge"
+  short_description: "Move a record's citation to a passage you give"
+  default_prompt: "Use $relocate-kgdistiller to move this knowledge's citation to the passage I paste."

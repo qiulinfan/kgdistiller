@@ -11,7 +11,7 @@ fix; they require an explicit release boundary.
 kgdistiller is a local, single-user engine. It validates bounded registered
 paths, rejects traversal, symlinked knowledge trees and unsafe source and
 record paths, and bounds MCP inputs and responses. Writers that change
-knowledge or the registry (`accept`, `check --fix-lines`,
+knowledge or the registry (`accept`, `relocate`, `check --fix-lines`,
 `base add|rm`, `embedding set|off`) serialize on the dedicated `$KGDISTILLER_HOME/lock` file; no
 data file is ever locked or truncated, and `accept` replaces a record only with the replacement draft given to it.
 MCP is read-only. kgdistiller has no web server and no publishing surface, and

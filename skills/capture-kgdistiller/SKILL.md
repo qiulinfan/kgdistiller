@@ -50,14 +50,19 @@ nothing: re-embedding is the owner's call.
 
 ## 2. Decide
 
-The same name is not the same concept; compare definitions and conditions.
+Compare definitions and conditions, not names. A label names one concept
+across every base: when a record or draft has the item's name but means
+something else, the item is new and its label takes its source's name,
+`Label (source)` (the file's name without its extension, or a web page's last
+path segment).
 
-- **new**: no record or draft holds this knowledge point, or only a homonym
-  does.
+- **new**: no record or draft holds this knowledge point, or only one of
+  another meaning with the same name does.
 - **unchanged**: a record or draft holds it with the same meaning. Write
   nothing, unless that record's citation no longer verifies and this passage
-  states the item: then draft its replacement (step 3) with `source`, `lines`
-  and Evidence moved here.
+  states the item: then move the citation here with
+  `kgd relocate UID - <<'PASSAGE'` and the selected text, which rewrites only
+  its `source`, `lines` and, when needed, Evidence.
 - **changed**: a record holds it with a different meaning. Draft its
   replacement from this passage, keeping its id and `understanding`, and say
   whether this definition is more general, corrects the recorded one, or

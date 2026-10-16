@@ -483,8 +483,8 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   line with the agent's reason: already recorded, already a draft, a borrowed
   concept for which no page was found (the lookup sidebar then shows what
   Find sources found), the proposed record of a passage that changes a record
-  of another base, or a passage that does not state the record it was to
-  localize.
+  of another base, a localized record, or a passage that does not state the
+  record it was to localize.
 - The left of the view lists the sources the drafts cite, each by its file
   name with the number of its drafts. Sources that share a file name get one
   more parent folder each until their names differ, the absolute path telling
@@ -524,16 +524,14 @@ and holding the command key finds the foreign record; **Localize here** on it,
 or **Localize to selection** on a foreign draft, starts the agent in the
 Capture view. One model call at low reasoning reads the record's statement and
 evidence and the numbered passage around the selection, and either declines,
-when the passage is about something else or means it differently, or gives
-the passage's quotes that state it with their lines, and the statement in the
-passage's wording when it should follow it. The plugin places the quotes as
-Capture does and writes the record again with the same id, its other fields
-kept (values, understanding, search terms; the epistemic label only when the
-local source's type allows it), citing the local source: a new draft that
-replaces an accepted record when accepted, or the rewritten draft, restored
-when `kg_drafts` would refuse the result. A record of another base, or one
-whose kind the local source's type lacks, is not localized; moving a record
-across bases is the compile Skill's relocation.
+when the passage is about something else or means it differently, or copies
+the sentences that state it. The plugin then runs `kgd relocate` on the record
+(or the draft's file) with those sentences, limited to the selected source,
+which rewrites only its `source`, `lines` and Evidence; a refusal goes back to
+the model. The record keeps everything else and stays accepted, or the draft
+stays a draft. A record of another base, or one whose kind the local source's
+type lacks, is not localized; moving a record across bases is the compile
+Skill's relocation.
 
 ## Not yet built
 

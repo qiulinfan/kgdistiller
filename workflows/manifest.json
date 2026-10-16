@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-workflows-v1",
   "product": "kgdistiller",
-  "version": 7,
+  "version": 8,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -25,6 +25,10 @@
     {
       "name": "deploy-kgdistiller",
       "path": "skills/deploy-kgdistiller"
+    },
+    {
+      "name": "relocate-kgdistiller",
+      "path": "skills/relocate-kgdistiller"
     },
     {
       "name": "query-kgdistiller",
@@ -63,6 +67,18 @@
         {
           "id": "compile",
           "skill": "compile-kgdistiller",
+          "agent": null,
+          "mode": "write"
+        }
+      ]
+    },
+    {
+      "id": "relocate-knowledge",
+      "description": "Move one record's citation to a passage the owner gives: find the record from the knowledge's name in one lookup turn, then run kgd relocate with the passage's text, which finds it in the registered sources and rewrites only the record's source, lines and, when needed, Evidence.",
+      "steps": [
+        {
+          "id": "relocate",
+          "skill": "relocate-kgdistiller",
           "agent": null,
           "mode": "write"
         }

@@ -177,8 +177,9 @@ each:
 
 Names, translations and aliases are retrieval evidence only. Read the bounded
 definitions before calling a hit `matched`. Each concept has one record, owned
-by the source that defines or originates it, so same-named records of two
-papers or bases are different concepts with different definitions. A source
+by the source that defines or originates it, and a label names one record: a
+concept of another meaning with the same name carries its source's name,
+`Label (source)`. Aliases are shared freely. A source
 that only uses a concept links that record; a concept nothing records may be
 captured as foreign knowledge from the work that originates it.
 

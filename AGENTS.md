@@ -43,13 +43,18 @@
 - Every admission is a draft the owner accepts (owner, 2026-10-15; docs/model.md
   "Ingestion"). Agents, Skills and the plugin's agent write drafts only, new
   records and replacements alike, and never run `kgd accept` or edit an
-  accepted record, except the link rewrites a relocation, merge or split the
-  owner accepted requires. `kgd accept` creates a new record with `os.link`
+  accepted record, except `kgd relocate`, which moves where a record cites
+  without changing what it says (owner, 2026-10-15: sources change and
+  nothing follows them; the relocate Skill moves a record to a passage the
+  owner gives), and the link rewrites a relocation across bases, a merge or a
+  split the owner accepted requires. `kgd find` (MCP `kg_find`) finds a text
+  in the registered sources, read-only and model-free. `kgd accept` creates a new record with `os.link`
   then `os.unlink`, never overwriting, and moves a replacement over its record
   with `os.replace`, refusing it when the record's file is newer than the
-  draft. The home lock is held by `accept`, `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
+  draft. The home lock is held by `accept`, `relocate`, `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
   truncated. The product never re-serializes frontmatter; `--fix-lines`
-  rewrites only the `lines:` line.
+  rewrites only the `lines:` line, and `relocate` only `source:`, `lines:`
+  and the Evidence section.
 - Embedding follows admission, not edits (owner, 2026-10-15). `kgd accept`
   ends with an index run that embeds only the records it created or replaced.
   After a hand edit of an accepted record the plugin runs
@@ -78,6 +83,13 @@
   it explains, links its record. Every value is a link (no pending terms); a
   concept nothing records is captured on its own first, from a local source
   or as foreign knowledge.
+- A label names one concept across every base (owner, 2026-10-15): no two
+  records, and no two drafts, share a label's name key, and a draft shares
+  none with an accepted record but the one it replaces (`check` rule
+  `label`, also refused by `accept`). A new concept of another meaning whose
+  name is taken adds its source's name, `Label (source)` (`label_suffix`: the
+  file's stem, or a web page's last path segment); the plugin's capture adds
+  it itself. Aliases are not unique.
 - Foreign knowledge (owner, 2026-10-15; docs/model.md "Foreign knowledge and
   localization"): a record whose `source` is a web address (the outside work
   that originates the concept, or a page explaining it) is foreign, has no
@@ -93,7 +105,7 @@
   its knowledge point and of every concept it links, in every base and in the
   drafts. When the knowledge point is already recorded:
   - an unchanged meaning is ignored, and a broken citation moves to the
-    admitted passage through a replacement draft;
+    admitted passage with `kgd relocate`;
   - a changed meaning becomes a replacement draft keeping the id, reported as
     more general, a correction or a conflict; accepting it is the owner's
     decision.
@@ -120,8 +132,8 @@
   extension are treated identically.
 - Records come only from reviewed capture or compile through drafts, guided by
   the source's user-registered document type. Never infer identity from
-  document order, headings, syntax or keyword co-occurrence; the same name is
-  not the same concept.
+  document order, headings, syntax or keyword co-occurrence; compare meanings
+  before treating a record of the same name as the knowledge point.
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain: `$KGDISTILLER_HOME/types/<name>.md`, whose
   frontmatter (read with PyYAML `BaseLoader`) has `node_kinds` and optional

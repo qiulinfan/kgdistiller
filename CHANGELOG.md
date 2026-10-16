@@ -33,6 +33,18 @@ gone. Delete any `.knowledge/sheets/` folder.
   foreign knowledge and a changed meaning as a replacement, and
   `compile-knowledge-sheets` became `compile-kgdistiller`, which drafts
   replacements instead of editing records. `harvest-kgdistiller` is removed.
+- A label names one concept across every base: `kgd check` (rule `label`)
+  and `kgd accept` refuse a label another record, or for a draft another
+  draft, already has, and suggest `Label (source)`, the source's file name or
+  web page added. Capture in the plugin adds it to a new concept of another
+  meaning by itself.
+- Sources change and nothing follows them: `kgd find` (MCP `kg_find`) finds
+  a passage or a name in the registered sources, tolerant of line breaks and
+  of the markup a reading view hides, and `kgd relocate` moves one record's
+  source, lines and, when needed, evidence to the only passage of its base
+  that holds a text. The new `relocate-kgdistiller` Skill finds the record
+  from the knowledge's name and runs it; the capture and compile Skills
+  relocate moved citations the same way.
 - Obsidian plugin: the Capture view lists the drafts by source, each by file
   name (with parent folders when names clash) and every foreign draft under
   "foreign". Capture drafts a borrowed concept as foreign knowledge from the
@@ -40,7 +52,8 @@ gone. Delete any `.knowledge/sheets/` folder.
   selected in the lookup sidebar or the Capture view is looked up with the
   hold or command like any text, and can be captured as foreign knowledge.
   **Localize here** on a foreign record, and **Localize to selection** on a
-  foreign draft, move its evidence to the passage selected in a local source.
+  foreign draft, relocate it with `kgd relocate` to the passage the agent
+  confirms in the selected local source.
 
 ## 1.1.0 — 2026-10-15
 

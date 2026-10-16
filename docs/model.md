@@ -83,9 +83,22 @@ length, never gets a node for it: the use links the concept's record. When no
 base records the concept yet, it is captured on its own, from where it is
 defined: a local source of the owner's, or the outside work that originates or
 explains it, as foreign knowledge
-([Foreign knowledge](#foreign-knowledge-and-localization)). Same-named
-concepts with different definitions are different records, and a name
-collision needs nothing more.
+([Foreign knowledge](#foreign-knowledge-and-localization)).
+
+A label names one concept across every base. In the owner's words
+(2026-10-15):
+
+> 两个概念如果名字一样, 意义也近似 -> 那么就是完全相同的概念. 我们在入库的时候先查库, 不会出现这种状况; 那么同名不同意义呢? 很简单, 检测到之后一律在新概念的名字后加上 ({源文件名})
+
+So no two records, and no two drafts, have labels with the same name key, and
+a draft's label is no accepted record's except the one it replaces. The lookup
+before every draft finds a record of the same name; when it means the same,
+the knowledge point is recorded already, and when it means something else,
+the new concept's label takes its source's name: `Label (source)`, where the
+source is the file's name without its extension, or a web page's last path
+segment, decoded, with underscores read as spaces (`Autoencoder
+(Autoencoder&VAE)` for a note `Autoencoder&VAE.md`). `kgd check` and `kgd accept` refuse a repeated label with
+that suggestion. Aliases are not unique.
 
 Accepted records, including relations, are the units of lexical and dense
 retrieval. Their links and evidence locate the original passages. Local source
@@ -141,10 +154,39 @@ files. In the owner's words (2026-10-15):
   source once the owner holds that work, for example after translating the
   paper into their vault. Looking the concept up while reading the local
   source offers it; the agent checks that the local passage states the same
-  knowledge point and writes the localized record as a draft with the same id
-  (a replacement when the record is accepted, a rewritten draft otherwise)
-  whose `source`, `lines` and Evidence cite the local passage. Localization is
-  never required: a foreign record is complete knowledge.
+  knowledge point and moves the record there with `kgd relocate`
+  ([Finding and relocating passages](#finding-and-relocating-passages)).
+  Localization is never required: a foreign record is complete knowledge.
+
+## Finding and relocating passages
+
+Sources change: text is inserted, files are renamed, merged and split.
+Nothing follows them automatically. In the owner's words (2026-10-15):
+
+> * 知识源变了怎么办? 比如前面多了一撮导致段落不一致了, 文章改名了
+> * 很简单: 不要管它! 接受这个问题
+> * 并且加上一个小 skill: relocation
+>
+> 什么是 relocation? 非常简单的一个小 skill.
+> 提供两个东西: 知识名(不一定要一模一样, agent 搜知识库就行); 新段落的内容
+>
+> * 新段落位置太难找了. 但是我如果提供新段落内容, 那么直接在 vaults 里 grep 就能找到.
+>
+> 然后, agent 快速地修改知识位置.
+
+- `kgd find` (MCP `kg_find`) finds a text in the registered sources, read
+  live: a passage the owner pastes, or every place a name occurs, such as
+  where a concept is defined. It is read-only and deterministic, and loads no
+  model.
+- `kgd relocate` moves one record's citation to the only passage of its base
+  that holds a given text. Only where the record cites changes: its
+  `source`, `lines` and, when its quotes are not in that passage, its
+  Evidence, which becomes the matched text. It is the one write an agent
+  makes to an accepted record without a draft, because it changes no meaning.
+- The relocate-kgdistiller Skill takes the knowledge's name, exact or
+  approximate, and the new passage's text: it finds the record with a lookup
+  and runs `kgd relocate`. `kgd check` still reports what moved or went stale,
+  and `check --fix-lines` still fixes a quote that only shifted lines.
 
 ## Understanding
 
@@ -200,12 +242,13 @@ The rules that follow from these statements:
   looked up the same way: a recorded or drafted concept is linked, and in a
   definition that link is the relation between the new knowledge and the
   known one.
-- **A new knowledge point** gets a new draft. A concept that merely shares the
-  name of a recorded one is new (a homonym, 1a).
+- **A new knowledge point** gets a new draft. A concept that shares the name
+  of a recorded one but means something else is new, and its label takes its
+  source's name (1a, "Research knowledge selection").
 - **The same knowledge point with the same meaning** gets no draft. If its
   recorded citation no longer verifies because the source was renamed,
-  merged, split or reworded, the agent drafts a replacement whose `source`,
-  `lines` and Evidence move to the passage being admitted.
+  merged, split or reworded, the agent relocates it to the passage being
+  admitted with `kgd relocate`.
 - **The same knowledge point with a changed meaning** gets a replacement draft
   rewritten from the new passage, keeping the id and the owner's
   `understanding`, with `source` and `lines` moved there (a relocation). The
@@ -227,8 +270,10 @@ The rules that follow from these statements:
   deleted, together with the links to it.
 - **Who writes what.** Agents write drafts only. The owner accepts them with
   `kgd accept` (the Obsidian Capture view runs it) and edits accepted records
-  by hand. The only agent edits of accepted records are the link rewrites
-  that a relocation, merge or split the owner accepted requires.
+  by hand. The only agent edits of accepted records are `kgd relocate`, which
+  moves where a record cites without changing what it says, and the link
+  rewrites that a relocation across bases, a merge or a split the owner
+  accepted requires.
 
 ## Data model
 
@@ -348,7 +393,7 @@ learned code of lower dimension.
 
 | Key | Required | Value |
 |---|---|---|
-| `label` | yes | Non-empty single-line string in any language. Not unique. |
+| `label` | yes | Non-empty single-line string in any language, unique by name key across every base (see [Research knowledge selection](#research-knowledge-selection)). |
 | `kind` | yes | A node kind or relation kind of the source's type. |
 | `source` | yes | A POSIX path relative to the base root, no leading `/`, no `..`, naming a registered source of this base; or a web address `http://…` or `https://…`, which makes the record foreign. |
 | `lines` | local only | One or more ranges `a` or `a-b`, comma-separated, ascending and disjoint, each with 1 ≤ a ≤ b ≤ the source's line count. A foreign record has none. |
@@ -376,8 +421,8 @@ stay strings). It must be a mapping whose values are strings or lists of
 strings; an empty scalar on a list or role key reads as an empty list. An
 unquoted wikilink such as `premise: [[x]]` parses as a nested list and is
 reported as "quote wikilinks". The product never re-serializes frontmatter; the
-only product-side frontmatter edit is the textual `lines:` rewrite of
-`check --fix-lines`.
+only product-side frontmatter edits are the textual `lines:` rewrite of
+`check --fix-lines` and the `source:` and `lines:` rewrite of `kgd relocate`.
 
 **Value grammar** (`requires` and every role value):
 
@@ -468,9 +513,9 @@ same knowledge point replaces its record through a draft with the same id (see
   Obsidian writes the path form `[[.knowledge/entries/y]]`, which the grammar
   accepts. kgd never falls back to aliases; a dangling link is reported with
   the records carrying that alias.
-- Labels and aliases are not unique. Each concept has one record, owned by
-  the source that defines it, so two records with the same name are two
-  concepts with different definitions; a name collision needs nothing more.
+- A label names one record across every base, and a concept of another
+  meaning with the same name adds its source's name; aliases are not unique.
+  Each concept has one record, owned by the source that defines it.
 - Accepted ids are permanent (see **Ids** above).
 - A local record lives in the base whose source supplies its evidence; a
   foreign record lives in the base whose source the owner was reading when
@@ -505,6 +550,7 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | `source` | A local `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root, and `lines` lies within it. A foreign one is a web address and is never fetched. |
 | `kind` | `kind` belongs to the source's type, or for a foreign record to a type registered for its base (all of those declaring it alike); a node kind has no role keys; a relation kind has a non-empty role value; `epistemic` is in the type's list. |
 | `link` | Every value is a link matching the grammar; every link resolves to an accepted record (of this base or another, read from files); no self-link; a cross-base link to an unregistered base names it. |
+| `label` | No other accepted record, in any base, has a label with the same name key; for a draft, no other draft either, and no accepted record but the one it replaces. The message suggests `Label (source)`. |
 | `body` | The body obeys the body grammar. |
 
 Drafts follow the same rules with two changes: local links may also resolve to
@@ -542,7 +588,7 @@ not fixed:
 
 `$KGDISTILLER_HOME/lock` is a dedicated lock file taken without waiting
 (`fcntl.flock`, or `msvcrt.locking` on Windows). It is held by `accept`,
-`check --fix-lines`, `base add`, `base rm`, `embedding set` and
+`relocate`, `check --fix-lines`, `base add`, `base rm`, `embedding set` and
 `embedding off`; a second writer fails
 at once. No data file is ever locked or truncated. `kgd index` relies on
 SQLite's own locking.
@@ -638,6 +684,54 @@ Agents read the source text with their own tools; the inventory carries no
 lines. A foreign record is drafted with the profile of the source the owner
 was reading.
 
+### `kgd find TEXT [--base B]... [--source PREFIX]... [--limit 20]`
+
+TEXT is the text to find, or `-` to read it from standard input. It reads the
+registered sources of the available bases (narrowed by `--base` and by
+`--source`, base-relative path prefixes) and writes nothing:
+
+```json
+{"matches": [{"base": "papers", "source": "papers/mae/mae_ch.md", "lines": "65-65", "exact": false,
+              "text": "我们将 image 划分为规则、不重叠的 patches"}],
+ "total": 1}
+```
+
+Text and sources are compared as tokens: NFKC-casefolded runs of letters and
+digits, each CJK character a token of its own; line breaks and punctuation
+never matter. A text of eight tokens or more matches a span that holds its
+tokens in order with at most a quarter as many other tokens between them, so
+a passage copied from a reading view, which hides link targets and markup,
+finds its lines; a shorter text, such as a name, matches its tokens exactly in
+sequence. `exact` says no token was skipped. `text` is the source's own text
+of the match, from its first token to its last, with the closing punctuation
+that follows, cut at 2000 characters. Matches are listed by base, source and
+line, at most `--limit`; `total` counts them all. The MCP tool `kg_find`
+returns the same JSON.
+
+### `kgd relocate TARGET TEXT [--source PREFIX]... [--dry-run]`
+
+TARGET is `base:id` of an accepted record, or the path of a record or draft
+file; TEXT is the passage, or `-` to read it from standard input.
+
+1. Take the lock and parse the record.
+2. Find TEXT as `kgd find` does in the record's base, narrowed by `--source`.
+   Unless it occurs exactly once, print `{"refused": {"message", "matches"}}`
+   (the matches there, or those of other bases when it occurs only there),
+   exit 1 and write nothing.
+3. Rewrite the frontmatter's `source:` line, and its `lines:` line, added
+   after `source:` for a foreign record, to the match; every other byte stays.
+   When the record's quotes all lie in the matched text, or in its lines, the
+   Evidence stays; otherwise it becomes the matched text, one quote per run of
+   non-blank lines.
+4. Refuse when the result would not pass `check` (its kind, roles and
+   evidence against the new source; links are not this command's concern) or
+   when the file changed meanwhile. `--dry-run` prints the report without
+   writing.
+5. Write the file through a temp file and an atomic replace, release the
+   lock, and for an accepted record run `kgd index --no-embed`. Print
+   `{"relocated": uid, "path", "from": {source, lines}, "to": {source, lines},
+   "evidence": "kept"|"replaced", "index": {...}}`.
+
 ### Changes, deletes and identity changes of accepted records
 
 When to ignore, replace or relocate knowledge that is already recorded
@@ -654,8 +748,7 @@ this section is how such a change is written.
   record or draft, or repointed by meaning to another record. Body-prose
   wikilinks to it, which `kgd check` does not validate, become plain text.
   Run `kgd check` and `kgd index --no-embed`.
-- **Relocation.** Within one base it is a replacement whose `source`, `lines`
-  and Evidence cite the new passage. Into another base, the record is drafted
+- **Relocation.** Within one base it is `kgd relocate`. Into another base, the record is drafted
   there with the same id (another id only when that base already uses it for
   another concept), its links adjusted to the new base; once the owner accepts
   it, every link to the old uid, in every base, is rewritten to the new one

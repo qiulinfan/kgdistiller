@@ -87,7 +87,7 @@ class ProductSkillTests(unittest.TestCase):
                 self.assertLessEqual(commands, COMMANDS)
                 self.assertLessEqual(set(TOOL_RE.findall(text)), set(TOOL_SCHEMAS))
         self.assertEqual(
-            {"capture-kgdistiller", "compile-kgdistiller", "deploy-kgdistiller", "query-kgdistiller"},
+            {"capture-kgdistiller", "compile-kgdistiller", "deploy-kgdistiller", "query-kgdistiller", "relocate-kgdistiller"},
             {path.parent.name for path in (ROOT / "skills").glob("*/SKILL.md")},
         )
 
@@ -114,6 +114,7 @@ class ProductSkillTests(unittest.TestCase):
         expected = {
             "capture-knowledge": [("capture-kgdistiller", "capture-writer", "write")],
             "compile-knowledge": [("compile-kgdistiller", None, "write")],
+            "relocate-knowledge": [("relocate-kgdistiller", None, "write")],
             "query-knowledge": [("query-kgdistiller", "query-reviewer", "read-only")],
             "deploy-kgdistiller": [("deploy-kgdistiller", None, "write")],
         }

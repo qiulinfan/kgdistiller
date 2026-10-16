@@ -9,9 +9,12 @@ format and one folder; they differ only in whether role keys are present.
   that record's replacement.
 - The global address of a record is its uid `<base>:<id>`.
 
-Agents write drafts only; the owner accepts them. kgd never re-serializes
-frontmatter. Write whole files yourself; the only product-side frontmatter
-edit is the one-line `lines:` rewrite of `kgd check --fix-lines`.
+Agents write drafts only; the owner accepts them. The one exception is
+`kgd relocate`, which moves a record's citation to a passage without changing
+what it says. kgd never re-serializes frontmatter. Write whole files yourself;
+the only product-side frontmatter edits are the `lines:` rewrite of
+`kgd check --fix-lines` and the `source:` and `lines:` rewrite of
+`kgd relocate`.
 
 ## File layout
 
@@ -64,7 +67,7 @@ learned code of lower dimension.
 
 | Key | Required | Value |
 |---|---|---|
-| `label` | yes | Non-empty single-line name in any language. Not unique. |
+| `label` | yes | Non-empty single-line name in any language, unique by name key across every base: a concept of another meaning whose name is taken adds its source's name, `Label (source)`. |
 | `kind` | yes | A node kind or relation kind of the source's document type; for a foreign record, of a type registered for its base. |
 | `source` | yes | A POSIX path relative to the base root (no leading `/`, no `..`) naming a registered source of this base; or a web address `http://…` or `https://…`, which makes the record foreign. |
 | `lines` | local only | One or more ranges `a` or `a-b`, 1-based and inclusive, comma-separated, ascending and disjoint, within the source, such as `126-140, 878-884`. A foreign record has none. |
@@ -241,6 +244,10 @@ Follow the source's document type: its `node_kinds`, `relation_kinds`,
   and a concept recorded in another base is linked as `[[base:id]]`.
 - **Understanding** is `yes` unless the owner says they do not understand the
   item; reading, capturing or finding a definition never sets it to `no`.
-- Same name is not same concept. Compare definitions with `kgd resolve` and
-  `kgd search`: same-named records are different concepts with different
-  definitions, and a name collision needs nothing more.
+- A label names one concept across every base. Compare definitions with
+  `kgd resolve` and `kgd search`: a record of the same name and meaning is the
+  knowledge point already recorded; a new concept of another meaning whose
+  name a record or draft already has takes its source's name in its label,
+  `Label (source)`: the source file's name without its extension, or a web
+  page's last path segment. `kgd check` and `kgd accept` refuse a repeated
+  label.
