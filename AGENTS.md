@@ -225,7 +225,8 @@
   drafts), off until the vault's settings name a kgd executable,
   covering every base. With the configured executable and
   `KGDISTILLER_HOME` it also runs `kgd base list`, `kgd source SOURCE`,
-  `kgd accept`, `kgd index`, `kgd index --no-embed` and `kgd embedding`
+  `kgd edit`, `kgd accept`, `kgd relocate`, `kgd index`, `kgd index --no-embed`
+  and `kgd embedding`
   (`kgd embedding set` fills the Hugging Face model cache), and it writes and
   deletes draft files; the plugin never parses records, and never opens the
   home or the database itself. Capture's ids

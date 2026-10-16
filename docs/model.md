@@ -616,6 +616,9 @@ takes no lock and opens no database. Each draft has its record fields as
 - `with`: the drafts of its base that it links, directly or through other
   drafts, which `kgd accept` must be given with it;
 - `linked_by`: the drafts that link it;
+- `choices`: the `node_kinds`, `relation_kinds` and `epistemic` values its
+  source's type allows (for a foreign draft, every type registered for its
+  base, a kind two of them declare differently left out), or `null`;
 - `problems`: what `kgd accept` would refuse when given the draft and its
   `with`, empty when it would accept them.
 
@@ -638,6 +641,24 @@ drafts whose label or an alias has that name key; each option repeats, ORed
 within itself. A draft that cannot be read or parsed is listed with
 `label: null` and its problem, unless `--source` or `--name` narrows the
 listing. The MCP tool `kg_drafts` returns the same JSON.
+
+### `kgd edit DRAFT FIELD [VALUE]...`
+
+Sets one field of a draft, for the owner's edits from the Capture view or the
+terminal; accepted records are edited by drawing them into a draft. FIELD is
+`label`, `kind`, `epistemic` or `understanding` (one value; none removes the
+last two, and `understanding` `yes` is written as absent), `aliases`,
+`requires` or a role (any number of values, each a link for the last two;
+none removes the field), or `body`, the prose before `## Search terms` and
+`## Evidence` (`-` as its only value reads standard input). `source` and
+`lines` change only with `kgd relocate`. Only that field's lines change: a
+value is written as a JSON string, a missing field is added before the closing
+`---`, and the rest of the file stays as it is. The result must still parse;
+whether `kgd accept` would take it is what `kgd drafts` reports. A new label of
+a new draft that no other draft links renames the draft to the label's id
+(numbered like any new id), so the id still describes it. Prints
+`{"draft": path, "uid": uid}`, with `renamed_from` when renamed; it takes no
+lock, and refuses, writing nothing, when the draft changed meanwhile.
 
 ### `kgd accept DRAFT... [--dry-run]`
 

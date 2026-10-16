@@ -394,6 +394,7 @@ rules.
 | `kgd find TEXT [--base B] [--source PREFIX]` | Find a passage or a name in the registered sources, whatever its line breaks and hidden markup. |
 | `kgd relocate TARGET TEXT` | Move a record's source, lines and evidence to the only passage of its base that holds the text. |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | List the drafts with their links and what `kgd accept` would refuse; writes nothing. |
+| `kgd edit DRAFT FIELD [VALUE...]` | Set one field of a draft: label, kind, epistemic, understanding, aliases, requires, a role or its statement. |
 | `kgd accept [--dry-run] DRAFT...` | Admit drafts as new records or replacements of the records with their ids, all or nothing, then index and embed them. |
 | `kgd index [--rebuild] [--no-embed]` | Bring the database up to date with the record files; `--no-embed` refreshes only the keyword index. |
 | `kgd search QUERY [--limit N] [--no-dense]` | Rank records by the lexical, dense and name lanes. |

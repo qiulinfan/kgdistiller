@@ -33,6 +33,13 @@ gone. Delete any `.knowledge/sheets/` folder.
   foreign knowledge and a changed meaning as a replacement, and
   `compile-knowledge-sheets` became `compile-kgdistiller`, which drafts
   replacements instead of editing records. `harvest-kgdistiller` is removed.
+- Drafts are edited on their Capture view card: label, kind, other names,
+  epistemic label, understanding and statement in place, and each role's and
+  `requires`' links with × to remove and + to link a record or draft found by
+  name. Each change runs the new `kgd edit DRAFT FIELD [VALUE...]`, which
+  rewrites only that field (and renames a new draft whose label changed);
+  `kgd drafts` reports each draft's `choices` of kinds, roles and epistemic
+  labels.
 - Updating a record is drawing it into a draft: **Revise as draft** in the
   lookup sidebar, or dragging the record onto the Capture view, copies it to
   a draft with its id, which replaces the record when accepted. A draft still

@@ -248,6 +248,7 @@ agent 只写草稿，由你确认。已接受的记录可以手动原地修改�
 | `kgd find TEXT [--base B] [--source PREFIX]` | 在已注册的 source 里查找一段文字或一个名字，不受换行和阅读视图隐藏的标记影响。 |
 | `kgd relocate TARGET TEXT` | 把一条记录的 source、行号和引文移到它所在 base 里唯一包含这段文字的段落。 |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | 列出草稿、它们的链接，以及 `kgd accept` 会拒绝的原因；不写任何东西。 |
+| `kgd edit DRAFT FIELD [VALUE...]` | 设置草稿的一个字段：label、kind、epistemic、understanding、aliases、requires、某个 role，或正文陈述。 |
 | `kgd accept [--dry-run] DRAFT...` | 把草稿转为新记录，或替换 id 相同的已接受记录，全部成功或全部不改，然后建索引并算向量。 |
 | `kgd index [--rebuild] [--no-embed]` | 让数据库与记录文件同步；`--no-embed` 只刷新关键词索引。 |
 | `kgd search QUERY [--limit N] [--no-dense]` | 按 lexical、dense、名称三路给记录排序。 |

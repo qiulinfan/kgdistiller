@@ -503,6 +503,14 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   with its base when that is another one), a draft, or a missing record. Ids
   and uids are never shown. A draft the agent wrote in this session also shows
   its report.
+- Every field is edited on the card: the label (renaming a new draft no other
+  draft links to its label's id), the kind (from its document type), its
+  other names, the epistemic label, whether it is understood, and the
+  statement (the pencil turns it into a text box). Each value of a role or of
+  `requires` has × to remove it, and each row + to link a record, or a draft of
+  the same base, found by name or words. Every change runs `kgd edit` on that
+  one field and lists the drafts again, so what `kgd accept` would refuse
+  shows at once; the evidence and the source change only by relocation.
 - Every draft says whether `kgd accept` would take it, together with the
   drafts it links, and otherwise lists `kgd accept`'s refusals. The view lists
   the drafts again whenever a draft file of this vault is saved, so an edit
@@ -544,9 +552,8 @@ Skill's relocation.
 
 Later owner-scheduled frontend work: editing commands, jump links from md/tex
 sources to records, a shipped `.base` file and a Bases view. For the Capture
-view: editing a draft's fields and links on its card or in a visual editor,
-asking the agent to revise a draft, and looking a draft's concepts up from its
-value chips. For the agent: relocation across bases, linking the records that
+view: a graph view for editing a draft's links, asking the agent to revise a
+draft, and looking a draft's concepts up from its value chips. For the agent: relocation across bases, linking the records that
 name a newly accepted concept, and compiling a whole source.
 
 ## Installation
