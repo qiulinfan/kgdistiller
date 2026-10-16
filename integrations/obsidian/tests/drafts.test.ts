@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { absoluteSource, acceptanceGroup, FOREIGN_GROUP, groupProblems, sourceGroups, valuesByRole, valueText, type Draft } from "../src/drafts";
+import type { CaptureFiles } from "../src/capture";
+import {
+  absoluteSource, acceptanceGroup, drawIntoDraft, FOREIGN_GROUP, groupProblems, sourceGroups, valuesByRole, valueText, type Draft,
+} from "../src/drafts";
 
 const draft = (uid: string, extra: Partial<Draft> = {}): Draft => ({
   uid, base: uid.split(":")[0]!, id: uid.split(":")[1]!, path: `/v/.knowledge/drafts/${uid.split(":")[1]}.md`,
@@ -84,5 +87,35 @@ describe("the Capture view's source list", () => {
       [FOREIGN_GROUP, "foreign", 2],
     ]);
     expect(sourceGroups([at("/vaults/papers", "mae", "a.md")]).map((group) => group.key)).not.toContain(FOREIGN_GROUP);
+  });
+});
+
+describe("drawing a record into a draft", () => {
+  const roots = new Map([["papers", "/vaults/papers"]]);
+  const filesOf = (written: Map<string, string>): CaptureFiles => ({
+    read: async (path) => {
+      const text = written.get(path);
+      if (text === undefined) throw new Error(`no file ${path}`);
+      return text;
+    },
+    ids: async () => new Set(),
+    create: async (path, text) => {
+      if (written.has(path)) throw new Error("exists");
+      written.set(path, text);
+    },
+    remove: async (path) => { written.delete(path); },
+  });
+
+  it("copies the record's file into a draft with its id", async () => {
+    const written = new Map([["/vaults/papers/.knowledge/entries/mae.md", "---\nlabel: MAE\n---\nbody\n"]]);
+    await expect(drawIntoDraft(roots, filesOf(written), "papers:mae")).resolves.toEqual({ path: "/vaults/papers/.knowledge/drafts/mae.md", created: true });
+    expect(written.get("/vaults/papers/.knowledge/drafts/mae.md")).toBe("---\nlabel: MAE\n---\nbody\n");
+  });
+
+  it("keeps a draft already waiting under that id, and refuses an unknown base", async () => {
+    const written = new Map([["/vaults/papers/.knowledge/entries/mae.md", "record"], ["/vaults/papers/.knowledge/drafts/mae.md", "edited"]]);
+    await expect(drawIntoDraft(roots, filesOf(written), "papers:mae")).resolves.toMatchObject({ created: false });
+    expect(written.get("/vaults/papers/.knowledge/drafts/mae.md")).toBe("edited");
+    await expect(drawIntoDraft(roots, filesOf(written), "notes:mae")).rejects.toThrow("base notes has no registered root");
   });
 });

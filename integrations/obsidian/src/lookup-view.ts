@@ -20,6 +20,7 @@ import { Component, ItemView, MarkdownRenderer, Notice, setIcon, type App, type 
 import { AgentPane, type AgentHost, type Selection } from "./agent-pane";
 import { FCOSE_LAYOUT, graphStylesheet } from "./graph-style";
 import { recordTarget, type LocalizeInput, type LocalizeTarget } from "./localize";
+import { RECORD_DRAG_TYPE } from "./drafts";
 import { needsEmbedding, type Indexer } from "./indexing";
 import {
   chainTree,
@@ -77,6 +78,8 @@ export interface LookupHost extends AgentHost {
   indexer: Indexer;
   /** Move a foreign record's evidence to a passage of a local source, as a draft, in the Capture view. */
   localize(target: LocalizeTarget, input: LocalizeInput): void;
+  /** Draw an accepted record into a draft with its id, in the Capture view, for revision. */
+  revise(uid: string): void;
 }
 
 type Settled<T> = { value: T; error?: undefined } | { value?: undefined; error: string };
@@ -480,7 +483,13 @@ export class KgdistillerLookupView extends ItemView {
 
   private renderRecord(pane: HTMLElement, record: FullRecord, chain: Settled<NeighborsResult>, around: Settled<NeighborsResult>): void {
     pane.createDiv({ cls: `kgd-kind kgd-kind-${record.class}`, text: record.class });
-    pane.createEl("h3", { text: record.label });
+    // Dragging the label onto the Capture view, like Revise as draft, draws the record into a draft.
+    const title = pane.createEl("h3", { text: record.label, attr: { draggable: "true", title: "Drag onto the Capture view to revise it as a draft" } });
+    title.addEventListener("dragstart", (event) => {
+      event.dataTransfer?.setData(RECORD_DRAG_TYPE, record.uid);
+      event.dataTransfer?.setData("text/plain", record.label);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy";
+    });
     this.row(pane, "Kind", record.kind);
     if (record.foreign) {
       const row = pane.createDiv({ cls: "kgd-detail-row" });
@@ -500,6 +509,7 @@ export class KgdistillerLookupView extends ItemView {
       button.addEventListener("click", () => void run());
     };
     action("Open record", true, () => this.openInBase(record.base, entryPath(record.id)));
+    action("Revise as draft", false, async () => this.host.revise(record.uid));
     if (!record.foreign) action("Open source", false, () => this.openInBase(record.base, record.source, firstLine(record.lines)));
     // A foreign record found from a selection in a local source can move its evidence there.
     const at = this.selection?.source;

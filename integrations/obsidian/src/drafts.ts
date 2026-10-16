@@ -2,8 +2,12 @@
  * Drafts as `kg_drafts` lists them (docs/model.md, `kgd drafts`): proposed
  * records waiting in the Capture view until the owner accepts or discards
  * them. kgd reads and checks the files; the plugin only shows what it reports
- * and groups the drafts that must be accepted together.
+ * and groups the drafts that must be accepted together. Revising an accepted
+ * record starts by drawing it into a draft with its id, which replaces it when
+ * accepted.
  */
+
+import type { CaptureFiles } from "./capture";
 
 export interface DraftValue {
   role: string;
@@ -139,4 +143,24 @@ export function sourceGroups(drafts: readonly Draft[]): SourceGroup[] {
     }
   }
   return foreign.length ? [...local, { key: FOREIGN_GROUP, name: FOREIGN_GROUP, title: FOREIGN_GROUP, drafts: foreign }] : local;
+}
+
+/** What dragging a record from the lookup sidebar onto the Capture view carries: the record's uid. */
+export const RECORD_DRAG_TYPE = "application/x-kgdistiller-record";
+
+/**
+ * Draw an accepted record into a draft with its id, a byte copy of its file,
+ * which the owner then edits and accepts to replace it (docs/model.md,
+ * "Drafts"). A draft already waiting under that id is kept and reported.
+ */
+export async function drawIntoDraft(roots: Map<string, string>, files: CaptureFiles, uid: string): Promise<{ path: string; created: boolean }> {
+  const colon = uid.indexOf(":");
+  const root = roots.get(uid.slice(0, colon));
+  if (!root) throw new Error(`base ${uid.slice(0, colon)} has no registered root`);
+  const id = uid.slice(colon + 1);
+  const path = `${root}/.knowledge/drafts/${id}.md`;
+  const waiting = await files.read(path).then(() => true, () => false);
+  if (waiting) return { path, created: false };
+  await files.create(path, await files.read(`${root}/.knowledge/entries/${id}.md`));
+  return { path, created: true };
 }

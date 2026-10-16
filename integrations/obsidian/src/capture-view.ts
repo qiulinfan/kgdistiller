@@ -19,7 +19,9 @@ import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, setIcon,
 
 import type { Selection } from "./agent-pane";
 import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
-import { acceptanceGroup, groupProblems, sourceGroups, valuesByRole, valueText, type Draft, type DraftsResult } from "./drafts";
+import {
+  acceptanceGroup, drawIntoDraft, groupProblems, RECORD_DRAG_TYPE, sourceGroups, valuesByRole, valueText, type Draft, type DraftsResult,
+} from "./drafts";
 import { INDEX_TIMEOUT_MS, type KgdServer } from "./kgd";
 import type { Indexer } from "./indexing";
 import { draftTarget, localizeRecord, type LocalizeInput, type LocalizeTarget } from "./localize";
@@ -137,6 +139,23 @@ export class KgdistillerCaptureView extends ItemView {
     setIcon(relist, "refresh-cw");
     relist.addEventListener("click", () => void this.listDrafts());
     this.jobsEl = this.contentEl.createDiv({ cls: "kgd-capture-jobs" });
+    // A record dragged here from the lookup sidebar is drawn into a draft for revision.
+    this.registerDomEvent(this.contentEl, "dragover", (event) => {
+      if (!event.dataTransfer?.types.includes(RECORD_DRAG_TYPE)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      this.contentEl.addClass("is-drop-target");
+    });
+    this.registerDomEvent(this.contentEl, "dragleave", (event) => {
+      if (!this.contentEl.contains(event.relatedTarget as Node | null)) this.contentEl.removeClass("is-drop-target");
+    });
+    this.registerDomEvent(this.contentEl, "drop", (event) => {
+      this.contentEl.removeClass("is-drop-target");
+      const uid = event.dataTransfer?.getData(RECORD_DRAG_TYPE);
+      if (!uid) return;
+      event.preventDefault();
+      void this.drawRecord(uid);
+    });
     const body = this.contentEl.createDiv({ cls: "kgd-capture-body" });
     this.sourcesEl = body.createDiv({ cls: "kgd-capture-sources" });
     this.draftsEl = body.createDiv({ cls: "kgd-capture-drafts" });
@@ -184,6 +203,20 @@ export class KgdistillerCaptureView extends ItemView {
       if (result.decision === "borrowed" && !result.draft) this.host.borrowed(selection);
       return captureOutcome(result);
     });
+  }
+
+  /** Draw an accepted record into a draft with its id, opened here for revision; accepting it replaces the record. */
+  async drawRecord(uid: string): Promise<void> {
+    try {
+      const { created } = await drawIntoDraft(await this.host.kgd.baseRoots(), this.host.captureFiles, uid);
+      this.expanded.add(uid);
+      new Notice(created
+        ? "kgdistiller drew the record into a draft: edit it, then accept it to replace the record."
+        : "A draft of this record already waits in Capture.");
+    } catch (error) {
+      new Notice(`kgdistiller could not draw the record into a draft: ${message(error)}`);
+    }
+    await this.listDrafts();
   }
 
   /** Move a foreign record's or draft's citation to a passage of a local source with `kgd relocate`. */

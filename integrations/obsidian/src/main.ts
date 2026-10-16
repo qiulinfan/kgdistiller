@@ -332,6 +332,11 @@ export default class KgdistillerPlugin extends Plugin {
   }
 
   /** Draft a selection in the Capture view, opened below the lookup sidebar; the owner keeps reading meanwhile. */
+  /** Draw an accepted record into a draft in the Capture view, for the owner to revise and accept. */
+  revise(uid: string): void {
+    void this.captureView().then((view) => view?.drawRecord(uid));
+  }
+
   capture(selection: Selection): void {
     void this.captureView().then((view) => view?.startCapture(selection));
   }

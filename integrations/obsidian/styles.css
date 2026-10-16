@@ -333,6 +333,11 @@ SOFTWARE.
   margin-bottom: 6px;
 }
 
+.kgd-capture-view.is-drop-target {
+  outline: 2px dashed var(--interactive-accent);
+  outline-offset: -4px;
+}
+
 .kgd-capture-body {
   align-items: flex-start;
   display: flex;
