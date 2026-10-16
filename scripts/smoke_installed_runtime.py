@@ -259,7 +259,6 @@ def main() -> int:
         require([row["class"] for row in profile["records"]] == ["node", "relation"], "source records mismatch")
         require([row["id"] for row in profile["drafts"]] == ["measure-theory"], "source drafts mismatch")
         require(runtime.object("source", "notes/measure.txt", cwd=root) == profile, "source differs by cwd")
-        require(not (root / ".knowledge/sheets").exists(), "source wrote a sheet")
         listed = runtime.object("drafts", cwd=outside)
         require([(item["uid"], item["problems"], item["with"], item["replaces"]) for item in listed["drafts"]]
                 == [("smoke:measure-theory", [], [], None)] and listed["unavailable_bases"] == [],
@@ -308,7 +307,6 @@ def main() -> int:
                 "resolve senses mismatch")
         require([(sense["uid"], sense["foreign"]) for sense in resolved["terms"][1]["senses"]]
                 == [("smoke:countable-additivity", True)], f"resolve foreign sense mismatch: {resolved}")
-        require(all("pending" not in term for term in resolved["terms"]), "resolve still reports pending uses")
         got = runtime.object("get", "measure-space", "--source-lines", "1", cwd=outside)
         record = got["records"][0]
         require(record["source_text"] is not None and record["source_text"].startswith("3\t"),

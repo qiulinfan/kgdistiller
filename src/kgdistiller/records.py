@@ -563,12 +563,9 @@ class Files:
                 self._records[path] = None
         return self._records[path]
 
-    def label(self, uid: str) -> str | None:
-        name, identifier = uid.split(":", 1)
-        if not self.available(name):
-            return None
-        found = self.record(name, ENTRIES, identifier) or self.record(name, DRAFTS, identifier)
-        return found.label if found else None
+    def drafts(self) -> set[str]:
+        """The folded uid of every draft of the available bases."""
+        return {f"{name}:{identifier}" for name in self.home.bases for identifier in self.ids(name, DRAFTS)}
 
     def sources(self, base: Base) -> tuple[dict[str, str], dict[str, list[str]]]:
         if base.name not in self._sources:
@@ -629,7 +626,8 @@ def _base_types(home: Home, base: Base) -> list[DocumentType]:
 def _kind_problems(record: Record, types: list[DocumentType], where: str) -> list[tuple[str, str]]:
     """The kind rule against the types that may declare ``record.kind``: one for a local record, the base's for a foreign one.
 
-    A kind declares its roles, a node kind as a relation kind does; a relation binds at least two records.
+    A kind declares its roles, a node kind as a relation kind does: a node kind that declares roles links at
+    least one record in them, and a relation binds at least two values.
     """
     declaring = [kind_type for kind_type in types if kind_type.roles(record.kind) is not None]
     if not declaring:
@@ -644,9 +642,15 @@ def _kind_problems(record: Record, types: list[DocumentType], where: str) -> lis
         if role not in (declared or ()):
             roles = f"its roles are {', '.join(declared)}" if declared else "it declares no roles"
             problems.append(("frontmatter", f"{role} is not a role of {record.kind}; {roles}"))
-    if relation and sum(len(values) for _, values in record.roles) < 2:
+    bound = sum(len(values) for _, values in record.roles)
+    if relation and bound < 2:
         problems.append(("kind", (
-            f"the relation {record.kind} binds at least two records; a statement about one record is a node"
+            f"the relation {record.kind} binds at least two values; a result the source states is a node "
+            "whose roles link what it is about"
+        )))
+    elif not relation and declared and bound == 0:
+        problems.append(("kind", (
+            f"a {record.kind} links what it is about in {', '.join(declared)}; capture a concept no record holds first"
         )))
     allowed = sorted({value for kind_type in declaring for value in kind_type.epistemic})
     if record.epistemic is not None and record.epistemic not in allowed:
@@ -685,9 +689,9 @@ def record_problems(
 ) -> tuple[list[tuple[str, str]], tuple[str, Ranges | None] | None]:
     """The source, kind and link rules of `kgd check` for one parsed record, plus its evidence freshness.
 
-    ``linkable_drafts`` are the folded ids of same-base drafts this record may
-    link: none for an accepted record, every draft in ``check``, and the
-    selected drafts in ``accept``. A foreign record has no freshness: its
+    ``linkable_drafts`` are the folded uids of the drafts, of any base, this
+    record may link: none for an accepted record, every draft in ``check``, and
+    the selected drafts in ``accept``. A foreign record has no freshness: its
     evidence lies outside the owner's files.
     """
     problems: list[tuple[str, str]] = []
@@ -735,15 +739,14 @@ def record_problems(
             problems.append(("link", f"{where} links base {target_base}, which is not registered"))
         elif not files.available(target_base):
             problems.append(("link", f"{where} links base {target_base}, which is unavailable"))
-        elif target in files.ids(target_base, ENTRIES) or (target_base == record.base and target in linkable):
+        elif target in files.ids(target_base, ENTRIES) or value.uid in linkable:
             continue
         elif target in files.ids(target_base, DRAFTS):
-            if target_base != record.base:
-                problems.append(("link", f"{where} links a draft of base {target_base}; cross-base links must target accepted records"))
-            elif draft:
-                problems.append(("link", f"{where}: select [[{target}]] too"))
+            shown = target if target_base == record.base else value.uid
+            if draft:
+                problems.append(("link", f"{where}: select [[{shown}]] too"))
             else:
-                problems.append(("link", f"{where} links the draft [[{target}]]; accept it first"))
+                problems.append(("link", f"{where} links the draft [[{shown}]]; accept it first"))
         else:
             problems.append(("link", f"{where}: {_dangling(files, value)}"))
     return problems, freshness
@@ -764,7 +767,7 @@ def _load_for_check(home_dir: Path, errors: list[dict[str, str]]) -> Home | None
         for path in sorted(types.glob("*.md")):
             try:
                 load_type(path)
-            except (KnowledgeError, OSError, UnicodeDecodeError) as error:
+            except KnowledgeError as error:
                 errors.append({"path": str(path), "rule": "type", "message": str(error)})
     try:
         load_home(home_dir, types=False)
@@ -815,7 +818,6 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
             if len(declared) > 1:
                 names = ", ".join(sorted(name for names in declared.values() for name in names))
                 error(home_dir / CONFIG_FILENAME, "type", f"kind {kind!r} is declared differently by the types {names} of base {name}")
-        draft_ids = files.ids(name, DRAFTS)
         for folder in (ENTRIES, DRAFTS):
             draft = folder == DRAFTS
             if knowledge_folder(base.root, folder).is_symlink():
@@ -841,7 +843,7 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
                     error(path, problem.rule, problem.message)
                     continue
                 problems, freshness = record_problems(
-                    files, record, draft=draft, linkable_drafts=draft_ids if draft else ()
+                    files, record, draft=draft, linkable_drafts=files.drafts() if draft else ()
                 )
                 for rule, message in problems:
                     error(path, rule, message)

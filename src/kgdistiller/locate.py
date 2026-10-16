@@ -3,7 +3,8 @@
 Sources change: lines shift, files are renamed, merged and split. Nothing
 follows them automatically. ``find`` locates a passage the owner gives, or
 every place a name occurs, in the registered sources; ``relocate`` moves one
-record's citation there. Both are deterministic and load no model.
+record's citation there, into another base with the record when the passage
+lies there. Both are deterministic and load no model.
 
 Matching compares word tokens, not characters: the text and every source are
 read as NFKC-casefolded runs of letters and digits, each CJK character a token
@@ -16,6 +17,7 @@ name, matches its tokens exactly in sequence. Line breaks never matter.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
@@ -25,6 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from .home import (
+    FIXED_KEYS,
+    KNOWLEDGE_DIRECTORY,
     Home,
     KnowledgeError,
     atomic_write_text,
@@ -38,12 +42,16 @@ from .records import (
     DRAFTS,
     ENTRIES,
     LINES_KEY_RE,
+    LINK_RE,
     Files,
+    RecordError,
     fold,
     format_ranges,
     normalize_space,
     parse_text,
+    parse_value,
     read_text,
+    record_files,
     record_problems,
 )
 
@@ -52,6 +60,7 @@ SKIP_FROM = 8
 TEXT_LIMIT = 2000
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
 SOURCE_KEY_RE = re.compile(r"^source[ \t]*:")
+KEY_RE = re.compile(r"^([^\s#:-][^:]*?)[ \t]*:")
 # Punctuation that ends a sentence or closes a bracket, kept with a matched span.
 CLOSERS = frozenset("。．.!?！？;；)）]］」』”’\"'*_")
 
@@ -221,7 +230,7 @@ def _rewritten(raw: str, source: str, lines: str, quotes: list[str] | None) -> s
     found = [number for number in range(1, close) if LINES_KEY_RE.match(texts[number])]
     if len(head) != 1 or len(found) > 1:
         raise KnowledgeError("the frontmatter must have one source: line and at most one lines: line to relocate")
-    texts[head[0]] = f'source: "{source}"'
+    texts[head[0]] = f"source: {json.dumps(source, ensure_ascii=False)}"
     if found:
         texts[found[0]] = f"lines: {lines}"
     else:
@@ -250,61 +259,142 @@ def _paragraphs(text: str) -> list[str]:
     return quotes
 
 
-def relocate(target: str, text: str, sources: Iterable[str] = (), dry_run: bool = False) -> dict[str, Any]:
-    """Move one record's citation to the only passage of its base that holds ``text``.
+def _relinked(raw: str, read: str, write: str, moved: tuple[str, str] | None) -> str:
+    """``raw`` with its link values rewritten, every other character kept.
+
+    A value read as a link of a record of base ``read`` is written as a link of
+    base ``write``; with ``moved`` (old uid, new uid), only values naming the old
+    uid change, to name the new one. Only role and ``requires`` values change.
+    """
+    pieces = re.split(r"(\r\n|\r|\n)", raw)
+    texts = pieces[0::2]
+    close = texts.index("---", 1)
+
+    def form(uid: str) -> str:
+        name, identifier = uid.split(":", 1)
+        return identifier if name == write else uid
+
+    def link(match: re.Match[str]) -> str:
+        try:
+            uid = parse_value(match.group(0), read).uid
+        except RecordError:
+            return match.group(0)
+        if moved is not None:
+            if uid != moved[0]:
+                return match.group(0)
+            uid = moved[1]
+        display = match.group(1).partition("|")[2]
+        return f"[[{form(uid)}{'|' + display if display else ''}]]"
+
+    key = ""
+    for number in range(1, close):
+        found = KEY_RE.match(texts[number])
+        if found:
+            key = found.group(1).strip()
+        if key == "requires" or key not in FIXED_KEYS:
+            texts[number] = LINK_RE.sub(link, texts[number])
+    pieces[0::2] = texts
+    return "".join(pieces)
+
+
+def _inbound(files: Files, old: str, new: str, skip: Path) -> list[tuple[Path, str, str]]:
+    """(file, its text, the text relinked) for every record and draft of an available base that links ``old``."""
+    identifier = old.split(":", 1)[1]
+    found: list[tuple[Path, str, str]] = []
+    for name in sorted(files.home.bases):
+        if not files.available(name):
+            continue
+        for folder in (ENTRIES, DRAFTS):
+            for path in record_files(files.home.bases[name].root, folder):
+                if path == skip:
+                    continue
+                raw = path.read_bytes().decode("utf-8")
+                if identifier not in fold(raw):
+                    continue
+                relinked = _relinked(raw, name, name, (old, new))
+                if relinked != raw:
+                    found.append((path, raw, relinked))
+    return found
+
+
+def relocate(
+    target: str, text: str, sources: Iterable[str] = (), bases: Iterable[str] = (), dry_run: bool = False
+) -> dict[str, Any]:
+    """Move one record's citation to the only passage of the registered sources that holds ``text``.
 
     The record keeps everything but its ``source``, ``lines`` and, when its
     quotes do not all lie in the passage, its Evidence, which becomes the
-    passage's lines. A foreign record becomes local. Refuses, writing nothing,
-    when the passage is not found exactly once in the record's base.
+    passage's lines. A foreign record becomes local. When the passage lies in
+    another base, the record moves there with its id, its links are rewritten
+    for that base and every link to it is rewritten to its new uid. Refuses,
+    writing nothing, when the passage is not found exactly once.
     """
     home = load_home(home_directory())
     with lock():
         name, path = _target(home, target)
+        draft = path.parent.name == DRAFTS
         raw = path.read_bytes().decode("utf-8")
         record = parse_text(read_text(path), name, path.stem, path)
         files = Files(home)
-        found = _matches(home, text, (name,), sources)
+        found = _matches(home, text, bases, sources)
         if len(found) != 1:
-            elsewhere = [match for match in _matches(home, text, (), sources) if match.base != name] if not found else []
             return {"refused": {
-                "message": (f"the passage occurs {len(found)} times in base {name}; pass --source to choose one"
-                            if found else f"the passage does not occur in base {name}"
-                            + ("; it occurs in another base, and moving a record across bases is a relocation "
-                               "of the knowledge model, not this command" if elsewhere else "")),
-                "matches": [match.report() for match in (found or elsewhere)[:FIND_LIMIT]],
+                "message": (f"the passage occurs {len(found)} times; pass --base or --source to choose one"
+                            if found else "the passage does not occur in a registered source"),
+                "matches": [match.report() for match in found[:FIND_LIMIT]],
             }}
         match = found[0]
+        old = f"{name}:{fold(path.stem)}"
+        new = f"{match.base}:{fold(path.stem)}"
+        destination = path
+        relinked: list[tuple[Path, str, str]] = []
+        if match.base != name:
+            folder = DRAFTS if draft else ENTRIES
+            destination = home.bases[match.base].root / KNOWLEDGE_DIRECTORY / folder / path.name
+            if fold(path.stem) in files.ids(match.base, ENTRIES) or fold(path.stem) in files.ids(match.base, DRAFTS):
+                raise KnowledgeError(f"base {match.base} already has a record or draft {path.stem}; it cannot move there")
+            if not draft and fold(path.stem) in files.ids(name, DRAFTS):
+                raise KnowledgeError(f"a replacement draft of {old} waits; accept or discard it before moving the record")
+            relinked = _inbound(files, old, new, path)
         span = normalize_space(match.text)
         keep = all(normalize_space(quote) in span for quote in record.evidence)
         quotes = None if keep else _paragraphs(match.text)
         if not keep:
             # The old quotes no longer lie in the passage; its own lines become the evidence.
-            lines_text = "\n".join(files.lines(home.bases[name].root / match.source)[match.first - 1 : match.last])
+            lines_text = "\n".join(files.lines(home.bases[match.base].root / match.source)[match.first - 1 : match.last])
             keep = all(normalize_space(quote) in normalize_space(lines_text) for quote in record.evidence)
             quotes = None if keep else quotes
         relocated = _rewritten(raw, match.source, match.lines, quotes)
-        moved = parse_text(relocated.replace("\r\n", "\n").replace("\r", "\n").removeprefix("﻿"), name, path.stem, path)
-        problems, freshness = record_problems(files, moved, draft=path.parent.name == DRAFTS,
-                                              linkable_drafts=files.ids(name, DRAFTS))
-        # Its links are not this command's concern; only where it cites and what it quotes changed.
-        problems = [message for rule, message in problems if rule != "link"]
+        if match.base != name:
+            relocated = _relinked(relocated, name, match.base, None)
+        moved = parse_text(relocated.replace("\r\n", "\n").replace("\r", "\n").removeprefix("\ufeff"),
+                           match.base, path.stem, destination)
+        problems, freshness = record_problems(files, moved, draft=draft, linkable_drafts=files.drafts())
+        # Its links and its label are not this command's concern; only where it cites and what it quotes changed.
+        problems = [message for rule, message in problems if rule not in ("link", "label")]
         if freshness is not None and freshness[0] != "fresh":
             problems.append(f"the relocated evidence is {freshness[0]}")
         if problems:
             raise KnowledgeError("the relocated record would not pass check: " + "; ".join(problems))
         report: dict[str, Any] = {
-            "relocated": f"{name}:{path.stem}", "path": str(path),
+            "relocated": new, "path": str(destination),
             "from": {"source": record.source, "lines": record.lines_text},
             "to": {"source": match.source, "lines": match.lines},
             "evidence": "kept" if keep else "replaced",
         }
+        if match.base != name:
+            report["moved"] = {"from": old, "to": new}
+            report["relinked"] = [str(item[0]) for item in relinked]
         if dry_run:
             return {**report, "dry_run": True}
-        if path.read_bytes().decode("utf-8") != raw:
-            raise KnowledgeError(f"{path} changed while it was relocated; run the command again")
-        atomic_write_text(path, relocated)
-    if path.parent.name == ENTRIES:
+        for changed, before, _ in [(path, raw, None), *relinked]:
+            if changed.read_bytes().decode("utf-8") != before:
+                raise KnowledgeError(f"{changed} changed while it was relocated; run the command again")
+        atomic_write_text(destination, relocated)
+        for changed, _, after in relinked:
+            atomic_write_text(changed, after)
+        if destination != path:
+            path.unlink()
+    if not draft or any(item[0].parent.name == ENTRIES for item in relinked):
         report["index"] = index(embed=False)
     return report
-

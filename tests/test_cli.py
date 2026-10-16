@@ -51,7 +51,7 @@ class BaseAddTest(unittest.TestCase):
         config["bases"]["papers"]["sources"] = {"papers/*.tex": "papers"}
         config_path.write_text(json.dumps(config), encoding="utf-8")
         (self.home / "types/papers.md").write_text(
-            type_document({"node_kinds": ["definition"], "guidance": "Named statements."}), encoding="utf-8")
+            type_document({"node_kinds": {"definition": []}, "guidance": "Named statements."}), encoding="utf-8")
 
     def test_base_add_unicode_root_round_trip(self) -> None:
         root = self.tmp / "测度 project"
@@ -71,7 +71,6 @@ class BaseAddTest(unittest.TestCase):
                                         "guidance", "line_count", "records", "drafts"})
         self.assertEqual((profile["node_kinds"], profile["records"], profile["drafts"]), ({"definition": []}, [], []))
         self.assertEqual(output(kgdistiller("source", str(root / "papers/paper.tex"), cwd=self.tmp)), profile)
-        self.assertFalse((root / ".knowledge/sheets").exists())
         unregistered = kgdistiller("source", "notes.txt", cwd=root)
         self.assertEqual(unregistered.returncode, 1)
         again = kgdistiller("base", "add", str(root), "--name", "other", cwd=self.tmp)

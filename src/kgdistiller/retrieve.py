@@ -14,7 +14,7 @@ three lanes with reciprocal rank fusion:
 There are no boosts, intent rules or thresholds. ``neighbors`` follows links
 with one recursive query, ``browse`` lists bases, source trees, a source's
 records by kind or every record of a kind, and ``pack`` returns whole records
-within a byte budget with shared relations and typed gaps. Only
+within a byte budget with the records they share and typed gaps. Only
 ``get --source-lines`` reads live source text.
 """
 
@@ -119,13 +119,16 @@ def _rows(connection: sqlite3.Connection, uids: Sequence[str]) -> dict[str, sqli
 
 
 def _degrees(connection: sqlite3.Connection, uids: Iterable[str]) -> dict[str, int]:
-    """How many other records each record links or is linked by: how central it is, derived from the links alone."""
+    """How many other records each record links or is linked by: how central it is, derived from the links alone.
+
+    A link to a record that does not exist counts for nothing.
+    """
     wanted = json.dumps(sorted(set(uids)))
     return dict(connection.execute(
         "SELECT uid, COUNT(DISTINCT other) FROM ("
         " SELECT src AS uid, dst AS other FROM link WHERE src IN (SELECT value FROM json_each(?))"
         " UNION SELECT dst, src FROM link WHERE dst IN (SELECT value FROM json_each(?))"
-        ") GROUP BY uid",
+        ") WHERE other != uid AND other IN (SELECT uid FROM record) GROUP BY uid",
         (wanted, wanted),
     ).fetchall())
 
@@ -798,11 +801,12 @@ def pack(
     requires_depth: int = 1,
     filters: Filters = NO_FILTERS,
 ) -> dict[str, Any]:
-    """Whole records within ``budget`` UTF-8 bytes of compact JSON, with shared relations and typed gaps.
+    """Whole records within ``budget`` UTF-8 bytes of compact JSON, with shared records and typed gaps.
 
     The caller's uids come first, then their ``requires`` closure breadth-first
-    up to ``requires_depth``, then each relation with at least two distinct
-    packed role targets. Filters restrict only the records pack adds itself.
+    up to ``requires_depth``, then each record, relation or statement node,
+    with role links to at least two distinct packed records. Filters restrict
+    only the records pack adds itself.
     """
     if budget < 1:
         raise KnowledgeError("budget must be at least 1")
@@ -858,7 +862,7 @@ def pack(
         shared = [
             row[0] for row in connection.execute(
                 f"SELECT l.src, COUNT(DISTINCT l.dst) AS packed FROM link l JOIN record r ON r.uid = l.src "
-                f"WHERE kgd_class(r.base, r.kind) = 'relation' AND l.role != 'requires' AND l.dst IN (SELECT value FROM json_each(?)){clause} "
+                f"WHERE l.role != 'requires' AND l.dst IN (SELECT value FROM json_each(?)){clause} "
                 f"GROUP BY l.src HAVING packed >= 2 ORDER BY packed DESC, l.src",
                 [json.dumps(sorted(packed_uids)), *parameters],
             )

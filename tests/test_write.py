@@ -121,10 +121,10 @@ class AcceptTest(WriteTestCase):
         cases = {
             "dangling": (node("D", "6", kind="implies", extra='premise: ["[[nowhere]]"]\nconclusion: ["[[subspace]]"]'),
                          "dangling link"),
-            "one-participant": (node("O", "6", kind="implies", extra='premise: ["[[subspace]]"]'), "binds at least two records"),
+            "one-participant": (node("O", "6", kind="implies", extra='premise: ["[[subspace]]"]'), "binds at least two values"),
             "bad-kind": (node("K", "6", kind="lemma"), "not a node or relation kind"),
-            "foreign-draft": (node("F", "6", kind="implies", extra='premise: ["[[notes:x]]"]\nconclusion: ["[[subspace]]"]'),
-                              "links a draft of base notes"),
+            "other-base-draft": (node("F", "6", kind="implies", extra='premise: ["[[notes:x]]"]\nconclusion: ["[[subspace]]"]'),
+                                 "select [[notes:x]] too"),
         }
         self.kb.write_record("x", node("X", "1"), "X.", ["Title line"], folder="drafts", base="notes")
         self.kb.write_source(SOURCE, "\n".join(LINES) + "\n", base="notes")
@@ -196,6 +196,26 @@ class AcceptTest(WriteTestCase):
         self.assertTrue(draft.exists())
 
 
+class AcrossBasesTest(WriteTestCase):
+    def test_drafts_of_different_bases_link_each_other_and_are_accepted_together(self) -> None:
+        self.kb.write_source(SOURCE, "\n".join(LINES) + "\n", base="notes")
+        theirs = self.kb.write_record("dimension", node("Dimension", "6"), "Text.", ["Unique sentence about dimension."],
+                                      folder="drafts", base="notes")
+        ours = self.draft("dimension-of-sum", node("Dimension of a sum", "5", kind="theorem",
+                                                   extra='about: ["[[subspace]]"]\nrequires: ["[[notes:dimension]]"]'),
+                          "The sum of two subspaces is a subspace.")
+        listed = {item["uid"]: item for item in drafts()["drafts"]}
+        self.assertEqual(["notes:dimension"], listed["kb:dimension-of-sum"]["with"])
+        self.assertEqual(["kb:dimension-of-sum"], listed["notes:dimension"]["linked_by"])
+        self.assertEqual([("about", "accepted"), ("requires", "draft")],
+                         [(value["role"], value["state"]) for value in listed["kb:dimension-of-sum"]["out"]])
+        self.assertEqual([], listed["kb:dimension-of-sum"]["problems"])
+        alone = accept([str(ours)])
+        self.assertIn("select [[notes:dimension]] too", alone["refused"][0]["message"])
+        receipt = without_index(accept([str(ours), str(theirs)]))
+        self.assertEqual({"created": ["kb:dimension-of-sum", "notes:dimension"], "updated": []}, receipt)
+
+
 class DraftsTest(WriteTestCase):
     def test_lists_a_draft_with_its_fields_values_and_acceptance(self) -> None:
         path = self.draft("dimension", node("Dimension", "6", extra='aliases: [维数]\nrequires: ["[[subspace]]", "[[notes:rank]]"]'))
@@ -211,9 +231,9 @@ class DraftsTest(WriteTestCase):
                 {"role": "requires", "pos": 1, "uid": "notes:rank", "state": "missing", "label": None},
             ],
             "choices": {
-                "node_kinds": {"definition": [], "theorem": [], "concept": []},
+                "node_kinds": {"definition": [], "theorem": ["about"], "concept": [], "example": ["uses", "setting"]},
                 "relation_kinds": {"implies": ["premise", "conclusion"], "equivalent": ["side"],
-                                   "example": ["uses", "setting"], "contrasts": ["subject", "contrast", "witness"]},
+                                   "contrasts": ["subject", "contrast", "witness"]},
                 "epistemic": ["proved", "stated"],
             },
             "with": [], "linked_by": [], "problems": ["requires[1]: dangling link [[notes:rank]]"],
@@ -405,14 +425,14 @@ class SourceTest(WriteTestCase):
         before = self.snapshot()
         profile = source(self.source)
         self.assertEqual(before, self.snapshot())
-        self.assertFalse((self.kb.root / ".knowledge/sheets").exists())
         self.assertEqual(
             ["base", "source", "type", "node_kinds", "relation_kinds", "epistemic", "guidance", "line_count",
              "records", "drafts"],
             list(profile),
         )
         self.assertEqual(("kb", SOURCE, "math", 6), (profile["base"], profile["source"], profile["type"], profile["line_count"]))
-        self.assertEqual({"definition": [], "theorem": [], "concept": []}, profile["node_kinds"])
+        self.assertEqual({"definition": [], "theorem": ["about"], "concept": [], "example": ["uses", "setting"]},
+                         profile["node_kinds"])
         self.assertEqual(["premise", "conclusion"], profile["relation_kinds"]["implies"])
         self.assertEqual(["proved", "stated"], profile["epistemic"])
         self.assertEqual(
@@ -462,11 +482,6 @@ class SourceTest(WriteTestCase):
             source(outside)
         with self.assertRaises(KnowledgeError):
             source(self.kb.root / "notes/missing.txt")
-
-    def test_sheet_and_harvest_are_gone(self) -> None:
-        for name in ("sheet", "sheet_json", "harvest", "render_sheet"):
-            self.assertFalse(hasattr(write, name), name)
-
 
 class EditTest(WriteTestCase):
     def test_a_field_is_set_and_the_rest_of_the_file_kept(self) -> None:

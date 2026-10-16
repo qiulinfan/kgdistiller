@@ -88,7 +88,7 @@ def _locate_draft(home: Home, path: Path | str) -> tuple[Base | None, str, str |
 def _validate_draft(
     files: Files, base: Base, identifier: str, path: Path, text: str, linkable: set[str]
 ) -> tuple[Record | None, Path | None, list[str]]:
-    """What ``accept`` makes of one draft selected with the same-base drafts ``linkable`` (folded ids).
+    """What ``accept`` makes of one draft selected with the drafts ``linkable`` (folded uids, of any base).
 
     ``(record, None, problems)`` proposes a new record and ``(record, entry,
     problems)`` the replacement of the accepted ``entry`` with its id, each
@@ -161,9 +161,7 @@ def _promote(home: Home, selected: list[tuple[Base, str, Path]], dry_run: bool) 
     """The part of ``accept`` under the home lock: validate every draft, then move each into ``entries/``."""
     refused: list[dict[str, str]] = []
     files = Files(home)
-    chosen: dict[str, set[str]] = {}
-    for base, identifier, _ in selected:
-        chosen.setdefault(base.name, set()).add(fold(identifier))
+    chosen = {f"{base.name}:{fold(identifier)}" for base, identifier, _ in selected}
     plan: list[tuple[Path, Path, str, str]] = []
     for base, identifier, path in selected:
         target = base.root / KNOWLEDGE_DIRECTORY / ENTRIES / f"{identifier}.md"
@@ -173,7 +171,7 @@ def _promote(home: Home, selected: list[tuple[Base, str, Path]], dry_run: bool) 
             refused.append({"path": str(path), "message": f"cannot read the draft: {error}"})
             continue
         record, existing, problems = _validate_draft(
-            files, base, identifier, path, text, chosen[base.name] - {fold(identifier)}
+            files, base, identifier, path, text, chosen - {f"{base.name}:{fold(identifier)}"}
         )
         refused.extend({"path": str(path), "message": message} for message in problems)
         if record is None and existing is not None:
@@ -200,21 +198,20 @@ def _promote(home: Home, selected: list[tuple[Base, str, Path]], dry_run: bool) 
                 os.unlink(path)
             updated.append(uid)
             continue
-        if action == "create":
-            target.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(path, target)
+        except FileExistsError:
             try:
-                os.link(path, target)
-            except FileExistsError:
-                try:
-                    identical = read_text(target) == text
-                except (OSError, UnicodeDecodeError):
-                    identical = False
-                if not identical:
-                    return {
-                        "created": created,
-                        "updated": updated,
-                        "aborted": {"path": str(path), "message": f"{target} appeared with different text; nothing was overwritten"},
-                    }
+                identical = read_text(target) == text
+            except (OSError, UnicodeDecodeError):
+                identical = False
+            if not identical:
+                return {
+                    "created": created,
+                    "updated": updated,
+                    "aborted": {"path": str(path), "message": f"{target} appeared with different text; nothing was overwritten"},
+                }
         os.unlink(path)
         created.append(uid)
     return {"created": created, "updated": updated}
@@ -223,12 +220,12 @@ def _promote(home: Home, selected: list[tuple[Base, str, Path]], dry_run: bool) 
 # ---------------------------------------------------------------- drafts
 
 
-def _draft_value(files: Files, record: Record, role: str, position: int, value: Value) -> dict[str, Any]:
+def _draft_value(files: Files, role: str, position: int, value: Value) -> dict[str, Any]:
     """One value of a draft: a link with the state of its target."""
     found: dict[str, Any] = {"role": role, "pos": position, "uid": value.uid}
     target_base, target = value.uid.split(":", 1)
     accepted = files.record(target_base, ENTRIES, target) if files.available(target_base) else None
-    draft = files.record(target_base, DRAFTS, target) if accepted is None and target_base == record.base else None
+    draft = files.record(target_base, DRAFTS, target) if accepted is None and files.available(target_base) else None
     if accepted is not None:
         found.update(state="accepted", label=accepted.label, understanding=accepted.understanding)
     elif draft is not None:
@@ -279,7 +276,7 @@ def drafts(bases: Iterable[str] = (), sources: Iterable[str] = (), names: Iterab
     """Every draft of the available bases, read from files; writes nothing and takes no lock.
 
     Each draft comes with its fields, each value's target, the drafts it must
-    be accepted with (its links to other drafts of its base, followed
+    be accepted with (its links to other drafts, of any base, followed
     transitively), the drafts linking it, and ``problems``: what ``accept``
     would refuse when given the draft and those drafts, empty when it would
     accept them. ``bases`` and ``sources`` (base-relative path prefixes) narrow
@@ -294,84 +291,84 @@ def drafts(bases: Iterable[str] = (), sources: Iterable[str] = (), names: Iterab
     prefixes = tuple(sources)
     keys = {name_key(name) for name in names} - {""}
     listed: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    unavailable: list[str] = []
+    unavailable = [name for name in sorted(home.bases) if not files.available(name) and (not wanted or name in wanted)]
+    # Drafts link drafts of every base, so every available base's drafts are read before any is listed.
+    paths: dict[str, Path] = {}
+    texts: dict[str, str] = {}
+    parsed: dict[str, Record] = {}
+    broken: dict[str, str] = {}
     for name in sorted(home.bases):
+        if not files.available(name) or (home.bases[name].root / KNOWLEDGE_DIRECTORY).is_symlink():
+            continue
+        for key, path in files.ids(name, DRAFTS).items():
+            uid = f"{name}:{key}"
+            paths[uid] = path
+            try:
+                texts[uid] = read_text(path)
+                parsed[uid] = parse_text(texts[uid], name, path.stem, path)
+            except (OSError, UnicodeDecodeError) as error:
+                broken[uid] = f"cannot read the draft: {error}"
+            except RecordError as error:
+                broken[uid] = error.message
+    shown = {uid: f"{uid.split(':', 1)[0]}:{path.stem}" for uid, path in paths.items()}
+    links = {
+        uid: {value.uid for _, _, value in record.values()
+              if value.uid in paths and value.uid != uid and value.id not in files.ids(value.base, ENTRIES)}
+        for uid, record in parsed.items()
+    }
+
+    for key, path in paths.items():
+        name = key.split(":", 1)[0]
         if wanted and name not in wanted:
             continue
         base = home.bases[name]
-        if not files.available(name):
-            unavailable.append(name)
+        uid = shown[key]
+        linked_by = sorted(shown[other] for other, targets in links.items() if key in targets)
+        record = parsed.get(key)
+        if record is None:
+            if not prefixes and not keys:
+                listed.append(((name, "", 0, key), {
+                    "uid": uid, "base": name, "id": path.stem, "path": str(path), "label": None,
+                    "with": [], "linked_by": linked_by, "problems": [broken[key]],
+                }))
             continue
-        if (base.root / KNOWLEDGE_DIRECTORY).is_symlink():
+        if prefixes and not any(record.source.startswith(prefix) for prefix in prefixes):
             continue
-        ids = files.ids(name, DRAFTS)
-        entries = files.ids(name, ENTRIES)
-        texts: dict[str, str] = {}
-        parsed: dict[str, Record] = {}
-        broken: dict[str, str] = {}
-        for key, path in ids.items():
-            try:
-                texts[key] = read_text(path)
-                parsed[key] = parse_text(texts[key], name, path.stem, path)
-            except (OSError, UnicodeDecodeError) as error:
-                broken[key] = f"cannot read the draft: {error}"
-            except RecordError as error:
-                broken[key] = error.message
-        links = {
-            key: {value.id for _, _, value in record.values()
-                  if value.base == name and value.id in ids and value.id not in entries and value.id != key}
-            for key, record in parsed.items()
-        }
-
-        for key, path in ids.items():
-            uid = f"{name}:{path.stem}"
-            linked_by = sorted(f"{name}:{ids[other].stem}" for other, targets in links.items() if key in targets)
-            record = parsed.get(key)
-            if record is None:
-                if not prefixes and not keys:
-                    listed.append(((name, "", 0, key), {
-                        "uid": uid, "base": name, "id": path.stem, "path": str(path), "label": None,
-                        "with": [], "linked_by": linked_by, "problems": [broken[key]],
-                    }))
-                continue
-            if prefixes and not any(record.source.startswith(prefix) for prefix in prefixes):
-                continue
-            if keys and not keys & {name_key(text) for text in (record.label, *record.aliases)}:
-                continue
-            others = _reachable(links, key)
-            _, _, problems = _validate_draft(files, base, record.id, path, texts[key], others)
-            listed.append(((name, record.source, record.first_line, key), {
-                "uid": uid,
-                "base": name,
-                "id": record.id,
-                "path": str(path),
-                "replaces": uid if key in entries else None,
-                "foreign": record.foreign,
-                "class": record_class(relations, name, record.kind),
-                "kind": record.kind,
-                "label": record.label,
-                "aliases": list(record.aliases),
-                "source": record.source,
-                "lines": record.lines_text,
-                "understanding": record.understanding,
-                "epistemic": record.epistemic,
-                "gloss": gloss(record.body),
-                "body": record.body,
-                "search_terms": record.search_terms,
-                "evidence": list(record.evidence),
-                "out": [_draft_value(files, record, role, position, value) for role, position, value in record.values()],
-                "choices": _choices(files, base, record),
-                "with": sorted(f"{name}:{ids[other].stem}" for other in others),
-                "linked_by": linked_by,
-                "problems": problems,
-            }))
+        if keys and not keys & {name_key(text) for text in (record.label, *record.aliases)}:
+            continue
+        others = _reachable(links, key)
+        _, _, problems = _validate_draft(files, base, record.id, path, texts[key], others)
+        listed.append(((name, record.source, record.first_line, key), {
+            "uid": uid,
+            "base": name,
+            "id": record.id,
+            "path": str(path),
+            "replaces": uid if key.split(":", 1)[1] in files.ids(name, ENTRIES) else None,
+            "foreign": record.foreign,
+            "class": record_class(relations, name, record.kind),
+            "kind": record.kind,
+            "label": record.label,
+            "aliases": list(record.aliases),
+            "source": record.source,
+            "lines": record.lines_text,
+            "understanding": record.understanding,
+            "epistemic": record.epistemic,
+            "gloss": gloss(record.body),
+            "body": record.body,
+            "search_terms": record.search_terms,
+            "evidence": list(record.evidence),
+            "out": [_draft_value(files, role, position, value) for role, position, value in record.values()],
+            "choices": _choices(files, base, record),
+            "with": sorted(shown[other] for other in others),
+            "linked_by": linked_by,
+            "problems": problems,
+        }))
     return {"drafts": [item for _, item in sorted(listed, key=lambda pair: pair[0])], "unavailable_bases": unavailable}
 
 
 # ---------------------------------------------------------------- edit
 
 SCALAR_FIELDS = ("label", "kind", "epistemic", "understanding")
-LIST_FIELDS = ("aliases", "requires")
 BODY = "body"
 _KEY_RE = re.compile(r"^([^\s#:][^:]*?)[ \t]*:")
 

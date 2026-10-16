@@ -206,42 +206,17 @@ def _usable(path: Path) -> sqlite3.Connection | None:
     return None
 
 
-def _carried(path: Path) -> tuple[str, dict[str, bytes]]:
-    """The model and the vectors by text of a database about to be recreated, when it still reads; else nothing.
-
-    Vectors depend only on a record's unified text and the model, so a database of another schema version
-    hands them to the new one, which takes each for the row whose text is the same.
-    """
-    if not path.is_file():
-        return "", {}
-    try:
-        old = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=BUSY_TIMEOUT_SECONDS)
-    except sqlite3.Error:
-        return "", {}
-    try:
-        model = old.execute("SELECT value FROM meta WHERE key = 'embedding'").fetchone()[0]
-        return model, dict(old.execute("SELECT text, vec FROM record WHERE vec IS NOT NULL"))
-    except (sqlite3.Error, TypeError):
-        return "", {}
-    finally:
-        old.close()
-
-
-def open_for_write() -> tuple[sqlite3.Connection, bool, tuple[str, dict[str, bytes]]]:
-    """Open the database for ``index``; recreate it when missing, unopenable or of another version.
-
-    A recreated database comes with the model and vectors by text the old file held, if it could be read.
-    """
+def open_for_write() -> tuple[sqlite3.Connection, bool]:
+    """Open the database for ``index``; recreate it when missing, unopenable or of another version."""
     require_fts5()
     path = database_path()
     connection = _usable(path)
     if connection is not None:
-        return connection, False, ("", {})
-    carried = _carried(path)
+        return connection, False
     _remove_database(path)
     connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
     connection.executescript(SCHEMA)
-    return connection, True, carried
+    return connection, True
 
 
 def open_read_only() -> sqlite3.Connection:
@@ -287,7 +262,6 @@ def unified_text(
     if "requires" in roles:
         lines.append("requires: " + "; ".join(roles["requires"]))
     lines.extend("> " + normalize_space(quote) for quote in json.loads(row["evidence"]))
-    lines.append(row["source"])
     return "\n".join(lines)
 
 
@@ -407,14 +381,13 @@ def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None 
     """
     home = load_home(home_directory(), types=False)
     available, unavailable = _available(home)
-    connection, created, (carried_model, carried) = open_for_write()
+    connection, created = open_for_write()
     connection.row_factory = sqlite3.Row
     report: dict[str, Any] = {
         "created": created,
         "rebuild": rebuild,
         "bases": {},
         "unavailable": unavailable,
-        "understanding_changed": [],
         "reused": 0,
         "embedded": 0,
         "unembedded": 0,
@@ -427,15 +400,14 @@ def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None 
         if model != meta_embedding(connection):
             connection.execute("UPDATE record SET vec = NULL")
             connection.execute("UPDATE meta SET value = ? WHERE key = 'embedding'", (model,))
-        # Vectors of a database of another schema, computed by the model the home still uses, are reused by text.
-        pool: dict[str, bytes] = dict(carried) if model and carried_model == model else {}
+        pool: dict[str, bytes] = {}
         if rebuild:
             for row in connection.execute("SELECT rowid, uid, base FROM record").fetchall():
                 if row["base"] not in unavailable:
                     _drop(connection, row["uid"], row["rowid"], pool)
         known = {
             row["uid"]: row
-            for row in connection.execute("SELECT rowid, uid, base, mtime_ns, size, understanding FROM record")
+            for row in connection.execute("SELECT rowid, uid, base, mtime_ns, size FROM record")
         }
         for uid, row in list(known.items()):
             if row["base"] not in home.bases:
@@ -464,10 +436,6 @@ def index(rebuild: bool = False, embed: bool = True, only: Iterable[str] | None 
                         _drop(connection, uid, old["rowid"], pool)
                         del known[uid]
                     continue
-                if old is not None and old["understanding"] != record.understanding:
-                    report["understanding_changed"].append(
-                        {"uid": uid, "from": old["understanding"], "to": record.understanding}
-                    )
                 _store(connection, record, stat)
                 counts["parsed"] += 1
             for uid, row in list(known.items()):

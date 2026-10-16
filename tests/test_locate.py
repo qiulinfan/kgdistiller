@@ -110,13 +110,58 @@ class RelocateTest(LocateTestCase):
         several = relocate("kb:token", "mask token")
         self.assertIn("2 times", several["refused"]["message"])
         self.assertEqual(2, len(several["refused"]["matches"]))
-        self.kb.write_source("notes/elsewhere.txt", "Only another base holds this sentence.\n", base="notes")
-        none = relocate("kb:token", "Only another base holds this sentence.")
-        self.assertIn("another base", none["refused"]["message"])
-        self.assertEqual("notes", none["refused"]["matches"][0]["base"])
+        none = relocate("kb:token", "No source holds this sentence.")
+        self.assertEqual("the passage does not occur in a registered source", none["refused"]["message"])
         self.assertEqual(before, path.read_bytes())
         narrowed = relocate("kb:token", "mask token", sources=["notes/paper.txt"], dry_run=True)
         self.assertIn("refused", narrowed)
+
+    def test_a_passage_in_another_base_moves_the_record_there_and_relinks_it(self) -> None:
+        self.kb.write_source("notes/elsewhere.txt", "Only another base holds this sentence.\n", base="notes")
+        self.kb.write_record("mask", node("Mask", PAPER, "5"), "M.", ["Each mask token"])
+        self.kb.write_record("x", node("X", "notes/elsewhere.txt", "1"), "X.", ["Only another base"], base="notes")
+        path = self.kb.write_record(
+            "token", node("Token", "https://example.com/token", None)
+            + 'requires:\n  - "[[mask]]"\n  - "[[notes:x|the X]]"\n', "T.", ["a token"])
+        local = self.kb.write_record("a", node("A", PAPER, "6") + 'requires: ["[[token]]"]\n', "A.", ["每个 mask token"])
+        other = self.kb.write_record("b", node("B", "notes/elsewhere.txt", "1") + 'requires:\n  - "[[kb:Token.md]]"\n',
+                                     "B.", ["holds this sentence"], base="notes")
+        report = relocate("kb:token", "Only another base holds this sentence.")
+        self.assertEqual({"from": "kb:token", "to": "notes:token"}, report["moved"])
+        self.assertEqual("notes:token", report["relocated"])
+        self.assertEqual(sorted([str(local), str(other)]), sorted(report["relinked"]))
+        self.assertFalse(path.exists())
+        moved = self.kb.path("token", base="notes").read_text(encoding="utf-8")
+        self.assertIn('requires:\n  - "[[kb:mask]]"\n  - "[[x|the X]]"\n', moved)
+        self.assertIn('requires: ["[[notes:token]]"]', local.read_text(encoding="utf-8"))
+        self.assertIn('requires:\n  - "[[token]]"\n', other.read_text(encoding="utf-8"))
+        self.assertEqual([], check()["errors"])
+
+    def test_a_move_across_bases_is_refused_when_the_id_is_taken_or_a_replacement_waits(self) -> None:
+        self.kb.write_source("notes/elsewhere.txt", "Only another base holds this sentence.\n", base="notes")
+        passage = "Only another base holds this sentence."
+        self.kb.write_record("token", node("Token", "https://example.com/token", None), "T.", ["a token"])
+        self.kb.write_record("token", node("Token", "https://example.com/token", None), "T.", ["a token"], folder="drafts")
+        with self.assertRaisesRegex(KnowledgeError, "replacement draft of kb:token waits"):
+            relocate("kb:token", passage)
+        self.kb.path("token", folder="drafts").unlink()
+        self.kb.write_record("token", node("Other token", "notes/elsewhere.txt", "1"), "O.", ["Only"],
+                             folder="drafts", base="notes")
+        with self.assertRaisesRegex(KnowledgeError, "base notes already has a record or draft token"):
+            relocate("kb:token", passage)
+        self.assertTrue(self.kb.path("token").exists())
+
+    def test_a_draft_moves_across_bases_with_the_drafts_that_link_it_relinked(self) -> None:
+        self.kb.write_source("notes/elsewhere.txt", "Only another base holds this sentence.\n", base="notes")
+        draft = self.kb.write_record("loose", node("Loose", "https://example.com/loose", None), "L.", ["loose"], folder="drafts")
+        user = self.kb.write_record("user", node("User", PAPER, "5") + 'requires: ["[[loose]]"]\n', "U.", ["Each mask token"],
+                                    folder="drafts")
+        report = relocate(str(draft), "Only another base holds this sentence.")
+        self.assertEqual([str(user)], report["relinked"])
+        self.assertNotIn("index", report)
+        self.assertIn('requires: ["[[notes:loose]]"]', user.read_text(encoding="utf-8"))
+        self.assertTrue(self.kb.path("loose", folder="drafts", base="notes").exists())
+        self.assertEqual([], check()["errors"])
 
     def test_dry_run_writes_nothing_and_unknown_targets_are_errors(self) -> None:
         path = self.kb.write_record("token", node("Token", "https://example.com/token", None), "T.", ["token"])

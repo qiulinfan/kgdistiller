@@ -88,8 +88,8 @@ class SearchTest(RetrieveTestCase):
              "gloss", "ranks", "requires", "participants", "in", "truncated"],
             list(top),
         )
-        # Three requires links out (one to a missing record) and one relation citing it.
-        self.assertEqual(4, top["degree"])
+        # Two requires links out to existing records (a third is missing) and one relation citing it.
+        self.assertEqual(3, top["degree"])
         self.assertEqual(
             {"class": "node", "kind": "definition", "label": "Measure space", "base": "kb", "source": "notes/a.txt",
              "lines": "2-2", "foreign": False, "understanding": "no", "epistemic": None, "gloss": "三元组 (X, M, μ)。"},
@@ -437,13 +437,11 @@ class GetTest(RetrieveTestCase):
             self.assertEqual("kb:" + identifier, record["uid"])
             self.assertIsNone(record["source_text"], identifier)
 
-    def test_a_broken_document_type_does_not_stop_reads_or_index(self) -> None:
+    def test_a_broken_document_type_fails_reads_by_name_but_not_the_index(self) -> None:
         (self.kb.home / "types/math.md").write_text("---\nnode_kinds: definition\n---\nGuidance.\n", encoding="utf-8")
-        self.assertEqual("kb:measure-space", search("measure space")["results"][0]["uid"])
-        # A type file that does not load declares no relation kinds.
-        self.assertEqual("node", get(["kb:space-implies-probability"])["records"][0]["class"])
-        self.assertEqual(["kb:measure"], [sense["uid"] for sense in resolve(["测度"])["terms"][0]["senses"]])
-        self.assertIsNotNone(get(["kb:measure"], source_lines=0)["records"][0]["source_text"])
+        for read in (lambda: search("measure space"), lambda: get(["kb:measure"]), lambda: resolve(["测度"])):
+            with self.subTest(read=read), self.assertRaisesRegex(KnowledgeError, "types/math.md"):
+                read()
         self.assertEqual({}, {name: counts["unparseable"] for name, counts in index()["bases"].items() if counts["unparseable"]})
 
     def test_bare_ids(self) -> None:
@@ -485,7 +483,7 @@ class ReadTimeClassTest(RetrieveTestCase):
         self.assertEqual(before, database.execute("SELECT uid, kind, text FROM record ORDER BY uid").fetchall())
 
     def test_the_class_follows_the_types_of_the_record_base(self) -> None:
-        self.kb.types["papers"] = {"node_kinds": ["model"], "relation_kinds": {"theorem": ["about"]}, "guidance": "Papers."}
+        self.kb.types["papers"] = {"node_kinds": {"model": []}, "relation_kinds": {"theorem": ["about"]}, "guidance": "Papers."}
         self.kb.sources["notes"]["papers/*.pdf"] = "papers"
         self.kb.write_config()
         self.assertEqual("node", self.classes()["kb:analysis"])
@@ -550,14 +548,14 @@ class GraphTestCase(unittest.TestCase):
 
 
 class DegreeTest(GraphTestCase):
-    """A record's degree counts the distinct other records it links or is linked by, in any role."""
+    """A record's degree counts the distinct other existing records it links or is linked by, in any role."""
 
     EXPECTED: ClassVar[dict[str, int]] = {
         "kb:x": 4,  # cited by r1, r2, r3 and e1
         "kb:y": 3,  # cited by r1, r2 and r3
         "kb:r1": 3,  # links x and y, cited by r2
         "kb:r3": 2,  # side x and y
-        "kb:a": 2,  # requires b and the missing loose-term
+        "kb:a": 1,  # requires b; the missing loose-term counts for nothing
         "kb:b": 1,  # requires a, which also requires b: one other record
         "kb:d": 2,  # required by c and h
         "kb:big": 0,
@@ -576,7 +574,7 @@ class DegreeTest(GraphTestCase):
 
     def test_neighbors(self) -> None:
         result = neighbors(["kb:e1"], direction="out")
-        self.assertEqual({"kb:e1": 2, "kb:x": 4, "kb:z": 0}, {uid: record["degree"] for uid, record in result["records"].items()})
+        self.assertEqual({"kb:e1": 1, "kb:x": 4, "kb:z": 0}, {uid: record["degree"] for uid, record in result["records"].items()})
 
 
 def edge(source: str, role: str, target: str, depth: int) -> dict[str, object]:
@@ -593,7 +591,7 @@ class NeighborsTest(GraphTestCase):
             result["edges"],
         )
         self.assertEqual(
-            {"kb:a": {"label": "A", "kind": "definition", "class": "node", "exists": True, "degree": 2},
+            {"kb:a": {"label": "A", "kind": "definition", "class": "node", "exists": True, "degree": 1},
              "kb:b": {"label": "B", "kind": "definition", "class": "node", "exists": True, "degree": 1},
              "kb:loose-term": {"label": None, "kind": None, "class": None, "exists": False, "degree": 0}},
             result["records"],
@@ -661,7 +659,7 @@ class BrowseTest(GraphTestCase):
         result = browse()
         self.assertEqual(["bases", "lag"], list(result))
         self.assertEqual(
-            [{"name": "kb", "available": True, "records": 15, "relations": 4},
+            [{"name": "kb", "available": True, "records": 15, "relations": 3},
              {"name": "notes", "available": True, "records": 1, "relations": 0}],
             result["bases"],
         )
@@ -674,11 +672,11 @@ class BrowseTest(GraphTestCase):
         root = browse("kb")
         self.assertEqual(["base", "dir", "entries", "lag"], list(root))
         self.assertEqual(("kb", ""), (root["base"], root["dir"]))
-        self.assertEqual([{"path": "notes/", "type": "dir", "records": 15, "relations": 4}], root["entries"])
+        self.assertEqual([{"path": "notes/", "type": "dir", "records": 15, "relations": 3}], root["entries"])
         directory = browse("kb:notes/")
         self.assertEqual("notes/", directory["dir"])
         self.assertEqual(
-            [{"path": "notes/g.txt", "type": "source", "records": 14, "relations": 4},
+            [{"path": "notes/g.txt", "type": "source", "records": 14, "relations": 3},
              {"path": "notes/sub/", "type": "dir", "records": 1, "relations": 0}],
             directory["entries"],
         )
@@ -735,12 +733,12 @@ class BrowseTest(GraphTestCase):
     def test_a_class_filter_changes_the_counts(self) -> None:
         relations = Filters(class_=("relation",))
         self.assertEqual(
-            [{"name": "kb", "available": True, "records": 4, "relations": 4},
+            [{"name": "kb", "available": True, "records": 3, "relations": 3},
              {"name": "notes", "available": True, "records": 0, "relations": 0}],
             browse(filters=relations)["bases"],
         )
         self.assertEqual(
-            [{"path": "notes/g.txt", "type": "source", "records": 4, "relations": 4}],
+            [{"path": "notes/g.txt", "type": "source", "records": 3, "relations": 3}],
             browse("kb:notes/", filters=relations)["entries"],
         )
 
@@ -785,6 +783,12 @@ class PackTest(GraphTestCase):
         self.assertEqual([], result["gaps"])
         self.assertEqual(["kb:x", "kb:r1", "kb:r2"], packed(pack(["kb:x", "kb:r1"])))
         self.assertEqual(["kb:x"], packed(pack(["kb:x"])))
+
+    def test_a_statement_about_packed_records_is_packed_with_them(self) -> None:
+        self.kb.write_record("t1", node("T1", "12", source="notes/g.txt", kind="theorem", extra='about: ["[[x]]", "[[y]]"]'),
+                             "T.", ["T1 holds."])
+        index(embed=False)
+        self.assertIn("kb:t1", packed(pack(["kb:x", "kb:y"])))
 
     def test_gap_reasons_and_order(self) -> None:
         result = pack(["kb:nothing", "kb:a", "kb:e1"], requires_depth=0)

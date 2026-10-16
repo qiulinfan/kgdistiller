@@ -47,15 +47,15 @@ MAX_MESSAGE_JSON_VALUES = 100_000
 MAX_TOOL_RESPONSE_BYTES = 8 * 1024 * 1024
 READ_ONLY_ANNOTATIONS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 INSTRUCTIONS = (
-    "Read-only access to every base registered in the kgdistiller home: source-backed records and "
-    "role-bound relations. A label names one record; aliases are shared, so compare senses before assuming identity, and "
+    "Read-only access to every base registered in the kgdistiller home: source-backed records, nodes "
+    "and the relations between them. A label names one record; aliases are shared, so compare senses before assuming identity, and "
     "deliver source:lines with the evidence quotes. Every result reports lag; when lag.changed_files > 0, "
     "run `kgd index --no-embed` and repeat the call. lag.unembedded > 0 or lag.embedding_changed means weaker "
     "dense coverage until the owner re-embeds; never re-embed unasked. If kg_search reports "
     "the retrieval extra missing, repeat it with no_dense. kg_neighbors follows links (dependency closure with "
-    "role requires, claims citing a record with dir in), kg_browse lists bases, source trees, a source's records "
-    "by kind or every record of a kind, and kg_pack returns whole records within a byte budget with shared "
-    "relations and typed gaps. kg_drafts lists the drafts awaiting acceptance, read from their files; drafts "
+    "role requires, the statement nodes and relations linking a record with dir in), kg_browse lists bases, "
+    "source trees, a source's records by kind or every record of a kind, and kg_pack returns whole records "
+    "within a byte budget with the records linking several of them and typed gaps. kg_drafts lists the drafts awaiting acceptance, read from their files; drafts "
     "are not knowledge and no other tool returns them. kg_find finds a passage or a name in the registered "
     "sources, such as where a concept is defined or where a moved passage now lies."
 )
@@ -121,7 +121,8 @@ TOOL_DEFINITIONS = [
         "kg_neighbors", "Follow Knowledge Links",
         "Follow links from records (uid: base:id, or a bare id held by one base) and return the edges reached, "
         "each once at its minimum depth and in the link's own direction, with the visited records. dir out "
-        "follows a record's own links, in the links citing it (claims and applications), both either. role "
+        "follows a record's own links, in the links to it (the statement nodes and relations linking it), both "
+        "either. role "
         "restricts the roles followed at every hop (role requires gives the dependency closure). depth limits "
         "the hops and so cuts cycles. Filters restrict the records the walk may enter; start uids always count, "
         "and missing targets are reported as leaves.",
@@ -146,7 +147,7 @@ TOOL_DEFINITIONS = [
         "kg_pack", "Pack Knowledge Evidence",
         "Pack whole records, never truncated, within budget bytes (the UTF-8 length of the compact JSON of the "
         "records list): the given uids, then their requires closure breadth-first up to requires_depth, then "
-        "relations linking at least two packed records. A record that does not fit is an over-budget gap and "
+        "records, relations and statement nodes alike, linking at least two packed records. A record that does not fit is an over-budget gap and "
         "later smaller ones may still fit. Gaps also report unknown uids, missing targets and "
         "linked records not packed. Filters restrict only the records pack adds itself.",
         _object_schema({
@@ -159,9 +160,9 @@ TOOL_DEFINITIONS = [
     _tool(
         "kg_drafts", "List Knowledge Drafts",
         "List the drafts awaiting acceptance, read from their files, not the index: each draft's fields, the "
-        "accepted record it replaces if any, every value's target (an accepted record, a draft of its base or a "
+        "accepted record it replaces if any, every value's target (an accepted record, a draft of any base or a "
         "missing record), the drafts "
-        "it must be accepted with, the drafts linking it, and the problems kgd accept would refuse, empty when it "
+        "it must be accepted with and the drafts linking it, of any base, and the problems kgd accept would refuse, empty when it "
         "would accept them. base and source (path prefixes) narrow the listing; names keeps the drafts whose label "
         "or an alias has one of those names.",
         _object_schema({"base": _strings(64, 32), "source": _strings(4096, 32), "names": _strings(4096, 128)}, []),

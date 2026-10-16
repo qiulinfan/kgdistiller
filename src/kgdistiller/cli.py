@@ -147,13 +147,16 @@ def parse_args() -> argparse.Namespace:
     find.add_argument("--limit", type=_positive, default=20)
 
     relocate = commands.add_parser(
-        "relocate", help="move a record's source, lines and evidence to the only passage of its base that holds a text"
+        "relocate",
+        help="move a record's source, lines and evidence to the only passage of the registered sources that holds a text, "
+        "into that passage's base when it lies in another",
     )
     relocate.add_argument("target", metavar="TARGET", help="base:id of an accepted record, or a record or draft file")
     relocate.add_argument("text", help="the passage's text; - reads it from standard input")
     relocate.add_argument(
         "--source", action="append", default=[], metavar="PREFIX", help="look only in sources with this prefix"
     )
+    relocate.add_argument("--base", action="append", default=[], metavar="NAME", help="look only in this base (repeatable)")
     relocate.add_argument("--dry-run", action="store_true")
 
     drafts = commands.add_parser(
@@ -202,7 +205,7 @@ def parse_args() -> argparse.Namespace:
     get.add_argument("--source-lines", type=_non_negative, metavar="N", help="add the live cited source range widened by N lines")
 
     neighbors = commands.add_parser(
-        "neighbors", parents=[filters], help="follow links from records: dependency and claim closures"
+        "neighbors", parents=[filters], help="follow links from records: requires chains and the statements and relations linking them"
     )
     neighbors.add_argument("uids", nargs="+", metavar="UID", help="base:id, or a bare id held by exactly one base")
     neighbors.add_argument(
@@ -404,7 +407,7 @@ def _command(args: argparse.Namespace) -> int:
         from .locate import relocate
 
         target = args.target if ":" in args.target and "/" not in args.target else str(_cwd_path(Path(args.target)))
-        report = relocate(target, _text(args.text), args.source, args.dry_run)
+        report = relocate(target, _text(args.text), args.source, args.base, args.dry_run)
         return _print(report, failed="refused" in report)
     if args.command == "drafts":
         from .write import drafts

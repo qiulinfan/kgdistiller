@@ -25,10 +25,7 @@ BASE_NAME = "kb"
 
 def type_document(spec: dict[str, Any]) -> str:
     """Render a document type file; JSON flow collections are valid YAML."""
-    node_kinds = spec["node_kinds"]
-    if isinstance(node_kinds, list):
-        node_kinds = {kind: [] for kind in node_kinds}
-    lines = ["---", f"node_kinds: {json.dumps(node_kinds)}"]
+    lines = ["---", f"node_kinds: {json.dumps(spec['node_kinds'])}"]
     if "relation_kinds" in spec:
         lines.append(f"relation_kinds: {json.dumps(spec['relation_kinds'])}")
     if "epistemic" in spec:
@@ -55,15 +52,14 @@ def use_temporary_home(test: unittest.TestCase) -> Path:
 
 RECORD_TYPES: dict[str, dict[str, Any]] = {
     "math": {
-        "node_kinds": ["definition", "theorem", "concept"],
+        "node_kinds": {"definition": [], "theorem": ["about"], "concept": [], "example": ["uses", "setting"]},
         "relation_kinds": {
             "implies": ["premise", "conclusion"],
             "equivalent": ["side"],
-            "example": ["uses", "setting"],
             "contrasts": ["subject", "contrast", "witness"],
         },
         "epistemic": ["proved", "stated"],
-        "guidance": "Definitions and named theorems are nodes; statements connecting them are relations.",
+        "guidance": "Definitions, theorems and examples are nodes; connections between records are relations.",
     },
 }
 RECORD_SOURCES = {"notes/**/*.txt": "math"}

@@ -151,8 +151,8 @@ class SchemaTest(IndexTestCase):
     def test_report_shape(self) -> None:
         report = index()
         self.assertEqual(
-            ["created", "rebuild", "bases", "unavailable", "understanding_changed", "reused", "embedded",
-             "unembedded", "truncated", "embedding_error"],
+            ["created", "rebuild", "bases", "unavailable", "reused", "embedded", "unembedded", "truncated",
+             "embedding_error"],
             list(report),
         )
         self.assertEqual({"kb": {"parsed": 2, "deleted": 0, "unparseable": []},
@@ -174,7 +174,7 @@ class SchemaTest(IndexTestCase):
             self.assertEqual(
                 "Sum is a subspace\nimplies · stated\nThe sum is a subspace.\nwhy is a sum closed\n"
                 "conclusion: Measure; kb:dimension\npremise: Subspace; Subspace\nrequires: kb:missing; notes:vector-space\n"
-                "> The sum of two subspaces\nnotes/a.txt",
+                "> The sum of two subspaces",
                 row["text"],
             )
             self.assertEqual(("implies", "yes", 4, 4, "4-4"),
@@ -205,7 +205,7 @@ class SchemaTest(IndexTestCase):
             row = connection.execute("SELECT * FROM record WHERE uid = 'kb:attention'").fetchone()
             self.assertEqual(("https://example.com/paper", 0, 0, ""),
                              (row["source"], row["line_start"], row["line_end"], row["lines"]))
-            self.assertTrue(row["text"].endswith("> Quoted from the paper.\nhttps://example.com/paper"), row["text"])
+            self.assertTrue(row["text"].endswith("> Quoted from the paper."), row["text"])
             self.assertEqual([("requires", 0, "kb:subspace")],
                              [tuple(link) for link in connection.execute("SELECT role, pos, dst FROM link WHERE src = 'kb:attention'")])
         finally:
@@ -313,11 +313,6 @@ class InvariantTest(IndexTestCase):
         fixed = index()
         self.assertTrue(index_clean(fixed))
         self.assertIn("kb:subspace", [row[0] for row in dump()["record"]])
-
-    def test_understanding_changes_are_reported(self) -> None:
-        index()
-        self.edit(self.subspace, "lines: 3", "lines: 3\nunderstanding: no")
-        self.assertEqual([{"uid": "kb:subspace", "from": "yes", "to": "no"}], index()["understanding_changed"])
 
     def test_deleted_files_and_unregistered_bases_lose_their_rows(self) -> None:
         index()
@@ -550,42 +545,16 @@ class EmbeddingTest(IndexTestCase):
         finally:
             connection.close()
 
-    def test_another_schema_version_hands_its_vectors_to_the_new_database(self) -> None:
-        with fake_encoder() as fake:
+    def test_another_schema_version_is_rebuilt_and_embedded_again(self) -> None:
+        with fake_encoder():
             index()
             before = self.rows()
             self.set_schema_version(3)
-            report = index()
-            self.assertTrue(report["created"])
-            self.assertEqual((3, 0, 0), (report["reused"], report["embedded"], report["unembedded"]))
-            self.assertEqual([self.MODEL], fake.loads)
-        self.assertEqual(before, self.rows())
-        self.assertEqual([("embedding", f"{self.MODEL} int8")], dump()["meta"])
-        self.assert_all_encoded()
-
-    def test_another_schema_version_of_another_model_hands_on_no_vectors(self) -> None:
-        with fake_encoder() as fake:
-            index()
-            self.set_schema_version(3)
-            self.kb.embedding = "other/model"
-            self.kb.write_config()
             report = index()
             self.assertTrue(report["created"])
             self.assertEqual((0, 3, 0), (report["reused"], report["embedded"], report["unembedded"]))
-            self.assertEqual([self.MODEL, "other/model"], fake.loads)
-        self.assertEqual([("embedding", "other/model int8")], dump()["meta"])
-        self.assert_all_encoded()
-
-    def test_carried_vectors_need_no_embedding_run(self) -> None:
-        with fake_encoder() as fake:
-            index()
-            before = self.rows()
-            self.set_schema_version(3)
-            report = index(embed=False)
-            self.assertEqual([self.MODEL], fake.loads)
-        self.assertTrue(report["created"])
-        self.assertEqual((3, 0, 0), (report["reused"], report["embedded"], report["unembedded"]))
         self.assertEqual(before, self.rows())
+        self.assert_all_encoded()
 
     def test_stale_write_is_a_no_op(self) -> None:
         tampered: list[str] = []
@@ -658,7 +627,6 @@ class EmbeddingTest(IndexTestCase):
         self.without_retrieval_extra()
         report = index()
         self.assertIsNotNone(report["embedding_error"])
-        self.assertEqual([{"uid": "kb:subspace", "from": "yes", "to": "no"}], report["understanding_changed"])
         self.assertEqual(1, report["bases"]["kb"]["parsed"])
 
     def test_rebuild_keeps_an_unavailable_base_and_loads_no_model(self) -> None:

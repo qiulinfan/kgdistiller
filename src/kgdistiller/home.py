@@ -178,7 +178,10 @@ def load_type(path: Path) -> DocumentType:
     where = f"document type {path}"
     if not SLUG_RE.fullmatch(name):
         raise KnowledgeError(f"{where}: the file name must be a slug matching {SLUG_RE.pattern}")
-    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise KnowledgeError(f"{where}: cannot be read as UTF-8 text ({error})") from error
     if not lines or lines[0] != "---" or "---" not in lines[1:]:
         raise KnowledgeError(f"{where}: expected YAML frontmatter between two '---' lines")
     end = lines.index("---", 1)
@@ -204,24 +207,19 @@ def load_type(path: Path) -> DocumentType:
 
 
 def base_relation_kinds(home: Home) -> dict[str, frozenset[str]]:
-    """The relation kinds of each base's document types; a type file that does not load declares none.
+    """The relation kinds of each base's document types.
 
-    Whether a record is a node or a relation follows its kind; reads take it from here, so a broken type file
-    never stops retrieval, and `kgd check` reports a kind two types of one base declare differently.
+    Whether a record is a node or a relation follows its kind, so reads take it from here and a type file
+    that does not load fails them, naming it; `kgd check` reports a kind two types of one base declare differently.
     """
-    loaded: dict[str, DocumentType | None] = dict(home.types)
+    loaded: dict[str, DocumentType] = dict(home.types)
     found: dict[str, frozenset[str]] = {}
     for name, base in home.bases.items():
         kinds: set[str] = set()
         for type_name in set(base.sources.values()):
             if type_name not in loaded:
-                try:
-                    loaded[type_name] = load_type(home.directory / TYPES_DIRECTORY / f"{type_name}.md")
-                except (KnowledgeError, OSError, UnicodeDecodeError, yaml.YAMLError):
-                    loaded[type_name] = None
-            document_type = loaded[type_name]
-            if document_type is not None:
-                kinds.update(document_type.relation_kinds)
+                loaded[type_name] = load_type(home.directory / TYPES_DIRECTORY / f"{type_name}.md")
+            kinds.update(loaded[type_name].relation_kinds)
         found[name] = frozenset(kinds)
     return found
 
