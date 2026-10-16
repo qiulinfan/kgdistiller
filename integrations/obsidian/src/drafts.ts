@@ -18,6 +18,13 @@ export interface DraftValue {
   label?: string | null;
 }
 
+/** What a draft's kind, roles and epistemic label may be, from its source's document type. */
+export interface Choices {
+  node_kinds: string[];
+  relation_kinds: Record<string, string[]>;
+  epistemic: string[];
+}
+
 export interface Draft {
   uid: string;
   base: string;
@@ -41,6 +48,8 @@ export interface Draft {
   search_terms?: string;
   evidence?: string[];
   out?: DraftValue[];
+  /** What its kind, roles and epistemic label may be; null when its source has no document type. */
+  choices?: Choices | null;
   /** The drafts it links, directly or through other drafts, which are accepted with it. */
   with: string[];
   linked_by: string[];
@@ -163,4 +172,25 @@ export async function drawIntoDraft(roots: Map<string, string>, files: CaptureFi
   if (waiting) return { path, created: false };
   await files.create(path, await files.read(`${root}/.knowledge/entries/${id}.md`));
   return { path, created: true };
+}
+
+/** The value that links `uid` from a record of `base`: local `[[id]]`, or `[[base:id]]` across bases. */
+export function linkFor(uid: string, base: string): string {
+  const colon = uid.indexOf(":");
+  return uid.slice(0, colon) === base ? `[[${uid.slice(colon + 1)}]]` : `[[${uid}]]`;
+}
+
+/** The links a role of a draft holds, in order, without the value at `drop` when given. */
+export function roleLinks(draft: Draft, role: string, drop?: number): string[] {
+  return (draft.out ?? []).filter((value) => value.role === role && value.pos !== drop).map((value) => linkFor(value.uid, draft.base));
+}
+
+/**
+ * The value rows a draft's card offers: the roles its kind declares (or, for a
+ * kind its type lacks, the roles it holds), in order, then `requires`.
+ */
+export function editableRoles(draft: Draft): string[] {
+  const declared = draft.choices?.relation_kinds[draft.kind ?? ""];
+  const held = [...new Set((draft.out ?? []).map((value) => value.role))].filter((role) => role !== "requires");
+  return [...new Set([...(declared ?? held), ...held]), "requires"];
 }

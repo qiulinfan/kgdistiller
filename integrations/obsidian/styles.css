@@ -519,3 +519,55 @@ SOFTWARE.
   margin: 4px 0 0;
   padding-inline-start: 18px;
 }
+
+.kgd-capture-field {
+  align-items: center;
+}
+
+.kgd-capture-input {
+  flex: 1 1 auto;
+  font-size: var(--font-ui-small);
+  min-width: 0;
+}
+
+.kgd-capture-input.is-short {
+  flex: 0 1 9em;
+}
+
+.kgd-capture-understood {
+  align-items: center;
+  display: inline-flex;
+  gap: 2px;
+  margin-inline-start: 8px;
+}
+
+.kgd-capture-statement {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.kgd-capture-statement > .kgd-prose {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.kgd-capture-textarea {
+  font-family: var(--font-text);
+  font-size: var(--font-ui-small);
+  min-height: 6em;
+  width: 100%;
+}
+
+.kgd-capture-remove,
+.kgd-capture-add {
+  height: auto;
+  padding: 0 2px;
+}
+
+.kgd-capture-remove svg,
+.kgd-capture-add svg {
+  height: 12px;
+  width: 12px;
+}

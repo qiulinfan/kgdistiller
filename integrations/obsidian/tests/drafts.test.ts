@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { CaptureFiles } from "../src/capture";
 import {
-  absoluteSource, acceptanceGroup, drawIntoDraft, FOREIGN_GROUP, groupProblems, sourceGroups, valuesByRole, valueText, type Draft,
+  absoluteSource, acceptanceGroup, drawIntoDraft, editableRoles, FOREIGN_GROUP, groupProblems, linkFor, roleLinks, sourceGroups, valuesByRole,
+  valueText, type Draft,
 } from "../src/drafts";
 
 const draft = (uid: string, extra: Partial<Draft> = {}): Draft => ({
@@ -119,3 +120,34 @@ describe("drawing a record into a draft", () => {
     await expect(drawIntoDraft(roots, filesOf(written), "notes:mae")).rejects.toThrow("base notes has no registered root");
   });
 });
+
+describe("editing a draft's values", () => {
+  const relation = draft("kb:sum", {
+    kind: "implies",
+    choices: { node_kinds: ["definition"], relation_kinds: { implies: ["premise", "conclusion"] }, epistemic: ["stated"] },
+    out: [
+      { role: "premise", pos: 0, uid: "kb:subspace", state: "accepted", label: "Subspace" },
+      { role: "premise", pos: 1, uid: "notes:span", state: "accepted", label: "Span" },
+      { role: "requires", pos: 0, uid: "kb:vector-space", state: "draft", label: "Vector space" },
+    ],
+  });
+
+  it("links a record of the draft's base locally and others across bases", () => {
+    expect(linkFor("kb:subspace", "kb")).toBe("[[subspace]]");
+    expect(linkFor("notes:span", "kb")).toBe("[[notes:span]]");
+  });
+
+  it("lists a role's links without the one removed", () => {
+    expect(roleLinks(relation, "premise")).toEqual(["[[subspace]]", "[[notes:span]]"]);
+    expect(roleLinks(relation, "premise", 0)).toEqual(["[[notes:span]]"]);
+    expect(roleLinks(relation, "conclusion")).toEqual([]);
+  });
+
+  it("offers the kind's roles, the roles it holds, then requires", () => {
+    expect(editableRoles(relation)).toEqual(["premise", "conclusion", "requires"]);
+    expect(editableRoles(draft("kb:node", { kind: "definition", choices: relation.choices }))).toEqual(["requires"]);
+    expect(editableRoles(draft("kb:odd", { kind: "unknown", out: [{ role: "witness", pos: 0, uid: "kb:x", state: "missing" }] })))
+      .toEqual(["witness", "requires"]);
+  });
+});
+

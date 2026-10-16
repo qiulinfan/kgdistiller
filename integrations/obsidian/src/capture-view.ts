@@ -15,13 +15,15 @@
  * as it is saved. Record ids and uids are never shown.
  */
 
-import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, setIcon, type App, type WorkspaceLeaf } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Modal, Notice, Setting, SuggestModal, setIcon, type App, type WorkspaceLeaf } from "obsidian";
 
 import type { Selection } from "./agent-pane";
 import { captureSelection, type CaptureFiles, type CaptureResult } from "./capture";
 import {
-  acceptanceGroup, drawIntoDraft, groupProblems, RECORD_DRAG_TYPE, sourceGroups, valuesByRole, valueText, type Draft, type DraftsResult,
+  acceptanceGroup, drawIntoDraft, editableRoles, groupProblems, linkFor, RECORD_DRAG_TYPE, roleLinks, sourceGroups, valuesByRole, valueText,
+  type Draft, type DraftsResult,
 } from "./drafts";
+import type { SearchResult } from "./lookup-model";
 import { INDEX_TIMEOUT_MS, type KgdServer } from "./kgd";
 import type { Indexer } from "./indexing";
 import { draftTarget, localizeRecord, type LocalizeInput, type LocalizeTarget } from "./localize";
@@ -394,25 +396,15 @@ export class KgdistillerCaptureView extends ItemView {
       }
       if (!this.isLocal(draft)) where.appendText(` · ${draft.base}`);
       if (draft.replaces) card.createDiv({ cls: "kgd-capture-row", text: "Accepting it replaces the accepted record with the same name and id." });
-      if (draft.aliases?.length) card.createDiv({ cls: "kgd-capture-row", text: `Also called: ${draft.aliases.join(", ")}` });
+      this.renderFields(card, draft);
+      this.renderStatement(card, draft);
+      this.renderValues(card, draft);
       const component = this.renderComponent!;
-      if (draft.body) void MarkdownRenderer.render(this.app, draft.body, card.createDiv({ cls: "kgd-prose" }), "", component);
-      for (const { role, values } of valuesByRole(draft)) {
-        const row = card.createDiv({ cls: "kgd-capture-row" });
-        row.createSpan({ cls: "kgd-capture-role", text: role });
-        for (const value of values) {
-          const shown = valueText(value, draft.base);
-          const chip = row.createSpan({ cls: `kgd-capture-value is-${shown.status}`, text: shown.text });
-          if (shown.note) chip.createSpan({ cls: "kgd-lookup-meta", text: ` · ${shown.note}` });
-        }
-      }
       if (draft.evidence?.length) {
         card.createEl("h4", { text: draft.foreign ? "Evidence · from the page" : `Evidence · L${draft.lines ?? ""}` });
         const quotes = draft.evidence.map((quote) => quote.split("\n").map((line) => `> ${line}`).join("\n")).join("\n\n");
         void MarkdownRenderer.render(this.app, quotes, card.createDiv({ cls: "kgd-evidence" }), "", component);
       }
-      const facts = [draft.epistemic ? `Epistemic: ${draft.epistemic}` : "", `Understood: ${draft.understanding ?? "yes"}`].filter(Boolean);
-      card.createDiv({ cls: "kgd-lookup-meta", text: facts.join(" · ") });
       const note = this.notes.get(draft.uid);
       if (note?.report) card.createDiv({ cls: "kgd-capture-note", text: `${note.report} · drafted in ${seconds(note.ms)}` });
     }
@@ -441,6 +433,132 @@ export class KgdistillerCaptureView extends ItemView {
     const discard = actions.createEl("button", { cls: "mod-warning", text: "Discard" });
     discard.disabled = busy;
     discard.addEventListener("click", () => new DiscardModal(this.app, draft, () => void this.discardDraft(draft)).open());
+  }
+
+  /**
+   * The draft's label, kind, other names, epistemic label and understanding, each
+   * edited in place: a change runs `kgd edit` on that one field, and the
+   * drafts are listed again, so what `kgd accept` would refuse shows at once.
+   */
+  private renderFields(card: HTMLElement, draft: Draft): void {
+    const choices = draft.choices;
+    const field = (name: string) => {
+      const row = card.createDiv({ cls: "kgd-capture-row kgd-capture-field" });
+      row.createSpan({ cls: "kgd-capture-role", text: name });
+      return row;
+    };
+    const label = field("label").createEl("input", { type: "text", cls: "kgd-capture-input", value: draft.label ?? "" });
+    const saveLabel = () => {
+      const value = label.value.trim();
+      if (value && value !== draft.label) void this.editDraft(draft, "label", [value]);
+    };
+    label.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") label.blur();
+    });
+    label.addEventListener("blur", saveLabel);
+    const kinds = [...(choices?.node_kinds ?? []), ...Object.keys(choices?.relation_kinds ?? {})];
+    const kind = field("kind").createEl("select", { cls: "dropdown" });
+    for (const name of new Set([...kinds, draft.kind ?? ""])) {
+      if (!name) continue;
+      const option = kind.createEl("option", { text: name, value: name });
+      option.selected = name === draft.kind;
+    }
+    kind.addEventListener("change", () => void this.editDraft(draft, "kind", [kind.value]));
+    const aliases = field("aliases");
+    const names = draft.aliases ?? [];
+    names.forEach((alias, index) => {
+      const chip = aliases.createSpan({ cls: "kgd-capture-value", text: alias });
+      this.removeButton(chip, `Remove ${alias}`, () => this.editDraft(draft, "aliases", names.filter((_, other) => other !== index)));
+    });
+    const added = aliases.createEl("input", { type: "text", cls: "kgd-capture-input is-short", placeholder: "add a name" });
+    added.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && added.value.trim()) void this.editDraft(draft, "aliases", [...names, added.value.trim()]);
+    });
+    const facts = field("epistemic");
+    const epistemic = facts.createEl("select", { cls: "dropdown" });
+    for (const name of new Set(["", ...(choices?.epistemic ?? []), draft.epistemic ?? ""])) {
+      const option = epistemic.createEl("option", { text: name || "—", value: name });
+      option.selected = name === (draft.epistemic ?? "");
+    }
+    epistemic.addEventListener("change", () => void this.editDraft(draft, "epistemic", epistemic.value ? [epistemic.value] : []));
+    const understood = facts.createEl("label", { cls: "kgd-capture-understood" });
+    const box = understood.createEl("input", { type: "checkbox" });
+    box.checked = (draft.understanding ?? "yes") === "yes";
+    understood.appendText(" understood");
+    box.addEventListener("change", () => void this.editDraft(draft, "understanding", [box.checked ? "yes" : "no"]));
+  }
+
+  /** The statement rendered as in the editor, with Edit turning it into a text box saved with `kgd edit … body`. */
+  private renderStatement(card: HTMLElement, draft: Draft): void {
+    const box = card.createDiv({ cls: "kgd-capture-statement" });
+    const shown = box.createDiv({ cls: "kgd-prose" });
+    if (draft.body) void MarkdownRenderer.render(this.app, draft.body, shown, "", this.renderComponent!);
+    const edit = box.createEl("button", { cls: "clickable-icon", attr: { "aria-label": "Edit the statement" } });
+    setIcon(edit, "pencil");
+    edit.addEventListener("click", () => {
+      box.empty();
+      const text = box.createEl("textarea", { cls: "kgd-capture-textarea" });
+      text.value = draft.body ?? "";
+      const buttons = box.createDiv({ cls: "kgd-lookup-actions" });
+      buttons.createEl("button", { cls: "mod-cta", text: "Save" }).addEventListener("click", () => void this.editDraft(draft, "body", [text.value]));
+      buttons.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.renderDrafts());
+      text.focus();
+    });
+  }
+
+  /**
+   * The edges: one row per role the kind declares and one for `requires`, each
+   * value a chip naming the record it links, with × to remove it and + to add
+   * a record or a draft of this base found by name.
+   */
+  private renderValues(card: HTMLElement, draft: Draft): void {
+    const byRole = new Map(valuesByRole(draft).map(({ role, values }) => [role, values]));
+    for (const role of editableRoles(draft)) {
+      const row = card.createDiv({ cls: "kgd-capture-row" });
+      row.createSpan({ cls: "kgd-capture-role", text: role });
+      for (const value of byRole.get(role) ?? []) {
+        const shown = valueText(value, draft.base);
+        const chip = row.createSpan({ cls: `kgd-capture-value is-${shown.status}`, text: shown.text });
+        if (shown.note) chip.createSpan({ cls: "kgd-lookup-meta", text: ` · ${shown.note}` });
+        this.removeButton(chip, `Remove ${shown.text}`, () => this.editDraft(draft, role, roleLinks(draft, role, value.pos)));
+      }
+      const add = row.createEl("button", { cls: "clickable-icon kgd-capture-add", attr: { "aria-label": `Link a record as ${role}` } });
+      setIcon(add, "plus");
+      add.addEventListener("click", () => new RecordSuggestModal(this.app, this.host.kgd, draft.base, (uid) => {
+        void this.editDraft(draft, role, [...roleLinks(draft, role), linkFor(uid, draft.base)]);
+      }).open());
+    }
+  }
+
+  private removeButton(chip: HTMLElement, label: string, run: () => Promise<void>): void {
+    const remove = chip.createEl("button", { cls: "clickable-icon kgd-capture-remove", attr: { "aria-label": label } });
+    setIcon(remove, "x");
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void run();
+    });
+  }
+
+  /** Set one field of a draft with `kgd edit`, then list the drafts again; a renamed draft keeps its card open. */
+  private async editDraft(draft: Draft, key: string, values: string[]): Promise<void> {
+    this.busy.add(draft.uid);
+    try {
+      const { report, failed } = await this.host.kgd.command(["edit", draft.path, key, ...values]);
+      if (failed) throw new Error(String((report.error as { message?: string } | undefined)?.message ?? "kgd edit refused the change"));
+      const uid = typeof report.uid === "string" ? report.uid : draft.uid;
+      if (uid !== draft.uid) {
+        this.expanded.delete(draft.uid);
+        this.expanded.add(uid);
+        const note = this.notes.get(draft.uid);
+        if (note) this.notes.set(uid, note);
+        this.notes.delete(draft.uid);
+      }
+    } catch (error) {
+      new Notice(`kgdistiller could not edit the draft: ${kgdReason(error)}`);
+    } finally {
+      this.busy.delete(draft.uid);
+      await this.listDrafts();
+    }
   }
 
   /** Localize a foreign draft to the passage selected in a local source. */
@@ -506,6 +624,42 @@ export class KgdistillerCaptureView extends ItemView {
     const root = this.host.vaultRoot();
     return root !== undefined && draft.path.startsWith(`${root}/`);
   }
+}
+
+/** Finds records, and drafts of the draft's base, by name or words, for a value to link. */
+class RecordSuggestModal extends SuggestModal<{ uid: string; label: string; kind: string; where: string }> {
+  constructor(app: App, private readonly kgd: KgdServer, private readonly base: string,
+    private readonly chosen: (uid: string) => void) {
+    super(app);
+    this.setPlaceholder("Find a record or a draft to link");
+  }
+
+  async getSuggestions(query: string): Promise<Array<{ uid: string; label: string; kind: string; where: string }>> {
+    if (!query.trim()) return [];
+    const [searched, drafts] = await Promise.all([
+      this.kgd.call<SearchResult>("kg_search", { query, limit: 10 }),
+      this.kgd.call<DraftsResult>("kg_drafts", { base: [this.base], names: [query] }),
+    ]);
+    return [
+      ...drafts.drafts.filter((draft) => draft.label !== null).map((draft) => ({ uid: draft.uid, label: draft.label!, kind: draft.kind ?? "", where: "draft" })),
+      ...searched.results.map((hit) => ({ uid: hit.uid, label: hit.label, kind: hit.kind, where: hit.base === this.base ? "" : hit.base })),
+    ];
+  }
+
+  renderSuggestion(item: { label: string; kind: string; where: string }, element: HTMLElement): void {
+    element.createSpan({ text: item.label });
+    element.createSpan({ cls: "kgd-lookup-meta", text: ` · ${[item.kind, item.where].filter(Boolean).join(" · ")}` });
+  }
+
+  onChooseSuggestion(item: { uid: string }): void {
+    this.chosen(item.uid);
+  }
+}
+
+/** The reason a kgd command gave for an error, read from the JSON it prints on standard error. */
+function kgdReason(error: unknown): string {
+  const text = message(error);
+  return /"message":\s*"((?:[^"\\]|\\.)*)"/.exec(text)?.[1]?.replace(/\\"/g, "\"") ?? text;
 }
 
 /** Asks before a draft is deleted: nothing remembers a discarded draft. */
