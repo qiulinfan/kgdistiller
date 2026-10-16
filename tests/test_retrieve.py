@@ -441,7 +441,7 @@ class GetTest(RetrieveTestCase):
     def test_a_broken_document_type_fails_reads_by_name_but_not_the_index(self) -> None:
         (self.kb.home / "types/math.md").write_text("---\nnode_kinds: definition\n---\nGuidance.\n", encoding="utf-8")
         for read in (lambda: search("measure space"), lambda: get(["kb:measure"]), lambda: resolve(["测度"])):
-            with self.subTest(read=read), self.assertRaisesRegex(KnowledgeError, "types/math.md"):
+            with self.subTest(read=read), self.assertRaisesRegex(KnowledgeError, r"types[\\/]math\.md"):
                 read()
         self.assertEqual({}, {name: counts["unparseable"] for name, counts in index()["bases"].items() if counts["unparseable"]})
 

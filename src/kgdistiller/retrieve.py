@@ -96,11 +96,11 @@ def compact_json(value: Any) -> str:
 
 def _session() -> tuple[sqlite3.Connection, Home]:
     home = load_home(home_directory(), types=False)
+    # A record is a relation when a document type of its base declares its kind one; the types are read here,
+    # before the database opens, not stored in the index, so editing types/ never forces re-indexing.
+    relations = base_relation_kinds(home)
     connection = open_read_only()
     connection.row_factory = sqlite3.Row
-    # A record is a relation when a document type of its base declares its kind one; the types are read here,
-    # not stored in the index, so editing types/ never forces re-indexing.
-    relations = base_relation_kinds(home)
     connection.create_function("kgd_class", 2, lambda base, kind: record_class(relations, base, kind), deterministic=True)
     # One read transaction per call, so meta.embedding and the vectors come
     # from the same commit even while `kgd index` writes.
