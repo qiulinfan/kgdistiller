@@ -10,8 +10,8 @@ and any number of bases. The home registers the bases in `config.json`, maps
 each base's source globs to user-defined document types in `types/<name>.md`,
 and holds the derived database `index.sqlite` and the writer `lock`. A base is
 a directory (normally one Obsidian vault) whose knowledge lives in
-`.knowledge/entries/` (accepted records), `.knowledge/drafts/` (proposed
-records) and `.knowledge/sheets/` (generated sheets).
+`.knowledge/entries/` (accepted records) and `.knowledge/drafts/` (proposed
+records awaiting the owner's acceptance).
 
 Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 
@@ -77,7 +77,7 @@ Write each `$KGDISTILLER_HOME/types/<type>.md` from the owner's vocabulary:
 example `example: [uses, setting]` for applications) and optional `epistemic`,
 with the owner's extraction guidance as the body. Do not install a fixed
 catalog or infer types from file formats. Preview a source with
-`kgd sheet SOURCE --json`. Recommend keeping the home's `config.json`, `types/`
+`kgd source SOURCE`. Recommend keeping the home's `config.json`, `types/`
 and `.gitignore` in a private local Git repository; initialize it only when the
 owner asks.
 
@@ -164,7 +164,7 @@ linker still links the Skills.
 ## Git
 
 Run `git init`, commit, configure a remote or push only when the owner asks. A
-base tracks its sources and `.knowledge/entries/`, `drafts/` and `sheets/`. The
+base tracks its sources and `.knowledge/entries/` and `drafts/`. The
 home tracks `config.json`, `types/` and `.gitignore`; `index.sqlite*` and
 `lock` are ignored. Say `committed locally` only after inspecting the commit,
 and `remote confirmed` only after a successful push.

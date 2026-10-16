@@ -529,8 +529,8 @@ class CodexProductTests(unittest.TestCase):
             initial = link_product(codex_home=home, mode="auto", source_root=source)
             self.assertTrue(initial["real_time"])
 
-            old_name = "harvest-kgdistiller"
-            new_name = "harvest-sheets"
+            old_name = "deploy-kgdistiller"
+            new_name = "deploy-knowledge"
             old_source = source / "skills" / old_name
             new_source = source / "skills" / new_name
             old_source.rename(new_source)
@@ -586,7 +586,7 @@ class CodexProductTests(unittest.TestCase):
             source = copy_product_root(root / "product")
             home = root / "codex-home"
             link_product(codex_home=home, mode="copy", source_root=source)
-            name = "harvest-kgdistiller"
+            name = "deploy-kgdistiller"
             target = home / "skills" / name / "SKILL.md"
             target.write_text("foreign replacement\n", encoding="utf-8")
 

@@ -14,10 +14,10 @@ product root. Use the `query-kgdistiller` Skill through the read-only MCP tools
 `kgd get [--source-lines N]`, `kgd neighbors`, `kgd browse` and `kgd pack`,
 all of which cover every registered base. Knowledge is records: nodes, and
 relations that bind records to named roles; applications are relations too,
-and pending terms are unlinked values. `search` fuses lexical, dense and name
-lanes; when it reports the retrieval extra missing, repeat it with
-`--no-dense` (MCP: `no_dense`) and report the reduced lanes. `resolve` lists
-senses, mentions and pending uses. `neighbors` gives dependency and claim
+every value is a link, and a foreign record's source is a web address.
+`search` fuses lexical, dense and name lanes; when it reports the retrieval
+extra missing, repeat it with `--no-dense` (MCP: `no_dense`) and report the reduced lanes. `resolve` lists
+senses and mentions. `neighbors` gives dependency and claim
 closures, `browse` gives base, source and kind views, and `pack` gives
 budgeted packets whose gaps are reported, never filled by guessing. Batch
 candidates, keep lane ranks and ambiguity explicit, and deliver each record's
@@ -25,8 +25,8 @@ uid with `source:lines` and its evidence quotes. When a result reports
 `lag.changed_files` above 0, run `kgd index --no-embed` and repeat the query;
 that keyword refresh is the only write allowed. Report `lag.unembedded` or
 `lag.embedding_changed` as weaker dense coverage and leave re-embedding to the
-owner. Never edit a source, record, draft or
-sheet, never run accept, harvest or `check --fix-lines`, and never promote
+owner. Never edit a source, record or draft, never run accept or
+`check --fix-lines`, and never promote
 lexical, dense (embedding), name, translation, acronym or link similarity into
 identity. Records with stale evidence are still returned; report that when an
 answer depends on the cited passage. Keep same-named records of different

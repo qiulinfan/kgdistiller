@@ -14,8 +14,7 @@ BASE_ROOT/
 ├── notes/                    # registered source documents, any text format
 └── .knowledge/
     ├── entries/<id>.md       # accepted records: nodes and relations
-    ├── drafts/<id>.md        # proposed new records, same format
-    └── sheets/<source>.md    # generated def/pending sheets
+    └── drafts/<id>.md        # proposed records, new or replacements, same format
 ```
 
 `KGDISTILLER_HOME` is the only environment variable for kgdistiller's own home
@@ -25,10 +24,9 @@ derived; `index.sqlite*` and `lock` can, and the home's `.gitignore` excludes
 them.
 
 A base owns its sources and its `.knowledge/` tree, the base's only knowledge
-root. Under `.knowledge/` the product reads and writes only `entries/`,
-`drafts/` and `sheets/`; anything else there is ignored. Commit all three with
-the base: drafts and sheet ticks are unharvested review state that should
-travel between machines. kgdistiller writes no `.gitignore` into a base.
+root. Under `.knowledge/` the product reads and writes only `entries/` and
+`drafts/`; anything else there is ignored. Commit both with the base: drafts
+are review state awaiting the owner that should travel between machines. kgdistiller writes no `.gitignore` into a base.
 
 ## Record format
 
@@ -53,15 +51,17 @@ lines: 24-32
 > 两个 subspace \(U_{1},U_{2}\) 的 sum \(U_{1} + U_{2}\) 也是一个 subspace
 ```
 
-- Fixed keys: `label`, `kind`, `source`, `lines` (required), `aliases`,
-  `understanding`, `epistemic`, `requires`; `tags` and `cssclasses` are
+- Fixed keys: `label`, `kind`, `source` (required), `lines` (required for a
+  local source; absent when `source` is a web address, a foreign record),
+  `aliases`, `understanding` (`yes` or `no`, default `yes`), `epistemic`,
+  `requires`; `tags` and `cssclasses` are
   accepted and ignored. The id is the file stem.
 - Every other key is a role declared for `kind` by the source's type. A record
   with a non-empty role list is a relation; otherwise it is a node.
 - Values are quoted links (`"[[id]]"`, `"[[base:id]]"`,
-  `"[[.knowledge/entries/id]]"`) or plain pending terms.
-- The body ends with `## Evidence`: verbatim quotes of the cited lines, one
-  blockquote each. An optional `## Search terms` section comes just before it.
+  `"[[.knowledge/entries/id]]"`); plain text is an error.
+- The body ends with `## Evidence`: verbatim quotes of the cited lines (of the
+  web page, for a foreign record), one blockquote each. An optional `## Search terms` section comes just before it.
 
 ## Base registration
 
@@ -113,7 +113,7 @@ relation_kinds:
   example: [uses, setting]
 epistemic: [USER_STATUS]
 ---
-The owner's rules for nodes, relations, examples and pending terms.
+The owner's rules for nodes, relations and examples.
 ```
 
 - The top level holds exactly `bases` and `embedding`; each base holds exactly
@@ -142,7 +142,7 @@ The owner's rules for nodes, relations, examples and pending terms.
   non-empty body is the extraction guidance.
 
 Sources are format-agnostic: any UTF-8 text document is read as lines and
-never parsed or converted. `kgd sheet SOURCE --json` shows a source's base,
+never parsed or converted. `kgd source SOURCE` shows a source's base,
 type, kinds, roles, guidance and line count, so extraction reads the owner's
 policy before any record exists.
 

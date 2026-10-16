@@ -56,8 +56,7 @@ Then verify that:
   `scripts/smoke_installed_runtime.py` with `KGDISTILLER_HOME` and `HOME` set to
   temporary directories: `base add` creates the home and the base's
   `entries/`; a type with node and relation kinds and a source glob are
-  registered; `sheet --json`, `sheet` and `accept` work on written records and
-  a draft; `check` is clean, reports a shifted quote as moved, and
+  registered; `source` and `accept` work on written records and a draft; `check` is clean, reports a shifted quote as moved, and
   `check --fix-lines` restores it; `index --no-embed` builds the database in
   the home and nowhere in the base; with `embedding` null, `search` and
   `search --no-dense` run only the lexical lane and the name lane, without
@@ -98,10 +97,10 @@ Then verify that:
   exactly the seven read-only tools;
 - the embedding adapter takes a model id only and has no reranker, default
   model or revision pin; at most one embedding process runs per user;
-- the home lock serializes `accept`, `harvest`, `check --fix-lines`,
-  `base add|rm` and `embedding set|off`: a held lock makes each fail without writing, `accept` never
-  overwrites a record and refuses without writing anything, and
-  `--fix-lines` skips a file that changed during the run;
+- the home lock serializes `accept`, `check --fix-lines`, `base add|rm` and
+  `embedding set|off`: a held lock makes each fail without writing; `accept`
+  replaces a record only with the replacement draft it is given, and a refusal
+  writes nothing; and `--fix-lines` skips a file that changed during the run;
 - sources of any extension are read as text, and no command parses source
   syntax or converts a source;
 - `check` reports every error and every moved or stale record and exits 1 for

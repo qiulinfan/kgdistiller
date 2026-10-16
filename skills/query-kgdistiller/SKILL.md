@@ -1,6 +1,6 @@
 ---
 name: query-kgdistiller
-description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must search records across every registered base, resolve names to their senses, mentions and pending uses, read complete records with their links and cited source lines, follow dependency and claim links, browse bases, source trees and kinds, pack budgeted evidence with its gaps, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
+description: Query a kgdistiller external-brain knowledge base read-only. Use when an Agent must search records across every registered base, resolve names to their senses and mentions, read complete records with their links and cited source lines, follow dependency and claim links, browse bases, source trees and kinds, pack budgeted evidence with its gaps, or classify a candidate's identity before authoring, including when the user asks to search or recall concepts from their kgdistiller (kgd/kgdt) knowledge base.
 ---
 
 # Query kgdistiller
@@ -16,16 +16,18 @@ unchanged.
 Knowledge is records: nodes (concepts and precisely stated results) and
 relations (statements binding records to named roles; applications and
 examples are relations too). Every record has a uid `<base>:<id>`, a `source`
-path, a `lines` range and verbatim Evidence quotes. Pending terms are plain
-values a record uses without a link. Every read goes through the derived
+and verbatim Evidence quotes: a local record's `source` is a base-relative path
+with a `lines` range, and a foreign record's is the web address of the outside
+work it quotes, with no lines (`foreign: true`). Every value is a link to
+another record. Every read goes through the derived
 database `$KGDISTILLER_HOME/index.sqlite`, covers every registered base unless
 filtered, and reports `lag`.
 
 ## Boundary
 
-- Never edit a source, a record, a draft, a sheet or the home's `config.json`
-  and types.
-- Never run `kgd accept`, `kgd harvest`, `kgd check --fix-lines` or
+- Never edit a source, a record, a draft or the home's `config.json` and
+  types.
+- Never run `kgd accept`, `kgd check --fix-lines` or
   `kgd base add|rm`, and never write drafts.
 - The one write allowed is the derived keyword refresh `kgd index --no-embed`
   when results report changed files (below). Never re-embed: that is the
@@ -60,7 +62,7 @@ Every command but `get` takes the filters, repeatable with OR within one
 filter and AND across filters: `--base B`, `--kind K`,
 `--class node|relation`, `--source PREFIX` (a base-relative path prefix, such
 as one paper's folder) and
-`--understanding unknown|not-yet-understood|understood`.
+`--understanding yes|no` (what the owner marked as not understood is `no`).
 
 **search** ranks records by three lanes fused with reciprocal rank fusion:
 
@@ -78,7 +80,7 @@ missing or the model cannot be loaded (the error names `--no-dense`), rerun it
 with `--no-dense` and report the reduced `lanes` and the error.
 
 Each result carries `uid`, `class`, `kind`, `label`, `base`, `source`,
-`lines`, `understanding`, `epistemic`, `gloss`, `ranks` for each lane that ran
+`lines`, `foreign`, `understanding`, `epistemic`, `gloss`, `ranks` for each lane that ran
 (`null` when that lane missed the record), `requires`, `participants` (for
 relations, by role), `in` (records that cite or require it) and `truncated`
 counts for those lists. Put source-language forms in the query when the owner
@@ -86,18 +88,18 @@ reads in another language; the dense lane helps across languages but does not
 replace them.
 
 **resolve** returns, for each term, `senses` (label or alias equal to the term
-after normalization), `mentions` (containing it as a phrase, or as a substring
-for CJK) and `pending` (records using it as an unlinked term). It is unranked
-and unlimited.
+after normalization), and `mentions` (containing it as a phrase, or as a
+substring for CJK). It is unranked and unlimited.
 
 **get** returns complete records: fixed fields, `body`, `search_terms`,
-`evidence`, `out` links by role and position (with labels, or the pending
-term, and whether the target exists), `in` links, and `missing` uids. A bare id
+`evidence`, `out` links by role and position (with labels and whether the
+target exists), `in` links, and `missing` uids. A bare id
 works when exactly one base has it. `--source-lines N` adds `source_text`, the
-cited range ±N lines read live from the source with line numbers.
+cited range ±N lines read live from the source with line numbers (`null` for
+a foreign record, whose source is not read).
 
 **neighbors** follows stored links from the given records and infers nothing.
-It returns `edges` (`{from, role, to|term, depth}`, always in the link's own
+It returns `edges` (`{from, role, to, depth}`, always in the link's own
 direction), `records` (every reached uid with label, kind, class and whether
 it exists) and `missing` (unknown starts). `--role` restricts every hop, not
 only the first, and `--depth` (default 1) bounds the walk, so cycles end there
@@ -110,10 +112,11 @@ Three walks cover most needs:
   in other relations (witnesses, debate positions);
 - applications: `--dir in --kind example`.
 
-**browse** lists what is indexed. No handle lists every base with its record,
-relation and pending counts; `base` and `base:dir/` list directories and
-sources with counts; `base:path/file` lists that source's records grouped by
-kind, with its pending terms; `--kind K` at any scope lists every record of
+**browse** lists what is indexed. No handle lists every base with its record and
+relation counts; `base` and `base:dir/` list directories and sources with
+counts, and at the base root the web addresses of foreign records;
+`base:path/file` or `base:<web address>` lists that source's records grouped
+by kind; `--kind K` at any scope lists every record of
 that kind with all its links, uncapped. Stay bounded: start at a base or one
 source, narrow with the handle and filters, and never list a whole large base
 or kind into context.
@@ -122,7 +125,7 @@ or kind into context.
 `requires` closure (`--requires-depth`, default 1) and the relations shared by
 at least two packed records, while the compact JSON of `records` stays within
 `--budget` bytes (default 60000). `gaps` lists what the packet lacks:
-`unknown-uid`, `over-budget`, `pending` terms, `missing-target` uids and
+`unknown-uid`, `over-budget`, `missing-target` uids and
 `not-packed` links. Report gaps as gaps; never fill one by guessing.
 
 ## Lag
@@ -154,13 +157,11 @@ the needed step. Distinguish, for example, an Lp from an ℓp setting, or a weak
 from a strong law of large numbers, when the source needs that distinction.
 To see the recorded chain behind a record, use
 `neighbors UID --role requires --dir out` or `pack UID --requires-depth N`;
-still surface only the direct pending terms and judge applicability from the
-content, not from the links.
+judge applicability from the content, not from the links.
 
 Available knowledge is not personal mastery. Report each record's
-`understanding` separately; skip an explanation only when the owner has stated
-`understood`. Surface direct pending terms without expanding their ancestry. A
-failed query is not a missing concept, and a missing record is not proof the
+`understanding` separately: `no` is what the owner marked as not understood,
+so explain those first. A failed query is not a missing concept, and a missing record is not proof the
 owner lacks the subject.
 
 ## Identity classification for authoring
@@ -178,12 +179,13 @@ Names, translations and aliases are retrieval evidence only. Read the bounded
 definitions before calling a hit `matched`. Each concept has one record, owned
 by the source that defines or originates it, so same-named records of two
 papers or bases are different concepts with different definitions. A source
-that only uses a concept links that record or keeps a global pending term.
+that only uses a concept links that record; a concept nothing records may be
+captured as foreign knowledge from the work that originates it.
 
 ## Handoff
 
 Return one entry per question or candidate: the query, uids found with
 `source:lines` and quotes, the classification when asked, the owner's
-understanding, direct pending terms, the gaps of any packet used, the lag
+understanding, the gaps of any packet used, the lag
 state and any `kgd index` run. Report omitted context and ambiguity. Make no
 other changes.

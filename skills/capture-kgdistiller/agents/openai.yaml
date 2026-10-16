@@ -1,4 +1,4 @@
 interface:
   display_name: "Capture Knowledge"
-  short_description: "Save one source-backed record and its direct gaps"
-  default_prompt: "Use $capture-kgdistiller to save this selected item as a source-backed record with my stated understanding and direct pending terms, then accept and index it."
+  short_description: "Draft one source-backed record for review"
+  default_prompt: "Use $capture-kgdistiller to draft this selected item as a source-backed record, or as foreign knowledge from the page that originates it, for me to review and accept."

@@ -2,6 +2,46 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+Every way knowledge enters the base now ends in a draft that the owner
+accepts, and knowledge from outside the owner's files is recorded as foreign
+knowledge instead of pending terms (docs/model.md, "Ingestion" and "Foreign
+knowledge and localization").
+
+Upgrading from 1.1.0: the index schema changed, so the next `kgd index`
+rebuilds the database. Records with a plain-text value, or an
+`understanding` of `unknown`, `not-yet-understood` or `understood`, no longer
+pass `kgd check`; edit them. Run `kgd claude link` or
+`kgd codex link` again: the compile Skill is renamed and the harvest Skill is
+gone. Delete any `.knowledge/sheets/` folder.
+
+- Every value of a record is a link. Pending terms are gone: a concept no
+  record holds is captured on its own first. `kgd resolve` lists senses and
+  mentions only, and `neighbors`, `browse` and `pack` report no terms.
+- A record whose `source` is a web address is foreign: it quotes the page of
+  the outside work that originates or explains a concept, has no `lines`, and
+  is accepted, linked and retrieved like any record. Retrieval results carry
+  `foreign`, and `browse` lists a base's foreign addresses at its root.
+- `understanding` is `yes` or `no`, absent meaning `yes`.
+- A draft with an accepted record's id replaces that record when accepted;
+  `kgd accept` reports it under `updated` and refuses it when the record
+  changed after the draft. `kgd drafts` reports `replaces` and `foreign`.
+- Sheets and `kgd harvest` are removed; `kgd source SOURCE` replaces
+  `kgd sheet SOURCE --json` and prints the same profile without pending terms.
+- The Skills only draft: `capture-kgdistiller` drafts a borrowed concept as
+  foreign knowledge and a changed meaning as a replacement, and
+  `compile-knowledge-sheets` became `compile-kgdistiller`, which drafts
+  replacements instead of editing records. `harvest-kgdistiller` is removed.
+- Obsidian plugin: the Capture view lists the drafts by source, each by file
+  name (with parent folders when names clash) and every foreign draft under
+  "foreign". Capture drafts a borrowed concept as foreign knowledge from the
+  pages Find sources finds, and a changed meaning as a replacement. Text
+  selected in the lookup sidebar or the Capture view is looked up with the
+  hold or command like any text, and can be captured as foreign knowledge.
+  **Localize here** on a foreign record, and **Localize to selection** on a
+  foreign draft, move its evidence to the passage selected in a local source.
+
 ## 1.1.0 — 2026-10-15
 
 kgdistiller 1.1.0 turns the knowledge base into a usable Obsidian plugin:

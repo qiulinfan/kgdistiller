@@ -1,4 +1,0 @@
-interface:
-  display_name: "Compile Knowledge Sheets"
-  short_description: "Draft records from a source and generate its sheet"
-  default_prompt: "Use $compile-knowledge-sheets to extract draft records from this source within the requested scope, check them and generate its def/pending sheet for my review."

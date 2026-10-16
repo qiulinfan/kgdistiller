@@ -9,17 +9,18 @@ their installers and agent-preset formats differ.
 A base is a directory registered in `$KGDISTILLER_HOME/config.json` (default
 `~/.knowledge/config.json`). Its knowledge is records in
 `.knowledge/entries/<id>.md`: nodes, and relations that bind records to the
-roles their user-registered document type declares. Proposed records wait in
-`.knowledge/drafts/`, and `.knowledge/sheets/` holds the generated def/pending
-view of each source. Sources are any UTF-8 text documents read as numbered
-lines; kgdistiller never parses their syntax. Retrieval reads the derived
+roles their user-registered document type declares. Every Skill that writes
+knowledge writes drafts, which wait in `.knowledge/drafts/` until the owner
+accepts them. Local sources are any UTF-8 text documents read as numbered
+lines; kgdistiller never parses their syntax. A foreign record cites the web
+page of an outside work instead. Retrieval reads the derived
 database `$KGDISTILLER_HOME/index.sqlite`, which `kgd index` keeps up to date.
 Publishing the notes belongs to the repositories that own them.
 
 Reference documents installed with this guide:
 
-- [model.md](model.md): records, grammar, drafts, sheets, `check`, `accept`,
-  `harvest`, `sheet` and the lock;
+- [model.md](model.md): records, foreign knowledge, grammar, drafts, `check`,
+  `accept`, `source` and the lock;
 - [retrieval.md](retrieval.md): the database, `kgd index`, lag, `search`,
   `resolve`, `get`, `neighbors`, `browse`, `pack` and the MCP tools;
 - [obsidian.md](obsidian.md): editing records in Obsidian and the plugin's
@@ -59,9 +60,8 @@ copies, discarding local edits to installed files.
 
 | Workflow | Skill | Mode | Steps |
 |---|---|---|---|
-| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (profile, cited passage, one `kgd resolve` of the item and its terms in every base, `kgd search --no-dense --limit 5`); a decision by the conflict rules; one command that writes the draft citing its lines verbatim and runs `kgd accept`, which indexes and embeds the new record, or an in-place edit then `kgd check && kgd index --no-embed`, with pending terms and stated understanding; link the pending uses of the created concept when the lookup found any; report. |
-| `compile-knowledge-sheets` | `compile-knowledge-sheets` | write | Set the bounded scope; `kgd sheet FILE --json`; one lookup turn for the whole candidate batch in every base, pending included; drafts for new records and in-place settlement of recorded knowledge by the conflict rules in one write turn, the owner asked otherwise; `kgd check --base B && kgd sheet FILE && kgd index --no-embed` in one command with every draft passing; report. |
-| `harvest-kgdistiller` | `harvest-kgdistiller` | write | One lookup turn for every ticked draft and its pending terms; `kgd harvest SHEET`, which indexes and embeds the created records (`--dry-run` on request); link the pending uses of created concepts when the lookup found any; report refused rows. |
+| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (`kgd source`, the cited passage, one `kgd resolve` and one `kgd drafts --name` of the item and the concepts it links, `kgd search --no-dense --limit 5`); a decision by the conflict rules; one command that writes the draft (citing its lines verbatim, a foreign draft quoting the web page of the work it borrows from, or a replacement of the recorded item) and lists it with `kgd drafts`; report. The owner accepts it. |
+| `compile-knowledge` | `compile-kgdistiller` | write | Set the bounded scope; `kgd source FILE`; one lookup turn for the whole candidate batch in every base and in the drafts; new drafts and replacement drafts by the conflict rules in one write turn; `kgd drafts --source FILE` with every draft free of problems; report. The owner accepts them. |
 | `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get`, `neighbors`, `browse`, `pack` across every base through the CLI or the MCP tools; bounded evidence with `source:lines`; identity classification; refresh on lag. |
 | `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
 
@@ -69,84 +69,77 @@ Step modes mean:
 
 - `read-only`: reads knowledge and changes nothing but the derived database
   (`kgd index --no-embed` when a result reports changed files);
-- `write`: changes knowledge or the home through `kgd` commands, drafts,
-  sheets or in-place record edits.
+- `write`: writes drafts, or changes the home through `kgd` commands.
 
 `agent: null` means the step runs in the current agent; a named agent refers
 to an installed preset. Manifests describe assets, not automatic triggers or a
 scheduler.
 
-**Every Skill that writes knowledge finishes with an index run**: `kgd accept`
-and `kgd harvest` index and embed the records they create, and after an
-in-place edit the Skill runs `kgd index --no-embed`. Re-embedding an edited
-record is the owner's call (`kgd index`, the plugin's Re-embed). The plugin
-refreshes the keyword index when the owner saves a record in Obsidian; edits
-made elsewhere lag until the next index run, and every read reports that lag.
+**Agents draft; the owner accepts.** No Skill runs `kgd accept` or edits an
+accepted record: a capture, a compile, a re-ingested source and a
+localization all end in drafts, new records or replacements of accepted ones.
+The owner reviews, revises and accepts them in the Obsidian Capture view or
+with `kgd accept`, which indexes and embeds what it admits. Re-embedding a
+record edited by hand is the owner's call (`kgd index`, the plugin's
+Re-embed). The plugin refreshes the keyword index when the owner saves a
+record in Obsidian; edits made elsewhere lag until the next index run, and
+every read reports that lag.
 
 ## Capture while reading
 
-`$capture-kgdistiller` saves one item the owner selected while reading: a
+`$capture-kgdistiller` drafts one item the owner selected while reading: a
 node, a relation or an example, in a short fixed pass. One lookup turn reads
-the type profile with `kgd sheet FILE --json` and compares existing senses
-with one `kgd resolve` of the item and its terms and one `kgd search` in every
-base, pending uses included (the same name is not the same concept). A new
-item becomes a draft that one shell command writes and accepts, ending in
-`kgd accept`, which indexes and embeds the new record (the capture request is
-the consent). An item already recorded follows the conflict rules of
-[model.md](model.md) "Conflicts, updates and relocation": it is ignored when
-its meaning is unchanged, overwritten and relocated when the new definition is
-more general or corrects the recorded one, and otherwise left to the owner's
-decision. In-place edits use a stale-read-safe editing
-tool followed by `kgd check --base B && kgd index --no-embed`. Unexplained terms become plain pending
-values, one level deep, unless a record anywhere defines them. `understanding` is set only from the owner's explicit statement. When the
-lookup listed pending uses, in any base, that mean the created concept, it
-links them after acceptance and runs `kgd index --no-embed`. It reports the classification,
-the uid and the pending terms in one short answer.
+the type profile with `kgd source FILE` and compares existing senses with one
+`kgd resolve`, one `kgd drafts --name` and one `kgd search` of the item and
+the concepts it links, in every base (the same name is not the same concept).
+A new item becomes a draft that one shell command writes and lists with
+`kgd drafts`, whose `problems` must be empty (the capture request is the
+consent). A concept the passage only uses or credits to other work is drafted
+as foreign knowledge from the web page of the work that originates or
+explains it, in the base of the source being read. An item already recorded
+follows the conflict rules of [model.md](model.md) "Conflicts, updates and
+relocation": it is ignored when its meaning is unchanged, and otherwise drafted
+as a replacement whose report says whether the new definition is more
+general, corrects the recorded one or conflicts with it. Every value is a link
+to a record or a draft; a concept nothing records is left out and reported.
+`understanding` is `yes` unless the owner says otherwise. It reports the
+classification and the draft in one short answer.
 
 The `capture-writer` preset runs this Skill in the background on a small model
 at low reasoning effort (Claude Code: `model: haiku`, `effort: low`; Codex:
 `model_reasoning_effort = "low"`), because the model's reasoning volume, not
 `kgd`, dominates a capture's time; the owner keeps reading and gets one line
 when it is done. Its lookup loads no embedding model: it searches the name and
-lexical lanes with the item's names in both languages. Its `kgd accept` embeds
-the new record through the shared embedding process.
+lexical lanes with the item's names in both languages.
 
-This is the usual writing path for a new article. Familiarity does not
-establish any record's understanding.
+Familiarity does not establish any record's understanding.
 
 ## Compile a source
 
-`$compile-knowledge-sheets` extracts a bounded scope of one registered source,
-up to the whole file when the owner asks for full distillation, typically for
-the owner's own notes or familiar material; re-admitting a rewritten note is
-the same request. It works in batches: one lookup turn looks up the whole
-candidate batch in every base, pending uses included, and one write turn
-writes every draft and edit. It applies the conflict rules of [model.md](model.md)
-"Conflicts, updates and relocation". New knowledge becomes drafts that pass
-`kgd check`, listed in the sheet that `kgd sheet FILE` generates. Knowledge
-already recorded is ignored, re-cited, overwritten and relocated in place.
-Records whose knowledge the source no longer contains, or whose source file
-no longer exists, are deleted to pending. Other changed meanings wait for the
-owner's decision. These in-place edits follow "Updates, deletes and identity
-changes of accepted records"; the run finishes with one command,
-`kgd check --base B && kgd sheet FILE && kgd index --no-embed`. It also serves requests to file or ingest a
-document into the knowledge base.
+`$compile-kgdistiller` extracts a bounded scope of one registered source, up
+to the whole file when the owner asks for full distillation, typically for the
+owner's own notes or familiar material; re-admitting a rewritten note is the
+same request. It works in batches: one lookup turn looks up the whole
+candidate batch in every base and in the drafts, and one write turn writes
+every draft. It applies the conflict rules of [model.md](model.md)
+"Conflicts, updates and relocation": new knowledge becomes new drafts, and
+recorded knowledge whose citation moved or whose meaning changed becomes
+replacement drafts, relocated into another base when the passage lies there.
+Records whose knowledge the source no longer contains, or whose source file no
+longer exists, are reported for the owner to decide. The run finishes with
+`kgd drafts --source FILE`, every draft free of problems. It also serves
+requests to file or ingest a document into the knowledge base.
 
-## Review and harvest
+## Review and acceptance
 
-The owner reviews the drafts in Obsidian (with the plugin's hidden indexing on,
-`.knowledge/` opens like any folder), edits them if needed and ticks the rows
-to accept in the source's sheet. A checkbox means "selected for acceptance",
-never "understood". `$harvest-kgdistiller` first looks the ticked drafts and
-their pending terms up again in one batch, since knowledge admitted after the
-compile run may now record them, then runs `kgd harvest SHEET`, which accepts
-exactly the ticked drafts in one call, indexes and embeds the created records,
-regenerates the sheet and prints the receipt. When the lookup listed pending
-uses, in any base, that mean a created concept, the Skill links them and runs
-`kgd check --base B && kgd index --no-embed`. A refusal changes nothing and
-lists the rows to fix, usually `select [[x]] too`. Harvest never re-extracts.
-Deleting a draft rejects it and leaves no trace. Model invocation is enabled
-for this Skill in both runtimes.
+The owner reviews the drafts in the Obsidian plugin's Capture view, which
+groups them by source, or opens them like any file (with the plugin's hidden
+indexing on, `.knowledge/` opens like any folder), edits them if needed and
+accepts them there or with `kgd accept DRAFT...`, which admits them with the
+drafts they link, indexes and embeds them. A replacement draft is refused when
+its record changed after the draft was written. A refusal changes nothing and
+names the problem, usually `select [[x]] too`. Deleting a draft rejects it and
+leaves no trace.
 
 ## Query
 
@@ -164,8 +157,7 @@ repeats the query; that keyword refresh is its only write. `lag.unembedded`
 and `lag.embedding_changed` are reported as weaker dense coverage; re-embedding
 is the owner's call. Lookup during reading happens at the
 actual use sites; a record not found is not proof the owner lacks the concept,
-and only the owner's stated understanding allows treating a record as
-mastered. Identity classification for authoring returns `matched`,
+and a record marked `understanding: no` is one the owner has not mastered. Identity classification for authoring returns `matched`,
 `ambiguous` or `unmatched` per candidate.
 
 ## Set up, check and restore
@@ -188,18 +180,20 @@ notice alone does not justify blocking ordinary local reading. Keep full source
 copies local, separate from original knowledge notes and short necessary
 excerpts.
 
-Evidence needs a registered source: a local UTF-8 text file inside a base,
+Local evidence needs a registered source: a UTF-8 text file inside a base,
 matched by one of its globs, whose lines the record cites and quotes verbatim.
-To capture from a paper, keep its text (an extracted Markdown or the LaTeX
-source) in the base and register a glob for it, or capture into an authored
-reading note that is itself a registered source. A PDF or a web page cannot be
-cited directly.
+To capture from a paper, keep its text (an extracted Markdown, a translation
+or the LaTeX source) in the base and register a glob for it, or capture into
+an authored reading note that is itself a registered source. A concept from a
+work the owner does not hold is foreign knowledge: its record cites the web
+page (preferably the work's arXiv page, otherwise an encyclopedia article)
+and quotes it verbatim; it is localized once the work is in a base.
 
 ## Handoffs
 
 Reading handoffs lead with the explanation and the records actually found,
 with their uids and `source:lines`; if a lookup was omitted or unavailable,
-say so instead of inventing results. Write handoffs name the uids, the accept
-receipt or the `check` result, and the `index` report. Git state and the
+say so instead of inventing results. Write handoffs name the drafts written,
+the records they replace, and their `problems` as `kgd drafts` lists them. Git state and the
 Obsidian plugin each have their own status; do not collapse them into a
 generic "deployed" result.

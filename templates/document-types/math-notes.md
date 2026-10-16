@@ -16,14 +16,14 @@ for a reusable precise result. Any other statement that can be true or false,
 such as a proposition, remark or consequence, is a relation binding the
 records it connects, recorded when the source explicitly supplies that
 connection. A connection inferred by combining passages is not a relation of
-these notes. A concept these notes use but define elsewhere is a pending term
-or a link to its defining record, never a second node.
+these notes. A concept these notes use but define elsewhere is a link to its
+defining record, never a second node.
 
 Use implies for a stated implication and requires-for for a stated proof or
 derivation dependency. Bind all jointly required premises to the same relation;
 do not replace a joint premise with separate implications. Examples and
 counterexamples use example: setting binds the space, structure or object the
-example works in, as a link or a pending term, and the concrete construction
+example works in, as a link, and the concrete construction
 and outcome stay in the prose. Role values are always knowledge references,
 never literal descriptions.
 
@@ -33,10 +33,9 @@ routine exposition and motivation need not each become a record. Decide by
 meaning, not by section names, markers or the source's file extension.
 
 Set proved only when the cited text supplies a proof; otherwise use stated.
-Record direct understanding prerequisites in requires. A term used without a
-definition remains a plain pending value; do not invent a definition or bind
-it by name. Compare existing definitions and conditions before reusing an id.
+Record direct understanding prerequisites that a record or draft holds in
+requires; do not invent a definition or bind a concept by name. Compare existing definitions and conditions before reusing an id.
 
 Copy Evidence quotes verbatim from the cited source lines. Preserve formulas,
-exceptions and limitations. Set understanding only from the owner's explicit
-statement; extracting a record does not establish that it is understood.
+exceptions and limitations. Set understanding to no only from the owner's
+explicit statement.

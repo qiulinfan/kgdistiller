@@ -18,7 +18,7 @@ from kgdistiller.mcp import TOOL_SCHEMAS
 from tests.test_cli import COMMANDS
 
 ROOT = Path(__file__).resolve().parents[1]
-WRITING_SKILLS = ("capture-kgdistiller", "compile-knowledge-sheets", "harvest-kgdistiller")
+WRITING_SKILLS = ("capture-kgdistiller", "compile-kgdistiller")
 CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]+`", re.DOTALL)
 COMMAND_RE = re.compile(r"(?<![\w/.-])(?:kgd|kgdistiller)[ ]+([a-z][a-z-]*)")
 TOOL_RE = re.compile(r"\bkg_[a-z_]+\b")
@@ -46,7 +46,7 @@ def _product_texts() -> dict[Path, str]:
 
 
 class ProductSkillTests(unittest.TestCase):
-    def test_harvest_allows_model_invocation_in_both_runtimes(self) -> None:
+    def test_writing_skills_allow_model_invocation_in_both_runtimes(self) -> None:
         for runtime in ("codex", "claude"):
             with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as temp:
                 home = Path(temp).resolve() / runtime
@@ -54,22 +54,23 @@ class ProductSkillTests(unittest.TestCase):
                     link_product(codex_home=home, mode="copy", source_root=ROOT)
                 else:
                     link_claude_product(claude_home=home, mode="copy", source_root=ROOT)
-                folder = home / "skills" / "harvest-kgdistiller"
-                skill = (folder / "SKILL.md").read_text(encoding="utf-8")
-                self.assertIn("name: harvest-kgdistiller", _frontmatter(skill))
-                self.assertNotIn("disable-model-invocation", skill)
-                metadata = (folder / "agents" / "openai.yaml").read_text(encoding="utf-8")
-                self.assertIn("$harvest-kgdistiller", metadata)
-                self.assertNotIn("allow_implicit_invocation", metadata)
+                for name in WRITING_SKILLS:
+                    folder = home / "skills" / name
+                    skill = (folder / "SKILL.md").read_text(encoding="utf-8")
+                    self.assertIn(f"name: {name}", _frontmatter(skill))
+                    self.assertNotIn("disable-model-invocation", skill)
+                    metadata = (folder / "agents" / "openai.yaml").read_text(encoding="utf-8")
+                    self.assertIn(f"${name}", metadata)
+                    self.assertNotIn("allow_implicit_invocation", metadata)
                 manifest = json.loads((ROOT / "workflows" / "manifest.json").read_text(encoding="utf-8"))
                 self.assertEqual({item["name"] for item in manifest["skills"]},
                                  {path.name for path in (home / "skills").iterdir()})
 
     def test_capture_and_compile_ship_the_same_record_format(self) -> None:
         capture = ROOT / "skills/capture-kgdistiller/references/record-format.md"
-        compile_ = ROOT / "skills/compile-knowledge-sheets/references/record-format.md"
+        compile_ = ROOT / "skills/compile-kgdistiller/references/record-format.md"
         self.assertEqual(capture.read_bytes(), compile_.read_bytes())
-        for name in ("capture-kgdistiller", "compile-knowledge-sheets"):
+        for name in WRITING_SKILLS:
             skill = (ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn("(references/record-format.md)", skill)
 
@@ -86,35 +87,33 @@ class ProductSkillTests(unittest.TestCase):
                 self.assertLessEqual(commands, COMMANDS)
                 self.assertLessEqual(set(TOOL_RE.findall(text)), set(TOOL_SCHEMAS))
         self.assertEqual(
-            {"capture-kgdistiller", "compile-knowledge-sheets", "deploy-kgdistiller",
-             "harvest-kgdistiller", "query-kgdistiller"},
+            {"capture-kgdistiller", "compile-kgdistiller", "deploy-kgdistiller", "query-kgdistiller"},
             {path.parent.name for path in (ROOT / "skills").glob("*/SKILL.md")},
         )
 
     def test_workflow_step_modes(self) -> None:
         for mode in ("read-only", "write"):
             workflow = [{
-                "id": "harvest", "description": "Harvest a sheet",
-                "steps": [{"id": "harvest", "skill": "harvest-kgdistiller", "agent": None, "mode": mode}],
+                "id": "compile", "description": "Compile a source",
+                "steps": [{"id": "compile", "skill": "compile-kgdistiller", "agent": None, "mode": mode}],
             }]
-            _validate_workflows(workflow, {"harvest-kgdistiller"}, set())
+            _validate_workflows(workflow, {"compile-kgdistiller"}, set())
         for mode in ("transaction", "export", "", None):
             with self.subTest(mode=mode):
                 workflow[0]["steps"][0]["mode"] = mode
                 with self.assertRaisesRegex(ProductError, "invalid step mode"):
-                    _validate_workflows(workflow, {"harvest-kgdistiller"}, set())
+                    _validate_workflows(workflow, {"compile-kgdistiller"}, set())
         workflow[0]["steps"][0]["mode"] = "write"
         for invalid in ("unknown", "", False, []):
             with self.subTest(agent=invalid):
                 workflow[0]["steps"][0]["agent"] = invalid
                 with self.assertRaises(ProductError):
-                    _validate_workflows(workflow, {"harvest-kgdistiller"}, set())
+                    _validate_workflows(workflow, {"compile-kgdistiller"}, set())
 
     def test_manifests_declare_the_shipped_workflows(self) -> None:
         expected = {
             "capture-knowledge": [("capture-kgdistiller", "capture-writer", "write")],
-            "compile-knowledge-sheets": [("compile-knowledge-sheets", None, "write")],
-            "harvest-kgdistiller": [("harvest-kgdistiller", None, "write")],
+            "compile-knowledge": [("compile-kgdistiller", None, "write")],
             "query-knowledge": [("query-kgdistiller", "query-reviewer", "read-only")],
             "deploy-kgdistiller": [("deploy-kgdistiller", None, "write")],
         }
@@ -163,8 +162,8 @@ class ProductSkillTests(unittest.TestCase):
                     )
                     (folder / "agents").mkdir()
                     (folder / "agents/openai.yaml").write_text(
-                        (ROOT / "skills/harvest-kgdistiller/agents/openai.yaml")
-                        .read_text(encoding="utf-8").replace("harvest-kgdistiller", name),
+                        (ROOT / "skills/compile-kgdistiller/agents/openai.yaml")
+                        .read_text(encoding="utf-8").replace("compile-kgdistiller", name),
                         encoding="utf-8",
                     )
                     previous_manifest["skills"].append({"name": name, "path": f"skills/{name}"})
@@ -213,7 +212,7 @@ class ProductSkillTests(unittest.TestCase):
                 )
                 self.assertTrue((home / f"agents/kgdistiller-query-reviewer.{extension}").is_file())
                 self.assertEqual("external\n", unrelated.read_text(encoding="utf-8"))
-                self.assertTrue((home / "skills/harvest-kgdistiller/SKILL.md").is_file())
+                self.assertTrue((home / "skills/compile-kgdistiller/SKILL.md").is_file())
                 if runtime == "codex":
                     checked = doctor_product(codex_home=home, source_root=source)
                 else:

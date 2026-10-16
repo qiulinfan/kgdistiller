@@ -18,8 +18,8 @@ states precisely. Preserve mathematical definitions, input/output contracts,
 update rules and the scope in which they apply. Each concept has one record,
 owned by the paper that defines or originates it. A concept this source only
 uses, such as a standard metric or an earlier method, is never a node of this
-source, even when the paper explains it at length: it is a pending term, or a
-link once the defining paper's record exists. A paper rarely has more than
+source, even when the paper explains it at length: link its record, or, when
+the owner captures it, draft it as foreign knowledge from the defining paper. A paper rarely has more than
 about twenty concept nodes; when a pass proposes more, re-check each for a
 fact turned into a noun, a needless split or a borrowed concept.
 
@@ -30,8 +30,8 @@ comparison, evaluates for a reported evaluation and property for a finding
 about one concept, which may be its only participant. An ablation or
 limitation that changes a result's meaning is knowledge too.
 
-Role values are knowledge references: links to records, or pending terms for
-concepts not yet recorded. Datasets, tasks and metrics are concepts and may
+Role values are knowledge references: links to records or drafts; a concept
+nothing records is left out of the values. Datasets, tasks and metrics are concepts and may
 fill setting and metric. Resolutions, splits, training settings,
 hyperparameters, units, uncertainty and measured values belong in the
 relation's prose and evidence, never in a role; numbers are never structured,
@@ -51,10 +51,10 @@ and nearby mentions establish no relation. A connection inferred by combining
 passages, or between this source and another one that it does not state, is
 not a relation of this source.
 
-Use requires for direct understanding prerequisites. Unexplained terms remain
-plain pending values. Compare meanings and conditions before reusing a record,
+Use requires for direct understanding prerequisites that a record or draft
+holds. Compare meanings and conditions before reusing a record,
 especially for same-named mechanisms from different papers.
 
 Copy Evidence quotes verbatim from the cited lines and preserve conditions,
-formulas, exceptions and negative results. Set understanding only from the
-owner's explicit statement.
+formulas, exceptions and negative results. Set understanding to no only from
+the owner's explicit statement.

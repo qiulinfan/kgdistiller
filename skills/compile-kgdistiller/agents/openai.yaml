@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compile Knowledge"
+  short_description: "Draft records from part or all of a source for review"
+  default_prompt: "Use $compile-kgdistiller to extract draft records from this source within the requested scope and check them, for me to review and accept."

@@ -46,9 +46,9 @@ kgd get research:sigma-algebra --source-lines 20
 
 在 **Settings → kgdistiller → kgd executable** 填好 `kgd` 的路径后：
 
-- **检索侧栏**：选中文字后按住 ⌘（其他系统是 Ctrl）0.3 秒，或运行 **Look up selection**，或在侧栏的搜索框里输入（ribbon 图标 **Open kgdistiller** 打开它）。它在所有已注册的 base 里查询，显示同名记录、把它当 pending term 用的记录、当前聚焦的记录及其 3 步以内的类型化邻居图，以及相关记录。在编辑器里打开一条记录或一个 source，侧栏也会跟着聚焦。搜索框下面的 **Re-embed** 按钮在有记录等着重算向量时是实的，并显示条数。
+- **检索侧栏**：选中文字后按住 ⌘（其他系统是 Ctrl）0.3 秒，或运行 **Look up selection**，或在侧栏的搜索框里输入（ribbon 图标 **Open kgdistiller** 打开它）。它在所有已注册的 base 里查询，显示同名记录、当前聚焦的记录及其 3 步以内的类型化邻居图，以及相关记录。在编辑器里打开一条记录或一个 source，侧栏也会跟着聚焦。搜索框下面的 **Re-embed** 按钮在有记录等着重算向量时是实的，并显示条数。
 - **Agent**（可选）：在 **Model providers** 里配好模型服务后，侧栏能判断选中的内容是否已入库，结合知识库、论文和网页回答问题，查一个术语的出处（**Find sources**），并把选中内容起草成草稿（**Capture**）。
-- **入库侧栏**：草稿在检索侧栏下方的 **kgdistiller Capture** 视图里等你确认，每条都完整显示，并标明 `kgd accept` 能否接受。**Accept** 把草稿连同它链接的草稿一起入库，并建索引、算向量；**Open draft** 打开文件修改；**Discard** 确认后删除。不点 Accept，什么都不会进入知识库。
+- **入库侧栏**：草稿在检索侧栏下方的 **kgdistiller Capture** 视图里等你确认，左侧按来源文件列出（外部来源归在 foreign 下），每条都完整显示，并标明 `kgd accept` 能否接受。**Accept** 把草稿连同它链接的草稿一起入库，并建索引、算向量；**Open draft** 打开文件修改；**Discard** 确认后删除。不点 Accept，什么都不会进入知识库。
 - **Embedding 设置**：**Settings → kgdistiller → Embedding** 显示 home 的 embedding 模型，并通过 `kgd embedding` 修改。
 
 改记录用 Properties 面板；保存后关键词索引会自动刷新，改过的记录在你点 Re-embed 时才重算向量。完整说明见 [docs/obsidian.md](docs/obsidian.md)。
@@ -60,7 +60,7 @@ kgd get research:sigma-algebra --source-lines 20
 CLI 和 MCP server 都在本地运行。它们读取 home 中的 `config.json` 和 `types/`、各 base 的记录和草稿，以及已注册的 source 文件（用于核对 evidence 和 `kgd get --source-lines`）。它们只写这些位置：
 
 - home：`kgd base add`/`rm` 和 `kgd embedding` 修改的 `config.json`，第一次 `kgd base add` 创建的 `types/` 目录和 `.gitignore`，以及 `index.sqlite*` 和 `lock`；
-- base 的 `.knowledge/` 下的 `entries/`、`drafts/` 和 `sheets/` 目录；
+- base 的 `.knowledge/` 下的 `entries/` 和 `drafts/` 目录；
 - vault `.obsidian/` 中的插件目录、`community-plugins.json` 和插件的 `data.json`，由 `kgd obsidian install` 写入；
 - 各 agent runtime 的 home，由 `kgd claude link` 和 `kgd codex link` 写入。
 
@@ -74,7 +74,7 @@ kgdistiller 原创代码采用 [MIT](LICENSE)，版权 2026 Qiulin Fan，允许�
 
 ## 核心概念
 
-kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，草稿在 `.knowledge/drafts/`，生成的审阅页在 `.knowledge/sheets/`。记录分两类：node（一个概念，或一条表述精确的结论），以及 relation（用 role 键绑定其他记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
+kgdistiller 面向学术研究：读的论文、写的论文、自己的研究笔记。每个注册的目录（通常是一个 Obsidian vault）叫一个 base。base 把知识存成 Markdown 记录：已接受的记录在 `.knowledge/entries/`，等你确认的草稿在 `.knowledge/drafts/`。记录分两类：node（一个概念，或一条表述精确的结论），以及 relation（用 role 键绑定其他记录）。每条记录都引用本 base 里的一个 source 文件，写明路径、行号范围和原文引文；foreign（外部）知识则引用外部作品的网页地址和该网页的原文。source 可以是任何格式的纯文本，kgdistiller 只把它当成带行号的文本来读，不解析语法。
 
 全局 home 是 `$KGDISTILLER_HOME`（默认 `~/.knowledge`），负责注册 base、把 source glob 映射到你定义的 document type，并保存派生数据库 `index.sqlite`：
 
@@ -90,8 +90,7 @@ kgdistiller 面向学术研究：读的论文、写的论文、自己的研究�
 ├── notes/                         # sources：任意 UTF-8 文本
 └── .knowledge/
     ├── entries/<id>.md            # 已接受的记录
-    ├── drafts/<id>.md             # 草稿，格式与记录相同
-    └── sheets/<source path>.md    # 生成的 def/pending sheet
+    └── drafts/<id>.md             # 草稿，格式与记录相同
 ```
 
 数据库里有 FTS5 全文索引行和 float32 向量，向量用 NumPy 精确扫描。embedding 模型以 int8 权重运行，每个用户只有一个共享进程，`BAAI/bge-m3` 约占 1 GB，空闲 15 分钟后退出。`kgd search` 用 reciprocal rank 融合三路：lexical、dense，以及对 label 和 alias 的名称匹配。如果上次 `kgd index` 之后记录文件有改动，每次读取都会在输出里报告 `lag`。知识本身是记录文件，数据库随时可以从它们重建。
@@ -129,8 +128,7 @@ relation_kinds:
 epistemic: [proved, stated]
 ---
 Extract each definition and each precisely stated result as a node. Record a
-relation only when the text states it. Record an unexplained term as a pending
-term.
+relation only when the text states it.
 ```
 
 在 `~/.knowledge/config.json` 里把 base 的 source 映射到这个 type：
@@ -155,17 +153,17 @@ term.
 kgd embedding set BAAI/bge-m3
 ```
 
-然后添加记录。可以让装好 Skills 的 agent 记录一个定义，或编译一整篇笔记。手动添加时，先用 `kgd sheet --json` 打印 source 的 type profile，再在 `~/research/.knowledge/drafts/` 里写一份草稿（格式见[记录格式](#记录格式)），然后检查、接受并建索引：
+然后添加记录。可以让装好 Skills 的 agent 记录一个定义，或编译一整篇笔记；结果都是等你审阅、确认的草稿。手动添加时，先用 `kgd source` 打印 source 的 type profile，再在 `~/research/.knowledge/drafts/` 里写一份草稿（格式见[记录格式](#记录格式)），然后检查、接受并建索引：
 
 ```sh
 cd ~/research
-kgd sheet notes/measure.md --json
+kgd source notes/measure.md
 kgd check
 kgd accept .knowledge/drafts/sigma-algebra.md
 kgd search "sigma algebra"
 ```
 
-`kgd sheet --json` 打印该 source 的 type profile 和已有记录。`kgd check` 校验 home、记录和草稿，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把草稿移进 `entries/`，要么全部成功，要么什么都不改，然后为它们建索引、为新记录算向量。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
+`kgd source` 打印该 source 的 type profile 和已有的记录与草稿。`kgd check` 校验 home、记录和草稿，并报告位置移动了或与 source 对不上的 evidence。`kgd accept` 把草稿移进 `entries/`，要么全部成功，要么什么都不改，然后为它们建索引、算向量；id 与已接受记录相同的草稿会替换那条记录。所有命令都输出 JSON，退出码：成功 0，有问题或被拒绝 1，用法错误 2。
 
 ## 文档类型与起始模板
 
@@ -175,7 +173,7 @@ kgd search "sigma algebra"
 
 一个 document type 包含 `node_kinds`、relation kind 及其 role、可选的 epistemic 标签，以及正文中的抽取指引。`config.json` 中的 source glob 为每个来源指定恰好一个 type。
 
-Capture 和 compile 在提出记录之前，通过 `kgd sheet SOURCE --json` 读取这份策略；`kgd check` 和接受流程根据它校验 kind 与 role。你可以修改策略或增加类型，无需修改引擎。
+Capture 和 compile 在提出记录之前，通过 `kgd source SOURCE` 读取这份策略；`kgd check` 和接受流程根据它校验 kind 与 role。你可以修改策略或增加类型，无需修改引擎。
 
 模板：
 
@@ -200,7 +198,7 @@ aliases:
 source: notes/measure.md
 lines: 3-4
 requires:
-  - "set"
+  - "[[set]]"
 ---
 A sigma-algebra on a set X is a collection of subsets of X closed under complements and countable unions.
 
@@ -231,13 +229,13 @@ A measure space is defined over a sigma-algebra.
 > F is a sigma-algebra on X
 ```
 
-- 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。可选：`aliases`、`understanding`（`unknown`、`not-yet-understood` 或 `understood`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
+- 必填：`label`、`kind`、`source`（相对 base 根目录的路径）和 `lines`（`a` 或 `a-b`）。foreign 记录的 `source` 是它引用的外部作品的网页地址，没有 `lines`。可选：`aliases`、`understanding`（`yes` 或 `no`，默认 `yes`）、`epistemic`、`requires`。`tags` 和 `cssclasses` 允许出现，但会被忽略。
 - 其余键都是 role。至少有一个非空 role 列表的记录是 relation，否则是 node。一条 relation 的 role 数量不限。
-- 列表里的值要么是链接（`"[[id]]"`、`"[[base:id]]"` 或 `"[[.knowledge/entries/id]]"`），要么是 pending term（纯文本值），表示 source 用到了这个词却没有解释。上面的 `set` 就是一例。
-- 正文依次是说明文字、可选的 `## Search terms` 小节，最后是 `## Evidence` 小节，内容是从被引用行逐字摘出的引文。
+- 列表里的值都是链接：`"[[id]]"`、`"[[base:id]]"` 或 `"[[.knowledge/entries/id]]"`。库里还没有的概念，先单独入库（从本地 source，或作为 foreign 知识），再链接。
+- 正文依次是说明文字、可选的 `## Search terms` 小节，最后是 `## Evidence` 小节，内容是从被引用行（或网页）逐字摘出的引文。
 - 例子和应用也是 relation，kind 由你注册，比如 `example: [uses, setting]`。
 
-已接受的记录直接原地修改，改完运行 `kgd check` 和 `kgd index --no-embed`（插件会自动刷新关键词索引）；改过的记录保留旧向量，直到你用 `kgd index` 重算。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
+agent 只写草稿，由你确认。已接受的记录可以手动原地修改，改完运行 `kgd check` 和 `kgd index --no-embed`（插件会自动刷新关键词索引）；改过的记录保留旧向量，直到你用 `kgd index` 重算。编辑 source 后，被引用的内容可能挪到了别的行。这时运行 `kgd check --fix-lines`：如果某条记录的引文在 source 的别处能找到，而且只出现一次，它就把这条记录的 `lines:` 改到新位置。完整语法和校验规则见 [docs/model.md](docs/model.md)。
 
 ## 命令
 
@@ -246,13 +244,12 @@ A measure space is defined over a sigma-algebra.
 | `kgd base add PATH [--name N]`、`base rm NAME`、`base list` | 注册、注销和列出 base，附带记录数、草稿数和索引数。 |
 | `kgd embedding`、`embedding set MODEL`、`embedding off` | 显示 home 的 embedding 模型和向量状态；下载、检查并启用一个模型；或关闭 dense 检索。 |
 | `kgd check [--base B] [--fix-lines]` | 校验 home、记录和草稿，报告移动或过期的 evidence。 |
-| `kgd sheet SOURCE [--json]` | 写出某个 source 的 sheet（记录、pending term、草稿），或打印它的 profile。 |
+| `kgd source SOURCE` | 打印某个 source 的 document type profile，以及引用它的记录和草稿。 |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | 列出草稿、它们的链接，以及 `kgd accept` 会拒绝的原因；不写任何东西。 |
-| `kgd accept [--dry-run] DRAFT...` | 把草稿转为已接受的记录，全部成功或全部不改，然后建索引并为新记录算向量。 |
-| `kgd harvest [--dry-run] SHEET` | 接受 sheet 中勾选的草稿，并重新生成 sheet。 |
+| `kgd accept [--dry-run] DRAFT...` | 把草稿转为新记录，或替换 id 相同的已接受记录，全部成功或全部不改，然后建索引并算向量。 |
 | `kgd index [--rebuild] [--no-embed]` | 让数据库与记录文件同步；`--no-embed` 只刷新关键词索引。 |
 | `kgd search QUERY [--limit N] [--no-dense]` | 按 lexical、dense、名称三路给记录排序。 |
-| `kgd resolve TERM...` | 列出 term 的各个义项和提及，以及把它当作 pending term 使用的记录。 |
+| `kgd resolve TERM...` | 列出 term 的各个义项和提及。 |
 | `kgd get UID... [--source-lines N]` | 读取完整记录及其链接，可附带 source 中当前的被引用行。 |
 | `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | 沿链接展开：依赖闭包和论断闭包。 |
 | `kgd browse [HANDLE]` | 列出 base、某个 base 的 source 目录、某个 source 按 kind 分组的记录，或用 `--kind` 列出某类全部记录。 |
@@ -263,36 +260,29 @@ A measure space is defined over a sigma-algebra.
 
 `search`、`resolve`、`neighbors`、`browse` 和 `pack` 支持筛选参数 `--base`、`--kind`、`--class {node,relation}`、`--source PREFIX` 和 `--understanding`，都可以重复使用。id 在所有 base 中唯一时可以直接写 id，不带 base 前缀。各命令细节看 `kgd <command> --help`，输出格式见 [docs/retrieval.md](docs/retrieval.md)。
 
-## Sheet 与 harvest
+## 审阅草稿
 
-sheet 是单个 source 的审阅页。`kgd sheet notes/measure.md` 会写出 `.knowledge/sheets/notes/measure.md.md`，按 kind 列出该 source 已接受的记录、尚未解决的 pending term，以及带复选框的草稿：
-
-```markdown
-## Drafts
-- [ ] [[.knowledge/drafts/measure-space|Measure space]] · definition · L6-7 — A measure space is a triple …
-```
-
-在 Obsidian 里打开 sheet，审阅或修改草稿，勾选要接受的那些。勾选只表示“接受这条草稿”，和你是否理解它无关。然后：
+每次 capture 和 compile 的结果都是草稿。可以在插件的 Capture 视图里审阅：它按来源列出草稿，显示每条的链接，以及 `kgd accept` 会拒绝的原因。也可以像普通文件一样打开草稿，然后运行：
 
 ```sh
-kgd harvest .knowledge/sheets/notes/measure.md.md
+kgd drafts --source notes/measure.md
+kgd accept .knowledge/drafts/measure-space.md
 ```
 
-harvest 一次性接受所有勾选的草稿，为它们建索引、算向量，并重新生成 sheet。如果某条勾选的 relation 链接到一条没勾选的草稿，harvest 会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的草稿，直接删掉文件即可。
+`kgd accept` 一次性接受给出的草稿及它们链接的草稿，要么全部成功，要么什么都不改，并为它们建索引、算向量。如果某条草稿链接到一条你没给出的草稿，它会拒绝执行、不做任何改动，并给出类似 `select [[measure-space]] too` 的提示。不要的草稿，直接删掉文件即可。
 
 ## Agent 集成
 
-五个 Skill 覆盖写入和查询流程：
+四个 Skill 覆盖写入和查询流程：
 
 | Skill | 作用 |
 |---|---|
-| `capture-kgdistiller` | 边读边保存或更新一条记录（node、relation 或例子），带上引文和 pending term。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
-| `compile-knowledge-sheets` | 按 document type 从已注册 source 的一部分或全部抽取草稿，并写出 sheet。已记录的知识按 [docs/model.md](docs/model.md#conflicts-updates-and-relocation) 的冲突规则忽略、重新引用、覆盖、迁移或删除为 pending。 |
-| `harvest-kgdistiller` | 对你勾选的草稿运行 `kgd harvest`，它会建索引并算向量。 |
+| `capture-kgdistiller` | 边读边把一条知识起草成草稿（node、relation 或例子），带上引文；借用的概念则从其出处网页起草成 foreign 知识。`kgdistiller-capture-writer` agent preset 在后台运行它。 |
+| `compile-kgdistiller` | 按 document type 从已注册 source 的一部分或全部起草草稿。已记录的知识按 [docs/model.md](docs/model.md#conflicts-updates-and-relocation) 的冲突规则忽略，或起草替换草稿。 |
 | `query-kgdistiller` | 用 search、resolve、get、neighbors、browse 和 pack 从知识库作答，引用 `source:lines`。只读，配有 `kgdistiller-query-reviewer` agent preset。 |
 | `deploy-kgdistiller` | 安装 kgdistiller，注册 base、source、document type 和模型，然后检查、建索引、安装插件、链接 runtime。 |
 
-入库时会建索引并为新记录算向量；改完记录后，Skill 只刷新关键词索引（`kgd index --no-embed`），重算向量由你决定。按你用的 runtime 安装：
+Skill 只写草稿；你确认入库时才建索引、算向量，你手动改过的记录何时重算向量由你决定。按你用的 runtime 安装：
 
 ```sh
 kgd claude link
@@ -328,7 +318,7 @@ OMP 原生从 `.mcp.json`、`.omp/mcp.json` 或 `~/.omp/agent/mcp.json` 加载 s
 
 ## 备份与恢复
 
-每个 base 的 source 和 `.knowledge/entries/`、`drafts/`、`sheets/` 一起提交。home 的 `config.json`、`types/` 和 `.gitignore` 单独放一个私有仓库；`index.sqlite*` 和 `lock` 已被忽略。换新机器时，恢复这些文件，改好每个 base 的 `path`，然后重建：
+每个 base 的 source 和 `.knowledge/entries/`、`drafts/` 一起提交。home 的 `config.json`、`types/` 和 `.gitignore` 单独放一个私有仓库；`index.sqlite*` 和 `lock` 已被忽略。换新机器时，恢复这些文件，改好每个 base 的 `path`，然后重建：
 
 ```sh
 kgd check

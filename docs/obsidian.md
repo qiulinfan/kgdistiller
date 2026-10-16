@@ -1,13 +1,14 @@
 # Obsidian preview and adjustment
 
 A base is normally one Obsidian vault, and its knowledge lives in the vault's
-hidden `.knowledge/` folder: accepted records in `entries/`, proposed records in
-`drafts/` and generated def/pending sheets in `sheets/`. Obsidian itself is the
+hidden `.knowledge/` folder: accepted records in `entries/` and proposed
+records in `drafts/`. Obsidian itself is the
 editor. The kgdistiller plugin adds three things: it lets Obsidian index the
 hidden folder; once a kgd executable is configured, the lookup sidebar looks
 knowledge up in every registered base, for a selection, a typed query or the
 file open in the editor, with the record in focus and a typed graph of its
-neighbours; and the Capture view lists the drafts waiting for the owner. Its
+neighbours; and the Capture view lists the drafts waiting for the owner, by
+source. Its
 optional agent runs inside the plugin and calls model and search APIs
 directly. `kgd check` stays the validator; Capture only drafts, and a draft
 becomes knowledge when the owner accepts it with `kgd accept`.
@@ -23,8 +24,8 @@ metadata cache like any other folder. Then:
 - Backlinks groups a record's incoming links by role name, because every role
   is a top-level list property;
 - renaming a record file rewrites the local links that point to it;
-- drafts and sheets open in place, so a sheet's draft checkboxes are ticked in
-  the ordinary editor before `kgd harvest`.
+- drafts open in place, so a draft can be edited in the ordinary editor before
+  it is accepted.
 
 After any edit, run `kgd check`. The plugin refreshes the keyword index itself
 when a record file is saved (see [Lookup](#lookup)); re-embedding an edited
@@ -39,7 +40,8 @@ filesystem adapter.
 
 The **kgdistiller Lookup** view is the plugin's lookup sidebar; the ribbon icon
 **Open kgdistiller** opens it with the cursor in its search box. Select text
-in any view and hold the command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s,
+in any view, the lookup sidebar and the Capture view included (a concept named
+in a record or draft is looked up the same way), and hold the command key (⌘ on macOS, Ctrl elsewhere) for 0.3 s,
 run **Look up selection**, or type into the search box at the top of the view
 and press Enter (**Search knowledge** puts the cursor there). The selection,
 with whitespace collapsed and cut at 500 characters, is looked up in every
@@ -55,10 +57,10 @@ The view shows, from the top:
 - **Same name**: the records whose label or alias has the selection's name key
   (the senses of `kg_resolve`). A shared name is not the same concept, so they
   are candidates to compare.
-- **Pending**: the records that use the name as a pending term.
 - The record in focus (the first name match, otherwise the first search
   result, or any record clicked):
-  - its kind, base, source and lines, understanding and epistemic label;
+  - its kind, base, source and lines (a foreign record's web address instead),
+    whether it is understood, and its epistemic label;
   - **Neighbours within 3 steps**: a small typed graph of the records within
     three concept steps, from `kg_neighbors --dir both --depth 6`. Relations
     are edges: a relation with exactly two link values, both in roles, is one
@@ -66,7 +68,7 @@ The view shows, from the top:
     links is a diamond joining them, its participants one step apart. A
     relation that another record links to, and a relation in focus, remain
     diamonds with their role edges. A relation about a single record is no
-    edge and is listed under About it instead; pending terms are left out.
+    edge and is listed under About it instead.
     Node records are circles, each kind taking a colour from a fixed
     twelve-colour palette by its position among the drawn kinds sorted;
     `requires` links are dashed and count as one step, and a missing record
@@ -80,7 +82,7 @@ The view shows, from the top:
   - **Built on it**: the records whose `requires` lists it;
   - its `requires` chain three levels deep
     (`kg_neighbors --role requires --dir out --depth 3`), each record expanded
-    once and pending terms as leaves.
+    once.
 - **Related**: the other records among the first ten of `kg_search`, with each
   lane's rank and the first line of the gloss.
 
@@ -88,8 +90,7 @@ While the view is open it follows the file open in the editor, when the vault
 is a registered base (its root is the base's root in `kgd base list`):
 
 - an accepted record `.knowledge/entries/<id>.md` comes into focus;
-- a source, or its sheet `.knowledge/sheets/<source>.md`, lists under **In
-  this source** the records the source defines, by kind and then line, from
+- a source lists under **In this source** the records the source defines, by kind and then line, from
   `kg_browse base:source`; the record in focus stays, and a click focuses
   another;
 - a draft, any other file under `.knowledge/`, and a note that defines no
@@ -106,7 +107,11 @@ Record ids and uids are never shown: they are addresses for programs, not
 knowledge.
 - **Open record** and **Open source** open the file in this vault when the
   record's base is this vault, and otherwise through an `obsidian://open?path=`
-  link in the vault that holds it.
+  link in the vault that holds it. A foreign record has no source file; its
+  web address is a link.
+- **Localize here** appears on a foreign record when the lookup started from a
+  selection in a registered source: the agent localizes the record to that
+  passage in the Capture view ([Localization](#localization)).
 - The keyword index follows the record files without being asked: a record
   file of this vault created, saved, renamed or deleted is indexed with
   `kgd index --no-embed` once 0.3 s pass without another save, and so is any
@@ -147,7 +152,7 @@ other window and agent: it loads once (about 2 s for `BAAI/bge-m3` on Apple
 silicon) and later searches take tens of milliseconds. It stops the server after 15 minutes
 without a lookup, when either setting changes and when the plugin unloads.
 With the same executable and home it also runs `kgd base list` once per server
-to locate the bases, `kgd sheet SOURCE --json` for a source's document type,
+to locate the bases, `kgd source SOURCE` for a source's document type,
 `kgd index --no-embed` for the keyword refresh, `kgd index` from Re-embed,
 `kgd accept` from the Capture view and `kgd embedding` from the Embedding
 settings, and it writes and deletes draft files. Every run but
@@ -161,8 +166,9 @@ neither the home nor the database, and lookups write no knowledge.
 A small agent built into the plugin adds four things to the lookup sidebar:
 a judgment of the selection, **Capture**, **Find sources**, and an answer to
 whatever is typed into the search box. Nothing is written until the owner
-presses Capture or runs **Capture selection**, and then only a draft, which
-becomes knowledge when the owner accepts it in the Capture view.
+presses Capture or runs **Capture selection**, or localizes a foreign record,
+and then only a draft, which becomes knowledge when the owner accepts it in
+the Capture view.
 
 The harness runs inside the plugin (`agent.ts`). Model requests go directly
 from `model.ts` to the Chat Completions API of the model chosen in the
@@ -250,8 +256,12 @@ while the owner keeps reading:
 
 - The selection comes with its source lines: from the editor directly, and in
   reading view by finding its text in the source as reading view shows it,
-  inside the selection's block when the text occurs more than once.
-- The plugin prepares everything deterministic: `kgd sheet SOURCE --json` for
+  inside the selection's block when the text occurs more than once. A
+  selection made in the lookup sidebar or the Capture view, such as a concept
+  a draft names, has no source lines: it is drafted only as foreign knowledge,
+  in the base and document type of the registered source open in the main
+  area, or found unchanged.
+- The plugin prepares everything deterministic: `kgd source SOURCE` for
   the document type, the records and drafts already citing the source and the
   base, the numbered paragraph around the selection with the nearest heading,
   the first `kg_search` results for the selection, and `kg_resolve` and
@@ -262,17 +272,17 @@ while the owner keeps reading:
   credits to other work) and, for a record, its label, kind, roles, requires,
   statement and evidence quotes with their lines.
 - The plugin refuses kinds and roles the type lacks, links to records the
-  model was not shown, and values that are neither links nor terms. It looks
-  up every name the record would write (label, aliases and plain terms) among
-  the records and the drafts, and returns any the model had not seen, so a
-  term is looked up before it is written as pending. It drops a relation's
-  aliases.
+  model was not shown, and values that are not links: a concept no record or
+  draft holds is left out of the values. It looks up every name the record
+  would write (label and aliases) among the records and the drafts, and
+  returns any the model had not seen. It drops a relation's aliases.
 - Drafts are not knowledge yet, but the model sees the source's drafts and
   those that share a name. A value may link a draft of the same base, which
   is then accepted together with it. When the selection is a draft's item the
   decision is unchanged, and the Capture view opens that draft. A draft is
   never superseded or contradicted: the owner edits it instead. A draft of
-  another base cannot be linked, since foreign links target accepted records.
+  another base cannot be linked, since cross-base links target accepted
+  records.
 - Evidence holds only the source's text. A quote is kept when it is verbatim
   in its lines after collapsing whitespace, as `kgd check` compares; moved to
   its only occurrence in the source when the lines were wrong; and replaced
@@ -286,11 +296,23 @@ while the owner keeps reading:
 - A new record is written as a draft with every frontmatter value a quoted
   string. It stays only when `kg_drafts` reports that `kgd accept` would take
   it with the drafts it links; otherwise it is removed and the refusal
-  returns to the model. Nothing is accepted or indexed. Unchanged and borrowed
-  write nothing. Superseding and conflicting show the proposed record and
-  write nothing yet: the in-place overwrite of a more general or corrected
-  definition, relocation, and the linking of pending uses remain the capture
-  Skill's.
+  returns to the model. Nothing is accepted or indexed. Unchanged writes
+  nothing.
+- Superseding and conflicting write the record's replacement: a draft with the
+  recorded id, keeping the record's understanding, which replaces it when the
+  owner accepts it; the report says whether the passage generalizes, corrects
+  or conflicts with it. A replacement already waiting is not overwritten. A
+  record of another base is not replaced from here: the proposed record is
+  shown, and moving a record across bases is the compile Skill's relocation.
+- Borrowed drafts the concept as **foreign knowledge**. The plugin runs Find
+  sources (below) for the concept's name and fetches the pages it found: the
+  originating paper's arXiv abstract and the Wikipedia article (the section a
+  redirect points into, or the lead). The model then picks the page that
+  states the concept best, preferring the originating work, and submits the
+  record with one to three quotes of that page; the plugin keeps a quote only
+  when it occurs in the page's text after collapsing whitespace. The draft's
+  `source` is the page's address and it has no lines. When no page is found,
+  nothing is drafted and the lookup sidebar shows what Find sources found.
 - Capture asks for low reasoning. Drafting rather than accepting matters: on
   2026-10-15 thirteen test selections from the test papers and notes, drafted
   three times, gave different labels, kinds and ownership decisions between
@@ -335,14 +357,14 @@ linear probing picked the paper on linear classifier probes (arXiv
 to 22 s. It sends the term to Exa,
 Wikipedia and arXiv only when pressed, naming the plugin in its User-Agent as
 Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
-borrowed capture runs it by itself.
+borrowed capture runs it by itself to find the pages of its foreign draft.
 
 **Search** answers what is typed into the search box, from the knowledge
 base first and from papers and the web for what it does not hold. The
 deterministic results appear as for a selection; the agent starts from the
 first search results, the records named in the question and, when the active
 note is a registered source, that source and its document type (from
-`kgd sheet --json`, which writes nothing). It reads more through read-only
+`kgd source`, which writes nothing). It reads more through read-only
 tools, called together where they are independent: `kg_search`, `kg_get` and
 `kg_neighbors` through `kgd mcp`; `paper_search`, which searches arXiv for
 papers that may answer the question and keeps only arXiv pages; and
@@ -447,29 +469,37 @@ arXiv. Capture's drafts and `kgd` runs stay on this machine.
 
 ## Capture view
 
-**kgdistiller Capture** lists the agent's captures and every draft waiting
-for the owner, in every registered base. It opens below the lookup sidebar
-the first time a capture starts, without taking focus, and **Show drafts**
-opens it at any time. Nothing in it is accepted until the owner presses
-Accept.
+**kgdistiller Capture** lists the agent's captures and localizations and every
+draft waiting for the owner, in every registered base. Every way knowledge
+enters the base ends here: a capture, a compile run by a Skill, a replacement
+of a recorded item and a localization. It opens below the lookup sidebar the
+first time a capture starts, without taking focus, and **Show drafts** opens
+it at any time. Nothing in it is accepted until the owner presses Accept.
 
-- A capture shows **Drafting** with its selection and the seconds so far.
-  Several captures can run at once; on 2026-10-15 three at a time drafted
-  thirteen selections in 49 s against 102 s one by one. A new draft replaces
-  its line and opens in full. A capture that wrote nothing stays as one line
-  with the agent's reason: already recorded, already a draft (that draft
-  opens), borrowed (the lookup sidebar then finds where it comes from, as
-  Find sources does), or the proposed record of a superseding or conflicting
-  passage.
+- A capture or localization shows **Drafting** with its selection and the
+  seconds so far. Several can run at once; on 2026-10-15 three at a time
+  drafted thirteen selections in 49 s against 102 s one by one. A new draft
+  replaces its line and opens in full. One that wrote nothing stays as one
+  line with the agent's reason: already recorded, already a draft, a borrowed
+  concept for which no page was found (the lookup sidebar then shows what
+  Find sources found), the proposed record of a passage that changes a record
+  of another base, or a passage that does not state the record it was to
+  localize.
+- The left of the view lists the sources the drafts cite, each by its file
+  name with the number of its drafts. Sources that share a file name get one
+  more parent folder each until their names differ, the absolute path telling
+  them apart, and every foreign draft is listed under **foreign**. **All**
+  shows every draft; a click shows one source's drafts.
 - Each draft shows what `kg_drafts` reads from its file: its label, node or
-  relation and kind, its source and lines (a click opens the source at the
-  first line), its other names, its statement and Evidence rendered as in the
-  editor, its epistemic label and understanding, and each role's values and
-  its prerequisites. A value reads as the record it links (named with its base
-  when that is another one), a draft, a missing record, or a concept not
-  recorded anywhere. Ids and uids are never shown. A draft the agent wrote in
-  this session also shows what the agent took the selection to be and its
-  report.
+  relation and kind, **foreign** when it cites a web page and **replaces**
+  when accepting it replaces the accepted record with its id; its source and
+  lines (a click opens the source at the first line), or a foreign draft's web
+  address; its other names, its statement and Evidence rendered as in the
+  editor, its epistemic label and whether it is understood, and each role's
+  values and its prerequisites. A value reads as the record it links (named
+  with its base when that is another one), a draft, or a missing record. Ids
+  and uids are never shown. A draft the agent wrote in this session also shows
+  its report.
 - Every draft says whether `kgd accept` would take it, together with the
   drafts it links, and otherwise lists `kgd accept`'s refusals. The view lists
   the drafts again whenever a draft file of this vault is saved, so an edit
@@ -480,17 +510,39 @@ Accept.
   0.1 s, and embedding 0.05 s more while the shared embedding process is warm
   or about 2 s when it must load the model.
   **Open draft** opens the draft file in a split beside the source for any
-  edit. **Discard** asks first, then deletes the draft; nothing remembers it,
-  and a draft that linked it cannot be accepted until that link is edited.
+  edit. **Localize to selection**, on a foreign draft, localizes it to the
+  passage selected in a registered source. **Discard** asks first, then
+  deletes the draft; nothing remembers it, and a draft that linked it cannot
+  be accepted until that link is edited.
+
+## Localization
+
+A foreign record or draft is localized once the owner holds the work it
+quotes, for example after translating the paper into their vault (docs/model.md,
+"Foreign knowledge and localization"). Selecting the concept in that source
+and holding the command key finds the foreign record; **Localize here** on it,
+or **Localize to selection** on a foreign draft, starts the agent in the
+Capture view. One model call at low reasoning reads the record's statement and
+evidence and the numbered passage around the selection, and either declines,
+when the passage is about something else or means it differently, or gives
+the passage's quotes that state it with their lines, and the statement in the
+passage's wording when it should follow it. The plugin places the quotes as
+Capture does and writes the record again with the same id, its other fields
+kept (values, understanding, search terms; the epistemic label only when the
+local source's type allows it), citing the local source: a new draft that
+replaces an accepted record when accepted, or the rewritten draft, restored
+when `kg_drafts` would refuse the result. A record of another base, or one
+whose kind the local source's type lacks, is not localized; moving a record
+across bases is the compile Skill's relocation.
 
 ## Not yet built
 
 Later owner-scheduled frontend work: editing commands, jump links from md/tex
 sources to records, a shipped `.base` file and a Bases view. For the Capture
-view: editing a draft's fields on its card, asking the agent to revise a
-draft, and looking a draft's concepts up in the lookup sidebar. For the
-agent: the in-place overwrite of superseded records and relocation, linking
-pending uses after a capture, and compiling a whole source.
+view: editing a draft's fields and links on its card or in a visual editor,
+asking the agent to revise a draft, and looking a draft's concepts up from its
+value chips. For the agent: relocation across bases, linking the records that
+name a newly accepted concept, and compiling a whole source.
 
 ## Installation
 
@@ -591,7 +643,7 @@ Still to be checked by hand in Obsidian 1.14.4 on a real vault:
 
 - a Properties edit of a role list round-trips and `kgd check` stays clean;
 - Backlinks groups a record's incoming links by role name;
-- the sidebar follows an opened record, source and sheet, and the neighbour
+- the sidebar follows an opened record and source, and the neighbour
   graph and its legend render in the light and dark themes;
 - **Open source** lands on the record's first line in the latex-live and
   tinymist views;

@@ -1,16 +1,18 @@
 ---
 name: capture-kgdistiller
-description: Save or update one source-backed knowledge record while reading — a node, a relation or an example — in a short fixed pass, one batched lookup then one command that writes, accepts and indexes, citing its source lines verbatim, recording direct pending terms and the owner's stated understanding. Use for requests to capture this concept, remember this definition or result, or update one record; whole-source extraction belongs to compile-knowledge-sheets.
+description: Draft one knowledge record the owner selected while reading — a node, a relation or an example — in a short fixed pass, one batched lookup then one command that writes and checks the draft, citing its source lines verbatim, or a web page's text for a concept the passage borrows, and linking only recorded or drafted concepts. The owner accepts it. Use for requests to capture this concept, remember this definition or result, or update one record; extraction from a whole source belongs to compile-kgdistiller.
 ---
 
-# Capture one knowledge item
+# Capture one knowledge item as a draft
 
-Save the item the owner selected while reading as one record in its registered
-base, in a short fixed pass: one lookup turn, then one command that writes,
-accepts and indexes, then one line to the owner. Batch every lookup into that
-one turn and decide from what it returns; look again only when a result is
-genuinely ambiguous. Do not read the whole source, survey related work or
-resolve prerequisites recursively.
+Draft the item the owner selected while reading as one record in its registered
+base, in a short fixed pass: one lookup turn, then one command that writes and
+checks the draft, then one line to the owner. Every capture ends in a draft:
+the owner reads, revises and accepts it (`kgd accept`, or the Obsidian Capture
+view); never run `kgd accept` yourself. Batch every lookup into that one turn
+and decide from what it returns; look again only when a result is genuinely
+ambiguous. Do not read the whole source, survey related work or resolve
+prerequisites recursively.
 
 Match the owner's language. Keep commands, ids, keys and raw errors unchanged.
 Paths given to `kgd` may be absolute or relative to the working directory; the
@@ -21,23 +23,26 @@ base is the registered root that contains the path.
 Run these together, and read the cited lines of the source with your own tool:
 
 ```sh
-kgd sheet SOURCE --json
-kgd resolve "NAME" "OTHER NAME" "TERM" ...
+kgd source SOURCE
+kgd resolve "NAME" "OTHER NAME" "CONCEPT" ...
 kgd search "DEFINING PHRASE" --limit 5 --no-dense
+kgd drafts --name "NAME" --name "CONCEPT" ...
 ```
 
-- `sheet --json` gives the source's base and document type: `node_kinds`,
+- `source` gives the source's base and document type: `node_kinds`,
   `relation_kinds` with their roles, `epistemic` and the guidance, plus the
-  records already citing the source. An unregistered file is an error: report
-  the glob it asks for; do not register it.
+  records and drafts already citing the source. An unregistered file is an
+  error: report the glob it asks for; do not register it.
 - `resolve` takes the item's names, in the source's language and in English,
-  and every term the record will name as a participant or prerequisite. Per
-  term it lists the `senses` (records with that name), `mentions` and
-  `pending` uses in every base.
+  and every concept the record will link as a participant or prerequisite.
+  Per name it lists the `senses` (records with that name) and `mentions` in
+  every base.
 - `search` finds the same knowledge point under another name. `--no-dense`
   keeps the lookup free of the embedding model; give it the item's names and
   defining words in both languages, so the name and lexical lanes match
   translations.
+- `drafts --name` lists the drafts awaiting the owner under those names, so
+  you neither duplicate a draft nor miss one you can link.
 
 If a result reports `lag.changed_files` above 0, run `kgd index --no-embed` and
 repeat the lookup once. `lag.unembedded` and `lag.embedding_changed` need
@@ -47,31 +52,34 @@ nothing: re-embedding is the owner's call.
 
 The same name is not the same concept; compare definitions and conditions.
 
-- **new**: no record holds this knowledge point, or only a homonym does.
-- **unchanged**: a record holds it with the same meaning. Write nothing, unless
-  that record's citation no longer verifies and this passage states the item:
-  then move its `source`, `lines` and Evidence here.
-- **superseding**: a record holds it with a different meaning, and this
-  passage's definition is more general or corrects it. Overwrite that record
-  in place, keeping its id and `understanding`. A definition the recorded one
-  explicitly rules out is conflicting even when broader.
-- **conflicting**: any other changed meaning, a narrower one included. Show
-  the owner both definitions with their source lines and write nothing.
+- **new**: no record or draft holds this knowledge point, or only a homonym
+  does.
+- **unchanged**: a record or draft holds it with the same meaning. Write
+  nothing, unless that record's citation no longer verifies and this passage
+  states the item: then draft its replacement (step 3) with `source`, `lines`
+  and Evidence moved here.
+- **changed**: a record holds it with a different meaning. Draft its
+  replacement from this passage, keeping its id and `understanding`, and say
+  whether this definition is more general, corrects the recorded one, or
+  conflicts with it (a narrower one included). A definition the recorded one
+  explicitly rules out is a conflict even when broader. The owner decides by
+  accepting or discarding the draft.
+- **borrowed**: the passage only uses the concept, or credits it to other work
+  (a citation, "proposed by", "popularized by", "as in"). It is that work's:
+  when no record or draft holds it, draft it as **foreign** knowledge from the
+  page that originates or explains it (step 3), never as a node of this
+  passage.
 
 Before writing, check what the passage owns:
 
 - A node only for a noun-like object this passage defines or originates, or a
-  theorem it states precisely. A concept it credits to other work (a citation,
-  "proposed by", "popularized by", "as in") is that work's: link the record
-  `resolve` found, otherwise keep it as a plain pending value.
+  theorem it states precisely.
 - Any other statement that can be true or false, such as a result, comparison
   or finding, is a relation whose Evidence quote itself states it. A
   connection you would infer across passages or sources is reported, never
   written.
 
-## 3. Write, accept and index, in one command
-
-For a new item, write the draft and admit it in one shell command:
+## 3. Write and check the draft, in one command
 
 ```sh
 mkdir -p ROOT/.knowledge/drafts && cat > ROOT/.knowledge/drafts/ID.md <<'RECORD'
@@ -84,7 +92,6 @@ source: notes/math/measure-theory/chapters/01-sigma-algebra.tex
 lines: 206-224
 requires:
   - "[[sigma-algebra]]"
-  - measurable space
 ---
 A measure space is a triple $(X,\mathcal M,\mu)$ with a σ-algebra $\mathcal M$ and a measure $\mu$.
 
@@ -92,48 +99,41 @@ A measure space is a triple $(X,\mathcal M,\mu)$ with a σ-algebra $\mathcal M$ 
 
 > 我们称 \((X,\mathcal{M},\mu)\) 为一个 measure space.
 RECORD
-kgd accept ROOT/.knowledge/drafts/ID.md
+kgd drafts --source SOURCE
 ```
 
 - `ID` is `slug(label)` (lowercase, non-alphanumerics to `-`; append `-2` on a
   collision), or an id from the meaning when the label carries a section,
-  figure, table, equation or theorem number. `source` is relative to the base
-  root, and `lines` lists the cited ranges, such as `46-48` or `72, 84`.
+  figure, table, equation or theorem number. A replacement uses the recorded
+  record's id, so its draft file has the accepted record's name; write it
+  from a fresh read of that record.
+- `source` is relative to the base root, and `lines` lists the cited ranges,
+  such as `46-48` or `72, 84`. A **foreign** record's `source` is the web
+  address of the page that originates or explains the concept (prefer the
+  originating paper, such as its arXiv page, then an encyclopedia article),
+  it has no `lines`, and each Evidence quote is copied verbatim from that
+  page, which you fetch with your web tools. It lives in the base of the
+  source being read and uses a kind of that source's type.
 - `kind` is one of the type's kinds. A relation adds one key per role of its
   kind, each a list of values; `requires` lists direct prerequisites.
-- Every value is a link, `"[[id]]"` or `"[[base:id]]"` across bases, or a plain
-  pending term; settings and measured values stay in the prose.
+- Every value is a link, `"[[id]]"` or `"[[base:id]]"` across bases, to a
+  record or a draft of the same base that the lookup found. A concept nothing
+  records is left out of the values and named in the report; settings and
+  measured values stay in the prose.
 - The prose opens with the statement. Each `>` quote under `## Evidence` is
-  copied verbatim from the cited lines.
-- Set `epistemic` only from the type's list and `understanding` only from the
-  owner's explicit statement.
+  copied verbatim from the cited lines or page.
+- Set `epistemic` only from the type's list, and `understanding: no` only when
+  the owner said they do not understand it; it is `yes` otherwise.
 - The complete format is
-  [references/record-format.md](references/record-format.md); read it when
-  `kgd accept` refuses, then fix the draft and run the command again.
+  [references/record-format.md](references/record-format.md).
 
-For an in-place edit of an accepted record, use an editing tool that refuses
-when the file changed since you read it (Claude Code `Edit`, Codex
-`apply_patch`), then run `kgd check --base B && kgd index --no-embed`. Never
-rename an accepted id; a relocation to another base follows the knowledge
-model's relocation procedure. When the source already has a sheet, add
-`kgd sheet SOURCE` to the command. The owner's capture request is the
-consent; do not ask again.
+`kgd drafts --source SOURCE` (for a foreign draft, `--name LABEL`) lists the
+draft with its `problems`, what `kgd accept` would refuse. Fix the draft until
+they are empty. The owner's capture request is the consent; do not ask again.
 
-`kgd accept` indexes the new record and embeds it before it returns, so every
-lane finds it at once. After an in-place edit, `kgd index --no-embed` updates
-the keyword index only; the edited record's vector is rebuilt when the owner
-re-embeds (`kgd index`), never by a Skill.
+## 4. Report
 
-## 4. Link pending uses, only when the lookup found them
-
-When step 1's `resolve` listed `pending` uses of the created record's own names
-that mean its definition (a homonym stays pending), edit each into a link that
-keeps the source's wording, `"[[id|wording]]"` or `"[[base:id|wording]]"`, then
-run `kgd check --base B && kgd index --no-embed` for every base you edited.
-Otherwise skip this step.
-
-## 5. Report
-
-One short line: the classification and uid, the pending terms recorded and the
-pending uses linked, and anything left to the owner, including connections
-reported instead of written.
+One short line: the classification, the draft's label and uid (and the record
+it replaces), the concepts left unlinked because nothing records them, and
+anything left to the owner, including connections reported instead of
+written. The owner accepts the draft.

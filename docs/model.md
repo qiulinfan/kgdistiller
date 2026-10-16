@@ -13,24 +13,24 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    files (`<root>/.knowledge/entries/*.md` for accepted knowledge and
    `<root>/.knowledge/drafts/*.md` for proposals) and the home files
    (`$KGDISTILLER_HOME/config.json` and `$KGDISTILLER_HOME/types/*.md`). The
-   database and the sheets are derived; a sheet also
-   carries the checkbox state of its draft rows, and nothing else.
+   database is derived.
 2. **One file format for every knowledge object.** Nodes and n-ary relations
    differ only by whether role properties are present. Applications and
-   examples are relations of a user-registered kind. Pending gaps are plain
-   text values where a link would go.
+   examples are relations of a user-registered kind. Every role value and
+   every `requires` value is a link to a record.
 3. **No hashes, no content-derived ids, no compatibility code.** Change
    detection uses file stat; evidence freshness is checked by finding the quote
    text in the source; re-embedding is decided by comparing stored text;
    concurrency uses one lock file, create-only moves and edit tools that refuse
    stale reads.
-4. **Format-agnostic sources.** A source is any registered UTF-8 text file,
-   addressed by path, 1-based inclusive line ranges and verbatim quotes. The
-   product never parses source syntax.
+4. **Format-agnostic sources.** A local source is any registered UTF-8 text
+   file, addressed by path, 1-based inclusive line ranges and verbatim quotes;
+   a foreign source is a web address, addressed by verbatim quotes of its text.
+   The product never parses source syntax and never downloads a source.
 5. **No owner vocabulary in product code.** The product fixes only the
-   record's fixed keys, the understanding enum, the section names
-   `Search terms` and `Evidence`, the folder names `entries`, `drafts` and
-   `sheets`, and the link grammar. Node kinds, relation kinds, roles and
+   record's fixed keys, the understanding values, the section names
+   `Search terms` and `Evidence`, the folder names `entries` and `drafts`, and
+   the link grammar. Node kinds, relation kinds, roles and
    epistemic labels are user data. Optional starting profiles live in
    `templates/document-types/`; they become active only when the owner copies
    and registers them in the home. The product activates no types and ships
@@ -51,7 +51,11 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
 9. **Identity is permanent.** An accepted id and a base name are citation
    keys: they are never renamed for convenience and never reused for another
    concept.
-10. **No entity without necessity.** In the owner's words: "我们的知识库的一条原则就是如无必要, 勿增实体. 所以当你觉得一个东西没必要的时候, 不再需要的时候, 请你直接删除, 不要做 fallback."
+10. **Every admission is a draft the owner accepts.** Agents only draft, new
+    records and replacements of accepted ones alike; knowledge enters the
+    base only when the owner accepts the draft
+    ([Ingestion](#ingestion-drafts-and-the-owners-acceptance)).
+11. **No entity without necessity.** In the owner's words: "我们的知识库的一条原则就是如无必要, 勿增实体. 所以当你觉得一个东西没必要的时候, 不再需要的时候, 请你直接删除, 不要做 fallback."
     Whatever a decision makes unnecessary, whether a kind, a field, a file, a
     code path or a document passage, is deleted outright in the same change,
     with no fallback and no compatibility path.
@@ -75,19 +79,79 @@ threshold for the number of nodes per source.
 
 Each concept has exactly one record, owned by the source that defines or
 originates it. A source that only uses a concept, even one it explains at
-length, never gets a node for it: the use is a pending term, global across
-bases, which names the defining source the owner still has to read. Once a
-record from that source exists in any base, the use is a link to it; the Skill
-that admits such a record links the pending uses that mean it, in every base.
-Same-named concepts with different definitions are different records, a name
-collision needs nothing more, and no record stands in for a concept whose
-defining source is missing.
+length, never gets a node for it: the use links the concept's record. When no
+base records the concept yet, it is captured on its own, from where it is
+defined: a local source of the owner's, or the outside work that originates or
+explains it, as foreign knowledge
+([Foreign knowledge](#foreign-knowledge-and-localization)). Same-named
+concepts with different definitions are different records, and a name
+collision needs nothing more.
 
 Accepted records, including relations, are the units of lexical and dense
-retrieval. Their links and evidence locate the original passages. Source text
-remains available for on-demand context through the record's base, relative
-`source` path and `lines`; `get --source-lines` reads that context live. No
-second paragraph store or source-format parser is needed for this connection.
+retrieval. Their links and evidence locate the original passages. Local source
+text remains available for on-demand context through the record's base,
+relative `source` path and `lines`; `get --source-lines` reads that context
+live. No second paragraph store or source-format parser is needed for this
+connection.
+
+## Ingestion: drafts and the owner's acceptance
+
+In the owner's words (2026-10-15):
+
+> 你想: 我什么时候会想要入库一个知识呢? 首先, 他一定是被 agent 提取出来作为一个知识了, 这是毋庸置疑的. 因而就有这么几个情况:
+>
+> * 第一个情况, 我 command 一个词语 (也就是问了他 "这是什么"). 这个时候我大概率就是根本不知道他是什么意思的. 我看完词条 -> 理解了, 把它从 draft 里稍微修订一下, 然后入库, perfect.
+> * 第二个情况, 我对一整个文档都很熟悉, 用一个 skill 去扫它, 获得一堆节点. 这个时候, 我在 draft 里扫一眼, 一个一个 accept
+>
+> 你发现区别了吗?
+> 没有区别!!!!!
+> 所以, 只要一个知识入库, 他就是直接进入 draft, 然后等待我审阅和修订. 不过, 它所有涉及的所有直接边关系, relation 关系都要我一一审核, 并且可以修订.
+
+So every way knowledge enters the base ends in drafts: a capture of one item
+while reading, a compile of part or all of a source, a re-ingested source, and
+a localization. Agents only write drafts. A draft is either a new record or,
+under the id of an accepted record of the same base, that record's
+replacement. The owner reads, revises and accepts each draft, its links
+included, and `kgd accept` admits it at once; deleting a draft rejects it.
+There is no other review surface and no generated sheet.
+
+## Foreign knowledge and localization
+
+Knowledge is learned top down: a reader assumes the lower-level results a text
+builds on and learns them later, if at all. Such a concept still gets a record
+when the owner captures it, even when its defining text is not among their
+files. In the owner's words (2026-10-15):
+
+> 其实这个 pending 不应该叫 pending, 而应该叫 foreign: 非本地的知识. 就是说, 这个知识的出处其实是外界的文章. 并且你说的是对的. 它仍然一样: 被扫描, capture 后放入 draft. 但是呢, 它是一个 foreign 的内容.
+>
+> * 这个 foreign 的内容, 难道一定就要在我本地把那个文章, 或者 wikipedia 页面下载下来, 才算通过吗? foreign 其实只是说明 "这个知识不在本地文件里", 但是对理解照样没有影响. 我照样可以把它从 draft accept 到正式的知识库. 它只是一个 bool 标签而已, 并且它的证据不是本地而是外界超链接.
+> * 并且注意: foreign 知识是可以 localize 的 (虽然不一定必要). 比如我查找 autoencoder 这个概念的出处, 然后我去把这个文章给 down 下来了 -> 我在这个文章里找到这个词并快捷键搜索 -> 搜到我的 autoencoder 这个词. 这个时候, 不管它是 draft 还是已经在正式知识库中, agent 都做一个 "localize": agent 把 source 从外界给迁移回本地.
+
+- **A foreign record** is a record whose `source` is a web address (`http://`
+  or `https://`): the work that originates the concept, or a page that
+  explains it, such as an encyclopedia article. It has no `lines`; its
+  Evidence quotes are copied verbatim from that page when it is drafted.
+  Foreign is not a stored field: it is whether `source` is a web address. A
+  foreign record is ordinary knowledge in every other way: it is accepted,
+  linked, retrieved and marked understood or not like any local record.
+- **Its base** is the base of the source the owner was reading when they
+  captured it, and its kind is one that a document type registered for that
+  base declares.
+- **Localization** moves a record's evidence from the outside work to a local
+  source once the owner holds that work, for example after translating the
+  paper into their vault. Looking the concept up while reading the local
+  source offers it; the agent checks that the local passage states the same
+  knowledge point and writes the localized record as a draft with the same id
+  (a replacement when the record is accepted, a rewritten draft otherwise)
+  whose `source`, `lines` and Evidence cite the local passage. Localization is
+  never required: a foreign record is complete knowledge.
+
+## Understanding
+
+`understanding` is `yes` or `no` and defaults to `yes`: accepting knowledge
+normally means the owner understood it. The owner marks `no` by hand on what
+they accept without understanding it, and finds those records with the
+`understanding` filter of every retrieval command.
 
 ## Conflicts, updates and relocation
 
@@ -96,7 +160,9 @@ knowledge are detected and resolved, how accepted knowledge is updated and how
 it is relocated (rebased) to another source; the rules for them in this
 document follow it. "1a" is the rule that each concept has exactly one record,
 owned by the source that defines it (see
-[Research knowledge selection](#research-knowledge-selection)).
+[Research knowledge selection](#research-knowledge-selection)). Its mentions of
+pending predate the 2026-10-15 statements above, which replaced pending terms
+with links to foreign or local records and made every admission a draft.
 
 > 你知道, 我们的知识库是一个 agentic 的知识库.
 >
@@ -127,44 +193,42 @@ from its source, and whether relocation crosses bases), also verbatim:
 
 The rules that follow from these statements:
 
-- **Look up before every write.** Admitting a source, or several items, is
-  admitting each knowledge point in turn. Before writing one, the admitting
-  agent looks it up in every registered base with `kgd resolve` and
-  `kgd search`, pending uses included. The same lookup precedes every pending
-  term: a term that a record anywhere defines is written as a link, and in a
+- **Look up before every draft.** Admitting a source, or several items, is
+  admitting each knowledge point in turn. Before drafting one, the agent looks
+  it up in every registered base with `kgd resolve` and `kgd search`, and in
+  the drafts with `kgd drafts --name`. Every concept a value would name is
+  looked up the same way: a recorded or drafted concept is linked, and in a
   definition that link is the relation between the new knowledge and the
   known one.
-- **A new knowledge point** gets a new record, and the admitting Skill links
-  its pending uses in every base. A concept that merely shares the name of a
-  recorded one is new (a homonym, 1a).
-- **The same knowledge point with the same meaning** gets no new record and no
-  content change. If the recorded citation no longer verifies because the
-  source was renamed, merged, split or reworded, the record's `source`,
+- **A new knowledge point** gets a new draft. A concept that merely shares the
+  name of a recorded one is new (a homonym, 1a).
+- **The same knowledge point with the same meaning** gets no draft. If its
+  recorded citation no longer verifies because the source was renamed,
+  merged, split or reworded, the agent drafts a replacement whose `source`,
   `lines` and Evidence move to the passage being admitted.
-- **The same knowledge point with a changed meaning** is overwritten in place
-  only when the new definition is more general than the recorded one or
-  corrects it. A definition that the recorded one explicitly rules out, such
-  as the error it corrected, is never more general, so re-admitting a
-  superseded passage cannot flip the record back. The record keeps its id and
-  the owner's `understanding`; everything else is rewritten from the new
-  passage, and `source` and `lines` move there. That move is a relocation. In
-  every other case, a narrower definition included, the admitting agent asks
-  the owner to decide and writes nothing for that knowledge point until they
-  do.
-- **Relocation is global.** When the passage lies in another base, the record
-  moves to that base and keeps its id, unless that base already uses the id
-  for another concept. Every link to it, in every base, is rewritten once.
-- **Knowledge that disappears becomes pending.** A record whose knowledge a
+- **The same knowledge point with a changed meaning** gets a replacement draft
+  rewritten from the new passage, keeping the id and the owner's
+  `understanding`, with `source` and `lines` moved there (a relocation). The
+  agent reports whether the new definition is more general than the recorded
+  one, corrects it, or conflicts with it in any other way, a narrower one
+  included; accepting the replacement is the owner's decision in every case.
+  A definition that the recorded one explicitly rules out, such as the error
+  it corrected, is reported as a conflict, never as more general.
+- **Relocation is global.** When the passage lies in another base, the agent
+  drafts the record in that base with the same id, unless that base already
+  uses the id for another concept. Once the owner accepts it, every link to
+  the old uid, in every base, is rewritten to the new one and the old record
+  is deleted.
+- **Knowledge that disappears is the owner's.** A record whose knowledge a
   re-admitted source no longer contains, or whose source file no longer
-  exists, is deleted. Every link to it, in every base, becomes a pending term
-  that keeps its wording. The agent does not look for where the knowledge
-  went. The owner decides whether it is re-established from another source or
-  abandoned. Re-establishing it is an ordinary admission whose lookup meets
-  those pending uses, and Git history keeps the deleted record.
-- **Who writes what.** New records go through drafts and `kgd accept` or
-  `kgd harvest`. Overwrites, moved citations, relocations and deletions to
-  pending are edits of accepted records that the admitting Skill makes itself,
-  because there are no update drafts. The owner reviews them with `git diff`.
+  exists, is reported, and `kgd check` reports it stale or its source missing.
+  The agent deletes nothing: the owner decides whether it is re-established
+  from another source, local or foreign, through a replacement draft, or
+  deleted, together with the links to it.
+- **Who writes what.** Agents write drafts only. The owner accepts them with
+  `kgd accept` (the Obsidian Capture view runs it) and edits accepted records
+  by hand. The only agent edits of accepted records are the link rewrites
+  that a relocation, merge or split the owner accepted requires.
 
 ## Data model
 
@@ -172,25 +236,23 @@ The rules that follow from these statements:
 |---|---|
 | Home | `$KGDISTILLER_HOME` (default `~/.knowledge`): base registry, source→type globs, document types, embedding model id, the database and the lock. |
 | Base | A registered directory, normally one Obsidian vault, holding its own knowledge under `.knowledge/`. Its name is a slug that exists only in `config.json`. |
-| Source | A file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines. It has exactly one document type. |
+| Source | Local: a file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines; it has exactly one document type. Foreign: a web address, the outside work or page whose text a foreign record quotes. |
 | Document type | `types/<name>.md`: `node_kinds`, `relation_kinds` (each kind with ordered roles) and optional `epistemic`; the body is guidance. |
-| Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. |
+| Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. It is local or foreign by its `source`. |
 | Node | A record with no non-empty role property: a noun-like concept or a precisely stated theorem. Its kind is a node kind. |
 | Relation | A record with at least one non-empty role property. Its kind is a relation kind and its role keys are that kind's roles. Arity is unbounded; a binary relation is the 2-role case. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
 | Application / example | A relation of a kind the owner registers for it, such as `example: [uses, setting]`. |
-| Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`. |
-| Pending gap | A plain-text value in a role list or in `requires`: a concept the source uses without explaining it. One direct level only. It never binds by name; it is resolved by editing it into a link. Gaps are global: a use stays pending only while no registered base holds the record that defines the concept, and once any base does, the use links there, across bases when needed. Role values are always knowledge references, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role. |
-| `requires` | A list on every record holding direct understanding prerequisites. Proof or derivation dependencies are relations. |
-| Evidence | `source` + `lines` (one or more ranges) + one or more verbatim quotes in the body's final `## Evidence` section. The quotes are the anchor; each lies inside one cited range. |
-| Understanding | `unknown`, `not-yet-understood` or `understood`; absent means `unknown`. Independent of coverage and evidence. |
+| Link | A value `"[[id]]"`, `"[[base:id]]"` or `"[[.knowledge/entries/id]]"` in a role list or in `requires`; every value is a link. A role value is a knowledge reference, so a literal setting, hyperparameter or measured value belongs in the prose and evidence, never in a role, and a concept without a record is captured before it is linked. |
+| `requires` | A list on every record holding links to its direct understanding prerequisites. Proof or derivation dependencies are relations. |
+| Evidence | `source` + `lines` (one or more ranges) + one or more verbatim quotes in the body's final `## Evidence` section; a foreign record has quotes of its web page and no `lines`. The quotes are the anchor; each lies inside one cited range of a local source. |
+| Understanding | `yes` or `no`; absent means `yes`. Independent of coverage and evidence. |
 | Epistemic | Optional; a value from the type's `epistemic` list stating how the cited passage itself supports the record, such as proved or measured there, or only stated. A result the source reports from other work is stated. It is never a verdict of the whole knowledge base. |
-| Draft | `.knowledge/drafts/<id>.md`: a proposed new record in exactly the record format. Not knowledge and not indexed. |
-| Sheet | `.knowledge/sheets/<source path>.md`: the generated def/pending view of one source. |
+| Draft | `.knowledge/drafts/<id>.md`: a proposed record in exactly the record format, new, or the replacement of the accepted record with its id. Not knowledge and not indexed. |
 
 There are no source ids, courses or groups, passages, stored sense groups,
-pending tables, edge files, identity or alignment registries, review or
-curation status, receipts or plan files, per-record `id` or `schema` fields,
-or update drafts.
+pending terms or lists, sheets, edge files, identity or alignment registries,
+review or curation status, receipts or plan files, per-record `id`, `schema`
+or `foreign` fields.
 
 ## Home and base layout
 
@@ -204,13 +266,12 @@ $KGDISTILLER_HOME/                 default ~/.knowledge; absolute after ~ expans
 
 <base root>/.knowledge/
 ├── entries/<id>.md                accepted records: nodes and relations, one folder
-├── drafts/<id>.md                 proposed new records, same format
-└── sheets/<source path>.md        generated def/pending sheets
+└── drafts/<id>.md                 proposed records, new or replacements, same format
 ```
 
 `KGDISTILLER_HOME` is the only environment variable the product reads for its
-own data. Under `.knowledge/` the product reads and writes only `entries/`,
-`drafts/` and `sheets/`; other files there are ignored. The product writes no
+own data. Under `.knowledge/` the product reads and writes only `entries/`
+and `drafts/`; other files there are ignored. The product writes no
 vault `.gitignore`.
 
 `config.json` has exactly the keys `bases` and `embedding`. Each base has
@@ -266,16 +327,33 @@ $U_1,U_2\subset V$ 均为 subspace。
 > 且 \(U_{1} + U_{2}\) 是同时包含 \(U_{1}\) 和 \(U_{2}\) 的 \(V\) 的最小 subspace.
 ```
 
+A foreign record cites a web address and quotes its page:
+
+```markdown
+---
+label: Autoencoder
+kind: definition
+source: https://en.wikipedia.org/wiki/Autoencoder
+understanding: no
+---
+An autoencoder is a neural network trained to reproduce its input through a
+learned code of lower dimension.
+
+## Evidence
+
+> An autoencoder is a type of artificial neural network used to learn efficient codings of unlabeled data
+```
+
 **Fixed keys**
 
 | Key | Required | Value |
 |---|---|---|
 | `label` | yes | Non-empty single-line string in any language. Not unique. |
 | `kind` | yes | A node kind or relation kind of the source's type. |
-| `source` | yes | POSIX path relative to the base root, no leading `/`, no `..`; a registered source of this base. |
-| `lines` | yes | One or more ranges `a` or `a-b`, comma-separated, ascending and disjoint, each with 1 ≤ a ≤ b ≤ the source's line count. |
+| `source` | yes | A POSIX path relative to the base root, no leading `/`, no `..`, naming a registered source of this base; or a web address `http://…` or `https://…`, which makes the record foreign. |
+| `lines` | local only | One or more ranges `a` or `a-b`, comma-separated, ascending and disjoint, each with 1 ≤ a ≤ b ≤ the source's line count. A foreign record has none. |
 | `aliases` | no | List of single-line names in any language, symbols. Not unique. |
-| `understanding` | no | `unknown`, `not-yet-understood` or `understood`; empty or absent means `unknown`. |
+| `understanding` | no | `yes` or `no`; empty or absent means `yes`. |
 | `epistemic` | no | A slug from the type's `epistemic` list: how the cited passage itself supports the record. |
 | `requires` | no | List of values. |
 | `tags`, `cssclasses` | no | Obsidian's own properties; accepted and ignored. |
@@ -304,20 +382,17 @@ only product-side frontmatter edit is the textual `lines:` rewrite of
 **Value grammar** (`requires` and every role value):
 
 ```text
-value   := link | term
-link    := "[[" target ( "|" display )? "]]"         the whole trimmed string; display is ignored
+value   := "[[" target ( "|" display )? "]]"        the whole trimmed string; display is ignored
 target  := id | base ":" id | ".knowledge/entries/" id      a trailing ".md" is ignored
-term    := non-empty single-line string containing neither "[[" nor "]]"
 ```
 
-Targets match after NFKC normalization and casefolding. A string with `[[` or
-`]]` that is not one whole link, a target containing `#` or `^`, any other path
+Targets match after NFKC normalization and casefolding. A string that is not
+one whole link (plain text included), a target containing `#` or `^`, any other path
 form, and a local link prefixed with the record's own base name are errors.
 Wikilinks inside body prose are free navigation and are neither validated nor
 indexed.
 
-Every value is a knowledge reference: a link, or a term naming a concept that
-is not yet recorded. A term is never a literal. Settings, hyperparameters,
+Every value is a knowledge reference, never a literal. Settings, hyperparameters,
 resolutions, splits, units and measured values belong in the prose and
 evidence. kgd records knowledge concepts, not measurements: comparing reported
 values means locating the records and reading their evidence or the source
@@ -360,16 +435,18 @@ when a source is revised or reorganized; a label may quote the source's own
 numbering when that is the item's name, while the id still describes the
 meaning. Once accepted, an id is permanent: it is never renamed for
 convenience and never reused for another concept. A changed meaning of the
-same knowledge point overwrites its record in place and keeps the id (see
+same knowledge point replaces its record through a draft with the same id (see
 [Conflicts, updates and relocation](#conflicts-updates-and-relocation)).
 
 ## Drafts
 
-- A draft proposes a new record: its id must not exist in `entries/`. There are
-  no update drafts; accepted records are edited in place.
+- A draft whose id does not exist in `entries/` proposes a new record. A draft
+  with the id of an accepted record of its base proposes that record's
+  replacement: accepting it replaces the record's file, and the id stays.
 - A draft's local links may target accepted records or other drafts of the
-  same base; its foreign links must target accepted records. Accepted records
-  never link to drafts.
+  same base; its cross-base links must target accepted records. A link to an
+  id that exists in `entries/` always means the accepted record. Accepted
+  records never link to drafts.
 - The owner may edit a draft before accepting it; the bytes present at
   acceptance are what is accepted. Deleting a draft rejects it, and nothing
   remembers the rejection: there is no rejection list, so a later compile may
@@ -377,53 +454,10 @@ same knowledge point overwrites its record in place and keeps the id (see
 - Drafts are validated by `kgd check` and never indexed. `kgd drafts` lists
   them with what `kgd accept` would make of each.
 
-## Sheets
-
-`kgd sheet SOURCE` writes `<root>/.knowledge/sheets/<source path>.md`:
-
-```markdown
-<!-- generated by kgd sheet; only draft checkboxes are read back -->
-# notes/math/linear-algebra/chapters/01-review.tex
-
-[[notes/math/linear-algebra/chapters/01-review.tex]] · type math-notes · 7 accepted · 2 drafts
-
-## definition
-- [[.knowledge/entries/subspace|Subspace]] · L7-19 · understood — vector space $V$ 的 subset …
-
-## implies
-- [[.knowledge/entries/sum-of-two-subspaces-is-a-subspace|Sum of two subspaces is a subspace]] · L24-32 · premise: Subspace · conclusion: Sum of subspaces — 若 …
-
-## Pending
-- vector space — Subspace (requires)
-
-## Drafts
-- [x] [[.knowledge/drafts/direct-sum-criterion|Direct sum criterion]] · implies · L37-41 · premise: Direct sum · conclusion: Subspace — …
-```
-
-- Accepted records are grouped under one `## <kind>` section per kind: node
-  kinds, then relation kinds, each in the type's order, then `## other` for
-  undeclared kinds. Rows sort by first line, then id.
-- Rows follow this grammar, where `<lines>` lists every cited range as `a-b`,
-  comma-separated, `<v>` is the target's label (its id, or uid for another
-  base, when missing) or the term itself, and `|`, `[` and `]` in display text
-  become spaces:
-
-  ```text
-  accepted: - [[.knowledge/entries/<id>|<label>]] · L<lines>[ · <understanding≠unknown>][ · <role>: <v>, …]… — <gloss>
-  draft:    - [ ] [[.knowledge/drafts/<id>|<label>]] · <kind> · L<lines>[ · <role>: <v>, …]… — <gloss>
-  ```
-
-- `## Pending` lists the term values of this source's accepted records, one
-  line per name key, with the owners' labels and roles. `## Drafts` lists the
-  drafts whose `source` is this file, by line.
-- Regeneration keeps the checkbox of each draft row whose draft still exists
-  and overwrites everything else. A checkbox means "selected for acceptance",
-  never "understood". `kgd index` never writes sheets.
-
 ## Identity and addressing
 
 - The uid `<base>:<id>` is unique by construction.
-- In a file, `[[id]]` is local and `[[base:id]]` is foreign; the foreign base
+- In a file, `[[id]]` is local and `[[base:id]]` is a cross-base link; its base
   must be registered and must not be the record's own base. Local links never
   change when a base moves. A base name is a permanent citation key written
   into every `[[base:id]]` that targets the base, so it is never renamed or
@@ -438,7 +472,9 @@ same knowledge point overwrites its record in place and keeps the id (see
   the source that defines it, so two records with the same name are two
   concepts with different definitions; a name collision needs nothing more.
 - Accepted ids are permanent (see **Ids** above).
-- A record lives in the base whose source supplies its evidence.
+- A local record lives in the base whose source supplies its evidence; a
+  foreign record lives in the base whose source the owner was reading when
+  they captured it.
 - The base for a path is the registered root containing the path's realpath;
   there is no upward walk.
 - A CLI uid argument is `base:id`, or a bare `id` when exactly one base has it;
@@ -464,20 +500,21 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | `config` | `config.json` shape, base names, root nesting, the home outside every root, every root available, no symlinked `.knowledge`, `entries/` or `drafts/`, an unknown `--base`. |
 | `type` | Each `types/*.md` obeys the type rules; every type named in `sources` exists. |
 | `source-type` | No registered file maps to two types. |
-| `id` | The stem is a valid id; ids are unique across `entries/` and `drafts/`; a draft's id is not in `entries/`. |
-| `frontmatter` | The record file is a regular file, not a symlink; the frontmatter parses; required keys present with the right shapes; every non-fixed key is a role of `kind`; `understanding` in the enum. |
-| `source` | `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root; `lines` lies within it. |
-| `kind` | `kind` belongs to the source's type; a node kind has no role keys; a relation kind has a non-empty role value; `epistemic` is in the type's list. |
-| `link` | Every value matches the grammar; every link resolves to an accepted record (local or foreign, read from files); no self-link; a foreign link to an unregistered base names it. |
+| `id` | The stem is a valid id; ids are unique within `entries/` and within `drafts/`, case-insensitively; a draft is not identical to the accepted record with its id. |
+| `frontmatter` | The record file is a regular file, not a symlink; the frontmatter parses; required keys present with the right shapes (`lines` for a local record, none for a foreign one); every non-fixed key is a role of `kind`; `understanding` is `yes` or `no`. |
+| `source` | A local `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root, and `lines` lies within it. A foreign one is a web address and is never fetched. |
+| `kind` | `kind` belongs to the source's type, or for a foreign record to a type registered for its base (all of those declaring it alike); a node kind has no role keys; a relation kind has a non-empty role value; `epistemic` is in the type's list. |
+| `link` | Every value is a link matching the grammar; every link resolves to an accepted record (of this base or another, read from files); no self-link; a cross-base link to an unregistered base names it. |
 | `body` | The body obeys the body grammar. |
 
-Drafts follow the same rules with three changes: the id must not exist in
-`entries/` (an identical file there is an interrupted accept, and the message
-says that rerunning `kgd accept` finishes it); local links may also resolve to
-drafts; foreign links resolve only to accepted records. An accepted record that
-links a draft is told to accept it first.
+Drafts follow the same rules with two changes: local links may also resolve to
+drafts, while cross-base links resolve only to accepted records; and a draft
+identical to the accepted record with its id (an accept interrupted between
+its two steps) is an error whose message says that rerunning `kgd accept`
+removes it. An accepted record that links a draft is told to accept it first.
 
-**Evidence freshness.** Quotes and source text are compared after
+**Evidence freshness** applies to local records; a foreign record is never
+fresh, moved or stale. Quotes and source text are compared after
 `" ".join(s.split())`.
 
 - **fresh**: every quote occurs inside one cited range;
@@ -505,7 +542,7 @@ not fixed:
 
 `$KGDISTILLER_HOME/lock` is a dedicated lock file taken without waiting
 (`fcntl.flock`, or `msvcrt.locking` on Windows). It is held by `accept`,
-`harvest`, `check --fix-lines`, `base add`, `base rm`, `embedding set` and
+`check --fix-lines`, `base add`, `base rm`, `embedding set` and
 `embedding off`; a second writer fails
 at once. No data file is ever locked or truncated. `kgd index` relies on
 SQLite's own locking.
@@ -517,9 +554,11 @@ takes no lock and opens no database. Each draft has its record fields as
 `kgd get` gives them (without `in`), plus:
 
 - `path`: the draft file;
-- `out`: every value, as a pending `term` or as a link with the `state` of its
-  target: `accepted` (with the record's `label` and `understanding`), `draft`
-  (a draft of the same base) or `missing`;
+- `replaces`: the uid of the accepted record this draft would replace, or
+  `null` for a new record;
+- `out`: every value as a link with the `state` of its target: `accepted`
+  (with the record's `label` and `understanding`), `draft` (a draft of the
+  same base) or `missing`;
 - `with`: the drafts of its base that it links, directly or through other
   drafts, which `kgd accept` must be given with it;
 - `linked_by`: the drafts that link it;
@@ -528,13 +567,13 @@ takes no lock and opens no database. Each draft has its record fields as
 
 ```json
 {"drafts": [{"uid": "notes:direct-sum-criterion", "base": "notes", "id": "direct-sum-criterion",
-   "path": "/abs/root/.knowledge/drafts/direct-sum-criterion.md", "class": "relation", "kind": "implies",
-   "label": "Direct sum criterion", "aliases": [], "source": "…", "lines": "37-41", "understanding": "unknown",
+   "path": "/abs/root/.knowledge/drafts/direct-sum-criterion.md", "replaces": null, "foreign": false,
+   "class": "relation", "kind": "implies",
+   "label": "Direct sum criterion", "aliases": [], "source": "…", "lines": "37-41", "understanding": "yes",
    "epistemic": null, "gloss": "…", "body": "…", "search_terms": "", "evidence": ["…"],
    "out": [{"role": "premise", "pos": 0, "uid": "notes:direct-sum", "state": "draft", "label": "Direct sum"},
            {"role": "conclusion", "pos": 0, "uid": "notes:subspace", "state": "accepted", "label": "Subspace",
-            "understanding": "understood"},
-           {"role": "requires", "pos": 0, "term": "vector space"}],
+            "understanding": "yes"}],
    "with": ["notes:direct-sum"], "linked_by": [], "problems": []}],
  "unavailable_bases": []}
 ```
@@ -554,88 +593,82 @@ or relative to the working directory.
 1. Take the lock and parse every selected draft.
 2. Validate each one in the post-acceptance world: local links may resolve to
    accepted records or to other selected drafts; a link to an unselected draft
-   is refused with `select [[x]] too`; evidence must be fresh; the id must not
-   exist in `entries/`, except when the existing file has exactly the draft's
-   text (an earlier accept interrupted between link and unlink), in which case
-   only the draft is removed.
+   is refused with `select [[x]] too`; a local record's evidence must be fresh.
+   A draft with the id of an accepted record replaces it, refused when the
+   record's file changed after the draft's (its modification time is later):
+   the replacement was drafted from an older record. A draft whose text equals
+   its accepted record (an earlier accept interrupted between link and unlink)
+   is only removed.
 3. On any problem print `{"refused": [{"path", "message"}]}`, exit 1 and write
    nothing. Problems in other records do not block acceptance.
-4. With `--dry-run` print `{"would_create": [uid]}`.
-5. Otherwise, in argument order, `os.link(draft, entries/<id>.md)` then
-   `os.unlink(draft)`. Nothing is ever overwritten: a target that appeared since
-   validation with different text stops the run, and the receipt lists what
-   was already created under `created` plus `aborted: {path, message}`.
-   Rerunning the same command completes an interrupted run.
+4. With `--dry-run` print `{"would_create": [uid], "would_update": [uid]}`.
+5. Otherwise, in argument order, a new record is `os.link(draft,
+   entries/<id>.md)` then `os.unlink(draft)`, and a replacement is
+   `os.replace(draft, entries/<id>.md)`. A new record never overwrites
+   anything: a target that appeared since validation with different text
+   stops the run, and the receipt lists what was already admitted plus
+   `aborted: {path, message}`. Rerunning the same command completes an
+   interrupted run.
 6. Release the lock and run `kgd index` with its embedding phase limited to
-   the created records: every changed record file is indexed, the new records
-   are embedded, and a record edited since it was embedded keeps waiting for
-   the owner's re-embed (docs/retrieval.md, "When records are embedded").
-7. Print `{"created": [uid], "understanding_set": [{"uid", "value"}], "index":
-   {...}}`. `understanding_set` lists the created records whose understanding
-   is not `unknown`, and `index` is the report of step 6. An embedding failure
-   is reported there and does not undo the acceptance; the exit code reflects
-   only refusals and aborts.
+   the admitted records: every changed record file is indexed, the new and
+   replaced records are embedded, and a record edited since it was embedded
+   keeps waiting for the owner's re-embed (docs/retrieval.md, "When records
+   are embedded").
+7. Print `{"created": [uid], "updated": [uid], "index": {...}}`, where `index`
+   is the report of step 6. An embedding failure is reported there and does
+   not undo the acceptance; the exit code reflects only refusals and aborts.
 
-### `kgd harvest SHEET [--dry-run]`
-
-SHEET is `<root>/.knowledge/sheets/<source path>.md`. Harvest collects the
-draft ids of the `## Drafts` rows matching
-`^- \[[xX]\] \[\[\.knowledge/drafts/<id>(\|…)?\]\]`, skips ticked rows whose
-draft no longer exists, runs one `accept` on the rest, regenerates the sheet on
-success and prints the accept result. A refusal changes nothing.
-
-### `kgd sheet SOURCE [--json]`
+### `kgd source SOURCE`
 
 SOURCE is a registered source file, absolute or relative to the working
 directory; an unregistered file is an error that asks for a glob in
-`config.json`. Without `--json` it writes the sheet through a temp file and an
-atomic replace and prints `{"sheet": path}`. With `--json` it writes nothing
-and prints the extraction profile and inventory agents use:
+`config.json`. It writes nothing and prints the extraction profile and
+inventory agents use:
 
 ```json
 {"base": "notes", "source": "notes/math/…/01-review.tex", "type": "math-notes",
  "node_kinds": ["definition", "theorem"], "relation_kinds": {"implies": ["premise", "conclusion"]},
  "epistemic": ["proved", "stated"], "guidance": "…", "line_count": 77,
  "records": [{"uid": "notes:subspace", "label": "Subspace", "kind": "definition", "class": "node",
-              "lines": "7-19", "understanding": "understood", "gloss": "…"}],
- "drafts": [{"id": "direct-sum-criterion", "label": "…", "kind": "implies", "class": "relation", "lines": "37-41"}],
- "pending": [{"term": "vector space", "owners": [{"uid": "notes:subspace", "role": "requires"}]}]}
+              "lines": "7-19", "understanding": "yes", "gloss": "…"}],
+ "drafts": [{"id": "direct-sum-criterion", "label": "…", "kind": "implies", "class": "relation", "lines": "37-41"}]}
 ```
 
 Agents read the source text with their own tools; the inventory carries no
-lines.
+lines. A foreign record is drafted with the profile of the source the owner
+was reading.
 
-### Updates, deletes and identity changes of accepted records
+### Changes, deletes and identity changes of accepted records
 
-When to ignore, overwrite or relocate knowledge that is already recorded
+When to ignore, replace or relocate knowledge that is already recorded
 follows [Conflicts, updates and relocation](#conflicts-updates-and-relocation);
 this section is how such a change is written.
 
-- **Update.** Edit `entries/<id>.md` in place with an editing tool that refuses
-  when the file changed since it was read (Claude Code `Edit`, Codex
-  `apply_patch`); never rewrite a whole record from an earlier read. Then run
-  `kgd check --base B` and `kgd index --no-embed`. The owner reviews agent edits with
-  `git diff`. Accept only creates, and the editor guards the window between
-  read and write. A better name goes into `label` or `aliases`; the id stays.
-- **Delete.** Remove the file. `kgd check` then lists every inbound link left
-  dangling, local and foreign. Edit each one in a record or draft into a
-  pending term that keeps its wording: `"[[id|wording]]"` becomes
-  `"wording"` and `"[[id]]"` the deleted record's label. Body-prose wikilinks
-  to it, which `kgd check` does not validate, become plain text the same way.
+- **Replacement.** An agent writes the changed record as a draft with the
+  record's id, from a fresh read of the record, and the owner accepts it. The
+  owner edits accepted records by hand as they like; then the Obsidian plugin,
+  or the owner, runs `kgd check --base B` and `kgd index --no-embed`. A better
+  name goes into `label` or `aliases`; the id stays.
+- **Delete.** The owner removes the file. `kgd check` then lists every inbound
+  link left dangling, in this base and others; each is removed from its
+  record or draft, or repointed by meaning to another record. Body-prose
+  wikilinks to it, which `kgd check` does not validate, become plain text.
   Run `kgd check` and `kgd index --no-embed`.
-- **Relocation.** Within one base, the overwrite edits `source`, `lines` and
-  the Evidence in place. Into another base, write the record as a draft there
-  with the same id (another id only when that base already uses it for another
-  concept), adjust its links to the new base and `kgd accept` it. Then rewrite
-  every link to the old uid, in every base, to the new one: a link in the new
-  base becomes local `"[[id]]"`, any other one `"[[base:id]]"`. Finally delete
-  the old file and run `kgd check` and `kgd index --no-embed`.
+- **Relocation.** Within one base it is a replacement whose `source`, `lines`
+  and Evidence cite the new passage. Into another base, the record is drafted
+  there with the same id (another id only when that base already uses it for
+  another concept), its links adjusted to the new base; once the owner accepts
+  it, every link to the old uid, in every base, is rewritten to the new one
+  with an editing tool that refuses stale reads (a link in the new base
+  becomes local `"[[id]]"`, any other one `"[[base:id]]"`), the old file is
+  deleted, and `kgd check` and `kgd index --no-embed` run.
 - **Identity change.** Ids are permanent, so a changed identity is a one-time
   link rewrite, never a rename. Merging true duplicates keeps one record;
-  splitting a record that conflated two meanings creates new records for them.
-  Repoint every inbound link by meaning, including body-prose wikilinks that
-  `kgd check` does not validate, then delete the superseded record and run
-  `kgd check --base B` and `kgd index --no-embed`.
+  splitting a record that conflated two meanings drafts new records for them.
+  Once the owner accepts the change, every inbound link is repointed by
+  meaning, including body-prose wikilinks that `kgd check` does not validate,
+  the superseded record is deleted, and `kgd check --base B` and
+  `kgd index --no-embed` run.
 
 ### Base registration
 

@@ -73,8 +73,8 @@ With the path of `kgd` set in **Settings → kgdistiller → kgd executable**:
 - **Lookup sidebar.** Select text and hold ⌘ (Ctrl elsewhere) for 0.3 s, run
   **Look up selection**, or type into the sidebar's search box (the ribbon
   icon **Open kgdistiller** opens it). It looks the text up in every
-  registered base and shows the records of the same name, the records that
-  use it as a pending term, the record in focus with a typed graph of its
+  registered base and shows the records of the same name, the record in
+  focus with a typed graph of its
   neighbours within 3 steps, and the related records. Opening a record or a
   source in the editor focuses it there too. **Re-embed** below the search box
   is solid, with a count, while records await embedding.
@@ -120,7 +120,7 @@ evidence and for `kgd get --source-lines`). They write only:
 - the home: `config.json` through `kgd base add`/`rm` and `kgd embedding`, the `types/` folder and
   `.gitignore` that the first `kgd base add` creates, `index.sqlite*` and
   `lock`;
-- the `entries/`, `drafts/` and `sheets/` folders under a base's `.knowledge/`;
+- the `entries/` and `drafts/` folders under a base's `.knowledge/`;
 - the plugin folder, `community-plugins.json` and the plugin's `data.json` in
   the vault's `.obsidian/`, through `kgd obsidian install`;
 - the agent runtime homes, through `kgd claude link` and `kgd codex link`.
@@ -151,11 +151,11 @@ are embedded in the bundle and listed in
 kgdistiller is a knowledge base for academic research: papers you read, papers
 you write and your own research notes. Each registered directory, usually one
 Obsidian vault, is a base. A base keeps its knowledge as Markdown records
-in `.knowledge/entries/`, proposals in `.knowledge/drafts/` and generated
-review sheets in `.knowledge/sheets/`. A record is either a node (a concept or
-a precisely stated result) or a relation whose role keys bind other records.
-Every record cites a source file of its base by path, line range and verbatim
-quotes. Sources are plain text in any format; kgdistiller reads them as
+in `.knowledge/entries/` and proposals awaiting your acceptance in
+`.knowledge/drafts/`. A record is either a node (a concept or a precisely
+stated result) or a relation whose role keys bind other records. Every record
+cites a source file of its base by path, line range and verbatim quotes, or,
+as foreign knowledge, the web page of an outside work it quotes. Sources are plain text in any format; kgdistiller reads them as
 numbered lines and never parses their syntax.
 
 The global home, `$KGDISTILLER_HOME` (default `~/.knowledge`), registers the
@@ -174,8 +174,7 @@ derived database `index.sqlite`:
 ├── notes/                         # sources: any UTF-8 text
 └── .knowledge/
     ├── entries/<id>.md            # accepted records
-    ├── drafts/<id>.md             # proposed records, same format
-    └── sheets/<source path>.md    # generated def/pending sheets
+    └── drafts/<id>.md             # proposed records, same format
 ```
 
 The database holds FTS5 full-text rows and float32 vectors, searched by an
@@ -232,8 +231,7 @@ relation_kinds:
 epistemic: [proved, stated]
 ---
 Extract each definition and each precisely stated result as a node. Record a
-relation only when the text states it. Record an unexplained term as a pending
-term.
+relation only when the text states it.
 ```
 
 Map the base's sources to that type in `~/.knowledge/config.json`:
@@ -262,23 +260,25 @@ kgd embedding set BAAI/bge-m3
 ```
 
 Then add records. Ask an agent with the Skills installed to capture a
-definition or compile a whole note. To add one by hand, print the source's type
-profile with `kgd sheet --json`, write a draft in
+definition or compile a whole note; every result is a draft you review and
+accept. To add one by hand, print the source's type profile with
+`kgd source`, write a draft in
 `~/research/.knowledge/drafts/` (see [Record format](#record-format)), then
 check, accept and index it:
 
 ```sh
 cd ~/research
-kgd sheet notes/measure.md --json
+kgd source notes/measure.md
 kgd check
 kgd accept .knowledge/drafts/sigma-algebra.md
 kgd search "sigma algebra"
 ```
 
-`kgd sheet --json` prints the type profile and the records a source already
-has. `kgd check` validates the home, records and drafts, and reports evidence
+`kgd source` prints the type profile and the records and drafts a source
+already has. `kgd check` validates the home, records and drafts, and reports evidence
 that moved or no longer matches its source. `kgd accept` moves drafts into
-`entries/`, all or nothing, then indexes them and embeds the new records.
+`entries/`, all or nothing, then indexes them and embeds them; a draft with an
+accepted record's id replaces that record.
 Every
 command prints JSON and exits 0 on success, 1 on findings or a refusal, and 2
 on a usage error.
@@ -293,7 +293,7 @@ A document type declares `node_kinds`, relation kinds and their roles,
 optional epistemic labels, and prose guidance for extraction. Source globs in
 `config.json` assign exactly one type to each source.
 
-Capture and compilation read that policy through `kgd sheet SOURCE --json`
+Capture and compilation read that policy through `kgd source SOURCE`
 before proposing records. `kgd check` and acceptance validate kinds and roles
 against it. You can change the policy or add types without changing the engine.
 
@@ -325,7 +325,7 @@ aliases:
 source: notes/measure.md
 lines: 3-4
 requires:
-  - "set"
+  - "[[set]]"
 ---
 A sigma-algebra on a set X is a collection of subsets of X closed under complements and countable unions.
 
@@ -358,20 +358,22 @@ A measure space is defined over a sigma-algebra.
 ```
 
 - `label`, `kind`, `source` (path relative to the base root) and `lines`
-  (`a` or `a-b`) are required. `aliases`, `understanding` (`unknown`,
-  `not-yet-understood` or `understood`), `epistemic` and `requires` are
-  optional; `tags` and `cssclasses` are allowed and ignored.
+  (`a` or `a-b`) are required. A foreign record's `source` is the web address
+  of the outside work it quotes, and it has no `lines`. `aliases`,
+  `understanding` (`yes` or `no`, default `yes`), `epistemic` and `requires`
+  are optional; `tags` and `cssclasses` are allowed and ignored.
 - Every other key is a role. A record with at least one non-empty role list is
   a relation; otherwise it is a node. A relation may have any number of roles.
-- A list value is a link (`"[[id]]"`, `"[[base:id]]"` or
-  `"[[.knowledge/entries/id]]"`) or a pending term (a plain-text value): a
-  term the source uses without explaining it. `set` above is one.
+- A list value is a link: `"[[id]]"`, `"[[base:id]]"` or
+  `"[[.knowledge/entries/id]]"`. A concept nothing records yet is captured on
+  its own first, from a local source or as foreign knowledge.
 - The body is prose, an optional `## Search terms` section, then a final
-  `## Evidence` section of verbatim quotes from the cited lines.
+  `## Evidence` section of verbatim quotes from the cited lines (or page).
 - Examples and applications are relations of a kind you register, such as
   `example: [uses, setting]`.
 
-Edit accepted records in place, then run `kgd check` and `kgd index --no-embed`
+Agents only write drafts; you accept them. Edit accepted records by hand in
+place, then run `kgd check` and `kgd index --no-embed`
 (the plugin refreshes the keyword index by itself); an edited record keeps
 its old vector until you re-embed with `kgd index`. When a
 source edit shifts the cited lines, `kgd check --fix-lines` rewrites the
@@ -386,13 +388,12 @@ rules.
 | `kgd base add PATH [--name N]`, `base rm NAME`, `base list` | Register, unregister and list bases with record, draft and index counts. |
 | `kgd embedding`, `embedding set MODEL`, `embedding off` | Show the home's embedding model and its vectors, download and check a model and use it, or turn the dense lane off. |
 | `kgd check [--base B] [--fix-lines]` | Validate the home, records and drafts; report moved or stale evidence. |
-| `kgd sheet SOURCE [--json]` | Write a source's sheet of records, pending terms and drafts, or print its profile. |
+| `kgd source SOURCE` | Print a source's document-type profile and the records and drafts citing it. |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | List the drafts with their links and what `kgd accept` would refuse; writes nothing. |
-| `kgd accept [--dry-run] DRAFT...` | Promote drafts to accepted records, all or nothing, then index them and embed the new records. |
-| `kgd harvest [--dry-run] SHEET` | Accept the ticked drafts of a sheet and regenerate it. |
+| `kgd accept [--dry-run] DRAFT...` | Admit drafts as new records or replacements of the records with their ids, all or nothing, then index and embed them. |
 | `kgd index [--rebuild] [--no-embed]` | Bring the database up to date with the record files; `--no-embed` refreshes only the keyword index. |
 | `kgd search QUERY [--limit N] [--no-dense]` | Rank records by the lexical, dense and name lanes. |
-| `kgd resolve TERM...` | List the senses and mentions of terms, and the records that use each as a pending term. |
+| `kgd resolve TERM...` | List the senses and mentions of terms. |
 | `kgd get UID... [--source-lines N]` | Read complete records with their links and, optionally, the live cited source lines. |
 | `kgd neighbors UID... [--role R] [--dir out\|in\|both] [--depth N]` | Follow links from records: dependency and claim closures. |
 | `kgd browse [HANDLE]` | List bases, a base's source directories, a source's records by kind, or every record of a `--kind`. |
@@ -407,45 +408,35 @@ rules.
 bases. Run `kgd <command> --help` for details and
 [docs/retrieval.md](docs/retrieval.md) for the output shapes.
 
-## Sheets and harvest
+## Reviewing drafts
 
-A sheet is the review page for one source. `kgd sheet notes/measure.md` writes
-`.knowledge/sheets/notes/measure.md.md`, which lists the source's accepted
-records by kind, its open pending terms, and its drafts as checkboxes:
-
-```markdown
-## Drafts
-- [ ] [[.knowledge/drafts/measure-space|Measure space]] · definition · L6-7 — A measure space is a triple …
-```
-
-Open the sheet in Obsidian, review or edit the drafts, and tick the ones to
-accept. A tick means "accept this draft"; it says nothing about whether you
-understand it. Then:
+Every capture and compile ends in drafts. Review them in the plugin's Capture
+view, which lists them by source and shows each one's links and what
+`kgd accept` would refuse, or open them like any file and run:
 
 ```sh
-kgd harvest .knowledge/sheets/notes/measure.md.md
+kgd drafts --source notes/measure.md
+kgd accept .knowledge/drafts/measure-space.md
 ```
 
-Harvest accepts exactly the ticked drafts in one step, indexes and embeds
-them, and regenerates the sheet. If a ticked relation links a draft you did not tick, it refuses and
-changes nothing, with a message such as `select [[measure-space]] too`. To
-reject a draft, delete its file.
+`kgd accept` admits the drafts given and the drafts they link, all or
+nothing, and indexes and embeds them. If a draft links a draft you did not
+give, it refuses and changes nothing, with a message such as
+`select [[measure-space]] too`. To reject a draft, delete its file.
 
 ## Agent integration
 
-Five Skills cover the write and read workflows:
+Four Skills cover the write and read workflows:
 
 | Skill | What it does |
 |---|---|
-| `capture-kgdistiller` | Saves or updates one record while you read: a node, a relation or an example, with its quote and pending terms. The `kgdistiller-capture-writer` agent preset runs it in the background. |
-| `compile-knowledge-sheets` | Extracts drafts from part or all of a registered source, following its document type, and writes the sheet. Knowledge already recorded is ignored, re-cited, overwritten, relocated or deleted to pending by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
-| `harvest-kgdistiller` | Runs `kgd harvest` on the drafts you ticked, which indexes and embeds them. |
+| `capture-kgdistiller` | Drafts one record while you read: a node, a relation or an example, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
+| `compile-kgdistiller` | Drafts records from part or all of a registered source, following its document type. Knowledge already recorded is ignored, or drafted as a replacement, by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |
 | `deploy-kgdistiller` | Installs, registers bases, sources, types and the model, then checks, indexes, installs the plugin and links the runtimes. |
 
-Accepting indexes and embeds the new records; after editing records, the
-Skills refresh only the keyword index (`kgd index --no-embed`) and leave
-re-embedding to you. Install them for your
+The Skills write drafts only; accepting them indexes and embeds them, and
+re-embedding a record you edited by hand is left to you. Install them for your
 runtime:
 
 ```sh
@@ -505,8 +496,8 @@ Skill.
 
 ## Backup and restore
 
-Commit each base's sources together with `.knowledge/entries/`, `drafts/` and
-`sheets/`. Keep the home's `config.json`, `types/` and `.gitignore` in a
+Commit each base's sources together with `.knowledge/entries/` and
+`drafts/`. Keep the home's `config.json`, `types/` and `.gitignore` in a
 separate private repository; `index.sqlite*` and `lock` are ignored. On a new
 machine, restore those files, fix each base's `path`, and rebuild:
 

@@ -32,7 +32,7 @@ lane. The exact scan is revisited when a home exceeds 50k records or a cold
 vector load takes more than 1 s; the next step would be a vector index over the
 same BLOBs, with no change to the record files.
 
-## Schema (`PRAGMA user_version = 2`)
+## Schema (`PRAGMA user_version = 3`)
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -49,11 +49,11 @@ CREATE TABLE record(
   kind          TEXT NOT NULL,
   label         TEXT NOT NULL,
   aliases       TEXT NOT NULL,                 -- JSON array
-  source        TEXT NOT NULL,
-  line_start    INTEGER NOT NULL,              -- first line of the first cited range
-  line_end      INTEGER NOT NULL,              -- last line of the last cited range
-  lines         TEXT NOT NULL,                 -- every cited range, "a-b, c-d"
-  understanding TEXT NOT NULL,                 -- unknown | not-yet-understood | understood
+  source        TEXT NOT NULL,                 -- base-relative path, or a foreign record's web address
+  line_start    INTEGER NOT NULL,              -- first line of the first cited range; 0 when foreign
+  line_end      INTEGER NOT NULL,              -- last line of the last cited range; 0 when foreign
+  lines         TEXT NOT NULL,                 -- every cited range, "a-b, c-d"; '' when foreign
+  understanding TEXT NOT NULL,                 -- yes | no
   epistemic     TEXT,
   body          TEXT NOT NULL,                 -- prose before "## Search terms" / "## Evidence"
   search_terms  TEXT NOT NULL,                 -- '' when absent
@@ -70,14 +70,10 @@ CREATE TABLE link(
   src      TEXT NOT NULL,                      -- record uid
   role     TEXT NOT NULL,                      -- 'requires' or a role name
   pos      INTEGER NOT NULL,                   -- position in that list; repeats allowed
-  dst      TEXT,                               -- target uid; may name a missing record
-  term     TEXT,                               -- pending term text
-  term_key TEXT,                               -- name_key(term)
-  CHECK ((dst IS NULL) <> (term IS NULL)),
+  dst      TEXT NOT NULL,                      -- target uid; may name a missing record
   PRIMARY KEY (src, role, pos)
 ) WITHOUT ROWID;
 CREATE INDEX link_dst  ON link(dst);
-CREATE INDEX link_term ON link(term_key);
 
 CREATE TABLE name(
   key TEXT NOT NULL, uid TEXT NOT NULL, is_label INTEGER NOT NULL,   -- name_key(label) and of each alias
@@ -90,11 +86,10 @@ CREATE VIRTUAL TABLE fts USING fts5(tokens, tokenize = 'unicode61 remove_diacrit
 
 There is no file table (a row carries its own stat), no base table (bases come
 from `config.json`), no tree or passage table (the tree is the `source` path),
-no pending table (pending gaps are `link` rows with `term`) and no
-document-type column, so editing `types/` never forces re-indexing. `kgd
-index`, the reads and `kgd base list` load `config.json` only: a malformed
-type file fails `check`, `sheet`, `accept` and `harvest`, never the index or
-retrieval.
+no foreign column (a record is foreign when its `source` is a web address)
+and no document-type column, so editing `types/` never forces re-indexing.
+`kgd index`, the reads and `kgd base list` load `config.json` only: a malformed
+type file fails `check`, `source` and `accept`, never the index or retrieval.
 
 ## Unified text
 
@@ -112,8 +107,8 @@ requires: {v1}; {v2}; …                    last
 {source}
 ```
 
-Each `{v}` is the linked record's label, its uid when that record is missing,
-or the pending term verbatim. The text excludes understanding, the record's own
+Each `{v}` is the linked record's label, or its uid when that record is
+missing. The text excludes understanding, the record's own
 id, line numbers, the base name and paths under `.knowledge`. Linked labels are
 part of the text, so a relation is found by its participants' names, and a
 label change cascades to every record that links it. A text longer than the
@@ -135,7 +130,7 @@ Both live in `kgdistiller/index.py`.
 `index` always covers every registered base.
 
 **Opening.** If `index.sqlite` is missing, cannot be opened or has
-`user_version` ≠ 2, it is deleted together with `-wal` and `-shm`, created
+`user_version` ≠ 3, it is deleted together with `-wal` and `-shm`, created
 with `meta.embedding = ''` and fully built. This is the one-command restore; a
 derived file needs no compatibility path.
 
@@ -199,7 +194,7 @@ written before the failure; rerun `kgd index`.
 ```json
 {"created": false, "rebuild": false,
  "bases": {"notes": {"parsed": 3, "deleted": 0, "unparseable": [{"path": "/abs/…/x.md", "message": "…"}]}},
- "unavailable": [], "understanding_changed": [{"uid": "notes:measure", "from": "unknown", "to": "understood"}],
+ "unavailable": [], "understanding_changed": [{"uid": "notes:measure", "from": "no", "to": "yes"}],
  "reused": 1, "embedded": 2, "unembedded": 0, "truncated": [], "embedding_error": null}
 ```
 
@@ -229,9 +224,9 @@ model.
 
 ## When records are embedded
 
-A new record is embedded when it is admitted: `kgd accept` and `kgd harvest`
-end with an index run whose embedding phase covers only the records they
-created. A record edited after admission, by an agent or by hand, is
+A record is embedded when it is admitted: `kgd accept` ends with an index run
+whose embedding phase covers only the records it created or replaced. A record
+edited by hand after admission is
 re-embedded only when the owner asks, with a plain `kgd index`; Skills and the
 Obsidian plugin refresh the keyword index after edits with
 `kgd index --no-embed` and never re-embed on their own.
@@ -283,7 +278,7 @@ of 2845 texts exactly as the model's 0.33 GB fast tokenizer did, the other
 splitting `}}}` the other way.
 
 At most one model is in memory per user. `kgd index`, `kgd accept`,
-`kgd harvest`, `kgd search` and every `kgd mcp` send texts to one embedding
+`kgd search` and every `kgd mcp` send texts to one embedding
 process (`adapters/embed_service.py`) and get vectors back; it never opens the
 database, so `kgd index` stays its only writer. The first request starts it,
 it loads a model on that model's first request, answers one request (one batch
@@ -328,8 +323,8 @@ filters: `--base B`, `--kind K`, `--class node|relation`, `--source PREFIX` (a
 base-relative source path prefix) and `--understanding U`. Values are ORed
 within a filter and ANDed across filters, applied in SQL. `search` applies
 them in every lane. `neighbors` prunes the traversal with them at every hop:
-the start uids are always included, and pending terms and missing targets are
-always reported as leaves. `pack` applies them only to the records it adds
+the start uids are always included, and missing targets are always reported
+as leaves. `pack` applies them only to the records it adds
 itself (the `requires` closure and shared relations), never to the uids the
 caller names. `get` addresses records by uid and takes no filters.
 
@@ -369,7 +364,7 @@ exactly those keys; with `--no-dense`, or when `meta.embedding` is `''`
  "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false},
  "results": [{"uid": "notes:measure-space", "class": "node", "kind": "definition", "label": "measure space",
    "base": "notes", "source": "notes/math/measure-theory/chapters/01-sigma-algebra-与-measure.tex",
-   "lines": "206-224", "understanding": "unknown", "epistemic": null,
+   "lines": "206-224", "foreign": false, "understanding": "yes", "epistemic": null,
    "gloss": "…",
    "ranks": {"lexical": 26, "dense": 1, "name": 1},
    "requires": [], "participants": {},
@@ -382,7 +377,8 @@ The example shortens `gloss` and `in`. A rank is `null` for a lane that did
 not return the record. `participants` (relations only) maps each role to its
 values; `in` lists the records that link this one, with the linking role.
 `requires`, each role list and `in` are capped at 12 entries; `truncated`
-counts what was cut. Pending terms are not search results; use `resolve`.
+counts what was cut. `foreign` is true when the record's `source` is a web
+address, and `lines` is then `""`.
 
 ## `kgd resolve TERM... [filters]`
 
@@ -391,16 +387,14 @@ For each term, unranked and unlimited, sorted by base, source and line:
 ```json
 {"terms": [{"term": "measure", "key": "measure",
    "senses":   [{"uid": "notes:measure", "label": "Measure", "kind": "definition", "class": "node",
-                 "base": "notes", "source": "…", "lines": "40-52", "gloss": "…"}],
-   "mentions": [{"uid": "notes:measure-space", "label": "Measure space", "…": "…"}],
-   "pending":  [{"owner": "notes:outer-measure", "role": "requires", "term": "measure"}]}],
+                 "base": "notes", "source": "…", "lines": "40-52", "foreign": false, "gloss": "…"}],
+   "mentions": [{"uid": "notes:measure-space", "label": "Measure space", "…": "…"}]}],
  "lag": {"changed_files": 0, "unavailable_bases": [], "unembedded": 0, "embedding_changed": false}}
 ```
 
 - `senses`: records whose label or alias key equals `name_key(TERM)`;
 - `mentions`: records whose label or alias key contains it as a whole-word
-  phrase, or as a substring when the term is CJK;
-- `pending`: `link` rows whose `term_key` equals it.
+  phrase, or as a substring when the term is CJK.
 
 `resolve` serves identity checks before writing and sense enumeration. A sense
 is a candidate, never an identity: compare definitions.
@@ -410,10 +404,10 @@ is a candidate, never an identity: compare definitions.
 ```json
 {"records": [{"uid": "notes:sum-of-two-subspaces-is-a-subspace", "base": "notes", "id": "…",
    "class": "relation", "kind": "implies", "label": "…", "aliases": [], "source": "…", "lines": "24-32",
-   "understanding": "unknown", "epistemic": "stated", "gloss": "…", "body": "…", "search_terms": "",
-   "evidence": ["…"],
+   "foreign": false, "understanding": "yes", "epistemic": "stated", "gloss": "…", "body": "…",
+   "search_terms": "", "evidence": ["…"],
    "out": [{"role": "premise", "pos": 0, "uid": "notes:subspace", "label": "Subspace", "exists": true},
-           {"role": "requires", "pos": 0, "term": "vector space"}],
+           {"role": "requires", "pos": 0, "uid": "notes:vector-space", "label": "Vector space", "exists": true}],
    "in": [{"uid": "…", "label": "…", "kind": "…", "role": "…"}],
    "source_text": "23\t…\n24\t…"}],
  "missing": ["notes:unknown-id"],
@@ -424,8 +418,9 @@ A UID is `base:id`, or a bare id when exactly one base has it; a bare id held
 by several bases is an error listing them. `out` lists roles first, then
 `requires`. `--source-lines N` adds `source_text`: each cited range widened by
 N lines on each side, overlapping windows joined, read live from the source
-with line numbers, or `null` when the source cannot be read or is not a
-registered source of its base that resolves inside the base root (so a
+with line numbers, or `null` when the record is foreign, or the source cannot
+be read or is not a registered source of its base that resolves inside the
+base root (so a
 hand-written `../` path, an absolute path or a symlink leaving the root is
 never read). This is the only read of source text; no passages are stored.
 
@@ -442,13 +437,11 @@ never read). This is the only read of source text; no passages are stored.
   pairs, so a cycle ends at the depth limit, and each reached uid keeps its
   minimum depth. A target uid with no record is reached but never followed
   further.
-- A link is reported once, as `{from, role, to, depth}` or, for a pending
-  term, `{from, role, term, depth}`. `from` is always the link's `src` and `to`
-  its `dst`, whatever the walk direction. A link is reported when the endpoint
+- A link is reported once, as `{from, role, to, depth}`. `from` is always the
+  link's `src` and `to` its `dst`, whatever the walk direction. A link is reported when the endpoint
   it is followed from was reached at a depth `d` below the limit and its other
   endpoint was reached too; its `depth` is `d + 1`, the minimum over the
-  endpoints it can be followed from. Pending terms are leaves of the `out`
-  direction, so they appear with `--dir out` and `--dir both` only.
+  endpoints it can be followed from.
 - Edges are ordered by depth, then `from`, then roles before `requires`, then
   role name and position. `records` maps every reached uid, the starts
   included, to `{label, kind, class, exists}` (JSON output sorts its keys); a
@@ -475,7 +468,7 @@ That is `kgd neighbors notes:hahn-decomposition-theorem --dir in`, shortened.
 The usual walks:
 
 - **Dependency closure:** `--role requires --dir out --depth n` lists what a
-  record requires, n levels deep, with pending terms as leaves.
+  record requires, n levels deep.
 - **Claim closure:** `--dir in` from a node lists the relations that cite it,
   with the role it plays in each; `--dir both --depth 2` adds their other
   participants, including relation-to-relation hops such as a relation that
@@ -486,37 +479,34 @@ The usual walks:
 ## `kgd browse [HANDLE] [filters]`
 
 `browse` lists what is indexed, from the bases down to one source. The handle
-splits on its first `:` into a base name and a base-relative path; a path
-ending in `/` names a directory, any other path a source file.
+splits on its first `:` into a base name and a base-relative path or web
+address; a path ending in `/` names a directory, any other path or a web
+address a source.
 
 | Handle | Returns |
 |---|---|
-| none | `bases`: every registered base, sorted by name, as `{name, available, records, relations, pending}` |
-| `base` | `{base, dir: "", entries}`: the top-level directories and source files of the base |
+| none | `bases`: every registered base, sorted by name, as `{name, available, records, relations}` |
+| `base` | `{base, dir: "", entries}`: the top-level directories and source files of the base, and the web addresses of its foreign records |
 | `base:dir/` | `{base, dir, entries}`: the children of that directory |
-| `base:path/file` | `{base, source, kinds, pending}`: that source's records grouped by kind, and its pending terms |
+| `base:path/file` or `base:<web address>` | `{base, source, kinds}`: that source's records grouped by kind |
 | any scope with `--kind K` | `records`: every record of those kinds in scope, with all its links |
 
 - Counts are of the records that pass the filters. `relations` counts
-  relation records, and `pending` counts distinct pending terms by name key.
-  `available` says whether the base root exists.
-- An entry is `{path, type, records, relations, pending}`, with `type` `dir`
-  or `source`. `path` is the full base-relative path, a directory's ending in
+  relation records. `available` says whether the base root exists.
+- An entry is `{path, type, records, relations}`, with `type` `dir`,
+  `source` or, for a web address at the base root, `foreign`. `path` is the full base-relative path, a directory's ending in
   `/`, so `base:` plus the path is the entry's own handle. A directory's
   counts cover its whole subtree. Entries are sorted by path.
 - A source's `kinds` are `[{kind, records}]`, sorted alphabetically (the
   document types are never read), each record
   `{uid, label, class, lines, understanding, gloss, links}` in line order.
-  `pending` is `[{term, owners: [{uid, role}]}]`, grouped by name key, sorted
-  by key, with the first spelling as `term` and each owner listed once per
-  role. This is the database twin of the source's sheet.
 - A non-empty `--kind` switches any scope (no handle, a base, a directory or a
   source) to a listing of `{uid, label, kind, class, base, source, lines,
   understanding, epistemic, gloss, links}`, ordered by base, source, line and
   uid. It is uncapped; narrow it with the handle or other filters.
 - `links` maps each role to its values in link order, `requires` included as
-  one role: `{uid, label}` for a link (`label` is `null` for a missing
-  target) and `{term}` for a pending term. It is never capped.
+  one role: `{uid, label}`, with `label` `null` for a missing target. It is
+  never capped.
 - Only sources with indexed records appear. A path with no matching records
   returns empty lists; an unregistered base is the error `unknown base 'x'`.
   Every result carries `lag`.
@@ -545,15 +535,14 @@ with the relations they share and every link it could not follow.
    are appended in order of packed participants, most first, then uid, under
    the same budget rule.
 4. **Gaps.** Every out-link of a packed record that the packet cannot follow,
-   in pack order and link order: `pending` for a term, `missing-target` for a
-   uid with no record, `not-packed` for a record outside the packet (an
+   in pack order and link order: `missing-target` for a uid with no record, `not-packed` for a record outside the packet (an
    over-budget record therefore also appears as `not-packed` from its
    referrers).
 
 Gaps list `unknown-uid` first, then `over-budget` in the order met, then the
 link gaps. Their shapes are `{reason: "unknown-uid", uid}` (the argument as
-given), `{reason: "over-budget", uid}`, `{reason: "pending", from, role,
-term}`, `{reason: "missing-target", from, role, uid}` and `{reason:
+given), `{reason: "over-budget", uid}`, `{reason: "missing-target", from,
+role, uid}` and `{reason:
 "not-packed", from, role, uid}`. Filters never remove a uid the caller named;
 a closure record they exclude shows up as `not-packed`. `--budget` must be at
 least 1 and `--requires-depth` at least 0.

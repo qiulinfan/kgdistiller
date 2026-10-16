@@ -4,13 +4,14 @@ Every piece of knowledge is one record file. Nodes and relations share one
 format and one folder; they differ only in whether role keys are present.
 
 - Accepted records: `<base root>/.knowledge/entries/<id>.md`.
-- Drafts (proposed new records): `<base root>/.knowledge/drafts/<id>.md`, in
-  exactly the same format.
+- Drafts: `<base root>/.knowledge/drafts/<id>.md`, in exactly the same format.
+  A draft is a new record, or, under the id of an accepted record of its base,
+  that record's replacement.
 - The global address of a record is its uid `<base>:<id>`.
 
-kgd never re-serializes frontmatter. Write whole files yourself; the only
-product-side frontmatter edit is the one-line `lines:` rewrite of
-`kgd check --fix-lines`.
+Agents write drafts only; the owner accepts them. kgd never re-serializes
+frontmatter. Write whole files yourself; the only product-side frontmatter
+edit is the one-line `lines:` rewrite of `kgd check --fix-lines`.
 
 ## File layout
 
@@ -27,11 +28,9 @@ aliases:
   - 测度空间
 source: notes/math/measure-theory/chapters/01-sigma-algebra.tex
 lines: 206-224
-understanding: understood
 requires:
   - "[[sigma-algebra]]"
   - "[[measure]]"
-  - measurable space
 ---
 三元组 $(X,\mathcal M,\mu)$，其中 $\mathcal M$ 是 σ-algebra，$\mu$ 是 measure。
 
@@ -44,21 +43,39 @@ what makes a measurable space a measure space
 > 我们称 \((X,\mathcal{M},\mu)\) 为一个 measure space.
 ```
 
+A **foreign** record cites the web page of the outside work that originates or
+explains the concept, has no `lines`, and quotes that page verbatim:
+
+```markdown
+---
+label: Autoencoder
+kind: definition
+source: https://en.wikipedia.org/wiki/Autoencoder
+---
+An autoencoder is a neural network trained to reproduce its input through a
+learned code of lower dimension.
+
+## Evidence
+
+> An autoencoder is a type of artificial neural network used to learn efficient codings of unlabeled data
+```
+
 ## Fixed keys
 
 | Key | Required | Value |
 |---|---|---|
 | `label` | yes | Non-empty single-line name in any language. Not unique. |
-| `kind` | yes | A node kind or relation kind of the source's document type. |
-| `source` | yes | POSIX path relative to the base root (no leading `/`, no `..`); a registered source of this base. |
-| `lines` | yes | One or more ranges `a` or `a-b`, 1-based and inclusive, comma-separated, ascending and disjoint, within the source, such as `126-140, 878-884`. |
+| `kind` | yes | A node kind or relation kind of the source's document type; for a foreign record, of a type registered for its base. |
+| `source` | yes | A POSIX path relative to the base root (no leading `/`, no `..`) naming a registered source of this base; or a web address `http://…` or `https://…`, which makes the record foreign. |
+| `lines` | local only | One or more ranges `a` or `a-b`, 1-based and inclusive, comma-separated, ascending and disjoint, within the source, such as `126-140, 878-884`. A foreign record has none. |
 | `aliases` | no | List of other names and symbols, any language. Not unique. |
-| `understanding` | no | `unknown`, `not-yet-understood` or `understood`; absent means `unknown`. |
+| `understanding` | no | `yes` or `no`; absent means `yes`. |
 | `epistemic` | no | One value from the type's `epistemic` list: how the cited passage itself supports the record. A result the source only reports from other work is stated. |
-| `requires` | no | List of values: direct understanding prerequisites, one level. |
+| `requires` | no | List of links: direct understanding prerequisites, one level. |
 | `tags`, `cssclasses` | no | Obsidian's own properties; accepted and ignored. |
 
-There is no `id` or `schema` key: the id is the file stem.
+There is no `id`, `schema` or `foreign` key: the id is the file stem, and a
+record is foreign when its `source` is a web address.
 
 ## Role keys and the class rule
 
@@ -81,10 +98,10 @@ conclusion: ["[[sum-of-subspaces]]"]
 kind: equivalent
 side: ["[[a]]", "[[b]]"]
 
-# self-relation with a pending participant
+# self-relation
 kind: property
 subject: ["[[sum-of-subspaces]]"]
-uses: ["[[subspace]]", "[[subspace]]", dimension]
+uses: ["[[subspace]]", "[[subspace]]", "[[dimension]]"]
 
 # a relation about a relation: the witness is itself a relation record;
 # the two contrasted records swap freely, so they share one role
@@ -95,19 +112,17 @@ witness: ["[[subspace-sum-with-itself]]"]
 # application / example: setting binds a concept; the concrete
 # construction ("F^n with the standard basis") is written in the prose
 kind: example
-uses: ["[[direct-sum]]", span]
+uses: ["[[direct-sum]]", "[[span]]"]
 setting: ["[[coordinate-space]]"]
 ```
 
 ## Value grammar
 
-A value (in `requires` or any role) is a link or a term:
+Every value (in `requires` or any role) is a link:
 
 ```
-value   := link | term
-link    := "[[" target ( "|" display )? "]]"      the whole trimmed string
+value   := "[[" target ( "|" display )? "]]"      the whole trimmed string
 target  := id | base ":" id | ".knowledge/entries/" id     a trailing ".md" is ignored
-term    := non-empty single-line string without "[[" or "]]"
 ```
 
 - Quote every link in YAML: `- "[[x]]"`. An unquoted `[[x]]` parses as a nested
@@ -115,10 +130,11 @@ term    := non-empty single-line string without "[[" or "]]"
 - `[[id]]` is local to the record's base; `[[base:id]]` targets another
   registered base. Never prefix a local link with the record's own base name.
 - Targets match after NFKC normalization and casefolding. `#`, `^` and other
-  path forms are errors.
-- A **term** is a pending gap: a concept the source uses without explaining
-  it here. It never binds by name, even when a record has that label. It is
-  resolved only by editing the value into a link.
+  path forms are errors. Plain text is an error.
+- A link targets an accepted record, or a draft of the same base. A concept
+  that nothing records is captured on its own first (locally, or as foreign
+  knowledge), and until then it is left out of the values; the prose may
+  still name it.
 - Every value is a knowledge reference, never a literal. Settings,
   hyperparameters, resolutions, splits, units and measured values belong in
   the prose and the Evidence quotes.
@@ -140,14 +156,16 @@ term    := non-empty single-line string without "[[" or "]]"
   is the heading immediately before it. Other headings belong to the prose.
 - The Evidence section contains only `>` lines and blank lines. Each run of
   consecutive `>` lines is one quote. At least one quote is required.
-- Each quote is copied verbatim from the cited lines of `source`. Freshness
-  compares quote and source after collapsing whitespace: every quote must occur
-  inside one cited range. Cite distant passages, such as a definition and its
-  appendix details, as separate ranges rather than one range spanning both.
+- Each quote is copied verbatim from the cited lines of `source`, or from the
+  web page of a foreign record. Freshness compares quote and local source
+  after collapsing whitespace: every quote must occur inside one cited range.
+  Cite distant passages, such as a definition and its appendix details, as
+  separate ranges rather than one range spanning both. A foreign record's
+  quotes are never checked against the page.
 - Search terms hold question forms and other non-name phrasings; names in any
   language go in `aliases`.
-- The gloss shown in sheets and results is the first sentence of the first
-  prose paragraph, so open with the statement.
+- The gloss shown in results is the first sentence of the first prose
+  paragraph, so open with the statement.
 
 ## Ids
 
@@ -158,58 +176,53 @@ term    := non-empty single-line string without "[[" or "]]"
   non-alphanumeric characters with `-`, strip leading and trailing `-`, cut at
   the last `-` at or before 80 characters. On a collision append `-2`, `-3`, … .
   If the slug is empty, choose a readable id.
-- Ids are unique case-insensitively across `entries/` and `drafts/` of one base.
+- Ids are unique case-insensitively within `entries/` and within `drafts/` of
+  one base; a draft with an accepted record's id is that record's replacement.
 - Choose the id from the meaning. Leave out section, figure, table, equation
   and theorem numbers, source ordinals, paths and kinds; they change when a
   source is revised. A label may keep the source's numbering when that is the
   item's name, but then write the id yourself.
 - An accepted id is permanent: never rename it for a better name (use `label`
   or `aliases`) and never reuse it for another concept. A changed meaning of
-  the same knowledge point overwrites the record in place under the knowledge
-  model's conflict rules and keeps the id. Merging duplicates or splitting a
-  conflated record rewrites the inbound links once (see the knowledge model's
-  identity changes).
+  the same knowledge point is a replacement draft with the same id, under the
+  knowledge model's conflict rules. Merging duplicates or splitting a
+  conflated record rewrites the inbound links once, after the owner accepts
+  it (see the knowledge model's identity changes).
 
 ## Drafts
 
-- A draft proposes a **new** record: its id must not exist in `entries/`. There
-  are no update drafts; change an accepted record by editing it in place.
+- A draft whose id is not in `entries/` is a new record; one with an accepted
+  record's id replaces that record when accepted. Write a replacement from a
+  fresh read of the record: `kgd accept` refuses it when the record changed
+  after the draft was written.
 - A draft's local links may target accepted records or other drafts of the
-  same base. Foreign links must target accepted records. Accepted records never
-  link to drafts.
-- `kgd check` validates drafts like records. Drafts are never indexed.
+  same base. Cross-base links must target accepted records. A link to an id in
+  `entries/` always means the accepted record. Accepted records never link to
+  drafts.
+- `kgd drafts [--source PREFIX] [--name NAME]` lists drafts with each value's
+  target, the drafts to accept with them (`with`), the record they replace
+  (`replaces`) and `problems`: what `kgd accept` would refuse. Fix a draft
+  until its problems are empty. `kgd check` validates drafts like records.
+  Drafts are never indexed.
 - Deleting a draft rejects it. Nothing remembers the rejection, so a later
   compile may propose the same record again.
 
-`kgd accept DRAFT... [--dry-run]` validates the selected drafts together, under
-the home lock, as if they were already accepted: links may resolve to accepted
-records or other selected drafts, and evidence must be fresh. It moves each
-draft into `entries/` without ever overwriting a file. Results:
-
-```json
-{"refused": [{"path": "/abs/.knowledge/drafts/x.md", "message": "premise[0]: select [[y]] too"}]}
-{"would_create": ["notes:x"]}
-{"created": ["notes:x", "notes:y"], "understanding_set": [{"uid": "notes:x", "value": "understood"}], "index": {"…": "…"}}
-```
-
-A refusal writes nothing and exits 1. A receipt with `aborted` names a target
-that appeared meanwhile; rerunning the same command finishes an interrupted
-accept. `understanding_set` lists every created record whose understanding is
-not `unknown`, so a set understanding is always visible. `index` is the report
-of the index run that follows: every changed record file is indexed and the
-created records are embedded; an embedding failure is reported there and does
-not undo the acceptance.
+The owner accepts drafts with `kgd accept DRAFT...` (the Obsidian Capture view
+runs it), which validates them together under the home lock as if they were
+already accepted, moves each into `entries/`, then indexes and embeds them.
+Agents never run it.
 
 ## What to extract
 
 Follow the source's document type: its `node_kinds`, `relation_kinds`,
-`epistemic` list and guidance (`kgd sheet FILE --json`). In general:
+`epistemic` list and guidance (`kgd source FILE`). In general:
 
 - **Nodes** are noun-like: the concepts, methods, architectures, objectives and
   quantities the source defines, plus theorems it states precisely. Each
   concept has one record, owned by the source that defines or originates it.
   A concept this source only uses, even one it explains at length, is not a
-  node here: it is a pending term or a link to its defining source's record.
+  node here: link its record, or, when the owner asks to capture it, draft it
+  as foreign knowledge from the page that originates or explains it.
 - **Relations** are every other statement that can be true or false:
   propositions, remarks, measured results, comparisons, findings, limitations,
   derivations and explanatory hypotheses. Bind each participant to the role the
@@ -222,14 +235,12 @@ Follow the source's document type: its `node_kinds`, `relation_kinds`,
   as a relation of this source; report it instead.
 - **Applications and examples** are relations of the kind the type registers
   for them, for example `example: [uses, setting]`.
-- **Pending gaps** are terms the source uses without explaining. Record them
-  one level deep, in `requires` or the role where they occur; never chase the
-  next level now. Gaps are global: `kgd resolve` checks every base, and a term
-  stays pending only while no registered base holds the record that defines
-  it. When one does, link it there, as `[[base:id]]` across bases. Never write
-  a stand-in definition for a concept whose defining source is missing.
-- **Understanding** is set only from the owner's explicit statement. Reading,
-  capturing or finding a definition never establishes it.
+- **Prerequisites** are linked one level deep, in `requires` or the role where
+  they occur, when a record or draft holds them; never chase the next level.
+  Lookups are global: `kgd resolve` and `kgd drafts --name` check every base,
+  and a concept recorded in another base is linked as `[[base:id]]`.
+- **Understanding** is `yes` unless the owner says they do not understand the
+  item; reading, capturing or finding a definition never sets it to `no`.
 - Same name is not same concept. Compare definitions with `kgd resolve` and
   `kgd search`: same-named records are different concepts with different
   definitions, and a name collision needs nothing more.

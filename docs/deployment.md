@@ -29,14 +29,12 @@ BASE_ROOT/
 ├── notes/                         # source documents, any text format
 └── .knowledge/
     ├── entries/<id>.md            # accepted records: nodes and relations
-    ├── drafts/<id>.md             # proposed new records, same format
-    └── sheets/<source path>.md    # generated def/pending sheets
+    └── drafts/<id>.md             # proposed records, new or replacements, same format
 ```
 
 `.knowledge/` is a base's only knowledge root, and the product reads and
-writes only these three folders in it. `entries/` is the knowledge. `drafts/`
-holds proposals awaiting `kgd accept` or `kgd harvest`, and `sheets/` the
-generated views whose draft checkboxes carry the owner's selection. The
+writes only these two folders in it. `entries/` is the knowledge. `drafts/`
+holds the proposals awaiting the owner's `kgd accept`. The
 database is derived from `config.json`, the `entries/` files and the embedding
 model; deleting it loses nothing but the time to rebuild and re-embed.
 
@@ -86,8 +84,7 @@ and data (the runtime linkers `codex|claude link|doctor` also honor
 `CODEX_HOME` and `CLAUDE_CONFIG_DIR`); it must be absolute after `~` expansion.
 On Windows, `~` is the current user's profile directory. There is no default
 base and no base identity file: to move a base, edit its `path` in
-`config.json`. A path argument (`kgd sheet`, `kgd accept`, `kgd harvest`)
-belongs to the registered root containing its real path; there is no upward
+`config.json`. A path argument (`kgd source`, `kgd accept`) belongs to the registered root containing its real path; there is no upward
 search for a `.knowledge` directory.
 
 ## Home configuration
@@ -190,7 +187,7 @@ documents.
 
 `node_kinds` is required; `relation_kinds` and `epistemic` are optional. Edit
 `sources` and the types by hand; `kgd check` validates the result, and
-`kgd sheet SOURCE --json` shows the profile a source resolves to. Sources are
+`kgd source SOURCE` shows the profile a source resolves to. Sources are
 UTF-8 text documents of any format; kgdistiller reads them as numbered lines
 and never parses or converts them.
 
@@ -242,8 +239,8 @@ up-to-date index runs in well under a second. The report adds `reused`
 leading part and listed rather than cut silently) and `embedding_error`
 (`null`, or why the embedding phase failed). `--no-embed` skips the
 embedding phase and leaves changed rows unembedded until the next run.
-`kgd accept` and `kgd harvest` run the index themselves and embed only the
-records they create; an edited record is re-embedded only by a plain
+`kgd accept` runs the index itself and embeds only the records it creates or
+replaces; an edited record is re-embedded only by a plain
 `kgd index` the owner runs.
 `--rebuild` re-derives every row in place in one transaction and re-uses the
 existing vectors by text, so it loads no model. If `embedding` is set but the
@@ -273,8 +270,8 @@ Initialize a private Git repository, commit, add a remote or push only when
 the owner explicitly authorizes that action. A base tracks:
 
 - every registered source document and required authored asset;
-- `.knowledge/entries/`, `.knowledge/drafts/` and `.knowledge/sheets/`, so
-  unharvested drafts and their tick state travel between machines.
+- `.knowledge/entries/` and `.knowledge/drafts/`, so drafts awaiting the owner
+  travel between machines.
 
 The home is separate owner data: keep `config.json`, `types/` and its
 `.gitignore` in their own private local Git repository, with no remote by

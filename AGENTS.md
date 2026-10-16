@@ -5,7 +5,7 @@
   asks to push. Do not create new PRs unless requested.
 - Keep the deterministic core provider-neutral. Model-specific behavior belongs
   in Agent skills or adapters.
-- The knowledge model, record format, drafts, sheets, `check` and the write
+- The knowledge model, record format, drafts, `check` and the write
   path follow [docs/model.md](docs/model.md); the derived database, `kgd index`,
   lag, `search`/`resolve`/`get`/`neighbors`/`browse`/`pack` and the MCP tools
   follow [docs/retrieval.md](docs/retrieval.md); the Obsidian plugin and
@@ -32,39 +32,41 @@
   another, and the home never lies inside a base root. The home is owner data
   and never enters this repository.
 - Storage: a base's knowledge is `.knowledge/entries/<id>.md` (accepted
-  records: nodes, and relations whose role keys bind participants), plus
-  `.knowledge/drafts/<id>.md` (proposed new records in the same format) and
-  `.knowledge/sheets/<source path>.md` (generated def/pending sheets whose only
-  read-back state is the draft checkboxes). The product reads and writes
-  nothing else under `.knowledge/`. Do not reintroduce edge files, graph
-  manifests, identity or alignment registries, receipts, plan files, snapshots
-  or stores. The database `$KGDISTILLER_HOME/index.sqlite` is derived from
+  records: nodes, and relations whose role keys bind participants) and
+  `.knowledge/drafts/<id>.md` (proposed records in the same format: new, or
+  under an accepted record's id its replacement). The product reads and writes
+  nothing else under `.knowledge/`. Do not reintroduce sheets, pending terms or
+  lists, edge files, graph manifests, identity or alignment registries,
+  receipts, plan files, snapshots or stores. The database `$KGDISTILLER_HOME/index.sqlite` is derived from
   `config.json`, the `entries/` files and the embedding model; `kgd index` is
   its only writer and readers open it read-only.
-- Writes go through drafts plus `kgd accept`/`kgd harvest` (create-only,
-  `os.link` then `os.unlink`, never overwriting), or through in-place edits of
-  accepted records with a stale-read-safe editing tool followed by
-  `kgd check`. The home lock is held by `accept`, `harvest`,
-  `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
+- Every admission is a draft the owner accepts (owner, 2026-10-15; docs/model.md
+  "Ingestion"). Agents, Skills and the plugin's agent write drafts only, new
+  records and replacements alike, and never run `kgd accept` or edit an
+  accepted record, except the link rewrites a relocation, merge or split the
+  owner accepted requires. `kgd accept` creates a new record with `os.link`
+  then `os.unlink`, never overwriting, and moves a replacement over its record
+  with `os.replace`, refusing it when the record's file is newer than the
+  draft. The home lock is held by `accept`, `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
   truncated. The product never re-serializes frontmatter; `--fix-lines`
   rewrites only the `lines:` line.
 - Embedding follows admission, not edits (owner, 2026-10-15). `kgd accept`
-  and `kgd harvest` end with an index run that embeds only the records they
-  created. After any edit of an accepted record, by an agent or by hand,
-  Skills and the plugin run `kgd index --no-embed`; re-embedding an edited
+  ends with an index run that embeds only the records it created or replaced.
+  After a hand edit of an accepted record the plugin runs
+  `kgd index --no-embed`; re-embedding an edited
   record is the owner's manual action (`kgd index`, the plugin's Re-embed),
   and whether it has work is `unembedded`, derived from the stored unified
   text, never from a snapshot or hash.
 - Ingestion stays lightweight; the owner's budget for waiting on one capture
   is about 20 seconds. The core stays model-free; model work stays in the
   Skills, the presets and the plugin's agent. The writing Skills work in
-  batches: one lookup turn (one
-  `kgd resolve` of every name, `kgd search --limit 5` only where needed), one
-  write turn, then one command that accepts or checks and indexes; nothing
-  runs after admission except linking the pending uses the lookup found. A
-  capture's lookup loads no embedding model (`search --no-dense`); its
-  `kgd accept` embeds the new record through the shared embedding process,
-  0.15 s when it is warm and about 2 s more when it must load. The
+  batches: one lookup turn (one `kgd resolve` and one `kgd drafts --name` of
+  every name, `kgd search --limit 5` only where needed), one write turn, then
+  one `kgd drafts` that lists the drafts with what `kgd accept` would refuse.
+  A capture's lookup loads no embedding model (`search --no-dense`); the
+  owner's `kgd accept` embeds the admitted records through the shared
+  embedding process, 0.15 s when it is warm and about 2 s more when it must
+  load. The
   `capture-writer` presets run it in the background on a small model
   at low reasoning effort, since model reasoning, not `kgd`, dominates capture
   time. `kgd index` never invokes a generative model; its only model is the
@@ -73,27 +75,36 @@
   or note quotes text stating that relation, and a connection no source states
   is reported, never written. Each concept has one record, owned by the source
   that defines or originates it; a source that only uses a concept, even one
-  it explains, records a pending term, global across bases, until the defining
-  record exists, and then links it. No record stands in for a missing source.
+  it explains, links its record. Every value is a link (no pending terms); a
+  concept nothing records is captured on its own first, from a local source
+  or as foreign knowledge.
+- Foreign knowledge (owner, 2026-10-15; docs/model.md "Foreign knowledge and
+  localization"): a record whose `source` is a web address (the outside work
+  that originates the concept, or a page explaining it) is foreign, has no
+  `lines`, and quotes that page verbatim. Foreign is derived from `source`,
+  never stored. `check` never fetches it and computes no freshness for it. Its
+  base is the base of the source being read, and its kind is one a type
+  registered for that base declares. Localization moves its evidence to a
+  local passage through a draft with the same id.
+- `understanding` is `yes` or `no`, absent meaning `yes`; only the owner sets
+  `no`.
 - Conflicts follow the owner's verbatim statements in docs/model.md
-  "Conflicts, updates and relocation". Every admission first looks the
-  knowledge point up in every base, pending uses included, and a term is
-  looked up before it is written as pending. When the knowledge point is
-  already recorded:
+  "Conflicts, updates and relocation". Every draft is preceded by a lookup of
+  its knowledge point and of every concept it links, in every base and in the
+  drafts. When the knowledge point is already recorded:
   - an unchanged meaning is ignored, and a broken citation moves to the
-    admitted passage;
-  - a changed meaning overwrites the record in place, keeping its id, only
-    when the new definition is more general or corrects the old one;
-    otherwise the admitting agent asks the owner.
+    admitted passage through a replacement draft;
+  - a changed meaning becomes a replacement draft keeping the id, reported as
+    more general, a correction or a conflict; accepting it is the owner's
+    decision.
   Relocation is global, across bases. Knowledge that disappears from its
-  source becomes pending: the record is deleted, links to it become pending
-  terms, and its fate is the owner's.
+  source is reported; the agent deletes nothing and its fate is the owner's.
 - 如无必要，勿增实体: delete whatever a decision makes unnecessary, outright and
   in the same change, with no fallback or compatibility path (docs/model.md
-  principle 10).
+  principle 11).
 - Nodes are noun-like objects and precisely stated theorems; every other
-  statement that can be true or false is a relation. Role values are knowledge
-  references (links or pending concepts), never literals; kgd stores no
+  statement that can be true or false is a relation. Role values are links to
+  knowledge records, never literals; kgd stores no
   structured measurements. `lines` lists one or more ranges; the Evidence
   quotes are the anchor.
 - Rejected drafts leave no trace; do not add a rejection list or any other
@@ -102,7 +113,8 @@
   or reuse them for another concept. Ids come from meaning, never from section,
   figure, table, equation or theorem numbers; merges and splits rewrite the
   inbound links once.
-- Format agnosticism: a knowledge source is any registered UTF-8 text document.
+- Format agnosticism: a local knowledge source is any registered UTF-8 text
+  document.
   Read it as numbered lines; never parse its syntax, scan for markers, pair
   sibling formats, or convert it. `.md`, `.typ`, `.tex`, `.txt` and every other
   extension are treated identically.
@@ -118,7 +130,7 @@
   hardcode the owner's example types. `templates/document-types/` holds
   optional editable starting profiles; they are bundled as data, never
   activated by installation or `base add`. Agents read a source's profile and
-  inventory through `kgd sheet SOURCE --json` and the text with their own tools.
+  inventory through `kgd source SOURCE` and the text with their own tools.
 - Tokens (`tokens`) and name keys (`name_key`) live in `index.py`; every
   tokenizer user imports them from there.
 - Hash-free consistency: no content-hash mechanism anywhere in the product
@@ -193,12 +205,14 @@
   setting) with no exclusion list; do not enable competing hidden-folder
   indexers. The plugin has a lookup sidebar and a Capture view, and draws no
   graph of the whole base: the lookup sidebar shows the neighbourhood of the
-  record in focus, for a selection, a typed query or the file open in the
-  editor, and the Capture view lists the drafts waiting for the owner. It reads
+  record in focus, for a selection (in any view, the plugin's own included), a
+  typed query or the file open in the editor, and the Capture view lists the
+  drafts waiting for the owner by source (file name, parent folders added only
+  when names clash, foreign drafts under "foreign"). It reads
   knowledge and drafts only through a resident `kgd mcp` (`kg_drafts` for
   drafts), off until the vault's settings name a kgd executable,
   covering every base. With the configured executable and
-  `KGDISTILLER_HOME` it also runs `kgd base list`, `kgd sheet SOURCE --json`,
+  `KGDISTILLER_HOME` it also runs `kgd base list`, `kgd source SOURCE`,
   `kgd accept`, `kgd index`, `kgd index --no-embed` and `kgd embedding`
   (`kgd embedding set` fills the Hugging Face model cache), and it writes and
   deletes draft files; the plugin never parses records, and never opens the
@@ -216,7 +230,8 @@
   Obsidian SecretStorage. It depends on no external
   agent runtime, owns its prompts and
   checks every model answer and citation, and writes knowledge only as a
-  draft, under the same rules as the capture Skill; the agent never accepts,
+  draft (new, foreign, a replacement, or a localization), under the same
+  rules as the capture Skill; the agent never accepts,
   and a draft becomes knowledge when the owner accepts it in the Capture view
   (`kgd accept`, which indexes and embeds it). The plugin refreshes the
   keyword index (`kgd index --no-embed`) whenever a record file is saved. Preserve the complete upstream MIT notice and pinned source

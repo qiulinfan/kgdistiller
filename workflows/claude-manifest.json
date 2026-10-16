@@ -1,7 +1,7 @@
 {
   "schema": "kgdistiller-claude-workflows-v1",
   "product": "kgdistiller",
-  "version": 5,
+  "version": 6,
   "installation": {
     "product_root": "workflow-products/kgdistiller",
     "state": ".kgdistiller-product-links.json"
@@ -19,16 +19,12 @@
       "path": "skills/capture-kgdistiller"
     },
     {
-      "name": "compile-knowledge-sheets",
-      "path": "skills/compile-knowledge-sheets"
+      "name": "compile-kgdistiller",
+      "path": "skills/compile-kgdistiller"
     },
     {
       "name": "deploy-kgdistiller",
       "path": "skills/deploy-kgdistiller"
-    },
-    {
-      "name": "harvest-kgdistiller",
-      "path": "skills/harvest-kgdistiller"
     },
     {
       "name": "query-kgdistiller",
@@ -50,7 +46,7 @@
   "workflows": [
     {
       "id": "capture-knowledge",
-      "description": "Capture one selected item while reading as a source-backed record in a short fixed pass: one batched lookup of the item and its terms in every base, pending uses included; a decision by the conflict rules; a draft citing its lines verbatim, or an in-place edit of the recorded item; accept and index in one command; then link the pending uses it defines.",
+      "description": "Draft one item selected while reading in a short fixed pass: one batched lookup of the item and the concepts it links in every base and in the drafts; a decision by the conflict rules; a draft citing its lines verbatim, a foreign draft quoting the web page of the work it borrows from, or a replacement of the recorded item; then check the draft. The owner accepts it.",
       "steps": [
         {
           "id": "capture",
@@ -61,24 +57,12 @@
       ]
     },
     {
-      "id": "compile-knowledge-sheets",
-      "description": "Extract draft records for the new knowledge of a bounded scope of one registered source guided by its document type, with one batched lookup and one write pass, settle the knowledge already recorded by the conflict rules, then check, generate the source's def/pending sheet for owner review and index in one command.",
+      "id": "compile-knowledge",
+      "description": "Extract drafts for the new knowledge of a bounded scope of one registered source guided by its document type, with one batched lookup and one write pass, and draft replacements of the knowledge already recorded by the conflict rules, then list the drafts with their problems for the owner to review and accept.",
       "steps": [
         {
           "id": "compile",
-          "skill": "compile-knowledge-sheets",
-          "agent": null,
-          "mode": "write"
-        }
-      ]
-    },
-    {
-      "id": "harvest-kgdistiller",
-      "description": "Look up the drafts ticked in a source sheet again in one batch under the conflict rules, accept exactly those rows and index in one command, then link the pending uses of the new concepts.",
-      "steps": [
-        {
-          "id": "harvest",
-          "skill": "harvest-kgdistiller",
+          "skill": "compile-kgdistiller",
           "agent": null,
           "mode": "write"
         }
