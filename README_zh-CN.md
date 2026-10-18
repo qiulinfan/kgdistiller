@@ -300,7 +300,7 @@ kgd codex link
 kgd codex doctor
 ```
 
-`link` 把 Skills、`kgdistiller-query-reviewer` 和 `kgdistiller-capture-writer` 两个 preset 以及 workflow manifest 装到 `~/.claude` 或 `~/.codex`（遵循 `CLAUDE_CONFIG_DIR` 和 `CODEX_HOME`），不会修改 `CLAUDE.md`、`settings.json`、`AGENTS.md` 或 `config.toml`。OpenCode 和 OMP 只装 Skills，在 checkout 里运行 `./scripts/link-skills.sh opencode` 或 `./scripts/link-skills.sh omp`（PowerShell 7：`./scripts/link-skills.ps1 -Runtime opencode`）。
+`link` 把 Skills、`kgdistiller-query-reviewer` 和 `kgdistiller-capture-writer` 两个 preset 以及 workflow manifest 装到 `~/.claude` 或 `~/.codex`（遵循 `CLAUDE_CONFIG_DIR` 和 `CODEX_HOME`），不会修改 `CLAUDE.md`、`settings.json`、`AGENTS.md` 或 `config.toml`。OMP 和 dsh（DeepSeek Harness）只装 Skills，在 checkout 里运行 `./scripts/link-skills.sh omp` 或 `./scripts/link-skills.sh dsh`（PowerShell 7：`./scripts/link-skills.ps1 -Runtime dsh`）。
 
 MCP server 提供 `kg_search`、`kg_resolve`、`kg_get`、`kg_neighbors`、`kg_browse`、`kg_pack`、`kg_drafts` 和 `kg_find`，JSON 与 CLI 相同。它自己不加载模型：dense 检索交给共享的 embedding 进程，只有空闲 15 分钟后的第一次 dense 搜索需要等模型加载。注册命令是 `kgd mcp`：
 
@@ -316,7 +316,7 @@ OMP 原生从 `.mcp.json`、`.omp/mcp.json` 或 `~/.omp/agent/mcp.json` 加载 s
 让 agent 从本仓库安装 kgdistiller 时，它应当：
 
 1. clone 仓库，运行 `npm run build`、`uv tool install '.[retrieval]'` 和 `uv tool update-shell`，确认 `kgd --help` 能运行。
-2. 链接自己的 runtime：先运行 `kgd claude link` 再运行 `kgd claude doctor`，或先 `kgd codex link` 再 `kgd codex doctor`；OpenCode 或 OMP 用 `./scripts/link-skills.sh opencode|omp`。完成后开一个新 session。
+2. 链接自己的 runtime：先运行 `kgd claude link` 再运行 `kgd claude doctor`，或先 `kgd codex link` 再 `kgd codex doctor`；OMP 或 dsh 用 `./scripts/link-skills.sh omp|dsh`。完成后开一个新 session。
 3. 按 `deploy-kgdistiller` Skill 操作：为每个 vault 运行 `kgd base add`，把 source glob 和 document type 写进 `~/.knowledge/config.json` 与 `~/.knowledge/types/`，用 `kgd embedding set BAAI/bge-m3` 设置模型，再运行 `kgd check`、`kgd index`；在 Obsidian 中打开过的 vault 还要运行 `kgd obsidian install`。
 4. 用 `kgd base list` 和 `kgd search "KNOWN NAME" --base NAME` 做冒烟测试。
 

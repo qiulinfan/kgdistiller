@@ -2,7 +2,7 @@
 # Link only this product's Skills. Full installers retain agent/link-state ownership.
 [CmdletBinding()]
 param(
-    [ValidateSet('claude', 'codex', 'opencode', 'omp')][string]$Runtime = 'claude',
+    [ValidateSet('claude', 'codex', 'omp', 'dsh')][string]$Runtime = 'claude',
     [string]$RuntimeHome
 )
 
@@ -25,11 +25,8 @@ if (-not $RuntimeHome) {
     $RuntimeHome = switch ($Runtime) {
         'claude' { if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' } }
         'codex' { if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' } }
-        'opencode' {
-            $configHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $HOME '.config' }
-            Join-Path $configHome 'opencode'
-        }
         'omp' { if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $HOME '.omp' 'agent' } }
+        'dsh' { if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME '.dsh' } }
     }
 }
 $runtimeSkills = Join-Path $RuntimeHome 'skills'

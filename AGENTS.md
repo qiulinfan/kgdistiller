@@ -270,7 +270,7 @@
   `kgdistiller codex link`. Keep the `skills` and `workflows` sections of the
   two runtime manifests identical; agent presets stay runtime-specific files.
 - `scripts/link-skills.sh RUNTIME` / `scripts/link-skills.ps1 -Runtime RUNTIME`
-  (`claude`, `codex`, `opencode` or `omp`) are a skills-only development
+  (`claude`, `codex`, `omp` or `dsh`) are a skills-only development
   shortcut independent of both manifests; they install no agents, workflows,
   or link state, and `kgdistiller claude link` adopts the symlinks they
   create. Full agent/workflow integration is governed

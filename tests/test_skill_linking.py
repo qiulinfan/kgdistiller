@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIMES = ("claude", "codex", "opencode", "omp")
+RUNTIMES = ("claude", "codex", "omp", "dsh")
 
 
 def powershell_ready():
@@ -56,10 +56,9 @@ class SkillLinkingTests(unittest.TestCase):
         self.skill(repo / "skills/alpha")
         self.skill(repo / "skills/zeta")
         homes = {runtime: base / "homes" / runtime for runtime in RUNTIMES}
-        homes["opencode"] = base / "config home" / "opencode"
         env = dict(os.environ, CLAUDE_CONFIG_DIR=str(homes["claude"]),
                    CODEX_HOME=str(homes["codex"]),
-                   XDG_CONFIG_HOME=str(homes["opencode"].parent),
+                   DSH_HOME=str(homes["dsh"]),
                    PI_CODING_AGENT_DIR=str(homes["omp"]))
         return repo, homes, env
 
@@ -178,14 +177,14 @@ class SkillLinkingTests(unittest.TestCase):
                           + '\'import json, os, sys; assert os.environ["MSYS2_ARG_CONV_EXCL"] == "*"; open(os.environ["KG_TEST_LOG"], "w").write(json.dumps(sys.argv[1:])); sys.exit(17)\' "$@"\n')
                 env.update(PATH=str(bin_dir) + os.pathsep + env["PATH"], KG_TEST_SYSTEM=system,
                            KG_TEST_LOG=str(log), KG_TEST_PYTHON=sys.executable)
-                result = subprocess.run(["sh", str(repo / "scripts/link-skills.sh"), "opencode"],
+                result = subprocess.run(["sh", str(repo / "scripts/link-skills.sh"), "dsh"],
                                         cwd=repo, env=env, text=True, check=False, capture_output=True, timeout=30)
                 self.assertEqual(17, result.returncode, result.stdout + result.stderr)
                 self.assertEqual(["-NoLogo", "-NoProfile", "-File",
                                   "native:" + str(repo / "scripts/link-skills.ps1"),
-                                  "-Runtime", "opencode", "-RuntimeHome", "native:" + str(homes["opencode"])],
+                                  "-Runtime", "dsh", "-RuntimeHome", "native:" + str(homes["dsh"])],
                                  json.loads(log.read_text()))
-                self.assertFalse(homes["opencode"].exists())
+                self.assertFalse(homes["dsh"].exists())
 
     @unittest.skipIf(os.name == "nt", "Dependency injection uses POSIX executable stubs")
     def test_windows_missing_powershell_fails_before_creating_runtime_directories(self):

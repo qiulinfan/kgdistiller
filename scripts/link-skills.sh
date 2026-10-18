@@ -6,13 +6,13 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
 skills_repo_dir="$repo_root/skills"
-[ "$#" -le 1 ] || { printf 'usage: %s [claude|codex|opencode|omp]\n' "$0" >&2; exit 2; }
+[ "$#" -le 1 ] || { printf 'usage: %s [claude|codex|omp|dsh]\n' "$0" >&2; exit 2; }
 runtime=${1:-claude}
 case "$runtime" in
   claude) runtime_root=${CLAUDE_CONFIG_DIR:-"$HOME/.claude"} ;;
   codex) runtime_root=${CODEX_HOME:-"$HOME/.codex"} ;;
-  opencode) runtime_root="${XDG_CONFIG_HOME:-$HOME/.config}/opencode" ;;
   omp) runtime_root=${PI_CODING_AGENT_DIR:-"$HOME/.omp/agent"} ;;
+  dsh) runtime_root=${DSH_HOME:-"$HOME/.dsh"} ;;
   *) printf 'unknown runtime: %s\n' "$runtime" >&2; exit 2 ;;
 esac
 runtime_skills_dir="$runtime_root/skills"

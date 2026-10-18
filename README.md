@@ -470,9 +470,9 @@ kgd codex doctor
 `kgdistiller-capture-writer` presets and the
 workflow manifest under `~/.claude` or `~/.codex` (honoring `CLAUDE_CONFIG_DIR`
 and `CODEX_HOME`) and never edits `CLAUDE.md`, `settings.json`, `AGENTS.md` or
-`config.toml`. OpenCode and OMP get the Skills only, from the checkout:
-`./scripts/link-skills.sh opencode` or `./scripts/link-skills.sh omp`
-(PowerShell 7: `./scripts/link-skills.ps1 -Runtime opencode`).
+`config.toml`. OMP and dsh (DeepSeek Harness) get the Skills only, from the checkout:
+`./scripts/link-skills.sh omp` or `./scripts/link-skills.sh dsh`
+(PowerShell 7: `./scripts/link-skills.ps1 -Runtime dsh`).
 
 The MCP server exposes `kg_search`, `kg_resolve`, `kg_get`, `kg_neighbors`,
 `kg_browse`, `kg_pack`, `kg_drafts` and `kg_find`, with the same JSON as the
@@ -499,8 +499,8 @@ When asked to install kgdistiller from this repository, an agent should:
 1. Clone it, run `npm run build`, then `uv tool install '.[retrieval]'` and
    `uv tool update-shell`, and confirm `kgd --help` runs.
 2. Link its own runtime: `kgd claude link` then `kgd claude doctor`, or
-   `kgd codex link` then `kgd codex doctor`; for OpenCode or OMP,
-   `./scripts/link-skills.sh opencode|omp`. Start a new session afterwards.
+   `kgd codex link` then `kgd codex doctor`; for OMP or dsh,
+   `./scripts/link-skills.sh omp|dsh`. Start a new session afterwards.
 3. Follow the `deploy-kgdistiller` Skill: `kgd base add` for each vault, write
    the source globs and document types into `~/.knowledge/config.json` and
    `~/.knowledge/types/`, set the model with `kgd embedding set BAAI/bge-m3`,
