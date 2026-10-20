@@ -18,6 +18,10 @@ rebuilt by `kgd index`, never migrated.
 
 ## Release gates
 
+License-notice checks normalize LF/CRLF line endings so native Windows Git
+checkouts pass the same integrity check; missing or changed notice text still
+fails. Verify that regression with `node --test scripts/license-notices.test.mjs`.
+
 Run from a clean engine worktree. Root `npm run build` comes first: the
 package and its editable build include the gitignored
 `integrations/obsidian/main.js`, so every `uv run` and `uv build` in a fresh

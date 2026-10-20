@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { readFile, copyFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { includesNotice } from "./license-notices.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const integration = join(root, "integrations/obsidian");
@@ -34,16 +35,21 @@ if (!verifyOnly) {
   // The directory's clean builder may set NODE_ENV=production. Build tools are
   // devDependencies, so include them explicitly without changing runtime deps.
   for (const command of [["ci", "--include=dev"], ["run", "build"]]) {
-    const run = spawnSync(npm, command, { cwd: integration, stdio: "inherit", shell: process.platform === "win32" });
+    const options = { cwd: integration, stdio: "inherit" };
+    // Windows needs a shell for npm.cmd. These commands are fixed literals;
+    // passing the complete command avoids Node's deprecated shell+args API.
+    const run = process.platform === "win32"
+      ? spawnSync([npm, ...command].join(" "), { ...options, shell: true })
+      : spawnSync(npm, command, options);
     if (run.error) throw run.error;
     if (run.status !== 0) process.exit(run.status ?? 1);
   }
   const bundle = await readFile(join(integration, "main.js"), "utf8");
   const license = (await readFile(join(root, "LICENSE"), "utf8")).trim();
   const notices = (await readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")).trim();
-  assert.ok(bundle.includes(license), "Plugin bundle must retain its full MIT license");
-  assert.ok(bundle.includes(notices), "Plugin bundle must retain the full third-party notices, licenses and source revisions");
-  assert.ok((await readFile(join(integration, "styles.css"), "utf8")).includes(license), "Plugin stylesheet must retain its full MIT license");
+  assert.ok(includesNotice(bundle, license), "Plugin bundle must retain its full MIT license");
+  assert.ok(includesNotice(bundle, notices), "Plugin bundle must retain the full third-party notices, licenses and source revisions");
+  assert.ok(includesNotice(await readFile(join(integration, "styles.css"), "utf8"), license), "Plugin stylesheet must retain its full MIT license");
   assert.ok(bundle.includes("Copyright (c) 2016-2026, The Cytoscape Consortium."));
   assert.ok(bundle.includes("Permission is hereby granted"));
   assert.ok(bundle.includes("The above copyright notice and this permission notice"));

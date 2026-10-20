@@ -212,6 +212,8 @@ forced choices then). A forced turn offers only its named tool in that mode,
 and the harness rejects another tool's call.
 API keys are selected or created with Obsidian's `SecretComponent` and read
 from `app.secretStorage`; plugin `data.json` stores only secret identifiers.
+Clearing either the provider or Exa selector stores an empty identifier, so
+the setting remains valid when the native control reports no selection.
 
 Each job asks for its own reasoning level: none to judge a selection and
 answer a question, low to capture and find sources. Services document

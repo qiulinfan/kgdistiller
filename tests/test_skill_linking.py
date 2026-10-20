@@ -46,6 +46,10 @@ class PowerShellReadinessTests(unittest.TestCase):
 class SkillLinkingTests(unittest.TestCase):
     linkers = ("sh",)
 
+    def setUp(self):
+        if self.linkers == ("sh",) and not shutil.which("sh"):
+            self.skipTest("POSIX sh is unavailable; native PowerShell cases run separately")
+
     def fixture(self, base):
         base = base.resolve()
         repo = base / "product checkout"

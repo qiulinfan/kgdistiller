@@ -6,6 +6,6 @@
   "license": "MIT",
   "scripts": {
     "build": "node scripts/build-obsidian-plugin.mjs",
-    "test": "npm --prefix integrations/obsidian test"
+    "test": "node --test scripts/license-notices.test.mjs && npm --prefix integrations/obsidian test"
   }
 }

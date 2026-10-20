@@ -14,7 +14,7 @@ const controls = vi.hoisted(() => ({
     toggleChange?: (value: boolean) => void | Promise<void>;
     textChange?: (value: string) => void | Promise<void>;
     textValue?: string;
-    secretChange?: (value: string) => unknown;
+    secretChange?: (value: string | null) => unknown;
     dropdownChange?: (value: string) => unknown;
     buttonClick?: () => void | Promise<void>;
     buttons?: Array<{ text: string; click?: () => void | Promise<void> }>;
@@ -75,7 +75,7 @@ vi.mock("obsidian", () => {
   class SecretComponent {
     constructor(_app: unknown, private record: (typeof controls.settings)[number]) {}
     setValue(): this { return this; }
-    onChange(callback: (value: string) => unknown): this { this.record.secretChange = callback; return this; }
+    onChange(callback: (value: string | null) => unknown): this { this.record.secretChange = callback; return this; }
   }
   class ItemView { constructor(public leaf: unknown) {} }
   class Modal {
@@ -348,6 +348,19 @@ describe("hidden knowledge lifecycle", () => {
 });
 
 describe("stored settings", () => {
+  it("clearing native secret selectors keeps empty references in saved settings", async () => {
+    controls.stored = { exaKey: "exa-key", providers: [
+      { name: "work", kind: "deepseek", baseUrl: "", format: "deepseek", levels: [], apiKey: "provider-key" },
+    ] };
+    const plugin = pluginFixture(); await plugin.onload(); showSettings(plugin);
+    await controls.settings.find((setting) => setting.name === "API key")!.secretChange!(null);
+    await controls.settings.find((setting) => setting.name === "Exa API key")!.secretChange!(null);
+    expect(plugin.settings.exaKey).toBe("");
+    expect(plugin.settings.providers[0]!.apiKey).toBe("");
+    expect(controls.saveData).toHaveBeenLastCalledWith(expect.objectContaining({
+      exaKey: "", providers: [expect.objectContaining({ apiKey: "" })],
+    }));
+  });
   it("defaults to hidden indexing off until kgd obsidian install turns it on, and lookups and the agent off", () => {
     expect(DEFAULT_SETTINGS).toEqual({
       hiddenKnowledgeEnabled: false, kgdCommand: "", knowledgeHome: "", providers: [], provider: "", model: "",

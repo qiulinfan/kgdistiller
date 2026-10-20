@@ -246,7 +246,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
     const exa = new Setting(containerEl).setName("Exa API key")
       .setDesc("Optional. Web search asks Exa's hosted MCP server (mcp.exa.ai) directly and works without a key at Exa's free rate limits; choose or add an Exa key in Obsidian SecretStorage to use your Exa plan's limits.");
     new SecretComponent(this.app, exa.controlEl).setValue(this.host.settings.exaKey).onChange(async (id) => {
-      this.host.settings.exaKey = id;
+      this.host.settings.exaKey = id ?? "";
       await this.host.savePluginSettings();
       this.host.agentSettingsChanged();
     });
@@ -389,7 +389,7 @@ export class KgdistillerSettingTab extends PluginSettingTab {
       .setDesc(kind.ownUrl && kind.baseUrl ? "A local server usually needs none; otherwise choose or add the secret holding its key."
         : "Choose a secret in Obsidian's SecretStorage, or add one holding the service's key; the plugin stores only the secret's name.");
     new SecretComponent(this.app, key.controlEl).setValue(provider.apiKey).onChange(async (id) => {
-      provider.apiKey = id;
+      provider.apiKey = id ?? "";
       await changed(true);
     });
     const models: Setting = new Setting(containerEl).setName("Models").setDesc(NOT_LISTED)
