@@ -114,7 +114,7 @@ Then verify that:
   syntax or converts a source;
 - `check` reports every error and every moved or stale record and exits 1 for
   any of them; staleness never hides a record from retrieval;
-- the Obsidian plugin (version 2.0.2, `isDesktopOnly: true`) passes its
+- the Obsidian plugin (version 2.0.3, `isDesktopOnly: true`) passes its
   vitest suites (the `kgd` client and its MCP session, the lookup model, the
   keyword refresh on record saves, capture, drafts, evidence, the agent, its
   judgment, providers, web search and sources, records with every entry of
@@ -146,8 +146,8 @@ once, as the changelog's upgrade notes describe.
 ## Obsidian Community release entry
 
 The monorepo publishes the plugin through root `manifest.json` and
-`versions.json`, exactly mirrored from `integrations/obsidian`. The plugin and
-the Python core are versioned independently; both are 2.0.2. A plugin release tag must
+`versions.json`, exactly mirrored from `integrations/obsidian`. The plugin is 2.0.3 and
+the Python core is 2.0.2; they are versioned independently. A plugin release tag must
 be the manifest's exact `x.y.z` version, without `v`; bare `x.y.z` tags are
 reserved for plugin releases, and Python core tags are `core-x.y.z`.
 
@@ -155,7 +155,7 @@ reserved for plugin releases, and Python core tags are `core-x.y.z`.
 npm ci
 npm run build
 npm test
-node scripts/build-obsidian-plugin.mjs --verify-only --tag 2.0.2
+node scripts/build-obsidian-plugin.mjs --verify-only --tag 2.0.3
 ```
 
 The root build delegates installation and build to the integration, checks

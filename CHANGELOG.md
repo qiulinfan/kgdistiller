@@ -7,6 +7,25 @@ All notable changes are documented here.
 - `kgd relocate BASE:ID` names an unavailable base instead of reporting
   that the record is not accepted.
 
+## Obsidian 2.0.3 — 2026-10-22
+
+The Python core remains at 2.0.2.
+
+- Capture restores its button after every attempt so failures and discarded
+  drafts can be retried. A separate judgment checks that a proposed draft is
+  the exact selected concept or statement before it can be written.
+- Find sources follows Wikipedia history and cited works with focused web
+  searches and primary-page reads. It includes non-arXiv papers, books and
+  unlinked citations, and retains unresolved leads and access failures.
+  Verified quotations establish what was read, not historical priority.
+- Source reading accepts publisher and author HTML, PDFs with a text layer,
+  and plain text. Capture reuses the selected origin and its primary page
+  from Find sources, and reports when another page supplies the evidence
+  because the preferred work could not be read.
+- Draft descriptions and reports follow the registered document type's
+  writing-language and terminology guidance, including foreign captures;
+  Evidence stays in its original language.
+
 ## 2.0.2 — 2026-10-16
 
 - A read whose document type does not load fails before it opens the
