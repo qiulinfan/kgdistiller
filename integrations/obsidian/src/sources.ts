@@ -52,8 +52,18 @@ export interface Encyclopedia {
   /** The section a redirect points into, such as "Denoising autoencoder (DAE)". */
   section?: string;
   zh?: { title: string; url: string };
-  /** The first paper on arXiv that the article's text about the term cites. */
-  cites?: { title: string; arxiv: string; url: string };
+  /** The article's text about the term, including historical context. */
+  context?: string;
+  /** Every cited work, including papers without an arXiv entry or an online link. */
+  citations?: WikiCitation[];
+}
+
+export interface WikiCitation {
+  title: string;
+  url?: string;
+  arxiv?: string;
+  authors?: string;
+  year?: string;
 }
 
 /** One entry of a source's reference list that a passage cites. */
@@ -166,15 +176,33 @@ export function wikiSection(wikitext: string, heading: string): string | undefin
   return lines.slice(start + 1, end).join("\n");
 }
 
-/** The papers wikitext cites on arXiv, in order: each citation template's title and its eprint, arxiv or arXiv DOI. */
-export function wikiCitations(wikitext: string): Array<{ title: string; arxiv: string }> {
-  const cited: Array<{ title: string; arxiv: string }> = [];
-  for (const match of wikitext.matchAll(/\{\{\s*cite[^{}]*\}\}/gi)) {
-    const template = match[0];
-    const id = /\|\s*(?:eprint|arxiv)\s*=\s*(\d{4}\.\d{4,5})/i.exec(template)?.[1] ?? arxivId(template);
-    if (!id || cited.some((each) => each.arxiv === id)) continue;
-    const title = /\|\s*title\s*=\s*([^|}]+)/i.exec(template)?.[1]?.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1").trim() ?? "";
-    cited.push({ title, arxiv: id });
+/** Citation templates, balanced so nested formatting does not drop a reference. */
+export function wikiCitations(wikitext: string): WikiCitation[] {
+  const cited: WikiCitation[] = [];
+  for (const match of wikitext.matchAll(/\{\{\s*(?:cite|citation)\b/gi)) {
+    let end = match.index! + 2;
+    let depth = 1;
+    for (; end < wikitext.length && depth > 0; end++) {
+      if (wikitext.startsWith("{{", end)) { depth++; end++; }
+      else if (wikitext.startsWith("}}", end)) { depth--; end++; }
+    }
+    if (depth) continue;
+    const template = wikitext.slice(match.index!, end);
+    const fields = new Map(template.slice(2, -2).split(/\|\s*(?=[\w -]+\s*=)/).slice(1).map((part) => {
+      const equal = part.indexOf("=");
+      return [part.slice(0, equal).trim().toLowerCase(), part.slice(equal + 1).trim()];
+    }));
+    const id = /\d{4}\.\d{4,5}/.exec(fields.get("arxiv") ?? fields.get("eprint") ?? "")?.[0] ?? arxivId(template);
+    const rawTitle = fields.get("title") ?? "";
+    const title = wikiPlain(rawTitle.replace(/\{\{(?:lang|langx)\|[^|{}]+\|([^{}]+)\}\}/gi, "$1")) || rawTitle;
+    const link = fields.get("url") ?? (fields.get("doi") ? `https://doi.org/${fields.get("doi")}` : id ? arxivUrl(id) : undefined);
+    let url: string | undefined;
+    try { const parsed = new URL(link ?? ""); if (["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password) url = parsed.href; } catch { /* A title without a link is still a useful clue. */ }
+    if (!title && !id) continue;
+    if (cited.some((each) => (id && each.arxiv === id) || (url && each.url === url) || (title && each.title === title))) continue;
+    const authors = [...fields].filter(([key]) => /^(?:last|first|author)\d*$/.test(key)).map(([, value]) => wikiPlain(value)).join(" ");
+    const year = fields.get("year") ?? fields.get("date");
+    cited.push({ title, ...(id ? { arxiv: id } : {}), ...(url ? { url } : {}), ...(authors ? { authors } : {}), ...(year ? { year } : {}) });
   }
   return cited;
 }
@@ -234,7 +262,9 @@ export function wikipediaEntry(page: WikiPage, section: string | undefined, wiki
   const title = page.title!;
   const text = section ? wikiSection(wikitext, section) : undefined;
   const lead = page.revisions?.[0]?.slots?.main?.content ?? "";
-  const cites = wikiCitations(text ?? lead)[0];
+  const full = text ?? (wikitext || lead);
+  const citations = wikiCitations(full);
+  const context = wikiPlain(full).slice(0, 14000);
   const zh = page.langlinks?.find((link) => link.lang === "zh")?.title;
   const anchor = section ? `#${encodeURIComponent(section.replace(/ /g, "_"))}` : "";
   return {
@@ -243,7 +273,8 @@ export function wikipediaEntry(page: WikiPage, section: string | undefined, wiki
     extract: text !== undefined ? firstSentences(wikiPlain(text)) : (page.extract ?? "").trim(),
     ...(section ? { section } : {}),
     ...(zh ? { zh: { title: zh, url: `https://zh.wikipedia.org/wiki/${encodeURIComponent(zh.replace(/ /g, "_"))}` } } : {}),
-    ...(cites ? { cites: { ...cites, url: arxivUrl(cites.arxiv) } } : {}),
+    ...(context ? { context } : {}),
+    ...(citations.length ? { citations } : {}),
   };
 }
 
@@ -254,7 +285,7 @@ async function json<T>(fetch: Fetch, url: string): Promise<T | undefined> {
 /** What every article query asks for: the lead's first sentences, disambiguation, the Chinese article and the lead's wikitext. */
 const ARTICLE_PROPS = {
   prop: "extracts|pageprops|langlinks|revisions", exintro: 1, explaintext: 1, exsentences: SNIPPET_SENTENCES, exlimit: "max",
-  ppprop: "disambiguation", lllang: "zh", rvprop: "content", rvslots: "main", rvsection: 0,
+  ppprop: "disambiguation", lllang: "zh", rvprop: "content", rvslots: "main",
 };
 
 /** Wikipedia's entry for a term's name, or undefined when it has no article under that name. */

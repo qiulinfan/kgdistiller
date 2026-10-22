@@ -29,7 +29,7 @@ import type { Indexer } from "./indexing";
 import { draftTarget, localizeRecord, type LocalizeInput, type LocalizeResult, type LocalizeTarget } from "./localize";
 import type { ModelClient } from "./model";
 import { openInBase } from "./open";
-import type { OriginServices } from "./origin";
+import type { Origin, OriginServices } from "./origin";
 import { firstLine } from "./records";
 
 export const VIEW_TYPE_KGDISTILLER_CAPTURE = "kgdistiller-capture-view";
@@ -191,7 +191,7 @@ export class KgdistillerCaptureView extends ItemView {
    * from its lines; one made in a side pane, in a record or draft, can only be
    * drafted as foreign knowledge, in the base and type of the source being read.
    */
-  async startCapture(selection: Selection): Promise<void> {
+  async startCapture(selection: Selection, origin?: Origin): Promise<void> {
     const path = selection.source?.path ?? await this.host.readingPath();
     if (!path) {
       new Notice("Open the registered source you are reading in the main area to capture a selection made beside it.");
@@ -200,9 +200,9 @@ export class KgdistillerCaptureView extends ItemView {
     const input = selection.source
       ? { path, from: selection.source.from, to: selection.source.to, selection: selection.text }
       : { path, selection: selection.text, context: selection.context };
-    await this.run(selection.text, async () => {
+    return this.run(selection.text, async () => {
       const result = await captureSelection((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles,
-        this.host.originServices(), input);
+        this.host.originServices(), { ...input, ...(origin ? { origin } : {}) });
       if (result.decision === "borrowed" && !result.draft) this.host.borrowed(selection);
       return captureOutcome(result);
     });

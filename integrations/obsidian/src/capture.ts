@@ -20,8 +20,9 @@ import { mergeRanges, normalizeSpace, parseRanges, placeQuote, rangesText, type 
 import type { ToolSpec } from "./model";
 import type { DraftsResult } from "./drafts";
 import { foreignPages, pageQuotes, pagesText, type ForeignPage } from "./foreign";
+import { judgeSelection } from "./judge";
 import type { GetResult, RecordSummary, ResolveResult, SearchResult } from "./lookup-model";
-import { findOrigin, type OriginServices } from "./origin";
+import { findOrigin, type Origin, type OriginServices } from "./origin";
 import { fold, labelSuffix, nameKey } from "./records";
 import { citedReferences, sourceOpening } from "./sources";
 
@@ -54,6 +55,8 @@ export interface CaptureInput {
   selection: string;
   /** The text around a selection made in a side pane. */
   context?: string;
+  /** Find sources already resolved the origin of this exact selection. */
+  origin?: Origin;
 }
 
 export type CaptureDecision = "new" | "unchanged" | "superseding" | "conflicting" | "borrowed";
@@ -129,11 +132,11 @@ The submission, for new, superseding, conflicting and a borrowed concept's page:
 - aliases: a node's other names, including those the source uses in its own language. A relation has none.
 - kind: one of the kinds below; fill the roles it declares.
 - requires: the direct prerequisites needed to understand it, as values, beyond those its roles already link.
-- statement: one or two sentences in the source's language that open with the knowledge itself, then its conditions.
+- statement: one or two sentences that open with the knowledge itself, then its conditions. Follow the document type's Guidance for the description's language and technical terminology. Otherwise use the language of the source being read. A foreign evidence page's language does not override this writing language; Evidence alone stays verbatim in that page's original language.
 - evidence: the selected text itself first, then other short quotes only when the item cannot be understood without them; each with its line or line range from the numbered passage, copied character for character, inline citation markup included. For a borrowed concept: one to three short quotes of the chosen page that define it, copied character for character, with empty lines.
 - epistemic: how the cited passage itself supports it, from the list below; a result this source only reports from other work is stated.
 
-Always give report: one short line for the owner, in the language of the passage, naming records by their labels, never by uid.`;
+Always give report: one short line for the owner, following the same writing-language guidance as the statement, naming records by their labels, never by uid. When the original work cannot be read and another page is cited instead, say why in the report. An origin-search judgment is a lead, never evidence for an attribution: name an author or an originating work in the statement only when the cited page supports it.`;
 
 /** The instructions added when the selection was made in a side pane, not in the source. */
 export const SIDE_SYSTEM = `This selection was made in a knowledge record or draft shown beside the source, not in the source: there is no numbered passage. Decide only unchanged, when a record or draft shown already holds the concept, or borrowed, to draft it as foreign knowledge in the base and document type of the source being read.`;
@@ -394,6 +397,8 @@ class CaptureState {
   readonly looked = new Set<string>();
   /** The pages a borrowed concept may be drafted from, once found. */
   pages: ForeignPage[] | undefined;
+  /** Problems reading the preferred source, retained in the result shown to the owner. */
+  pageFailures: string[] = [];
 
   constructor(readonly profile: Profile, readonly root: string, readonly lines: readonly string[], readonly input: CaptureInput) {}
 
@@ -426,11 +431,12 @@ export async function captureSelection(complete: Complete, kgd: CaptureKgd, file
     ? [...resolvedText(state, await kgd.call<ResolveResult>("kg_resolve", { terms: names })), ...(await namedDrafts(kgd, state, names)).lines]
     : [];
   const lookup: Tool<CaptureResult> = { spec: LOOKUP_TOOL, run: (args) => lookUp(kgd, state, args) };
-  const submit: Tool<CaptureResult> = { spec: SUBMIT_TOOL, run: (args) => file(kgd, files, origin, state, args) };
+  const submit: Tool<CaptureResult> = { spec: SUBMIT_TOOL, run: (args) => file(complete, kgd, files, origin, state, args) };
   return runJob(complete, {
     system: `${CAPTURE_SYSTEM}${state.inSource ? "" : `\n\n${SIDE_SYSTEM}`}\n\n${typeText(profile)}`,
     user: [
       captureUser(input, profile, lines, searched.results.filter((hit) => !profile.records.some((record) => record.uid === hit.uid)), named),
+      ...(input.origin ? [`Find sources for the selected item already returned:\n${JSON.stringify(input.origin, (key, value: unknown) => key === "page" ? undefined : value)}\nUse this origin for this exact item. Context does not change the selected item into a broader or narrower concept.`] : []),
       ...(sourceDrafts.length ? [`Drafts of this source awaiting the owner's review:\n${sourceDrafts.map(summaryLine).join("\n")}`] : []),
     ].join("\n\n"),
     tools: [lookup, submit],
@@ -482,7 +488,7 @@ function resolvedText(state: CaptureState, resolved: ResolveResult): string[] {
   return parts;
 }
 
-async function file(kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices, state: CaptureState, args: Record<string, unknown>):
+async function file(complete: Complete, kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices, state: CaptureState, args: Record<string, unknown>):
   Promise<string | { done: CaptureResult }> {
   const decision = args.decision;
   if (decision !== "new" && decision !== "unchanged" && decision !== "superseding" && decision !== "conflicting" && decision !== "borrowed") {
@@ -493,8 +499,23 @@ async function file(kgd: CaptureKgd, files: CaptureFiles, origin: OriginServices
   if (!state.inSource && decision !== "unchanged" && decision !== "borrowed") {
     return "error: a selection made in a side pane can only be unchanged or borrowed";
   }
-  if (decision === "borrowed") return fileForeign(kgd, files, origin, state, args, item, report);
   const recorded = typeof args.record === "string" ? args.record.trim().replace(/^\[\[|\]\]$/g, "") : "";
+  const candidate = decision === "unchanged" ? state.shown.get(recorded) : undefined;
+  const label = candidate?.label ?? (typeof args.label === "string" ? args.label.trim() : "");
+  if (label) {
+    const statement = candidate?.gloss ?? (typeof args.statement === "string" ? args.statement.trim() : item);
+    const kind = candidate?.kind ?? (typeof args.kind === "string" ? args.kind : "concept");
+    const relation = candidate ? candidate.class === "relation" : kind in state.profile.relation_kinds;
+    const judged = await judgeSelection(complete, {
+      selection: state.input.selection,
+      context: state.input.context ?? (state.inSource ? state.lines.slice(state.input.from! - 1, state.input.to).join("\n") : ""),
+      candidates: [{ uid: "proposal", label, kind, class: relation ? "relation" : "node", base: candidate?.base ?? state.profile.base, source: "", lines: "", gloss: statement }],
+    });
+    if (judged.verdict !== "matched") {
+      return `error: the proposal is not the selected knowledge item. ${judged.explanation} Capture exactly ${JSON.stringify(state.input.selection)}; do not add or remove qualifiers from the surrounding passage. Correct the item and decision before submitting again.`;
+    }
+  }
+  if (decision === "borrowed") return fileForeign(kgd, files, origin, state, args, item, report);
   if (decision !== "new" && !state.shown.has(recorded)) return `error: record must be the uid of a record shown to you for ${decision}`;
   const draft = state.drafts.has(recorded);
   if (decision === "unchanged") {
@@ -541,9 +562,11 @@ async function fileForeign(kgd: CaptureKgd, files: CaptureFiles, origin: OriginS
     const context = state.inSource ? state.lines.slice(input.from! - 1, input.to).join("\n") : input.context ?? input.selection;
     const opening = state.lines.some((line) => line.trim()) ? sourceOpening(state.lines, input.path) : undefined;
     const references = state.inSource ? citedReferences(context, state.lines) : [];
-    const found = await findOrigin(origin, { term, context, ...(opening ? { source: opening } : {}), references });
-    const { pages, failures } = await foreignPages(origin.fetch, found.origin);
+    const found = input.origin ? { origin: input.origin, failures: [] }
+      : await findOrigin(origin, { term, context, ...(opening ? { source: opening } : {}), references });
+    const { pages, failures } = await foreignPages(origin.fetch, found.origin, origin.readPage);
     state.pages = pages;
+    state.pageFailures = failures;
     if (pages.length === 0) {
       const why = [found.origin.reason, ...found.failures, ...failures].filter(Boolean).join(" ");
       return { done: { item, decision: "borrowed", label: term, report: `${report} No page that originates or explains it was found, so nothing was drafted.${why ? ` ${why}` : ""}`.trim() } };
@@ -551,7 +574,8 @@ async function fileForeign(kgd: CaptureKgd, files: CaptureFiles, origin: OriginS
     return [
       `Where "${term}" comes from, by page:`,
       pagesText(pages),
-      "Draft it as foreign knowledge: call submit with decision borrowed, page (the page that states the concept best, preferring the originating work), and the record fields, its kind one of the document type's, its evidence one to three quotes copied character for character from that page, with empty lines.",
+      ...(failures.length ? [`Source-reading problems:\n${failures.join("\n")}`] : []),
+      "Draft it as foreign knowledge: call submit with decision borrowed, page (the page that states the concept best, preferring the originating work), and the record fields, its kind one of the document type's, its evidence one to three quotes copied character for character from that page, with empty lines. The statement and report follow the document type's writing-language guidance even when the quoted page is in another language. If you cite a different page from the originating work, explain why in the report; do not invent an attribution the cited page does not state.",
     ].join("\n\n");
   }
   const number = typeof args.page === "number" ? args.page : Number(args.page);
@@ -566,7 +590,7 @@ async function fileForeign(kgd: CaptureKgd, files: CaptureFiles, origin: OriginS
   if (!id) return "error: the label gives an empty id; use a label with letters or digits";
   const uid = `${profile.base}:${id}`;
   return writeDraft(kgd, files, state, `${state.root}/.knowledge/drafts/${id}.md`, uid, recordFile(named, page.url, undefined, quotes),
-    { item, decision: "borrowed", uid, label: named.label, draft: true, foreign: true, report });
+    { item, decision: "borrowed", uid, label: named.label, draft: true, foreign: true, report: [report, ...state.pageFailures].filter(Boolean).join(" ") });
 }
 
 /**

@@ -4,7 +4,7 @@
  * from the web page of the work that originates it, or of an article that
  * explains it, quoting that page. These are the pages a foreign draft may
  * cite, each with the text its Evidence quotes must be copied from: the
- * originating paper's arXiv abstract, then the Wikipedia article the agent
+ * original work's page, readable document or arXiv abstract, then the Wikipedia article the agent
  * judged to be about the term.
  */
 
@@ -17,10 +17,14 @@ export interface ForeignPage {
   title: string;
   /** The page's text as fetched; quotes must occur in it. */
   text: string;
+  /** Links actually present on the page, which an origin investigation may follow. */
+  links?: Array<{ title: string; url: string }>;
 }
 
+export type ReadPage = (url: string) => Promise<ForeignPage>;
+
 /** The pages an origin offers, each fetched for its text; a page that cannot be read is left out and its failure returned. */
-export async function foreignPages(fetch: Fetch, origin: Origin): Promise<{ pages: ForeignPage[]; failures: string[] }> {
+export async function foreignPages(fetch: Fetch, origin: Origin, readPage: ReadPage): Promise<{ pages: ForeignPage[]; failures: string[] }> {
   const failures: string[] = [];
   const read = async (what: string, load: () => Promise<ForeignPage | undefined>) => {
     try {
@@ -33,12 +37,12 @@ export async function foreignPages(fetch: Fetch, origin: Origin): Promise<{ page
   const work = origin.work;
   const article = origin.wikipedia;
   const [paper, encyclopedia] = await Promise.all([
-    work?.arxiv
+    origin.page && origin.page.url === work?.url ? origin.page : work?.arxiv
       ? read("arXiv did not answer", async () => {
         const entry = await arxivPaper(fetch, work.arxiv!);
         return entry?.abstract ? { url: work.url ?? `https://arxiv.org/abs/${entry.arxiv}`, title: entry.title, text: `${entry.title}\n\n${entry.abstract}` } : undefined;
       })
-      : undefined,
+      : work?.url ? read("The originating work could not be read", async () => ({ ...await readPage(work.url!), title: work.title })) : undefined,
     article
       ? read("Wikipedia did not answer", async () => {
         const text = await wikipediaText(fetch, article);

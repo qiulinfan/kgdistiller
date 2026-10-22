@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { foreignPages, pageQuotes, pagesText, type ForeignPage } from "../src/foreign";
 import type { Origin } from "../src/origin";
@@ -23,6 +23,7 @@ describe("a foreign draft's quotes", () => {
 });
 
 describe("the pages of an origin", () => {
+  const unusedPage = async (): Promise<ForeignPage> => { throw new Error("unexpected page read"); };
   const origin: Origin = {
     choice: "web", reason: "",
     work: { title: "BEiT", url: "https://arxiv.org/abs/2106.08254", arxiv: "2106.08254", year: "2021" },
@@ -33,7 +34,7 @@ describe("the pages of an origin", () => {
   const article = JSON.stringify({ query: { pages: [{ title: "Vision transformer", revisions: [{ slots: { main: { content: "== BEiT ==\nBEiT masks [[patch]]es." } } }] }] } });
 
   it("are the originating paper's abstract, then the Wikipedia article's text, numbered for the model", async () => {
-    const { pages, failures } = await foreignPages(async (url) => (url.includes("arxiv.org") ? feed : article), origin);
+    const { pages, failures } = await foreignPages(async (url) => (url.includes("arxiv.org") ? feed : article), origin, unusedPage);
     expect(failures).toEqual([]);
     expect(pages).toEqual([
       { url: "https://arxiv.org/abs/2106.08254", title: "BEiT: BERT Pre-Training of Image Transformers", text: "BEiT: BERT Pre-Training of Image Transformers\n\nWe introduce BEiT." },
@@ -49,12 +50,30 @@ describe("the pages of an origin", () => {
     const failing = await foreignPages(async (url) => {
       if (url.includes("arxiv.org")) return feed;
       throw new Error("en.wikipedia.org answered 503");
-    }, origin);
+    }, origin, unusedPage);
     expect(failing.pages.map((each) => each.title)).toEqual(["BEiT: BERT Pre-Training of Image Transformers"]);
     expect(failing.failures).toEqual(["Wikipedia did not answer: en.wikipedia.org answered 503"]);
     const bare = await foreignPages(async () => "<feed><entry><id>http://arxiv.org/abs/2106.08254v2</id><title>BEiT</title></entry></feed>",
-      { ...origin, wikipedia: undefined });
+      { ...origin, wikipedia: undefined }, unusedPage);
     expect(bare).toEqual({ pages: [], failures: [] });
-    await expect(foreignPages(async () => { throw new Error("unexpected"); }, { choice: "none", reason: "" })).resolves.toEqual({ pages: [], failures: [] });
+    await expect(foreignPages(async () => { throw new Error("unexpected"); }, { choice: "none", reason: "" }, unusedPage)).resolves.toEqual({ pages: [], failures: [] });
+  });
+
+  it("reads a non-arXiv work's own URL and presents it before Wikipedia", async () => {
+    const work = { title: "Original paper", url: "https://publisher.example/paper.pdf" };
+    const readPage = vi.fn(async (url: string) => ({ url, title: "paper.pdf", text: "A coding network reconstructs its input." }));
+    const { pages, failures } = await foreignPages(async () => article, { ...origin, work }, readPage);
+    expect(readPage).toHaveBeenCalledExactlyOnceWith(work.url);
+    expect(pages[0]).toEqual({ ...work, text: "A coding network reconstructs its input." });
+    expect(pages[1]!.url).toContain("wikipedia.org");
+    expect(failures).toEqual([]);
+  });
+
+  it("reports a non-arXiv source failure even when another page is readable", async () => {
+    const work = { title: "Original paper", url: "https://publisher.example/paper" };
+    const { pages, failures } = await foreignPages(async () => article, { ...origin, work }, async () => { throw new Error("HTTP 403"); });
+    expect(pages).toHaveLength(1);
+    expect(pages[0]!.url).toContain("wikipedia.org");
+    expect(failures).toEqual(["The originating work could not be read: HTTP 403"]);
   });
 });

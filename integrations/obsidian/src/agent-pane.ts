@@ -37,13 +37,15 @@ export interface AgentHost {
   webSearch(query: string): Promise<WebSource[]>;
   /** The registered source in the active editor or reading view, if any. */
   reading(): Promise<Reading | undefined>;
+  originServices(): OriginServices;
   /** Draft the selection in the Capture view. */
-  capture(selection: Selection): void;
+  capture(selection: Selection, origin?: Origin): Promise<void>;
 }
 
 export class AgentPane {
   private selection: Selection | undefined;
   private request = 0;
+  private origin: Origin | undefined;
   private readonly verdictEl: HTMLElement;
   private readonly answerEl: HTMLElement;
   private readonly actionsEl: HTMLElement;
@@ -66,6 +68,7 @@ export class AgentPane {
   /** Start over for a new selection or question; a selection's actions appear at once, and without one (a listed source) nothing shows. */
   reset(selection: Selection | undefined, question = false): void {
     this.selection = selection;
+    this.origin = undefined;
     this.request++;
     for (const element of [this.verdictEl, this.answerEl, this.actionsEl, this.sourcesEl]) element.empty();
     if (!selection || !this.host.model.configured() || question) return;
@@ -196,13 +199,25 @@ export class AgentPane {
     if (button && !button.disabled) await this.capture(button);
   }
 
-  /** Hand the selection to the Capture view, once per lookup. */
+  /** Prevent duplicate submissions only while Capture is running. */
   private async capture(button: HTMLButtonElement): Promise<void> {
     const selection = this.selection;
     if (!selection?.source && !selection?.side) return;
     button.disabled = true;
     button.setText("Drafting in Capture");
-    this.host.capture(selection);
+    const request = this.request;
+    try {
+      await this.host.capture(selection, this.origin);
+    } catch (error) {
+      if (request === this.request) {
+        this.actionsEl.createDiv({ cls: "kgd-lookup-error", text: `Could not start Capture: ${message(error)}` });
+      }
+    } finally {
+      if (request === this.request) {
+        button.disabled = false;
+        button.setText("Capture");
+      }
+    }
   }
 
   /** The capture of this selection found it borrowed: find where it comes from, unless that is already shown. */
@@ -226,7 +241,7 @@ export class AgentPane {
     const started = performance.now();
     const section = element.createDiv({ cls: "kgd-lookup-section" });
     section.createEl("h4", { text: "Where it comes from" });
-    const status = section.createDiv({ cls: "kgd-lookup-hint", text: "Searching the web and Wikipedia, then judging…" });
+    const status = section.createDiv({ cls: "kgd-lookup-hint", text: "Following sources, historical context and references…" });
     const lines = selection.source
       ? (await this.host.captureFiles.read(selection.source.path).catch(() => "")).replace(/\r\n?/g, "\n").split("\n")
       : [];
@@ -236,7 +251,7 @@ export class AgentPane {
     let origin: Origin;
     let failures: string[];
     try {
-      ({ origin, failures } = await findOrigin(this.originServices(),
+      ({ origin, failures } = await findOrigin(this.host.originServices(),
         { term: selection.text, context: selection.context, ...(source ? { source } : {}), references }));
     } catch (error) {
       if (request !== this.request) return;
@@ -246,34 +261,37 @@ export class AgentPane {
       return;
     }
     if (request !== this.request) return;
+    this.origin = origin;
     status.remove();
     this.renderOrigin(section, origin, performance.now() - started);
     this.renderWikipedia(section, origin.wikipedia);
     for (const failure of failures) section.createDiv({ cls: "kgd-lookup-hint", text: failure });
   }
 
-  private originServices(): OriginServices {
-    return { complete: (chat) => this.host.model.complete(chat), fetch: this.host.fetchText, webSearch: (query) => this.host.webSearch(query) };
-  }
-
   private renderOrigin(element: HTMLElement, origin: Origin, ms: number): void {
     const line = element.createDiv({ cls: `kgd-lookup-verdict-line${origin.work ? " is-origin" : ""}` });
-    const head = {
-      source: "Introduced by this source: ",
-      reference: `Introduced by [${origin.reference ?? ""}]: `,
-      web: "Introduced by: ",
-      none: "No originating work found",
-    }[origin.choice];
+    const head = origin.work ? origin.quote ? "Source passage verified: " : "Origin candidate: " : "Origin unresolved";
     line.createSpan({ cls: "kgd-lookup-verdict-head", text: head });
     const work = origin.work;
     if (work) {
       if (work.url) line.createEl("a", { text: work.title, href: work.url });
       else line.createSpan({ text: work.title });
-      const where = work.arxiv ? `arXiv:${work.arxiv}` : origin.arxivError ? `arXiv did not answer: ${origin.arxivError}` : "not on arXiv";
-      line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${[work.year, where].filter(Boolean).join(" · ")}` });
+      const where = work.arxiv ? `arXiv:${work.arxiv}` : origin.arxivError ? `arXiv did not answer: ${origin.arxivError}` : "";
+      const meta = [work.year, where].filter(Boolean).join(" · ");
+      if (meta) line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${meta}` });
     }
     line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${seconds(ms)}` });
     if (origin.reason) element.createDiv({ cls: "kgd-lookup-explanation", text: origin.reason });
+    if (origin.quote) element.createEl("blockquote", { text: origin.quote });
+    if (origin.leads?.length) {
+      element.createEl("h4", { text: "Earlier work and leads" });
+      const list = element.createEl("ul");
+      for (const work of origin.leads) {
+        const item = list.createEl("li");
+        if (work.url) item.createEl("a", { text: work.title, href: work.url });
+        else item.createSpan({ text: work.title });
+      }
+    }
   }
 
   private renderWikipedia(element: HTMLElement, wikipedia: Encyclopedia | undefined): void {
@@ -288,11 +306,16 @@ export class AgentPane {
       item.createEl("a", { text: wikipedia.zh.title, href: wikipedia.zh.url });
     }
     if (wikipedia.extract) item.createDiv({ cls: "kgd-lookup-gloss", text: wikipedia.extract });
-    if (wikipedia.cites) {
-      const cites = item.createDiv();
-      cites.createSpan({ cls: "kgd-lookup-meta", text: "It cites first: " });
-      cites.createEl("a", { text: wikipedia.cites.title || `arXiv:${wikipedia.cites.arxiv}`, href: wikipedia.cites.url });
-      cites.createSpan({ cls: "kgd-lookup-meta", text: ` · arXiv:${wikipedia.cites.arxiv}` });
+    if (wikipedia.citations?.length) {
+      const details = item.createEl("details");
+      details.createEl("summary", { text: `References and origin clues (${wikipedia.citations.length})` });
+      const list = details.createEl("ul");
+      for (const work of wikipedia.citations) {
+        const entry = list.createEl("li");
+        if (work.url) entry.createEl("a", { text: work.title || work.url, href: work.url });
+        else entry.createSpan({ text: work.title });
+        entry.createSpan({ cls: "kgd-lookup-meta", text: ` ${work.authors ?? ""} ${work.year ?? ""}`.trim() });
+      }
     }
     item.createDiv({ cls: "kgd-lookup-hint", text: "Text from Wikipedia, CC BY-SA 4.0." });
   }
@@ -307,7 +330,6 @@ export class AgentPane {
       item.createSpan({ cls: "kgd-lookup-meta", text: `[${reference.number}] ` });
       if (reference.url) item.createEl("a", { text: reference.text, href: reference.url });
       else item.createSpan({ text: reference.text });
-      if (reference.url && !arxivId(reference.url)) item.createSpan({ cls: "kgd-lookup-meta", text: " · not on arXiv" });
     }
   }
 

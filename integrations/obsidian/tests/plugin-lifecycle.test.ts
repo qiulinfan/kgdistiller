@@ -108,7 +108,7 @@ vi.mock("../src/api", async (importOriginal) => ({
 }));
 vi.mock("../src/capture-view", () => ({ VIEW_TYPE_KGDISTILLER_CAPTURE: "kgdistiller-capture",
   KgdistillerCaptureView: class {
-    startCapture(selection: { text: string }): Promise<void> { controls.drafted(selection.text); return Promise.resolve(); }
+    startCapture(selection: { text: string }, origin?: unknown): Promise<void> { return Promise.resolve(controls.drafted(selection.text, origin)); }
     listDrafts(): Promise<void> { controls.relist(); return Promise.resolve(); }
   } }));
 vi.mock("../src/lookup-view", () => ({ VIEW_TYPE_KGDISTILLER_LOOKUP: "kgdistiller-lookup", LOOKUP_ICON: "scan-search",
@@ -223,9 +223,9 @@ describe("community lifecycle conventions", () => {
     const { plugin } = harness(); await plugin.onload();
     const selection = { text: "masked autoencoder", context: "", source: { path: "/vault/a.md", from: 1, to: 1 } };
     plugin.capture(selection);
-    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledWith("masked autoencoder"));
+    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledWith("masked autoencoder", undefined));
     plugin.capture({ ...selection, text: "mask token" });
-    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledWith("mask token"));
+    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledWith("mask token", undefined));
     const workspace = plugin.app.workspace as unknown as {
       createLeafBySplit: ReturnType<typeof vi.fn>; setActiveLeaf: ReturnType<typeof vi.fn>; getMostRecentLeaf(): unknown; getLeavesOfType(type: string): unknown[];
     };
@@ -235,6 +235,19 @@ describe("community lifecycle conventions", () => {
     expect(controls.sourcesFor).toHaveBeenCalledExactlyOnceWith("masked autoencoder");
     controls.commands.find((command) => command.id === "show-drafts")!.callback();
     await vi.waitFor(() => expect(controls.relist).toHaveBeenCalledOnce());
+  });
+
+  it("returns the Capture job's completion to the lookup sidebar", async () => {
+    const plugin = pluginFixture(); await plugin.onload();
+    let finish!: () => void;
+    controls.drafted.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const settled = vi.fn();
+    const capture = plugin.capture({ text: "autoencoders", context: "", side: true }).then(settled);
+    await vi.waitFor(() => expect(controls.drafted).toHaveBeenCalledOnce());
+    expect(settled).not.toHaveBeenCalled();
+    finish();
+    await capture;
+    expect(settled).toHaveBeenCalledExactlyOnceWith(undefined);
   });
 });
 

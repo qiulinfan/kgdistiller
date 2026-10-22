@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ChatReply, ChatRequest } from "../src/model";
-import { acceptOrigin, judgeOrigin, originQuery, originUser, originWork, type OriginInput } from "../src/origin";
+import { acceptOrigin, judgeOrigin, originQuery, originUser, originWork, type OriginInput, type OriginServices } from "../src/origin";
 
 const BEIT = { number: "2", text: "Hangbo Bao, Li Dong, and Furu Wei. BEiT: BERT pre-training of image transformers. arXiv:2106.08254, 2021.", url: "https://arxiv.org/abs/2106.08254" };
 const MOCO = { number: "9", text: "Xinlei Chen, Saining Xie, and Kaiming He. An empirical study of training self-supervised Vision Transformers. In ICCV, 2021." };
@@ -102,8 +102,8 @@ describe("the originating work", () => {
     const judged = acceptOrigin({ choice: "web", number: 1, title, reason: "" }, input);
     const accepted = judged as Exclude<typeof judged, string>;
     await expect(originWork(async () => "<feed></feed>", accepted)).resolves.toEqual({ work: { title, url: DAE.url } });
-    await expect(originWork(async () => { throw new Error("export.arxiv.org answered 503"); }, accepted))
-      .resolves.toEqual({ work: { title, url: DAE.url }, arxivError: "export.arxiv.org answered 503" });
+    await expect(originWork(async () => { throw new Error("must not probe arXiv when the source has its own link"); }, accepted))
+      .resolves.toEqual({ work: { title, url: DAE.url } });
     await expect(originWork(async () => "<feed></feed>", { ...accepted, title: "Denoising autoencoders: a survey" }))
       .resolves.toEqual({ work: { title: DAE.title, url: DAE.url } });
     await expect(originWork(async () => "<feed></feed>", { choice: "none", reason: "" })).resolves.toEqual({});
@@ -138,16 +138,111 @@ describe("judging an origin", () => {
       };
     };
     const fetch = async (): Promise<string> => FEED("2104.02057", "An Empirical Study of Training Self-Supervised Vision Transformers", "2021");
-    await expect(judgeOrigin(complete, fetch, { ...input, term: "MoCo v3" })).resolves.toEqual({
+    await expect(judgeOrigin({ complete, fetch, webSearch: async () => [], readPage: async (url) => ({ url, title: "Work", text: "Text" }) }, { ...input, term: "MoCo v3" }, [])).resolves.toEqual({
       choice: "reference",
       reason: "MoCo v3 出自 [9]。",
       reference: "9",
       wikipedia: ARTICLES[0],
       work: { title: "An Empirical Study of Training Self-Supervised Vision Transformers", url: "https://arxiv.org/abs/2104.02057", arxiv: "2104.02057", year: "2021" },
     });
-    expect(requests[0]!.messages[0]!.content).toContain("a term it only uses, studies or credits to earlier work is not its own");
-    expect(requests[0]!.tool_choice).toEqual({ type: "function", function: { name: "origin" } });
+    expect(requests[0]!.messages[0]!.content).toContain("The source being read may only use the concept");
+    expect(requests[0]!.tool_choice).toBe("required");
     expect(requests.map((request) => request.reasoning_effort)).toEqual(["low", "low"]);
     expect(requests[1]!.messages.at(-1)).toMatchObject({ role: "tool", content: "error: number must be a cited reference: 2, 9" });
+  });
+});
+
+describe("following origin clues", () => {
+  const paper = { title: "Early coding networks", url: "https://publisher.example/early-coding", snippet: "A primary work." };
+  const passage = "The coding network learns to reconstruct its input.";
+  const article = { title: "Coding network", url: "https://en.wikipedia.org/wiki/Coding_network", extract: "A coding network is a neural network.", context: "The history discusses earlier coding methods.", citations: [{ title: paper.title, authors: "A. Reader", year: "1980", url: paper.url }] };
+  const base: OriginInput = { term: "coding network", context: "A coding network.", references: [], results: [], articles: [article] };
+  const reply = (name: string, args: Record<string, unknown>): ChatReply => ({ message: { content: null, tool_calls: [{ id: "call", type: "function", function: { name, arguments: JSON.stringify(args) } }] } });
+  function services(answers: ChatReply[]) {
+    const requests: ChatRequest[] = [];
+    const complete = vi.fn(async (request: ChatRequest) => { requests.push(structuredClone(request)); const answer = answers.shift(); if (!answer) throw new Error("no more answers"); return answer; });
+    const service: OriginServices = { complete, fetch: async () => "<feed></feed>", webSearch: vi.fn(async () => [paper]), readPage: vi.fn(async (url) => ({ url, title: paper.title, text: passage })) };
+    return { service, requests };
+  }
+
+  it("follows a non-arXiv Wikipedia reference, verifies a quote and keeps the page for Capture", async () => {
+    const { service, requests } = services([
+      reply("read", { url: paper.url }),
+      reply("origin", { choice: "web", number: 1, title: paper.title, article: 1, quote: passage, reason: "原文陈述该方法。" }),
+    ]);
+    const origin = await judgeOrigin(service, base, []);
+    expect(origin).toMatchObject({ work: { title: paper.title, url: paper.url }, quote: passage, page: { text: passage }, wikipedia: article });
+    expect(service.readPage).toHaveBeenCalledExactlyOnceWith(paper.url);
+    expect(requests[0]!.messages[1]!.content).toContain("A. Reader 1980");
+    expect(requests[0]!.messages[1]!.content).toContain("history discusses earlier coding methods");
+  });
+
+  it("searches an unlinked historical citation by title and then reads the discovered primary link", async () => {
+    const { service } = services([
+      reply("search", { query: '"Early coding networks" A. Reader 1980' }),
+      reply("read", { url: paper.url }),
+      reply("origin", { choice: "web", number: 1, title: paper.title, quote: passage, reason: "由引用追到原文。" }),
+    ]);
+    const origin = await judgeOrigin(service, { ...base, articles: [{ ...article, citations: [{ title: paper.title, authors: "A. Reader", year: "1980" }] }] }, []);
+    expect(service.webSearch).toHaveBeenCalledExactlyOnceWith('"Early coding networks" A. Reader 1980');
+    expect(origin.work?.url).toBe(paper.url);
+  });
+
+  it("refuses to stop at the initial search and preserves an unverified earlier-work lead", async () => {
+    const { service, requests } = services([
+      reply("origin", { choice: "none", reason: "没有。" }),
+      reply("search", { query: "coding network early history" }),
+      reply("origin", { choice: "none", leads: [1], reason: "找到了早期工作，尚不能确认唯一源头。" }),
+    ]);
+    const origin = await judgeOrigin(service, { ...base, articles: [] }, []);
+    expect(requests[1]!.messages.at(-1)!.content).toContain("investigate an earlier-work clue");
+    expect(origin).toMatchObject({ choice: "none", leads: [{ title: paper.title, url: paper.url }] });
+    expect(origin).not.toHaveProperty("quote");
+  });
+
+  it("retains a primary-work lead and the access failure when it cannot be opened", async () => {
+    const { service } = services([
+      reply("read", { url: paper.url }),
+      reply("origin", { choice: "web", number: 1, title: paper.title, reason: "找到论文，但原文访问被拒绝。" }),
+    ]);
+    vi.mocked(service.readPage).mockRejectedValueOnce(new Error("403"));
+    const failures: string[] = [];
+    const origin = await judgeOrigin(service, base, failures);
+    expect(origin.work?.url).toBe(paper.url);
+    expect(origin).not.toHaveProperty("quote");
+    expect(failures[0]).toContain("403");
+  });
+
+  it("rejects an invented quote and an unobserved URL", async () => {
+    const { service, requests } = services([
+      reply("read", { url: "https://invented.example/paper" }),
+      reply("read", { url: paper.url }),
+      reply("origin", { choice: "web", number: 1, title: paper.title, quote: "An invented statement.", reason: "" }),
+      reply("origin", { choice: "web", number: 1, title: paper.title, quote: passage, reason: "" }),
+    ]);
+    const origin = await judgeOrigin(service, base, []);
+    expect(requests[1]!.messages.at(-1)!.content).toContain("read only a link observed");
+    expect(requests[3]!.messages.at(-1)!.content).toContain("quote must be copied verbatim");
+    expect(origin.quote).toBe(passage);
+  });
+
+  it("keeps observed leads if the investigation reaches its model-call limit", async () => {
+    const { service } = services(Array.from({ length: 10 }, () => reply("search", { query: "earlier work" })));
+    const failures: string[] = [];
+    const origin = await judgeOrigin(service, base, failures);
+    expect(origin.choice).toBe("none");
+    expect(origin.leads).toContainEqual({ title: paper.title, url: paper.url });
+    expect(failures[0]).toContain("did not finish");
+  });
+
+  it("retains Wikipedia's observed references when the model service fails", async () => {
+    const { service } = services([]);
+    service.complete = async () => { throw new Error("Model service unavailable"); };
+    const failures: string[] = [];
+    const origin = await judgeOrigin(service, base, failures);
+    expect(origin.choice).toBe("none");
+    expect(origin.leads).toContainEqual({ title: paper.title, url: paper.url });
+    expect(failures).toContain("Model service unavailable");
+    expect(origin).not.toHaveProperty("quote");
   });
 });

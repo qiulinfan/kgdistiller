@@ -30,7 +30,7 @@ export interface Judgment {
 
 export const JUDGE_SYSTEM = `You judge whether a passage the owner selected while reading names knowledge already recorded in their kgdistiller knowledge base. You see the selection, the text around it, and numbered candidate records found by name and by search. Nodes are concepts and the results stated about them, such as theorems and findings; relations are connections stated between two or more records. Answer by calling judge.
 
-First decide what the selection means in the text around it: a concept, or a statement.
+First decide what the selection means in the text around it: a concept, or a statement. Context disambiguates the selected text; it must not silently add or remove qualifiers. Selecting a general concept inside the name or description of a particular method does not select that method. Singular and plural names and translations may still name the same concept.
 - matched: one candidate is that same concept or statement. Judge by meaning: compare definitions and conditions. A shared name does not make the same concept: a general term used in its general sense is not a specific record that happens to share the word, and a broader or narrower concept is not a match. A concept is a node that defines it, never a statement or relation that merely mentions it; a statement matches only a record that states it.
 - ambiguous: two or more candidates are each that same concept or statement under some reading of the text.
 - unmatched: no candidate is it.

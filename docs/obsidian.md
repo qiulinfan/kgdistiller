@@ -290,6 +290,11 @@ while the owner keeps reading:
   superseding, conflicting, or borrowed for a concept the source only uses or
   credits to other work) and, for a record, its label, kind, roles, requires,
   statement and evidence quotes with their lines.
+- Before accepting a submission, a separate judgment compares its meaning
+  with the exact selection. A broader or narrower item is refused and returned
+  to the capture model to correct before any draft is written. Context may
+  disambiguate a name, but cannot add a qualifier the owner did not select.
+  This is a model judgment and can still be wrong; the owner reviews the draft.
 - The plugin refuses kinds and roles the type lacks, links to records the
   model was not shown, and values that are not links: a concept no record or
   draft holds is left out of the values. A relation must bind at least two
@@ -324,58 +329,62 @@ while the owner keeps reading:
   in its record's base: the proposed record is shown and nothing is drafted.
 - Borrowed drafts the concept as **foreign knowledge**. The plugin runs Find
   sources (below) for the concept's name and fetches the pages it found: the
-  originating paper's arXiv abstract and the Wikipedia article (the section a
-  redirect points into, or the lead). The model then picks the page that
+  original work's own web page, publisher page, PDF or other readable text,
+  an arXiv abstract, and the Wikipedia article (the section a redirect points
+  into, or the lead). The model then picks the page that
   states the concept best, preferring the originating work, and submits the
   record with one to three quotes of that page; the plugin keeps a quote only
   when it occurs in the page's text after collapsing whitespace. The draft's
   `source` is the page's address and it has no lines. When no page is found,
   nothing is drafted and the lookup sidebar shows what Find sources found.
-- Capture asks for low reasoning. Drafting rather than accepting matters: on
-  2026-10-15 thirteen test selections from the test papers and notes, drafted
-  three times, gave different labels, kinds and ownership decisions between
-  runs, and about eight of ten drafts needed an edit before they were worth
-  keeping.
+  If Find sources already finished for this selection, Capture reuses that
+  origin and the primary page already read rather than repeating the search
+  or downloading the same page again. When the primary source cannot be read,
+  the failure is shown to the model and retained in the capture report even
+  when another page supplies the draft.
+  Descriptions and reports follow the source document type's language and
+  terminology guidance; a foreign page's language never overrides it. Evidence
+  stays verbatim in the cited source's original language.
+- Capture asks for low reasoning. Every draft still needs the owner's review.
 
-**Find sources**, for an unrecorded or borrowed term, finds the work that
-introduced it and the Wikipedia article that explains it. The sidebar lists at
-once the works the selected lines cite, read from the source's own reference
-list (block ids `^reference-N`). Then, at the same time, one web search
-through Exa (as for Search below) asks who first introduced the
-term, and Wikipedia gives the article the term's name leads to, read at the
-section a redirect points into (masked autoencoder is the Masked Autoencoder
-section of Vision transformer), and the first three articles its search finds.
-One model call at low reasoning then judges both. It picks the originating
-work among the source being read (its title and opening lines), the
-references the selected lines cite and the first eight web results, or none,
-as for a general term with no single origin or when the origin is not among
-them; and the Wikipedia article that explains the term as the text uses it,
-even under another name (latent representation is explained by Latent
-space), or none, since a name or a search also finds other things of the same
-name (BEiT finds Beit Shemesh, and linear probing the hash-table method). It
-says why in one sentence, and the plugin refuses a choice that names no
-candidate. A web search or Wikipedia that fails leaves the other's candidates
-to judge, and the sidebar says which failed. The work is shown with its title
-as the candidate gives it (the model's title when the candidate's text holds
-it) and, when it has an arXiv link of its own, as its arXiv page with the year
-its arXiv id gives. Only a work without such a link is searched on arXiv by
-title, once and at least three seconds after the last search, as arXiv's terms
-ask, since arXiv's API refuses clients that ask too often; a work arXiv does
-not hold says so and keeps its own link. The article is shown with its opening
-sentences, the Chinese article and the first paper its text cites. Nine test
-terms from the MAE paper and the notes have expected picks: BEiT, block-wise
-masking and MoCo v3 through the references the passage cites, masked
-autoencoder as the paper being read, denoising autoencoder as its reference
-(not on arXiv), variational autoencoder as Auto-Encoding Variational Bayes,
-and none for latent representation, partial fine-tuning and linear probing.
-With the direct DeepSeek API (`deepseek-flash`) and Exa's keyless search
-sending the origin query as written, one round picked eight as expected;
-linear probing picked the paper on linear classifier probes (arXiv
-1610.01644) instead of none. The web search took 0.6 to 1.8 s, the judgment 3
-to 22 s. It sends the term to Exa,
-Wikipedia and arXiv only when pressed, naming the plugin in its User-Agent as
-Wikimedia asks; Wikipedia's text is shown with its CC BY-SA 4.0 notice. A
-borrowed capture runs it by itself to find the pages of its foreign draft.
+**Find sources** investigates the selected concept's provenance. The initial
+Exa search and Wikipedia lookup start the investigation. Wikipedia supplies
+the full article or redirected section, its historical context and all cited
+works, including non-arXiv papers, books, reports and references without links.
+The sidebar keeps these references as clues; the first citation is never
+presented as proof of origin.
+
+The agent can search exact titles, authors, dates and earlier terminology,
+read source links and the references linked on those pages, and look up
+related Wikipedia entries. It must try reading a proposed primary work before
+finishing when a link is available, and must follow a clue before reporting
+an unresolved origin. A selected primary work's verified passage is quoted
+from the page actually read. The sidebar distinguishes that verification
+from an unverified origin candidate, and retains relevant earlier works and
+unresolved leads with their observed links. A quotation verifies that the
+passage was read, not historical priority: the explanation distinguishes the
+concept's origin, later formulations, naming and popularization. These remain
+model judgments.
+
+An investigation permits ten model calls, forcing a final origin response on
+the last call. Reaching that limit preserves the observed leads and reports
+why an origin was not established. Search, page-reading and Wikipedia access
+failures remain visible. A failed service is not evidence that no origin
+exists. A candidate's own publisher or author link is kept; arXiv is searched
+by title only for a work that has no observed link. Nothing is admitted to the
+knowledge base by Find sources. Its read primary page is held in memory for
+Capture of this same selection and cleared on a new lookup.
+
+Source reading uses the browser's HTML parser and Obsidian's PDF.js, and
+accepts publisher or author HTML, PDFs with a text layer, and plain text in
+UTF-8 or its declared character encoding. It reads at most 24,000 characters
+and the first twenty PDF pages. Scanned PDFs need OCR, and login walls,
+unsupported binary formats and other access failures are reported. There is
+no promise to read every document format or to identify a unique origin.
+The plugin sends the selected term and investigation queries to Exa and
+Wikipedia and reads the observed source links only when the owner requests
+Find sources or a borrowed capture needs it. Wikipedia's text retains its
+CC BY-SA 4.0 notice.
 
 **Search** answers what is typed into the search box, from the knowledge
 base first and from papers and the web for what it does not hold. The
@@ -503,6 +512,9 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   Find sources found), the proposed record of a passage that changes a record
   of another base, a localized record, or a passage that does not state the
   record it was to localize.
+- The lookup sidebar shows **Drafting in Capture** only while its capture
+  runs. Every finished attempt restores **Capture** so it can be retried,
+  including after discarding an unwanted draft.
 - The left of the view lists the sources the drafts cite, each by its file
   name with the number of its drafts. Sources that share a file name get one
   more parent folder each until their names differ, the absolute path telling

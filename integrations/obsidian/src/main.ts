@@ -21,7 +21,8 @@ import {
 } from "./providers";
 import type { Reading } from "./search";
 import type { LocalizeInput, LocalizeResult, LocalizeTarget } from "./localize";
-import type { OriginServices } from "./origin";
+import type { Origin, OriginServices } from "./origin";
+import { readWebPage } from "./pages";
 import { webSearch, type WebSource } from "./web";
 
 import { HiddenKnowledgeIndexer, type HiddenKnowledgeStatus } from "./hidden-knowledge";
@@ -142,7 +143,7 @@ export default class KgdistillerPlugin extends Plugin {
   }
 
   originServices(): OriginServices {
-    return { complete: (chat) => this.model.complete(chat), fetch: this.fetchText, webSearch: (query) => this.webSearch(query) };
+    return { complete: (chat) => this.model.complete(chat), fetch: this.fetchText, webSearch: (query) => this.webSearch(query), readPage: readWebPage };
   }
   /** Source lookups name the plugin to Wikipedia and arXiv, as Wikimedia asks. */
   readonly fetchText: Fetch = async (url) => {
@@ -340,8 +341,9 @@ export default class KgdistillerPlugin extends Plugin {
   }
 
   /** Draft a selection in the Capture view, opened below the lookup sidebar; the owner keeps reading meanwhile. */
-  capture(selection: Selection): void {
-    void this.captureView().then((view) => view?.startCapture(selection));
+  async capture(selection: Selection, origin?: Origin): Promise<void> {
+    const view = await this.captureView();
+    await view?.startCapture(selection, origin);
   }
 
   /** Move a foreign record's citation to a passage of a local source with `kgd relocate`, into that source's base. */

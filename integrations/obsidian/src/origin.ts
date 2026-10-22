@@ -1,18 +1,13 @@
-/**
- * Where an unrecorded term comes from, judged by the agent. One web search asks
- * who first introduced the term; one model call at low reasoning then picks
- * the originating work among the source being read, the references the
- * passage cites and the web results, or none, as for a general term with no
- * single origin, and the Wikipedia article that explains the term as the text
- * uses it, if any. The chosen work is shown as its arXiv page when arXiv holds it: from
- * the candidate's own arXiv link, or else from one arXiv title search, so the
- * rate-limited arXiv API is asked only for a work without a link. Nothing is
- * written to the knowledge base.
+/** Investigate a selected concept through searches, Wikipedia history and
+ * references, and primary pages. Preserve observed leads and access failures;
+ * a copied source passage verifies access, never historical priority by itself.
  */
 
-import { runJob, type Complete, type Tool } from "./agent";
+import { AgentError, runJob, type Complete, type Tool } from "./agent";
 import { arxivByTitle, arxivId, arxivUrl, normalizeTitle, wikipediaArticles, type Encyclopedia, type Fetch, type Reference, type SourceOpening } from "./sources";
 import type { WebSource } from "./web";
+import type { ForeignPage, ReadPage } from "./foreign";
+import { normalizeSpace } from "./evidence";
 
 /** Web results beyond this many are not shown to the model. */
 export const ORIGIN_RESULTS = 8;
@@ -57,14 +52,24 @@ export interface Origin {
   arxivError?: string;
   /** The Wikipedia article that explains the term as the text uses it. */
   wikipedia?: Encyclopedia;
+  /** A passage copied from the chosen work, verified against the page read. */
+  quote?: string;
+  /** The chosen work as actually read, reused by Capture in this lookup. */
+  page?: ForeignPage;
+  /** Relevant earlier works or unresolved candidates, all with observed provenance. */
+  leads?: Work[];
 }
 
-export const ORIGIN_SYSTEM = `You find the work that originated a term: the one that proposed or introduced it. You see the term, the text it was read in, the source being read, the references that text cites, and numbered web results. Answer by calling origin with exactly one choice:
+export const ORIGIN_SYSTEM = `Investigate where the exact selected concept comes from. The initial search is a starting point, not the end of the investigation. Use search for exact paper titles, authors, dates, earlier terminology and primary sources; use wikipedia to follow useful concepts and historical accounts; use read to inspect observed source links and their references. Wikipedia's history and ALL its cited works are clues, including papers, books, reports and dissertations outside arXiv. Follow those clues until you can support an origin or explain the unresolved gap. A title, a shared word, citation count, a web snippet or the first paper Wikipedia cites cannot establish an origin. Do not conflate the first use of a name, the original concept, a later formulation, and a popularization. The source being read may only use the concept. Earlier relevant work must not disappear merely because no single first inventor can be established.
+
+Read the selected primary work before finishing when its link is available. If access fails, preserve it as a lead and explain the failure. For a verified work, quote a short verbatim passage from a page you read that supports its connection to this exact concept. Do not claim historical priority that the evidence does not establish. When uncertain, choose none and return relevant numbered leads. Work titles and links must come from observed candidates; never invent a reference.
+
+Finish by calling origin with exactly one choice:
 - source: the source being read itself introduces the term, even when a web result is the same work; a term it only uses, studies or credits to earlier work is not its own;
 - reference: a cited reference that the text credits with the term (give its number);
 - web: a web result that is the originating paper itself (give its number); a later paper that uses, extends or surveys the term is not;
 - none: no candidate is the originating work, as for a general term with no single origin, or when the true origin is not among them.
-Except for none, give the originating work's title, without authors, venue or year. The Wikipedia articles are numbered too: give article for the one that explains the term as the text uses it, even under another name, and leave it out when none does; an article about another thing of the same name does not. reason: one short sentence in the language of the text the term was read in.`;
+Except for none, give the originating work's title, without authors, venue or year. The Wikipedia articles are numbered too: give article for the one that explains the term as the text uses it, even under another name, and leave it out when none does; an article about another thing of the same name does not. reason: a concise account in the language of the text the term was read in, separating supported facts, earlier related work, and unresolved access or historical uncertainty.`;
 
 const ORIGIN_TOOL = {
   type: "function" as const,
@@ -79,6 +84,8 @@ const ORIGIN_TOOL = {
         title: { type: "string", description: "The originating work's title." },
         article: { type: "integer", description: "The Wikipedia article that explains the term as the text uses it; left out when none does." },
         reason: { type: "string" },
+        quote: { type: "string", description: "A short passage copied verbatim from the selected primary page you read; omit when it could not be verified." },
+        leads: { type: "array", items: { type: "integer" }, description: "Numbers of relevant earlier works or unresolved candidates among the web results, even when no unique origin is established." },
       },
       required: ["choice", "reason"],
       additionalProperties: false,
@@ -93,10 +100,10 @@ function clip(text: string, chars: number): string {
 
 export function originUser(input: OriginInput): string {
   const references = input.references.map((reference) => `[${reference.number}] ${reference.text}`).join("\n");
-  const results = input.results.slice(0, ORIGIN_RESULTS)
+  const results = input.results
     .map((result, index) => `[${index + 1}] ${clip(result.title, TITLE_CHARS)} — ${result.url} — ${clip(result.snippet, SNIPPET_CHARS)}`).join("\n");
   const articles = input.articles
-    .map((article, index) => `[${index + 1}] ${article.title}${article.section ? ` § ${article.section}` : ""} — ${clip(article.extract, EXTRACT_CHARS)}`).join("\n");
+    .map((article, index) => `[${index + 1}] ${article.title}${article.section ? ` § ${article.section}` : ""} — ${clip(article.extract, EXTRACT_CHARS)}${article.context ? `\nContext and history: ${article.context}` : ""}${article.citations?.length ? `\nCited works (clues, not proof of origin):\n${article.citations.map((work) => `${work.title} — ${work.authors ?? ""} ${work.year ?? ""} — ${work.url ?? "no link; search the title"}`).join("\n")}` : ""}`).join("\n");
   return [
     `Term: ${input.term}`,
     `Read in: ${input.context.trim() || input.term}`,
@@ -167,7 +174,7 @@ function acceptChoice(args: Record<string, unknown>, input: OriginInput): Judged
     const arxiv = arxivId(url) ?? arxivId(text);
     return { choice, reason, title, candidate: { title: text, text, reference: number, ...(url ? { url } : {}), ...(arxiv ? { arxiv } : {}) } };
   }
-  const results = input.results.slice(0, ORIGIN_RESULTS);
+  const results = input.results;
   const number = args.number;
   if (typeof number !== "number" || !Number.isInteger(number) || number < 1 || number > results.length) {
     return results.length ? `error: number must be a web result from 1 to ${results.length}` : "error: there are no web results; choose another candidate or none";
@@ -185,7 +192,7 @@ function acceptChoice(args: Record<string, unknown>, input: OriginInput): Judged
  * The work as shown. A reference or page names its work among authors, venue
  * and site, so the judged title is shown when the candidate holds it. A
  * candidate's own arXiv id gives the link and the year (2106.08254 is from
- * 2021); only a candidate without one is searched on arXiv by the judged title.
+ * 2021); only a candidate without any observed link is searched on arXiv by title.
  */
 export async function originWork(fetch: Fetch, judged: Judged): Promise<Pick<Origin, "work" | "arxivError">> {
   const candidate = judged.candidate;
@@ -195,6 +202,7 @@ export async function originWork(fetch: Fetch, judged: Judged): Promise<Pick<Ori
   const id = candidate.arxiv;
   if (id) return { work: { title, url: arxivUrl(id), arxiv: id, year: `20${id.slice(0, 2)}` } };
   const own: Work = { title, ...(candidate.url ? { url: candidate.url } : {}) };
+  if (candidate.url) return { work: own };
   try {
     const entry = await arxivByTitle(fetch, judged.title ?? candidate.title);
     return { work: entry ? { title: entry.title, url: arxivUrl(entry.arxiv), arxiv: entry.arxiv, year: entry.year } : own };
@@ -203,30 +211,117 @@ export async function originWork(fetch: Fetch, judged: Judged): Promise<Pick<Ori
   }
 }
 
-/** Judge where a term comes from among the candidates, then find the chosen work on arXiv. */
-export async function judgeOrigin(complete: Complete, fetch: Fetch, input: OriginInput): Promise<Origin> {
+/** Follow the observed clues before judging the origin; retain the primary page for Capture. */
+export async function judgeOrigin(services: OriginServices, input: OriginInput, failures: string[]): Promise<Origin> {
+  input = { ...input, results: [...input.results], articles: [...input.articles] };
+  const readPages = new Map<string, ForeignPage>();
+  const attempted = new Set<string>();
+  let followed = 0;
+  let quote: string | undefined;
+  let leads: Work[] = [];
+  const add = (results: WebSource[]): void => {
+    for (const result of results) if (!input.results.some((other) => other.url === result.url)) input.results.push(result);
+  };
+  const addCitations = (): void => add(input.articles.flatMap((article) => (article.citations ?? []).flatMap((work) => work.url ? [{ title: work.title, url: work.url, snippet: `Cited by ${article.url}. ${work.authors ?? ""} ${work.year ?? ""}. A lead to investigate, not proof of origin.` }] : [])));
+  addCitations();
+  const knownUrls = (): Set<string> => new Set([
+    ...input.results.map((result) => result.url), ...input.references.flatMap((ref) => ref.url ? [ref.url] : []),
+    ...input.articles.map((article) => article.url), ...[...readPages.values()].flatMap((page) => (page.links ?? []).map((link) => link.url)),
+    ...(input.source && arxivId(input.source.text) ? [arxivUrl(arxivId(input.source.text)!)] : []),
+  ]);
   const tool: Tool<Judged> = {
     spec: ORIGIN_TOOL,
     run: async (args) => {
       const judged = acceptOrigin(args, input);
-      return typeof judged === "string" ? judged : { done: judged };
+      if (typeof judged === "string") return judged;
+      const url = judged.candidate?.url ?? (judged.candidate?.arxiv ? arxivUrl(judged.candidate.arxiv) : undefined);
+      if (url && !attempted.has(url)) return "error: read the selected primary work before finishing; if it cannot be read, preserve it as an unverified lead and explain why";
+      if (judged.choice === "none" && followed === 0) return "error: investigate an earlier-work clue with search, wikipedia or read before concluding that the origin is unresolved";
+      const proposedQuote = typeof args.quote === "string" ? normalizeSpace(args.quote) : "";
+      const page = url ? readPages.get(url) : undefined;
+      if (proposedQuote && (!page || !normalizeSpace(page.text).includes(proposedQuote))) return "error: quote must be copied verbatim from the selected page you read";
+      const numbers = args.leads ?? [];
+      if (!Array.isArray(numbers) || numbers.some((number) => !Number.isInteger(number) || number < 1 || number > input.results.length)) return "error: leads must be numbers of observed web results";
+      leads = [...new Set(numbers as number[])].map((number) => ({ title: input.results[number - 1]!.title, url: input.results[number - 1]!.url }));
+      quote = proposedQuote || undefined;
+      return { done: judged };
     },
   };
-  const judged = await runJob(complete, {
-    system: ORIGIN_SYSTEM,
-    user: originUser(input),
-    tools: [tool],
-    turns: 2,
-    first: "origin",
-    effort: "low",
-  });
+  const search: Tool<Judged> = {
+    spec: { type: "function", function: { name: "search", description: "Follow a citation or historical clue with a focused web search. Results are added to the numbered candidates.", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } } },
+    run: async (args) => {
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      if (!query) return "error: give a focused query";
+      followed++;
+      try { add((await services.webSearch(query)).slice(0, ORIGIN_RESULTS)); }
+      catch (error) { const failure = `Follow-up search failed: ${error instanceof Error ? error.message : String(error)}`; failures.push(failure); return failure; }
+      return originUser(input);
+    },
+  };
+  const read: Tool<Judged> = {
+    spec: { type: "function", function: { name: "read", description: "Read an observed source or reference link; inspect its actual text and links before judging origin.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"], additionalProperties: false } } },
+    run: async (args) => {
+      const url = typeof args.url === "string" ? args.url : "";
+      if (!knownUrls().has(url)) return "error: read only a link observed in the results, Wikipedia references, source references, or a page already read";
+      followed++;
+      attempted.add(url);
+      try {
+        const page = readPages.get(url) ?? await services.readPage(url);
+        readPages.set(url, page);
+        const existing = input.results.find((result) => result.url === url);
+        if (existing) existing.snippet = `${page.title} ${page.text.slice(0, 500)}`;
+        else add([{ title: page.title, url, snippet: page.text.slice(0, SNIPPET_CHARS) }]);
+        return `${page.title} — ${url}\n${page.text}\nLinks:\n${(page.links ?? []).map((link) => `${link.title} — ${link.url}`).join("\n")}\nNumbered candidates:\n${input.results.map((result, index) => `[${index + 1}] ${result.title} — ${result.url}`).join("\n")}`;
+      } catch (error) {
+        const failure = `Could not read ${url}: ${error instanceof Error ? error.message : String(error)}`;
+        failures.push(failure);
+        return failure;
+      }
+    },
+  };
+  const wikipedia: Tool<Judged> = {
+    spec: { type: "function", function: { name: "wikipedia", description: "Investigate an alternative name or related concept through Wikipedia, including its history and references.", parameters: { type: "object", properties: { term: { type: "string" } }, required: ["term"], additionalProperties: false } } },
+    run: async (args) => {
+      const term = typeof args.term === "string" ? args.term.trim() : "";
+      if (!term) return "error: give the term to investigate";
+      followed++;
+      try { for (const article of await wikipediaArticles(term, services.fetch)) if (!input.articles.some((other) => other.url === article.url)) input.articles.push(article); }
+      catch (error) { const failure = `Wikipedia follow-up failed: ${error instanceof Error ? error.message : String(error)}`; failures.push(failure); return failure; }
+      addCitations();
+      return originUser(input);
+    },
+  };
+  let judged: Judged;
+  try {
+    judged = await runJob(services.complete, {
+      system: ORIGIN_SYSTEM,
+      user: originUser(input),
+      tools: [search, read, wikipedia, tool],
+      turns: 10,
+      last: "origin",
+      effort: "low",
+    });
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+    return {
+      choice: "none", reason: error instanceof AgentError
+        ? "The investigation did not establish an origin within its model-call limit; these are observed leads, not verified origins."
+        : "The investigation could not finish; these are observed leads, not verified origins.",
+      leads: [...input.results, ...input.articles].map((result) => ({ title: result.title, url: result.url })),
+    };
+  }
   const reference = judged.candidate?.reference;
+  const work = await originWork(services.fetch, judged);
+  const page = work.work?.url ? readPages.get(work.work.url) : undefined;
   return {
     choice: judged.choice,
     reason: judged.reason,
     ...(reference ? { reference } : {}),
     ...(judged.wikipedia ? { wikipedia: judged.wikipedia } : {}),
-    ...(await originWork(fetch, judged)),
+    ...work,
+    ...(page ? { page: { ...page, title: work.work!.title } } : {}),
+    ...(quote ? { quote } : {}),
+    ...(leads.length ? { leads } : {}),
   };
 }
 
@@ -235,11 +330,11 @@ export interface OriginServices {
   complete: Complete;
   fetch: Fetch;
   webSearch(query: string): Promise<WebSource[]>;
+  readPage: ReadPage;
 }
 
 /**
- * Where a term comes from: one web search and Wikipedia's articles, together,
- * then the judgment among them and the references the text cites. Either
+ * Seed an investigation with web results and Wikipedia's history and references. Either
  * service failing leaves the other's candidates to judge; `failures` says which
  * failed.
  */
@@ -256,6 +351,6 @@ export async function findOrigin(services: OriginServices, input: Omit<OriginInp
       return [];
     }),
   ]);
-  const origin = await judgeOrigin(services.complete, services.fetch, { ...input, results, articles });
+  const origin = await judgeOrigin(services, { ...input, results, articles }, failures);
   return { origin, failures };
 }

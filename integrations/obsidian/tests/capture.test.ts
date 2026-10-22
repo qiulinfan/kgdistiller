@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { judgeSelection } from "../src/judge";
+
+vi.mock("../src/judge", () => ({ judgeSelection: vi.fn() }));
+beforeEach(() => {
+  vi.mocked(judgeSelection).mockReset();
+  vi.mocked(judgeSelection).mockResolvedValue({ verdict: "matched", records: ["proposal"], explanation: "Same item." });
+});
 
 import {
   SIDE_SYSTEM,
@@ -19,8 +26,8 @@ import {
 import type { Draft } from "../src/drafts";
 import type { ChatReply, ChatRequest } from "../src/model";
 import type { FullRecord, RecordSummary } from "../src/lookup-model";
-import type { OriginServices } from "../src/origin";
 import type { WebSource } from "../src/web";
+import type { OriginServices } from "../src/origin";
 
 const SOURCE = "/vaults/papers/papers/mae/mae_ch.md";
 const lines = [
@@ -163,8 +170,19 @@ function world(options: WorldOptions = {}): World {
     },
     remove: async (path) => { written.delete(path); },
   };
+  const originAnswers = scripted(() => "origin", judged);
   const origin: OriginServices = {
-    complete: scripted(() => "origin", judged).complete,
+    complete: async (request) => {
+      const answer = judged[0];
+      const url = results[0]?.url ?? (answer?.choice === "reference" ? "https://arxiv.org/abs/2106.08254" : undefined);
+      if (url && !request.messages.some((message) => message.role === "tool")) {
+        return { message: { content: null, tool_calls: [{ id: "read-origin", type: "function", function: { name: "read", arguments: JSON.stringify({ url }) } }] } };
+      }
+      if (answer?.choice === "none" && !request.messages.some((message) => message.role === "tool")) {
+        return { message: { content: null, tool_calls: [{ id: "search-origin", type: "function", function: { name: "search", arguments: JSON.stringify({ query: "earlier work" }) } }] } };
+      }
+      return originAnswers.complete(request);
+    },
     // Wikipedia has no article for the term; arXiv answers with BEiT's abstract.
     fetch: async (url) => {
       fetched.push(url);
@@ -175,6 +193,7 @@ function world(options: WorldOptions = {}): World {
       return JSON.stringify({ query: { pages: [] } });
     },
     webSearch: async () => results,
+    readPage: async (url) => ({ url, title: "Original work", text: BEIT_ABSTRACT }),
   };
   return { kgd, files, origin, written, commands, listed, got, fetched };
 }
@@ -486,6 +505,84 @@ describe("a borrowed concept", () => {
   const beit: WebSource = { title: "BEiT: BERT Pre-Training of Image Transformers", url: BEIT_URL, snippet: "BEiT masks blocks of patches." };
   const fromBeit = { choice: "web", number: 1, title: "BEiT: BERT Pre-Training of Image Transformers", reason: "BEiT 提出。" };
 
+  it("does not turn autoencoders selected inside masked autoencoders into the masked method", async () => {
+    const w = world({ judged: [{ choice: "none", reason: "No originating page available." }] });
+    w.written.set(SOURCE, "Masked autoencoders reconstruct missing image patches.");
+    vi.mocked(judgeSelection).mockResolvedValueOnce({ verdict: "unmatched", records: [], explanation: "Autoencoder is the general concept; Masked autoencoder is narrower." });
+    const { complete, requests } = model(
+      { item: "Masked autoencoder", decision: "new", label: "Masked autoencoder", kind: "architecture", statement: "Reconstructs missing image patches.", evidence: [{ lines: "1", quote: "Masked autoencoders reconstruct missing image patches." }], report: "" },
+      { item: "Autoencoder", decision: "borrowed", label: "Autoencoder", report: "通用概念。" },
+    );
+    const result = await capture(w, complete, { path: SOURCE, from: 1, to: 1, selection: "autoencoders" });
+    expect(result).toMatchObject({ decision: "borrowed", label: "Autoencoder" });
+    expect(seen(requests)[0]).toContain('Capture exactly "autoencoders"');
+    expect(drafts(w)).toEqual([]);
+  });
+
+  it("reuses the origin already displayed by Find sources instead of searching again", async () => {
+    const w = world();
+    const webSearch = vi.spyOn(w.origin, "webSearch");
+    const { complete, requests } = model(asked, page);
+    const origin = { choice: "web" as const, work: { title: fromBeit.title, url: BEIT_URL, arxiv: "2106.08254" }, reason: fromBeit.reason };
+    const result = await capture(w, complete, { ...borrowedInput, origin });
+    expect(result).toMatchObject({ draft: true, foreign: true });
+    expect(webSearch).not.toHaveBeenCalled();
+    expect(requests[0]!.messages[1]!.content).toContain("Find sources for the selected item already returned:");
+    expect(drafts(w)[0]![1]).toContain(`source: "${BEIT_URL}"`);
+  });
+
+  it("cites a cached non-arXiv primary page and follows the profile's language without translating Evidence", async () => {
+    const guidance = "Write descriptions and reports in Chinese, keeping technical terms in English. Never translate Evidence.";
+    const w = world({ source: { guidance } });
+    const work = { title: "Original masking work", url: "https://publisher.example/masking.pdf" };
+    const origin = { choice: "web" as const, work, page: { ...work, text: BEIT_ABSTRACT }, reason: "已核实原文。" };
+    const read = vi.spyOn(w.origin, "readPage");
+    const search = vi.spyOn(w.origin, "webSearch");
+    const statement = "Block-wise masking 每次遮住一块 image patches，而不是逐个遮住 patch。";
+    const { complete, requests } = model(asked, { ...page, statement });
+    await capture(w, complete, { ...borrowedInput, origin });
+    const text = drafts(w)[0]![1];
+    expect(text).toContain(`source: "${work.url}"`);
+    expect(text).toContain(statement);
+    expect(text).toContain("> Block-wise masking masks a block of image patches at a time");
+    expect(read).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    expect(requests[0]!.messages[0]!.content).toContain(guidance);
+    expect(requests[0]!.messages[0]!.content).toContain("A foreign evidence page's language does not override this writing language");
+  });
+
+  it("shows why the primary source was unavailable when the draft cites Wikipedia", async () => {
+    const w = world();
+    w.origin.readPage = async () => { throw new Error("HTTP 403"); };
+    w.origin.fetch = async () => JSON.stringify({ query: { pages: [{ extract: BEIT_ABSTRACT }] } });
+    const origin = { choice: "web" as const, work: { title: "Original masking work", url: "https://publisher.example/masking.pdf" }, wikipedia: { title: "Masking", url: "https://en.wikipedia.org/wiki/Masking", extract: "" }, reason: "" };
+    const { complete, requests } = model(asked, page);
+    const result = await capture(w, complete, { ...borrowedInput, origin });
+    expect(result.report).toContain("The originating work could not be read: HTTP 403");
+    expect(seen(requests)[0]).toContain("Source-reading problems:");
+    expect(drafts(w)[0]![1]).toContain('source: "https://en.wikipedia.org/wiki/Masking"');
+  });
+
+  it("rejects a narrower concept before writing and lets the model return to the selected item", async () => {
+    const w = world({ judged: [fromBeit], results: [beit] });
+    vi.mocked(judgeSelection).mockResolvedValueOnce({ verdict: "unmatched", records: [], explanation: "The proposal is a particular method, not the selected general concept." });
+    const { complete, requests } = model({ ...page, decision: "new", label: "A narrower method", evidence: [{ lines: "6", quote: lines[5] }] }, asked, page);
+    const result = await capture(w, complete, borrowedInput);
+    expect(seen(requests)[0]).toContain("the proposal is not the selected knowledge item");
+    expect(result).toMatchObject({ label: "Block-wise masking", foreign: true });
+    expect(drafts(w)).toHaveLength(1);
+    expect(drafts(w)[0]![1]).not.toContain("A narrower method");
+    expect(vi.mocked(judgeSelection).mock.calls[0]![1]).toMatchObject({ selection: borrowedInput.selection, candidates: [{ label: "A narrower method" }] });
+  });
+
+  it("does not write when the scope check cannot complete", async () => {
+    const w = world();
+    vi.mocked(judgeSelection).mockRejectedValue(new Error("model unavailable"));
+    const { complete } = model(page, page, page, page, page, page);
+    await expect(capture(w, complete, borrowedInput)).rejects.toThrow("did not finish");
+    expect(drafts(w)).toEqual([]);
+  });
+
   it("shows the pages it comes from, then is drafted as foreign knowledge citing the page without lines", async () => {
     const w = world({ judged: [fromBeit], results: [beit] });
     const { complete, requests } = model(asked, page);
@@ -496,7 +593,7 @@ describe("a borrowed concept", () => {
     const shown = seen(requests)[0]!;
     expect(shown).toContain(`Where "Block-wise masking" comes from, by page:\n\n[1] BEiT: BERT Pre-Training of Image Transformers — ${BEIT_URL}\n`);
     expect(shown).toContain(BEIT_ABSTRACT);
-    expect(w.fetched.filter((url) => url.startsWith("https://export.arxiv.org/"))).toEqual(["https://export.arxiv.org/api/query?id_list=2106.08254&max_results=1"]);
+    expect(w.fetched.filter((url) => url.startsWith("https://export.arxiv.org/"))).toEqual([]);
     expect(w.written.get("/vaults/papers/.knowledge/drafts/block-wise-masking.md")).toBe([
       "---", "label: \"Block-wise masking\"", "kind: \"algorithm\"", "aliases:", "  - \"分块掩码\"", `source: "${BEIT_URL}"`,
       "epistemic: \"stated\"", "requires:", "  - \"[[masked-autoencoder]]\"", "---", "Block-wise masking masks a block of image patches at a time.", "",

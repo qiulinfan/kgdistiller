@@ -151,6 +151,14 @@ const VISION_TRANSFORMER = [
 ].join("\n");
 
 describe("Wikipedia", () => {
+  it("retains non-arXiv books and papers with author, date, DOI and nested citation formatting", () => {
+    const text = 'History.<ref>{{cite journal |last=Reader |first=A. |year=1980 |title=Early coding networks |doi=10.1234/coding}}</ref> '
+      + '<ref>{{citation |author=B. Writer |date=1985 |title={{lang|en|Coding representations}} |url=https://publisher.example/coding}}</ref>';
+    expect(wikiCitations(text)).toEqual([
+      { title: "Early coding networks", url: "https://doi.org/10.1234/coding", authors: "Reader A.", year: "1980" },
+      { title: "Coding representations", url: "https://publisher.example/coding", authors: "B. Writer", year: "1985" },
+    ]);
+  });
   it("tries the singular of a plural term", () => {
     expect(wikipediaTitles("denoising autoencoders")).toEqual(["Denoising autoencoders", "Denoising autoencoder"]);
     expect(wikipediaTitles("BEiT")).toEqual(["BEiT"]);
@@ -160,8 +168,8 @@ describe("Wikipedia", () => {
     const section = wikiSection(VISION_TRANSFORMER, "masked autoencoder");
     expect(section?.split("\n")).toHaveLength(3);
     expect(wikiCitations(section!)).toEqual([
-      { title: "Masked Autoencoders Are Scalable Vision Learners", arxiv: "2111.06377" },
-      { title: "Context Encoders", arxiv: "1604.07379" },
+      { title: "Masked Autoencoders Are Scalable Vision Learners", arxiv: "2111.06377", url: "https://arxiv.org/abs/2111.06377", authors: "He" },
+      { title: "Context Encoders", arxiv: "1604.07379", url: "https://arxiv.org/abs/1604.07379" },
     ]);
     expect(wikiPlain(section!)).toBe("The Masked Autoencoder took inspiration from denoising autoencoders. It has two ViTs put end-to-end. Later text.");
     expect(wikiSection(VISION_TRANSFORMER, "History")?.split("\n")).toHaveLength(7);
@@ -180,12 +188,12 @@ describe("Wikipedia", () => {
     };
     const located = wikipediaPage(reply);
     expect(located?.section).toBe("Masked Autoencoder");
-    expect(wikipediaEntry(located!.page, located!.section, VISION_TRANSFORMER)).toEqual({
+    expect(wikipediaEntry(located!.page, located!.section, VISION_TRANSFORMER)).toMatchObject({
       title: "Vision transformer",
       url: "https://en.wikipedia.org/wiki/Vision_transformer#Masked_Autoencoder",
       extract: "The Masked Autoencoder took inspiration from denoising autoencoders. It has two ViTs put end-to-end.",
       section: "Masked Autoencoder",
-      cites: { title: "Masked Autoencoders Are Scalable Vision Learners", arxiv: "2111.06377", url: "https://arxiv.org/abs/2111.06377" },
+      citations: [{ title: "Masked Autoencoders Are Scalable Vision Learners", arxiv: "2111.06377", url: "https://arxiv.org/abs/2111.06377" }, { title: "Context Encoders" }],
     });
   });
 
@@ -194,12 +202,12 @@ describe("Wikipedia", () => {
       title: "Variational autoencoder", extract: " A VAE is a model. ", langlinks: [{ lang: "zh", title: "变分自编码器" }],
       revisions: [{ slots: { main: { content: "{{cite arXiv |title=Auto-Encoding Variational Bayes |eprint=1312.6114 }}" } } }],
     };
-    expect(wikipediaEntry(page, undefined, "")).toEqual({
+    expect(wikipediaEntry(page, undefined, "")).toMatchObject({
       title: "Variational autoencoder",
       url: "https://en.wikipedia.org/wiki/Variational_autoencoder",
       extract: "A VAE is a model.",
       zh: { title: "变分自编码器", url: "https://zh.wikipedia.org/wiki/%E5%8F%98%E5%88%86%E8%87%AA%E7%BC%96%E7%A0%81%E5%99%A8" },
-      cites: { title: "Auto-Encoding Variational Bayes", arxiv: "1312.6114", url: "https://arxiv.org/abs/1312.6114" },
+      citations: [{ title: "Auto-Encoding Variational Bayes", arxiv: "1312.6114", url: "https://arxiv.org/abs/1312.6114" }],
     });
     expect(wikipediaPage({ query: { pages: [{ title: "BEiT", missing: true }] } })).toBeUndefined();
     expect(wikipediaPage({ query: { pages: [{ title: "Beit", pageprops: { disambiguation: "" } }] } })).toBeUndefined();
@@ -222,7 +230,7 @@ describe("finding Wikipedia's entry", () => {
     };
     const entry = await findWikipedia("masked autoencoder", fetch);
     expect(entry?.url).toBe("https://en.wikipedia.org/wiki/Vision_transformer#Masked_Autoencoder");
-    expect(entry?.cites?.arxiv).toBe("2111.06377");
+    expect(entry?.citations?.[0]?.arxiv).toBe("2111.06377");
     expect(urls[0]).toContain("titles=Masked%20autoencoder");
     expect(urls[1]).toContain("titles=Vision%20transformer");
     expect(urls[1]).not.toContain("rvsection");
@@ -244,7 +252,7 @@ describe("finding Wikipedia's entry", () => {
     };
     const articles = await wikipediaArticles("latent representation", fetch);
     expect(articles.map((article) => article.title)).toEqual(["Latent representation", "Latent diffusion model", "Latent space"]);
-    expect(articles[1]?.cites).toEqual({ title: "High-Resolution Image Synthesis", arxiv: "2112.10752", url: "https://arxiv.org/abs/2112.10752" });
+    expect(articles[1]?.citations?.[0]).toEqual({ title: "High-Resolution Image Synthesis", arxiv: "2112.10752", url: "https://arxiv.org/abs/2112.10752" });
     expect(articles[2]?.zh?.title).toBe("潜空间 (机器学习)");
     expect(urls.find((url) => url.includes("generator=search"))).toContain("gsrsearch=latent%20representation&gsrlimit=3");
     await expect(wikipediaArticles("BEiT", async (url) => JSON.stringify({ query: { pages: url.includes("generator=search") ? [] : [{ title: "BEiT", missing: true }] } })))
