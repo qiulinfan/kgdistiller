@@ -20,7 +20,7 @@
 - 通过一个 SQLite 索引同时搜索所有已注册的 vault；`kgd search` 融合全文检索、dense embedding 检索（例如 BGE-M3）和名称匹配三路结果。
 - 在 Obsidian 里选中文字即可查询知识，看到记录周围的类型化邻居图；内置 agent 把选中内容起草成草稿，你在入库侧栏里确认入库；coding agent 通过 Skills 和 MCP server 来记录、编译和查询知识。
 
-本仓库包含 Obsidian 插件和 Python 核心，二者都是 **3.0.0**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
+本仓库包含 Obsidian 插件 **3.0.1** 和 Python 核心 **3.0.0**。两者分开发版、分开打 tag：插件 tag 是 `x.y.z`，核心 tag 是 `core-x.y.z`。
 
 ## 为什么以知识图谱为核心
 

@@ -27,7 +27,7 @@
   Capture view; coding agents capture, compile and query through Skills and
   an MCP server.
 
-This repository holds the Obsidian plugin and the Python core, both at
+This repository holds the Obsidian plugin at **3.0.1** and the Python core at
 **3.0.0**. They are versioned and tagged separately: plugin tags are bare
 `x.y.z`, core tags are `core-x.y.z`.
 

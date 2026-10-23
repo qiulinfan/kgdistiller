@@ -2,6 +2,19 @@
 
 All notable changes are documented here.
 
+## Obsidian 3.0.1 — 2026-10-23
+
+The Python core remains at 3.0.0.
+
+- Knowledge-marker chips take the command key from Obsidian's `Platform`
+  instead of reading the operating system from `navigator`, which failed the
+  community directory review, and are created with Obsidian's `createSpan`.
+- Timers use `window.setTimeout` and `window.clearTimeout` for popout windows,
+  the hidden-folder indexer imports `node:fs/promises` instead of calling
+  `require`, binary detection no longer puts a control character in a regular
+  expression, and the lookup pane's spacing no longer uses a `:has` selector.
+- Release assets carry GitHub artifact attestations.
+
 ## 3.0.0 — 2026-10-23
 
 The Python core and the Obsidian plugin both move to 3.0.0.
