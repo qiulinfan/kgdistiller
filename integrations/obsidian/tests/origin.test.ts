@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChatReply, ChatRequest } from "../src/model";
+import { rankSourceLinks } from "../src/origin-ranking";
+vi.mock("../src/origin-ranking", () => ({ rankSourceLinks: vi.fn(async () => []) }));
 import { acceptOrigin, judgeOrigin, originQuery, originUser, originWork, type OriginInput, type OriginServices } from "../src/origin";
 
 const BEIT = { number: "2", text: "Hangbo Bao, Li Dong, and Furu Wei. BEiT: BERT pre-training of image transformers. arXiv:2106.08254, 2021.", url: "https://arxiv.org/abs/2106.08254" };
@@ -244,5 +246,31 @@ describe("following origin clues", () => {
     expect(origin.leads).toContainEqual({ title: paper.title, url: paper.url });
     expect(failures).toContain("Model service unavailable");
     expect(origin).not.toHaveProperty("quote");
+  });
+
+  it("reranks the complete pool after a partial investigation without discarding the original evidence", async () => {
+    const { service } = services(Array.from({ length: 10 }, () => reply("search", { query: "earlier work" })));
+    const results = Array.from({ length: 24 }, (_, n) => ({ title: `Work ${n + 1}`, url: `https://publisher.example/work-${n + 1}`, snippet: "Observed search result." }));
+    const selected = { title: results[23]!.title, url: results[23]!.url, annotation: "与所选概念直接相关；目前只核实到检索摘要。" };
+    vi.mocked(rankSourceLinks).mockResolvedValueOnce([selected]);
+    const origin = await judgeOrigin(service, { ...base, rank: true, results }, []);
+    expect(origin.ranked).toEqual([selected]);
+    const rankedInput = vi.mocked(rankSourceLinks).mock.calls.at(-1)![1];
+    expect(rankedInput.candidates.some((candidate) => candidate.url === results[23]!.url)).toBe(true);
+    expect(rankedInput.candidates.some((candidate) => candidate.url === article.url)).toBe(true);
+    expect(rankedInput.candidates.some((candidate) => candidate.url === paper.url)).toBe(true);
+    expect(new Set(rankedInput.candidates.map((candidate) => candidate.url)).size).toBe(rankedInput.candidates.length);
+    expect(origin.leads!.length).toBeGreaterThan(10);
+  });
+
+  it("skips the ranking call when no shortlist is shown, as for Capture", async () => {
+    const { service } = services([
+      reply("read", { url: paper.url }),
+      reply("origin", { choice: "web", number: 1, title: paper.title, quote: passage, reason: "原文陈述该方法。" }),
+    ]);
+    vi.mocked(rankSourceLinks).mockClear();
+    const origin = await judgeOrigin(service, base, []);
+    expect(rankSourceLinks).not.toHaveBeenCalled();
+    expect(origin).not.toHaveProperty("ranked");
   });
 });

@@ -32,6 +32,7 @@ export interface Reading {
   base: string;
   source: string;
   type: string;
+  guidance?: string;
 }
 
 export interface Citation {

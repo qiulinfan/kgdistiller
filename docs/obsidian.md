@@ -351,7 +351,7 @@ while the owner keeps reading:
 Exa search and Wikipedia lookup start the investigation. Wikipedia supplies
 the full article or redirected section, its historical context and all cited
 works, including non-arXiv papers, books, reports and references without links.
-The sidebar keeps these references as clues; the first citation is never
+These references remain investigation clues; the first citation is never
 presented as proof of origin.
 
 The agent can search exact titles, authors, dates and earlier terminology,
@@ -365,6 +365,20 @@ unresolved leads with their observed links. A quotation verifies that the
 passage was read, not historical priority: the explanation distinguishes the
 concept's origin, later formulations, naming and popularization. These remain
 model judgments.
+
+After investigation, a separate model call reranks the complete observed
+candidate pool by its semantic relevance to the exact selected concept.
+The sidebar shows one deduplicated ordered list of at most ten source links,
+including primary works and Wikipedia explanations when relevant, rather
+than separate unranked reference and lead lists. Every link has a concise
+annotation explaining its specific relationship and evidence status: a page
+actually read, a Wikipedia citation, a search snippet, or an inaccessible
+primary source. The source document type's writing-language and terminology
+guidance applies to these annotations. The model may return fewer than ten
+and must not fill a quota. Ranking can retry a malformed answer once; if it
+fails, the sidebar reports that failure and does not dump the raw candidates.
+The concluded origin work keeps its own link above the list either way.
+Capture does not show the list, so its investigation skips the ranking call.
 
 An investigation permits ten model calls, forcing a final origin response on
 the last call. Reaching that limit preserves the observed leads and reports

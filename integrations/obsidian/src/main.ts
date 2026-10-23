@@ -117,8 +117,8 @@ export default class KgdistillerPlugin extends Plugin {
   /** The registered source at an absolute path, from `kgd source`, which writes nothing; undefined for any other file. */
   async registeredSource(path: string): Promise<Reading | undefined> {
     try {
-      const { base, source, type } = (await this.kgd.command(["source", path])).report as unknown as Reading;
-      return { base, source, type };
+      const { base, source, type, guidance } = (await this.kgd.command(["source", path])).report as unknown as Reading;
+      return { base, source, type, ...(guidance ? { guidance } : {}) };
     } catch {
       return undefined;
     }

@@ -14,7 +14,7 @@ import type { KgdServer } from "./kgd";
 import type { RecordSummary } from "./lookup-model";
 import { findOrigin, type Origin, type OriginServices } from "./origin";
 import { answerMarkdown, searchKnowledge, stepText, type Reading, type SearchAnswer } from "./search";
-import { arxivId, citedReferences, sourceOpening, type Encyclopedia, type Fetch, type Reference } from "./sources";
+import { arxivId, citedReferences, sourceOpening, type Fetch } from "./sources";
 import type { WebSource } from "./web";
 
 /** The selected passage a lookup started from. */
@@ -247,12 +247,12 @@ export class AgentPane {
       : [];
     const source = selection.source && lines.some((line) => line.trim()) ? sourceOpening(lines, selection.source.path) : undefined;
     const references = selection.source ? citedReferences(lines.slice(selection.source.from - 1, selection.source.to).join("\n"), lines) : [];
-    if (references.length > 0) this.renderReferences(references);
     let origin: Origin;
     let failures: string[];
     try {
+      const reading = await this.host.reading();
       ({ origin, failures } = await findOrigin(this.host.originServices(),
-        { term: selection.text, context: selection.context, ...(source ? { source } : {}), references }));
+        { term: selection.text, context: selection.context, rank: true, guidance: reading?.guidance, ...(source ? { source } : {}), references }));
     } catch (error) {
       if (request !== this.request) return;
       status.remove();
@@ -264,7 +264,6 @@ export class AgentPane {
     this.origin = origin;
     status.remove();
     this.renderOrigin(section, origin, performance.now() - started);
-    this.renderWikipedia(section, origin.wikipedia);
     for (const failure of failures) section.createDiv({ cls: "kgd-lookup-hint", text: failure });
   }
 
@@ -283,53 +282,19 @@ export class AgentPane {
     line.createSpan({ cls: "kgd-lookup-meta", text: ` · ${seconds(ms)}` });
     if (origin.reason) element.createDiv({ cls: "kgd-lookup-explanation", text: origin.reason });
     if (origin.quote) element.createEl("blockquote", { text: origin.quote });
-    if (origin.leads?.length) {
-      element.createEl("h4", { text: "Earlier work and leads" });
-      const list = element.createEl("ul");
-      for (const work of origin.leads) {
+    if (origin.ranked?.length) {
+      element.createEl("h4", { text: "Related sources" });
+      const list = element.createEl("ol", { cls: "kgd-lookup-links" });
+      for (const work of origin.ranked) {
         const item = list.createEl("li");
-        if (work.url) item.createEl("a", { text: work.title, href: work.url });
-        else item.createSpan({ text: work.title });
+        item.createEl("a", { text: work.title, href: work.url });
+        item.createDiv({ cls: "kgd-lookup-explanation", text: work.annotation });
       }
+    } else {
+      element.createDiv({ cls: "kgd-lookup-hint", text: "No ranked sources to show." });
     }
-  }
-
-  private renderWikipedia(element: HTMLElement, wikipedia: Encyclopedia | undefined): void {
-    if (!wikipedia) {
-      element.createDiv({ cls: "kgd-lookup-hint", text: "No Wikipedia article is about it in this sense." });
-      return;
-    }
-    const item = element.createDiv({ cls: "kgd-lookup-wikipedia" });
-    item.createEl("a", { text: `Wikipedia: ${wikipedia.title}${wikipedia.section ? ` § ${wikipedia.section}` : ""}`, href: wikipedia.url });
-    if (wikipedia.zh) {
-      item.createSpan({ text: " · " });
-      item.createEl("a", { text: wikipedia.zh.title, href: wikipedia.zh.url });
-    }
-    if (wikipedia.extract) item.createDiv({ cls: "kgd-lookup-gloss", text: wikipedia.extract });
-    if (wikipedia.citations?.length) {
-      const details = item.createEl("details");
-      details.createEl("summary", { text: `References and origin clues (${wikipedia.citations.length})` });
-      const list = details.createEl("ul");
-      for (const work of wikipedia.citations) {
-        const entry = list.createEl("li");
-        if (work.url) entry.createEl("a", { text: work.title || work.url, href: work.url });
-        else entry.createSpan({ text: work.title });
-        entry.createSpan({ cls: "kgd-lookup-meta", text: ` ${work.authors ?? ""} ${work.year ?? ""}`.trim() });
-      }
-    }
-    item.createDiv({ cls: "kgd-lookup-hint", text: "Text from Wikipedia, CC BY-SA 4.0." });
-  }
-
-  private renderReferences(references: Reference[]): void {
-    const section = this.sourcesEl.createDiv({ cls: "kgd-lookup-section" });
-    section.createEl("h4", { text: "Cited here" });
-    section.createDiv({ cls: "kgd-lookup-hint", text: "The works this passage cites, from the source's reference list." });
-    const list = section.createEl("ul", { cls: "kgd-lookup-links" });
-    for (const reference of references) {
-      const item = list.createEl("li");
-      item.createSpan({ cls: "kgd-lookup-meta", text: `[${reference.number}] ` });
-      if (reference.url) item.createEl("a", { text: reference.text, href: reference.url });
-      else item.createSpan({ text: reference.text });
+    if (origin.ranked?.some((work) => /^https?:\/\/(?:[\w-]+\.)?wikipedia\.org\//.test(work.url))) {
+      element.createDiv({ cls: "kgd-lookup-hint", text: "Text from Wikipedia, CC BY-SA 4.0." });
     }
   }
 

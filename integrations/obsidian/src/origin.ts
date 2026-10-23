@@ -8,6 +8,7 @@ import { arxivByTitle, arxivId, arxivUrl, normalizeTitle, wikipediaArticles, typ
 import type { WebSource } from "./web";
 import type { ForeignPage, ReadPage } from "./foreign";
 import { normalizeSpace } from "./evidence";
+import { rankSourceLinks, type RankedSource, type SourceCandidate } from "./origin-ranking";
 
 /** Web results beyond this many are not shown to the model. */
 export const ORIGIN_RESULTS = 8;
@@ -22,6 +23,10 @@ export interface OriginInput {
   term: string;
   /** The text the term was read in. */
   context: string;
+  /** Rerank the observed sources into the sidebar's shortlist; Capture does not show it. */
+  rank?: boolean;
+  /** Owner-defined language and terminology guidance of the source being read. */
+  guidance?: string;
   /** The source being read, when the selection lies in a file. */
   source?: SourceOpening;
   /** The references the text cites, from the source's reference list. */
@@ -58,6 +63,8 @@ export interface Origin {
   page?: ForeignPage;
   /** Relevant earlier works or unresolved candidates, all with observed provenance. */
   leads?: Work[];
+  /** The only source links displayed: at most ten, reranked and annotated. */
+  ranked?: RankedSource[];
 }
 
 export const ORIGIN_SYSTEM = `Investigate where the exact selected concept comes from. The initial search is a starting point, not the end of the investigation. Use search for exact paper titles, authors, dates, earlier terminology and primary sources; use wikipedia to follow useful concepts and historical accounts; use read to inspect observed source links and their references. Wikipedia's history and ALL its cited works are clues, including papers, books, reports and dissertations outside arXiv. Follow those clues until you can support an origin or explain the unresolved gap. A title, a shared word, citation count, a web snippet or the first paper Wikipedia cites cannot establish an origin. Do not conflate the first use of a name, the original concept, a later formulation, and a popularization. The source being read may only use the concept. Earlier relevant work must not disappear merely because no single first inventor can be established.
@@ -224,6 +231,32 @@ export async function judgeOrigin(services: OriginServices, input: OriginInput, 
   };
   const addCitations = (): void => add(input.articles.flatMap((article) => (article.citations ?? []).flatMap((work) => work.url ? [{ title: work.title, url: work.url, snippet: `Cited by ${article.url}. ${work.authors ?? ""} ${work.year ?? ""}. A lead to investigate, not proof of origin.` }] : [])));
   addCitations();
+  const present = async (origin: Origin): Promise<Origin> => {
+    if (!input.rank) return origin;
+    const candidates = new Map<string, SourceCandidate>();
+    const addCandidate = (title: string, url: string | undefined, context: string): void => {
+      if (!url) return;
+      const known = candidates.get(url);
+      candidates.set(url, { title: known?.title || title || url, url, context: known ? `${known.context}\n${context}` : context });
+    };
+    for (const result of input.results) addCandidate(result.title, result.url, result.snippet);
+    for (const reference of input.references) addCandidate(reference.text, reference.url, `Cited by the selected passage: ${reference.text}`);
+    for (const article of input.articles) {
+      addCandidate(article.title, article.url, `Wikipedia background: ${article.extract}`);
+      for (const citation of article.citations ?? []) addCandidate(citation.title, citation.url, `Wikipedia citation; not proof of relevance or priority. ${citation.authors ?? ""} ${citation.year ?? ""}`);
+    }
+    if (origin.work) addCandidate(origin.work.title, origin.work.url, `Investigation conclusion, subject to its uncertainty: ${origin.reason}`);
+    for (const candidate of candidates.values()) {
+      const page = readPages.get(candidate.url);
+      candidate.context += page ? `\nPage actually read:\n${page.text.slice(0, 2000)}` : attempted.has(candidate.url) ? "\nPrimary-page read failed; only the observed clue is available." : "\nPrimary page not read; only the observed clue is available.";
+    }
+    try {
+      return { ...origin, ranked: await rankSourceLinks(services.complete, { term: input.term, context: input.context, guidance: input.guidance, candidates: [...candidates.values()] }) };
+    } catch (error) {
+      failures.push(`Source ranking failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { ...origin, ranked: [] };
+    }
+  };
   const knownUrls = (): Set<string> => new Set([
     ...input.results.map((result) => result.url), ...input.references.flatMap((ref) => ref.url ? [ref.url] : []),
     ...input.articles.map((article) => article.url), ...[...readPages.values()].flatMap((page) => (page.links ?? []).map((link) => link.url)),
@@ -303,17 +336,17 @@ export async function judgeOrigin(services: OriginServices, input: OriginInput, 
     });
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
-    return {
+    return present({
       choice: "none", reason: error instanceof AgentError
         ? "The investigation did not establish an origin within its model-call limit; these are observed leads, not verified origins."
         : "The investigation could not finish; these are observed leads, not verified origins.",
       leads: [...input.results, ...input.articles].map((result) => ({ title: result.title, url: result.url })),
-    };
+    });
   }
   const reference = judged.candidate?.reference;
   const work = await originWork(services.fetch, judged);
   const page = work.work?.url ? readPages.get(work.work.url) : undefined;
-  return {
+  return present({
     choice: judged.choice,
     reason: judged.reason,
     ...(reference ? { reference } : {}),
@@ -322,7 +355,7 @@ export async function judgeOrigin(services: OriginServices, input: OriginInput, 
     ...(page ? { page: { ...page, title: work.work!.title } } : {}),
     ...(quote ? { quote } : {}),
     ...(leads.length ? { leads } : {}),
-  };
+  });
 }
 
 /** What finding a term's origin needs: the model, the fetcher for Wikipedia and arXiv, and the web search. */

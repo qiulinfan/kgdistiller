@@ -6,6 +6,11 @@ All notable changes are documented here.
 
 - `kgd relocate BASE:ID` names an unavailable base instead of reporting
   that the record is not accepted.
+- Find sources shows one reranked list of at most ten source links, each
+  annotated with its relationship to the selected concept and its evidence
+  status, instead of unranked cited-reference, Wikipedia-reference and lead
+  lists. Annotations follow the document type's writing-language guidance,
+  and the origin work keeps its own link. Capture skips the ranking call.
 
 ## Obsidian 2.0.3 — 2026-10-22
 

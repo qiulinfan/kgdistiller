@@ -11,16 +11,20 @@ class Element {
   disabled = false;
   text = "";
   cls = "";
+  tag = "div";
+  href?: string;
   addClass(): void {}
   empty(): void { this.children = []; }
   createDiv(options: { cls?: string; text?: string } = {}): Element { return this.createEl("div", options); }
   createSpan(options: { cls?: string; text?: string } = {}): Element { return this.createEl("span", options); }
   get childElementCount(): number { return this.children.length; }
   remove(): void {}
-  createEl(_tag: string, options: { cls?: string; text?: string } = {}): Element {
+  createEl(tag: string, options: { cls?: string; text?: string; href?: string } = {}): Element {
     const element = new Element();
     element.text = options.text ?? "";
     element.cls = options.cls ?? "";
+    element.tag = tag;
+    element.href = options.href;
     this.children.push(element);
     return element;
   }
@@ -34,7 +38,7 @@ const selection: Selection = { text: "autoencoders", context: "An autoencoder re
 function fixture() {
   const container = new Element();
   const capture = vi.fn<AgentHost["capture"]>();
-  const host = { model: { configured: () => true }, captureFiles: { read: async () => "" }, originServices: () => ({}), capture } as unknown as AgentHost;
+  const host = { model: { configured: () => true }, captureFiles: { read: async () => "" }, reading: async () => undefined, originServices: () => ({}), capture } as unknown as AgentHost;
   const pane = new AgentPane(container as unknown as HTMLElement, host, () => undefined, () => {}, async () => {});
   pane.reset(selection);
   const button = () => container.children[2]!.querySelector()!;
@@ -98,5 +102,34 @@ describe("Capture action lifecycle", () => {
     pane.reset(other);
     await pane.startCapture();
     expect(capture).toHaveBeenLastCalledWith(other, undefined);
+  });
+});
+
+describe("source shortlist", () => {
+  const all = (element: Element): Element[] => [element, ...element.children.flatMap(all)];
+  const links = (element: Element): Array<string | undefined> => all(element).filter((each) => each.tag === "a").map((each) => each.href);
+
+  it("shows the origin's link, then only reranked links, in order and each with an annotation, without dumping raw references", async () => {
+    const { pane, container } = fixture();
+    const ranked = Array.from({ length: 10 }, (_, n) => ({ title: `Selected ${n + 1}`, url: `https://publisher.example/selected-${n + 1}`, annotation: `与当前概念的关系 ${n + 1}；仅核实到引用线索。` }));
+    vi.mocked(findOrigin).mockResolvedValueOnce({ failures: [], origin: {
+      choice: "web", reason: "结果已按相关性排序。", work: { title: ranked[0]!.title, url: ranked[0]!.url }, ranked,
+      leads: Array.from({ length: 50 }, (_, n) => ({ title: `Raw ${n}`, url: `https://publisher.example/raw-${n}` })),
+      wikipedia: { title: "Topic", url: "https://en.wikipedia.org/wiki/Topic", extract: "Background.", citations: Array.from({ length: 60 }, (_, n) => ({ title: `Reference ${n}`, url: `https://publisher.example/ref-${n}` })) },
+    } });
+    await pane.sourcesFor(selection);
+    expect(vi.mocked(findOrigin).mock.calls.at(-1)![1]).toMatchObject({ rank: true });
+    const elements = all(container.children[3]!);
+    expect(links(container.children[3]!)).toEqual([ranked[0]!.url, ...ranked.map((work) => work.url)]);
+    for (const work of ranked) expect(elements.some((element) => element.text === work.annotation)).toBe(true);
+    expect(elements.some((element) => element.text.startsWith("Raw ") || element.text.startsWith("Reference "))).toBe(false);
+  });
+
+  it("keeps the origin's link when ranking leaves it out or fails", async () => {
+    const { pane, container } = fixture();
+    const work = { title: "Original work", url: "https://publisher.example/original" };
+    vi.mocked(findOrigin).mockResolvedValueOnce({ failures: ["Source ranking failed: no answer"], origin: { choice: "web", reason: "Found.", work, ranked: [] } });
+    await pane.sourcesFor(selection);
+    expect(links(container.children[3]!)).toEqual([work.url]);
   });
 });
