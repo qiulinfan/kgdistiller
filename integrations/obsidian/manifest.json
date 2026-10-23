@@ -1,7 +1,7 @@
 {
   "id": "kgdistiller",
   "name": "kgdistiller",
-  "version": "2.0.3",
+  "version": "3.0.0",
   "minAppVersion": "1.13.7",
   "description": "Look up kgdistiller records from a selection, a search or the open file, with the focused record's typed neighbourhood graph.",
   "author": "Qiulin Fan",

@@ -2,7 +2,9 @@
 
 All notable changes are documented here.
 
-## Unreleased
+## 3.0.0 — 2026-10-23
+
+The Python core and the Obsidian plugin both move to 3.0.0.
 
 Upgrading: replace each base's `sources` in `config.json` with `types`, the
 list of the document types its records may use (`kgd check` refuses the old

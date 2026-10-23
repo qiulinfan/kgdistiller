@@ -35,8 +35,8 @@ interpreter that has it.
 npm run build
 uv run --locked python -m unittest discover -s tests -v
 uv run --locked ruff check src tests scripts
-uv build --out-dir build/release/2.0.2
-uv run --locked python scripts/check_distribution.py --dist-root build/release/2.0.2
+uv build --out-dir build/release/3.0.0
+uv run --locked python scripts/check_distribution.py --dist-root build/release/3.0.0
 npm test
 cd integrations/obsidian && npm ci && npm run check
 ```
@@ -123,7 +123,7 @@ Then verify that:
   `--url` makes a record foreign with the page's text;
 - `check` reports every error and every moved, stale or followed record and
   exits 1 for any of them; staleness never hides a record from retrieval;
-- the Obsidian plugin (version 2.0.3, `isDesktopOnly: true`) passes its
+- the Obsidian plugin (version 3.0.0, `isDesktopOnly: true`) passes its
   vitest suites (the `kgd` client and its MCP session, the lookup model, the
   keyword refresh on record saves, capture, drafts, evidence, the agent, its
   judgment, providers, web search and sources, records with every entry of
@@ -146,7 +146,7 @@ a clean tagged commit into an empty distribution directory, inspect wheel and
 sdist contents, and smoke-install the wheel in an isolated environment. Use
 short-lived or trusted publishing credentials and never commit tokens. Tag only
 after all gates pass; tag the Python core as `core-x.y.z` (for example
-`core-2.0.2`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
+`core-3.0.0`), never a bare `x.y.z`, which is reserved for the Obsidian plugin
 and starts its release workflow. Do not move a published tag. Keep the previous release
 available. 1.0 data and APIs are intentionally incompatible with every 0.x
 release, and 2.0 records and document types with 1.x: the owner migrates them
@@ -155,8 +155,8 @@ once, as the changelog's upgrade notes describe.
 ## Obsidian Community release entry
 
 The monorepo publishes the plugin through root `manifest.json` and
-`versions.json`, exactly mirrored from `integrations/obsidian`. The plugin is 2.0.3 and
-the Python core is 2.0.2; they are versioned independently. A plugin release tag must
+`versions.json`, exactly mirrored from `integrations/obsidian`. The plugin and
+the Python core are both 3.0.0; they are versioned independently. A plugin release tag must
 be the manifest's exact `x.y.z` version, without `v`; bare `x.y.z` tags are
 reserved for plugin releases, and Python core tags are `core-x.y.z`.
 
@@ -164,7 +164,7 @@ reserved for plugin releases, and Python core tags are `core-x.y.z`.
 npm ci
 npm run build
 npm test
-node scripts/build-obsidian-plugin.mjs --verify-only --tag 2.0.3
+node scripts/build-obsidian-plugin.mjs --verify-only --tag 3.0.0
 ```
 
 The root build delegates installation and build to the integration, checks
