@@ -140,6 +140,7 @@ vi.stubGlobal("Element", FakeElement);
 vi.stubGlobal("document", mainDocument);
 vi.stubGlobal("activeWindow", { getSelection: () => ({ toString: () => domSelection.text, anchorNode: domSelection.anchor ?? null }) });
 
+import { Setting } from "obsidian";
 import KgdistillerPlugin from "../src/main";
 import { DEFAULT_SETTINGS, KgdistillerSettingTab } from "../src/settings";
 import { HOLD_MS } from "../src/hold";
@@ -185,10 +186,22 @@ function harness(): Harness {
   return { plugin, handlers };
 }
 const pluginFixture = (): KgdistillerPlugin => harness().plugin;
+/** Draw the tab as Obsidian 1.13 does from its definitions: a heading per group, then each row, drawn again on update(). */
 function showSettings(plugin: KgdistillerPlugin): KgdistillerSettingTab {
   const tab = new KgdistillerSettingTab(plugin.app, plugin);
-  tab.containerEl = { empty: vi.fn(), createEl: vi.fn(() => { throw new Error("direct HTML heading"); }) } as unknown as typeof tab.containerEl;
-  tab.display(); return tab;
+  type Row = { name: string; desc?: unknown; render?: (setting: unknown, group: unknown) => void };
+  const draw = (): void => {
+    for (const group of tab.getSettingDefinitions() as unknown as { heading: string; items: Row[] }[]) {
+      new Setting(null as unknown as HTMLElement).setName(group.heading).setHeading();
+      for (const row of group.items) {
+        const setting = new Setting(null as unknown as HTMLElement).setName(row.name);
+        if (typeof row.desc === "string") setting.setDesc(row.desc);
+        row.render?.(setting, group);
+      }
+    }
+  };
+  tab.update = draw;
+  draw(); return tab;
 }
 beforeEach(() => {
   controls.headings.length = 0; controls.commands.length = 0; controls.editorExtensions.length = 0; controls.postProcessors.length = 0; controls.settings.length = 0; controls.ribbons.length = 0;
@@ -442,8 +455,8 @@ describe("hidden knowledge settings", () => {
     expect(controls.configure).toHaveBeenCalledExactlyOnceWith(true);
     expect(controls.settings.map((setting) => setting.name)).toEqual([
       "Hidden knowledge folder", "Index hidden knowledge folder", "Indexing status",
-      "Lookup", "kgd executable", "Knowledge home", "Embedding", "Vectors", "Embedding model",
-      "Model providers", "Provider", "Web search", "Exa API key",
+      "Lookup", "kgd executable", "Knowledge home", "Embedding", "Dense search model", "Vectors", "Embedding model",
+      "Model providers", "Agent models", "Provider", "Web search", "Exa API key",
     ]);
     expect(controls.settings.find((setting) => setting.name === "Index hidden knowledge folder")?.description)
       .toContain("kgd obsidian install");
