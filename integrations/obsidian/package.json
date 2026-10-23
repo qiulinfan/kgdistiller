@@ -1,6 +1,6 @@
 {
   "name": "kgdistiller-obsidian",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Look up kgdistiller records from a selection, a search or the open file, with the focused record's typed neighbourhood graph.",
   "main": "main.js",
   "type": "module",

@@ -1,17 +1,14 @@
-kgdistiller Obsidian 3.0.1 fixes the findings of the community directory's
-automated review of 3.0.0. It works with the kgdistiller 3.0.0 CLI (`kgd`),
-whose path you set under **Settings → kgdistiller → kgd executable**.
+kgdistiller Obsidian 3.0.2 finishes the community review fixes of 3.0.1. It
+works with the kgdistiller 3.0.0 CLI (`kgd`), whose path you set under
+**Settings → kgdistiller → kgd executable**.
 
-- **Command key from Obsidian.** Knowledge-marker chips decide between ⌘ and
-  Ctrl with Obsidian's `Platform` instead of reading the operating system from
-  the browser's `navigator`, and are created with Obsidian's element helpers.
-- **Popout windows.** Timers run on the window, so lookups, the hold trigger
-  and the kgd client behave the same in popout windows.
-- **Cleaner code paths.** The hidden-folder indexer imports the file system
-  module directly, binary detection uses no control character in a regular
-  expression, and the lookup pane's spacing no longer uses a `:has` selector.
-- **Verifiable assets.** `main.js`, `manifest.json` and `styles.css` carry
-  GitHub artifact attestations of the workflow that built them.
+- **Searchable settings.** The settings tab uses Obsidian 1.13's settings
+  definitions, so its rows appear in Obsidian's settings search. Choosing,
+  adding or removing a model provider, or changing its service, redraws the
+  tab the way Obsidian 1.13 expects.
+- **Since 3.0.1.** Knowledge-marker chips take the command key from Obsidian's
+  `Platform`; timers run on the window for popout windows; release assets
+  carry GitHub artifact attestations.
 
 Nothing changes in the knowledge format or the CLI. Reload Obsidian after
 updating the plugin.

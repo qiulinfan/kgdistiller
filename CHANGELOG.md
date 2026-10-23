@@ -2,6 +2,15 @@
 
 All notable changes are documented here.
 
+## Obsidian 3.0.2 — 2026-10-23
+
+The Python core remains at 3.0.0.
+
+- The settings tab follows Obsidian 1.13's settings definitions: its rows are
+  found by Obsidian's settings search, and a change of provider or service
+  redraws the tab with `update()` instead of `display()`. The embedding and
+  model-provider explanations are their own rows.
+
 ## Obsidian 3.0.1 — 2026-10-23
 
 The Python core remains at 3.0.0.
