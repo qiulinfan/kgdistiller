@@ -1,3 +1,4 @@
+import * as nodeFs from "node:fs/promises";
 import { type App, normalizePath } from "obsidian";
 
 import { KNOWLEDGE_DIRECTORY } from "./records";
@@ -62,7 +63,7 @@ export class HiddenKnowledgeIndexer {
 
   constructor(
     private readonly app: App,
-    private readonly loadFilesystem: () => Filesystem = () => require("node:fs/promises") as Filesystem,
+    private readonly loadFilesystem: () => Filesystem = () => nodeFs,
   ) {}
 
   /** Index the whole `.knowledge` tree when enabled; nothing under it needs excluding. */

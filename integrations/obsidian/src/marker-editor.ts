@@ -9,6 +9,7 @@
 
 import { Prec, RangeSetBuilder, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { Platform } from "obsidian";
 
 import { markerAt, markerLabel, scanLine, touches, type LineMarker, type MarkerFormat } from "./markers";
 
@@ -35,7 +36,7 @@ class ChipWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    return markerChip(view.dom.ownerDocument, this.label, this.name);
+    return markerChip(this.label, this.name);
   }
 
   /** A plain click reaches the editor, which puts the cursor at the chip and so reveals the raw marker. */
@@ -45,22 +46,17 @@ class ChipWidget extends WidgetType {
 }
 
 /** The chip a marker shows as, in an editor or in reading view; no link, so Obsidian neither follows nor creates a note. */
-export function markerChip(doc: Document, label: string, name: string): HTMLElement {
-  const chip = doc.createElement("span");
-  chip.className = "kgd-marker-chip";
-  chip.textContent = label;
-  chip.dataset.kgdMarker = name;
-  chip.setAttribute("aria-label", `Knowledge: ${name} (${modifierName()}-click to open)`);
-  return chip;
-}
-
-function modifierName(): string {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+export function markerChip(label: string, name: string): HTMLElement {
+  return createSpan({
+    cls: "kgd-marker-chip",
+    text: label,
+    attr: { "data-kgd-marker": name, "aria-label": `Knowledge: ${name} (${Platform.isMacOS ? "⌘" : "Ctrl"}-click to open)` },
+  });
 }
 
 /** Whether a mouse event holds the platform's command key: ⌘ on macOS, Ctrl elsewhere. */
 export function modifierHeld(event: MouseEvent): boolean {
-  return modifierName() === "⌘" ? event.metaKey : event.ctrlKey;
+  return Platform.isMacOS ? event.metaKey : event.ctrlKey;
 }
 
 function decorations(view: EditorView, host: MarkerEditorHost): DecorationSet {
@@ -175,7 +171,7 @@ export function chipRenderedMarkers(element: HTMLElement, open: (name: string) =
     before.textContent = head.slice(0, -2);
     after.textContent = tail.slice(2);
     const shown = link.textContent ?? "";
-    const chip = markerChip(element.ownerDocument, shown.trim() ? shown : name, name);
+    const chip = markerChip(shown.trim() ? shown : name, name);
     chip.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();

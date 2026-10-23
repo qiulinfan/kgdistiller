@@ -355,7 +355,7 @@ const arxivSlots = new WeakMap<Fetch, number>();
 async function arxivQuery(fetch: Fetch, params: Record<string, string | number>): Promise<ArxivEntry[]> {
   const at = Math.max(Date.now(), (arxivSlots.get(fetch) ?? 0) + ARXIV_INTERVAL_MS);
   arxivSlots.set(fetch, at);
-  if (at > Date.now()) await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
+  if (at > Date.now()) await new Promise((resolve) => window.setTimeout(resolve, at - Date.now()));
   return arxivFeed(await fetch(`${ARXIV}?${query(params)}`));
 }
 

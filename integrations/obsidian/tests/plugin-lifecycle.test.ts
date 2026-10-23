@@ -296,7 +296,6 @@ describe("community lifecycle conventions", () => {
 describe("record indexing", () => {
   it("indexes this vault's record files without embeddings once a burst of saves settles, and nothing else", async () => {
     vi.useFakeTimers();
-    (globalThis as { window?: unknown }).window = globalThis;
     try {
       const { plugin, handlers } = harness(); await plugin.onload();
       const refresh = vi.spyOn(plugin.indexer, "refresh").mockResolvedValue();
@@ -311,7 +310,6 @@ describe("record indexing", () => {
       vi.advanceTimersByTime(300);
       expect(refresh).toHaveBeenCalledTimes(2);
     } finally {
-      delete (globalThis as { window?: unknown }).window;
       vi.useRealTimers();
     }
   });

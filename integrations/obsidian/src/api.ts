@@ -92,12 +92,12 @@ export class ApiClient {
       const finish = (error?: Error, value?: string): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         this.pending.delete(request);
         if (error) reject(error); else resolve(value ?? "");
       };
       const abort = (error: Error): void => { finish(error); request.destroy(); };
-      const timer = setTimeout(() => abort(new ApiError(`API request timed out after ${timeout / 1000} s.`)), timeout);
+      const timer = window.setTimeout(() => abort(new ApiError(`API request timed out after ${timeout / 1000} s.`)), timeout);
       this.pending.set(request, abort);
       // No redirects: credentials are sent only to the configured endpoint.
       request.on("response", (response) => {

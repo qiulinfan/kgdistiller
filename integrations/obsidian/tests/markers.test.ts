@@ -1,6 +1,17 @@
 import { DOMParser, Event as DomEvent } from "linkedom";
 import { describe, expect, it, vi } from "vitest";
 
+// Obsidian's Platform and its global createSpan, as the plugin calls them, on a linkedom page.
+vi.mock("obsidian", () => ({ Platform: { isMacOS: false } }));
+const page = new DOMParser().parseFromString("<html><body></body></html>", "text/html");
+vi.stubGlobal("createSpan", (options: { cls?: string; text?: string; attr?: Record<string, string> } = {}) => {
+  const span = page.createElement("span");
+  if (options.cls) span.className = options.cls;
+  if (options.text !== undefined) span.textContent = options.text;
+  for (const [name, value] of Object.entries(options.attr ?? {})) span.setAttribute(name, value);
+  return span;
+});
+
 import { chipRenderedMarkers } from "../src/marker-editor";
 import {
   columnOffset,

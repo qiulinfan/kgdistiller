@@ -164,7 +164,7 @@ SOFTWARE.
   color: var(--text-error);
 }
 
-.kgd-lookup-agent:has(> :not(:empty)) {
+.kgd-lookup-agent > :not(:empty) {
   margin: 6px 0;
 }
 

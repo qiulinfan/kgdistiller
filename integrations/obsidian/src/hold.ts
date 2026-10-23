@@ -12,7 +12,7 @@ export const HOLD_MS = 300;
 type Key = Pick<KeyboardEvent, "key">;
 
 export class HoldTrigger {
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private pressed = false;
 
   constructor(private readonly key: "Meta" | "Control", private readonly fire: () => void) {}
@@ -24,7 +24,7 @@ export class HoldTrigger {
     }
     if (this.pressed) return;
     this.pressed = true;
-    this.timer = setTimeout(() => {
+    this.timer = window.setTimeout(() => {
       this.timer = undefined;
       this.fire();
     }, HOLD_MS);
@@ -37,7 +37,7 @@ export class HoldTrigger {
 
   /** Stop a pending hold without ending the press. */
   cancel(): void {
-    if (this.timer !== undefined) clearTimeout(this.timer);
+    if (this.timer !== undefined) window.clearTimeout(this.timer);
     this.timer = undefined;
   }
 

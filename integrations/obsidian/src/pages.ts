@@ -65,7 +65,7 @@ export async function readWebPage(url: string): Promise<ForeignPage> {
   let text: string;
   try { text = new TextDecoder(charset, { fatal: true }).decode(data); }
   catch { throw new Error("The source is a binary document, not HTML, a PDF, or UTF-8 text."); }
-  if (/\x00/.test(text) || text.startsWith("PK\u0003\u0004")) throw new Error("This binary document format is not readable by Capture.");
+  if (text.includes("\u0000") || text.startsWith("PK\u0003\u0004")) throw new Error("This binary document format is not readable by Capture.");
   if (type.includes("html") || /<\s*(?:!doctype\s+html|html|head|body|title|h1|p)\b/i.test(text)) return htmlPage(text, url);
   if (!text.trim()) throw new Error("The source has no readable text.");
   return { url, title: url.split("/").pop() ?? url, text: normalizeSpace(text).slice(0, PAGE_CHARS) };

@@ -79,7 +79,7 @@ interface ToolResult {
 interface Pending {
   resolve(result: unknown): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: number;
 }
 
 export class KgdServer {
@@ -89,7 +89,7 @@ export class KgdServer {
   private stderr = "";
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
-  private idle: ReturnType<typeof setTimeout> | undefined;
+  private idle: number | undefined;
   private bases: Promise<Map<string, string>> | undefined;
 
   constructor(
@@ -211,7 +211,7 @@ export class KgdServer {
     if (!child) return Promise.reject(new KgdError("kgd mcp is not running"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         this.fail(child, `kgd mcp did not answer ${method} within ${REQUEST_TIMEOUT_MS / 1000} s`);
         child.kill();
       }, REQUEST_TIMEOUT_MS);
@@ -241,7 +241,7 @@ export class KgdServer {
       const pending = typeof message.id === "number" ? this.pending.get(message.id) : undefined;
       if (!pending) continue;
       this.pending.delete(message.id as number);
-      clearTimeout(pending.timer);
+      window.clearTimeout(pending.timer);
       if (message.error) pending.reject(new KgdError(String(message.error.message ?? "kgd mcp error")));
       else pending.resolve(message.result);
     }
@@ -255,7 +255,7 @@ export class KgdServer {
     const detail = this.stderr.trim();
     const error = new KgdError(detail ? `${reason}: ${detail}` : reason);
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
+      window.clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();
@@ -263,11 +263,11 @@ export class KgdServer {
 
   private armIdle(): void {
     this.clearIdle();
-    if (this.child && this.pending.size === 0) this.idle = setTimeout(() => this.stop(), IDLE_MS);
+    if (this.child && this.pending.size === 0) this.idle = window.setTimeout(() => this.stop(), IDLE_MS);
   }
 
   private clearIdle(): void {
-    if (this.idle !== undefined) clearTimeout(this.idle);
+    if (this.idle !== undefined) window.clearTimeout(this.idle);
     this.idle = undefined;
   }
 }

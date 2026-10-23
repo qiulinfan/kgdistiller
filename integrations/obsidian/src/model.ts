@@ -40,7 +40,7 @@ export const MODEL_TIMEOUT_MS = 120 * 1000;
 export const BUSY_RETRY_DELAYS_MS: readonly number[] = [1000, 2000];
 
 export type Wait = (ms: number) => Promise<void>;
-const wait: Wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait: Wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 export interface ToolCall {
   id: string;
