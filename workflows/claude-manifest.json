@@ -74,7 +74,7 @@
     },
     {
       "id": "relocate-knowledge",
-      "description": "Move one record's citation to a passage the owner gives: find the record from the knowledge's name in one lookup turn, then run kgd relocate with the passage's text, which finds it in the registered sources of every base and rewrites only the record's source, lines and, when needed, Evidence, moving the record with its id into the passage's base when that is another one and rewriting every link to it.",
+      "description": "Find where records went after their sources changed and move their citations there: kgd check --fix-lines and kgd relocate follow each record's markers through its own file, its base and every other base; a reworded passage is judged by its meaning and relocated with its new text, and unmarked knowledge found nowhere becomes foreign, citing the outside page that states it.",
       "steps": [
         {
           "id": "relocate",
@@ -98,7 +98,7 @@
     },
     {
       "id": "deploy-kgdistiller",
-      "description": "Install with the retrieval extra, register bases, source globs, document types and the embedding model in the home, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes.",
+      "description": "Install with the retrieval extra, register bases with their document types and the embedding model in the home, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes.",
       "steps": [
         {
           "id": "deploy",

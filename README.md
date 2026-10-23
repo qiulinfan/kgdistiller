@@ -88,6 +88,12 @@ With the path of `kgd` set in **Settings → kgdistiller → kgd executable**:
   **Accept** admits a draft with the drafts it links, indexes and embeds it;
   **Open draft** opens the file for editing; **Discard** deletes it after
   asking. Nothing enters the knowledge base until you accept it.
+- **Knowledge markers.** A marker such as `--[[Sigma-algebra]]--` in a md
+  or txt note, or `\kn{Sigma-algebra}` in a tex file, names the record that
+  passage states; capture writes one for each local draft. Markers show as
+  purple chips in live preview, reading view and latex-live's TeX editors;
+  Cmd/Ctrl+click opens the record, and **Jump between knowledge and its
+  marker** goes back and forth.
 - **Embedding settings.** **Settings → kgdistiller → Embedding** shows the
   home's embedding model and changes it through `kgd embedding`.
 
@@ -102,7 +108,8 @@ and never opens the home or the database itself. It writes its own
 `data.json` (API keys stay in Obsidian's SecretStorage; `data.json` holds only
 their names), and, when you capture, accept or discard, drafts under
 `.knowledge/drafts/`. With the `kgd` you configure it runs `kgd base list`,
-`kgd source`, `kgd edit`, `kgd accept`, `kgd relocate` (to localize a record,
+`kgd source`, `kgd markers`, `kgd mark` (which writes a captured draft's
+marker into its source), `kgd edit`, `kgd accept`, `kgd relocate` (to localize a record,
 which changes where an accepted record cites and may move it into another
 base), `kgd index`, `kgd index --no-embed` and `kgd embedding`. It collects no telemetry, needs no account and installs or updates
 nothing. Lookup without the agent makes no network request. The agent sends
@@ -116,13 +123,14 @@ plugins in that vault. If the Hidden Folders Access plugin is enabled,
 kgdistiller reports the conflict and leaves its own indexing off.
 
 The CLI and MCP server run locally. They read the home's `config.json` and
-`types/`, the records and drafts, and the registered source files (to check
-evidence and for `kgd get --source-lines`). They write only:
+`types/`, the records and drafts, and the bases' source files (to check
+evidence, find knowledge markers and for `kgd get --source-lines`). They write only:
 
 - the home: `config.json` through `kgd base add`/`rm` and `kgd embedding`, the `types/` folder and
   `.gitignore` that the first `kgd base add` creates, `index.sqlite*` and
   `lock`;
 - the `entries/` and `drafts/` folders under a base's `.knowledge/`;
+- one line of a source file, where `kgd mark` inserts a draft's marker;
 - the plugin folder, `community-plugins.json` and the plugin's `data.json` in
   the vault's `.obsidian/`, through `kgd obsidian install`;
 - the agent runtime homes, through `kgd claude link` and `kgd codex link`.
@@ -158,23 +166,25 @@ in `.knowledge/entries/` and proposals awaiting your acceptance in
 stated result whose roles link what it is about) or a relation whose role
 keys bind at least two values. Every record
 cites a source file of its base by path, line range and verbatim quotes, or,
-as foreign knowledge, the web page of an outside work it quotes. Sources are plain text in any format; kgdistiller reads them as
-numbered lines and never parses their syntax.
+as foreign knowledge, the web page of an outside work it quotes. A base's
+sources are its `.md`, `.tex` and `.txt` files outside hidden folders;
+kgdistiller reads them as numbered lines and reads no syntax in them but the
+knowledge markers that name the records a passage states.
 
 The global home, `$KGDISTILLER_HOME` (default `~/.knowledge`), registers the
-bases, maps source globs to the document types you define, and keeps the
-derived database `index.sqlite`:
+bases with the document types you define for them, and keeps the derived
+database `index.sqlite`:
 
 ```text
 ~/.knowledge/                      # $KGDISTILLER_HOME
-├── config.json                    # bases, their source globs, embedding model
+├── config.json                    # bases, their document types, embedding model
 ├── types/<name>.md                # one document type per file
 ├── .gitignore                     # "index.sqlite*" and "lock"
 ├── index.sqlite                   # derived; rebuilt by `kgd index`
 └── lock
 
 ~/research/                        # a base, usually an Obsidian vault
-├── notes/                         # sources: any UTF-8 text
+├── notes/                         # sources: every .md, .tex and .txt file
 └── .knowledge/
     ├── entries/<id>.md            # accepted records
     └── drafts/<id>.md             # proposed records, same format
@@ -241,16 +251,17 @@ text states a connection between records, such as one result implying
 another.
 ```
 
-Map the base's sources to that type in `~/.knowledge/config.json`:
+Give the base that type in `~/.knowledge/config.json` (with the type file in
+place, `kgd base add ~/research --name research --type research-notes` writes
+it too). Every `.md`, `.tex` and `.txt` file of the base outside hidden
+folders is a source; nothing registers them one by one:
 
 ```json
 {
   "bases": {
     "research": {
       "path": "~/research",
-      "sources": {
-        "notes/**/*.md": "research-notes"
-      }
+      "types": ["research-notes"]
     }
   },
   "embedding": null
@@ -268,7 +279,7 @@ kgd embedding set BAAI/bge-m3
 
 Then add records. Ask an agent with the Skills installed to capture a
 definition or compile a whole note; every result is a draft you review and
-accept. To add one by hand, print the source's type profile with
+accept. To add one by hand, print the profiles of the source's base with
 `kgd source`, write a draft in
 `~/research/.knowledge/drafts/` (see [Record format](#record-format)), then
 check, accept and index it:
@@ -281,8 +292,8 @@ kgd accept .knowledge/drafts/sigma-algebra.md
 kgd search "sigma algebra"
 ```
 
-`kgd source` prints the type profile and the records and drafts a source
-already has. `kgd check` validates the home, records and drafts, and reports evidence
+`kgd source` prints the profile of each document type of the source's base,
+its knowledge markers, and the records and drafts it already has. `kgd check` validates the home, records and drafts, and reports evidence
 that moved or no longer matches its source. `kgd accept` moves drafts into
 `entries/`, all or nothing, then indexes them and embeds them; a draft with an
 accepted record's id replaces that record.
@@ -297,8 +308,10 @@ on a usage error.
 > 我作为仓库创始人自己需要的类型（比如 math notes、ai research、cs notes），直接作为默认 templates 就可以了。
 
 A document type declares node kinds and relation kinds with their roles,
-optional epistemic labels, and prose guidance for extraction. Source globs in
-`config.json` assign exactly one type to each source.
+optional epistemic labels, and prose guidance for extraction. A base lists
+its types in `config.json`; each record names the one it follows in `type:`
+(optional when the base has one), and the agent drafting it chooses the type
+that fits the document.
 
 Capture and compilation read that policy through `kgd source SOURCE`
 before proposing records. `kgd check` and acceptance validate kinds and roles
@@ -313,7 +326,7 @@ Templates:
 | [cs-notes](templates/document-types/cs-notes.md) | Definitions, algorithms, data structures, architectures, results such as complexity bounds and invariants, with implementation relations. |
 
 Copy a chosen file into `$KGDISTILLER_HOME/types/`, edit its vocabulary and
-guidance, then map the relevant source globs to its file stem. These are
+guidance, then add its file stem to the `types` of the bases that use it. These are
 starting templates; installation and `kgd base add` leave the active type
 catalog for you to define. The templates are also bundled under
 `kgdistiller/product/templates/document-types/` in the Python package.
@@ -368,7 +381,9 @@ The Hahn decomposition theorem implies the Jordan decomposition theorem.
   name, as in `Autoencoder (Autoencoder&VAE)`. A foreign record's `source` is the web address
   of the outside work it quotes, and it has no `lines`. `aliases`,
   `understanding` (`yes` or `no`, default `yes`), `epistemic` and `requires`
-  are optional; `tags` and `cssclasses` are allowed and ignored.
+  are optional; `tags` and `cssclasses` are allowed and ignored. `type`
+  names the record's document type and is required when its base has
+  several.
 - Every other key is a role of the record's kind. Whether a record is a node
   or a relation follows its kind's section in the document type. A relation
   binds at least two values, in any number of roles; a node kind that
@@ -389,19 +404,24 @@ text changed loses its vector and is missing from the dense lane until you
 re-embed with `kgd index`. When a
 source edit shifts the cited lines, `kgd check --fix-lines` rewrites the
 `lines:` of each record whose quotes it finds exactly once elsewhere in the
-source. [docs/model.md](docs/model.md) has the full grammar and validation
+source. When a file is renamed or moved, `kgd check` follows each record's
+knowledge markers (its own file, then its base, then every other base) and
+reports where they lead under `follow`; `--fix-lines` applies the follows
+within a base and `kgd relocate UID` any of them. [docs/model.md](docs/model.md) has the full grammar and validation
 rules.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `kgd base add PATH [--name N]`, `base rm NAME`, `base list` | Register, unregister and list bases with record, draft and index counts. |
+| `kgd base add PATH [--name N] [--type T]...`, `base rm NAME`, `base list` | Register (with the document types its records may use), unregister and list bases with their types and record, draft and index counts. |
 | `kgd embedding`, `embedding set MODEL`, `embedding off` | Show the home's embedding model and its vectors, download and check a model and use it, or turn the dense lane off. |
-| `kgd check [--base B] [--fix-lines]` | Validate the home, records and drafts; report moved or stale evidence. |
-| `kgd source SOURCE` | Print a source's document-type profile and the records and drafts citing it. |
-| `kgd find TEXT [--base B] [--source PREFIX]` | Find a passage or a name in the registered sources, whatever its line breaks and hidden markup. |
-| `kgd relocate TARGET TEXT [--base B] [--source PREFIX]` | Move a record's source, lines and evidence to the only passage of the registered sources that holds the text, into that passage's base, with every link to it rewritten, when it lies in another. |
+| `kgd check [--base B] [--fix-lines]` | Validate the home, records and drafts; report moved or stale evidence and where knowledge markers lead (`follow`). |
+| `kgd source SOURCE` | Print the document-type profiles of a source's base, its markers and the records and drafts citing it. |
+| `kgd markers [SOURCE...] [--uid UID] [--base B] [--orphans]` | List knowledge markers with the records they name. |
+| `kgd mark DRAFT [--name NAME] [--dry-run]` | Write a marker naming a local draft into its source, on the line of its first quote, keeping the line count. |
+| `kgd find TEXT [--base B] [--source PREFIX]` | Find a passage or a name in the sources, whatever its line breaks and hidden markup. |
+| `kgd relocate TARGET [TEXT] [--url URL] [--base B] [--source PREFIX]` | Move a record's source, lines and evidence to the only passage of the sources that holds the text, or without TEXT to where its markers lead, into that passage's base, with every link to it rewritten, when it lies in another; with `--url` and the page's text, make it foreign. |
 | `kgd drafts [--base B] [--source PREFIX] [--name NAME]` | List the drafts with their links and what `kgd accept` would refuse; writes nothing. |
 | `kgd edit DRAFT FIELD [VALUE...]` | Set one field of a draft: label, kind, epistemic, understanding, aliases, requires, a role or its statement. |
 | `kgd accept [--dry-run] DRAFT...` | Admit drafts as new records or replacements of the records with their ids, all or nothing, then index and embed them. |
@@ -446,11 +466,11 @@ Five Skills cover the write and read workflows:
 
 | Skill | What it does |
 |---|---|
-| `capture-kgdistiller` | Drafts one record while you read: a concept, a result the source states, or a relation between records, with its quote, or a borrowed concept as foreign knowledge from the page of its work. The `kgdistiller-capture-writer` agent preset runs it in the background. |
-| `compile-kgdistiller` | Drafts records from part or all of a registered source, following its document type. Knowledge already recorded is ignored, or drafted as a replacement, by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
-| `relocate-kgdistiller` | Moves one record to the passage you paste, after a source was edited or renamed, into another base when the passage lies there: it finds the record from the knowledge's name and runs `kgd relocate`. |
+| `capture-kgdistiller` | Drafts one record while you read: a concept, a result the source states, or a relation between records, with its quote, or a borrowed concept as foreign knowledge from the page of its work, and marks a local draft in its source. The `kgdistiller-capture-writer` agent preset runs it in the background. |
+| `compile-kgdistiller` | Drafts records from part or all of a source, following the document type that fits it, and marks them in the source. Knowledge already recorded is ignored, or drafted as a replacement, by the conflict rules in [docs/model.md](docs/model.md#conflicts-updates-and-relocation). |
+| `relocate-kgdistiller` | Finds where records went after a source was edited, renamed or moved, by their knowledge markers in their own file, their base and then every other base, and moves them there; judges a reworded passage by its meaning; moves a record to a passage you paste; and makes unmarked knowledge that is found nowhere foreign, citing the page that states it. |
 | `query-kgdistiller` | Answers from the base with search, resolve, get, neighbors, browse and pack, citing `source:lines`. Read-only, with the `kgdistiller-query-reviewer` agent preset. |
-| `deploy-kgdistiller` | Installs, registers bases, sources, types and the model, then checks, indexes, installs the plugin and links the runtimes. |
+| `deploy-kgdistiller` | Installs, registers bases with their document types and the model, then checks, indexes, installs the plugin and links the runtimes. |
 
 The Skills write drafts only; accepting them indexes and embeds them, and
 re-embedding a record you edited by hand is left to you. Install them for your
@@ -502,8 +522,8 @@ When asked to install kgdistiller from this repository, an agent should:
    `kgd codex link` then `kgd codex doctor`; for OMP or dsh,
    `./scripts/link-skills.sh omp|dsh`. Start a new session afterwards.
 3. Follow the `deploy-kgdistiller` Skill: `kgd base add` for each vault, write
-   the source globs and document types into `~/.knowledge/config.json` and
-   `~/.knowledge/types/`, set the model with `kgd embedding set BAAI/bge-m3`,
+   the document types into `~/.knowledge/types/` and each base's `types` in
+   `~/.knowledge/config.json`, set the model with `kgd embedding set BAAI/bge-m3`,
    then run `kgd check`,
    `kgd index` and, for a vault opened in Obsidian, `kgd obsidian install`.
 4. Smoke-test with `kgd base list` and `kgd search "KNOWN NAME" --base NAME`.

@@ -26,16 +26,25 @@ import { findOrigin, type Origin, type OriginServices } from "./origin";
 import { fold, labelSuffix, nameKey } from "./records";
 import { citedReferences, sourceOpening } from "./sources";
 
-/** What `kgd source SOURCE` reports about a source: its base, document type and the records and drafts citing it. */
-export interface Profile {
-  base: string;
-  source: string;
+/** A document type's extraction profile, as `kgd source` lists it. */
+export interface DocumentProfile {
   type: string;
   /** Each node kind with its roles, which may be none. */
   node_kinds: Record<string, string[]>;
   relation_kinds: Record<string, string[]>;
   epistemic: string[];
   guidance: string;
+}
+
+/**
+ * What `kgd source SOURCE` reports about a source: its base, the profile of
+ * every document type its base allows, and the records and drafts citing it.
+ * A record of a base of several types declares the type it follows.
+ */
+export interface Profile {
+  base: string;
+  source: string;
+  types: DocumentProfile[];
   line_count: number;
   records: Array<{ uid: string; label: string; kind: string; class: string; lines: string; gloss: string }>;
   drafts: Array<{ id: string; label: string; kind: string; class: string; lines: string }>;
@@ -78,6 +87,10 @@ export interface CaptureResult {
   proposal?: string;
   /** For a changed meaning: a replacement of the record already waits for the owner, so nothing was written. */
   waiting?: boolean;
+  /** Where `kgd mark` wrote the marker naming a local draft in its source, or that the source already marks it. */
+  marker?: string;
+  /** Why `kgd mark` could not mark the source; the draft stays. */
+  markError?: string;
   report: string;
 }
 
@@ -158,40 +171,49 @@ const LOOKUP_TOOL: ToolSpec = {
   },
 };
 
-const SUBMIT_TOOL: ToolSpec = {
-  type: "function",
-  function: {
-    name: "submit",
-    description: "File the item. A refusal explains what to correct.",
-    parameters: {
-      type: "object",
-      properties: {
-        item: { type: "string", description: "First, in one sentence: the concept or statement the selected text names or states, and who defines or states it." },
-        decision: { type: "string", enum: ["new", "unchanged", "superseding", "conflicting", "borrowed"] },
-        record: { type: "string", description: "The uid of the recorded item, for unchanged, superseding and conflicting." },
-        page: { type: "integer", description: "For a borrowed concept, once its pages are shown: the number of the page the record cites." },
-        label: { type: "string" },
-        aliases: { type: "array", items: { type: "string" } },
-        kind: { type: "string" },
-        roles: { type: "object", additionalProperties: { type: "array", items: { type: "string" } }, description: "Each role of the kind: its values. A relation binds at least two; a node kind that declares roles, such as a theorem's about, links at least one." },
-        requires: { type: "array", items: { type: "string" } },
-        statement: { type: "string" },
-        evidence: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: { lines: { type: "string" }, quote: { type: "string" } },
-            required: ["lines", "quote"],
-            additionalProperties: false,
-          },
-        },
-        epistemic: { type: "string" },
-        report: { type: "string" },
+/** The submission; in a base of several document types it also names the type the record follows. */
+function submitTool(types: readonly DocumentProfile[]): ToolSpec {
+  const type = { type: "string", enum: types.map((profile) => profile.type), description: "The document type the record follows: the one that fits the document being read." };
+  // The type comes before the kind, which is one of its kinds.
+  const properties = Object.fromEntries(Object.entries(SUBMIT_PROPERTIES)
+    .flatMap(([name, spec]) => (name === "kind" && types.length > 1 ? [["type", type], [name, spec]] : [[name, spec]])));
+  return {
+    type: "function",
+    function: {
+      name: "submit",
+      description: "File the item. A refusal explains what to correct.",
+      parameters: {
+        type: "object",
+        properties,
+        required: ["item", "decision", "report"],
+        additionalProperties: false,
       },
-      required: ["item", "decision", "report"],
+    },
+  };
+}
+
+const SUBMIT_PROPERTIES = {
+  item: { type: "string", description: "First, in one sentence: the concept or statement the selected text names or states, and who defines or states it." },
+  decision: { type: "string", enum: ["new", "unchanged", "superseding", "conflicting", "borrowed"] },
+  record: { type: "string", description: "The uid of the recorded item, for unchanged, superseding and conflicting." },
+  page: { type: "integer", description: "For a borrowed concept, once its pages are shown: the number of the page the record cites." },
+  label: { type: "string" },
+  aliases: { type: "array", items: { type: "string" } },
+  kind: { type: "string" },
+  roles: { type: "object", additionalProperties: { type: "array", items: { type: "string" } }, description: "Each role of the kind: its values. A relation binds at least two; a node kind that declares roles, such as a theorem's about, links at least one." },
+  requires: { type: "array", items: { type: "string" } },
+  statement: { type: "string" },
+  evidence: {
+    type: "array",
+    items: {
+      type: "object",
+      properties: { lines: { type: "string" }, quote: { type: "string" } },
+      required: ["lines", "quote"],
       additionalProperties: false,
     },
   },
+  epistemic: { type: "string" },
+  report: { type: "string" },
 };
 
 /** The lines shown to the model: the selection's paragraphs, a little context, and the nearest heading above. */
@@ -311,17 +333,34 @@ function summaryLine(record: { uid: string; label: string; kind: string; class?:
   return `[${record.uid}] ${record.label} · ${record.kind}${record.class ? ` ${record.class}` : ""}${where ? ` · ${where}` : ""} — ${record.gloss ?? ""}`;
 }
 
+/** The source's document type, or every type of its base for the model to choose the one that fits the document. */
 export function typeText(profile: Profile): string {
   const withRoles = (kinds: Record<string, string[]>) =>
     Object.entries(kinds).map(([kind, names]) => (names.length ? `${kind} (${names.join(", ")})` : kind)).join("; ");
-  const roles = withRoles(profile.relation_kinds);
-  return [
-    `Document type ${profile.type}:`,
-    `Node kinds and their roles: ${withRoles(profile.node_kinds)}`,
-    `Relation kinds and their roles: ${roles}`,
-    `Epistemic values: ${profile.epistemic.join(", ")}`,
-    `Guidance:\n${profile.guidance.trim()}`,
+  const one = (type: DocumentProfile) => [
+    `Document type ${type.type}:`,
+    `Node kinds and their roles: ${withRoles(type.node_kinds)}`,
+    `Relation kinds and their roles: ${withRoles(type.relation_kinds)}`,
+    `Epistemic values: ${type.epistemic.join(", ")}`,
+    `Guidance:\n${type.guidance.trim()}`,
   ].join("\n");
+  if (profile.types.length === 1) return one(profile.types[0]!);
+  return [
+    `The base ${profile.base} has the document types ${profile.types.map((type) => type.type).join(", ")}. Choose the one that fits the document being read and give it as type in the submission; the kind, roles, epistemic value and Guidance are that type's.`,
+    ...profile.types.map(one),
+  ].join("\n\n");
+}
+
+/**
+ * The document type a submission follows: the base's only type, or in a base
+ * of several the one it names; a string says what to correct.
+ */
+export function chosenType(profile: Profile, named: unknown): DocumentProfile | string {
+  const { types } = profile;
+  if (types.length === 1) return types[0]!;
+  if (types.length === 0) return `error: base ${profile.base} registers no document type`;
+  const found = types.find((type) => type.type === (typeof named === "string" ? named.trim() : ""));
+  return found ?? `error: type must be one of ${types.map((type) => type.type).join(", ")}: the document type that fits ${profile.source}`;
 }
 
 /** The selection's Latin-script names, such as "MAE" or "block-wise masking", with singular forms, for one batched resolve. */
@@ -359,6 +398,8 @@ export function captureUser(input: CaptureInput, profile: Profile, lines: readon
 export interface Draft {
   label: string;
   kind: string;
+  /** The document type it follows, written only in a base of several types. */
+  type?: string;
   aliases: string[];
   roles: Record<string, string[]>;
   requires: string[];
@@ -373,6 +414,7 @@ export interface Draft {
  */
 export function recordFile(draft: Draft, source: string, lines: Range[] | undefined, quotes: string[], understanding?: string): string {
   const front: string[] = [`label: ${JSON.stringify(draft.label)}`, `kind: ${JSON.stringify(draft.kind)}`];
+  if (draft.type) front.push(`type: ${JSON.stringify(draft.type)}`);
   const list = (key: string, values: string[]) => {
     if (values.length) front.push(`${key}:`, ...values.map((value) => `  - ${JSON.stringify(value)}`));
   };
@@ -431,7 +473,7 @@ export async function captureSelection(complete: Complete, kgd: CaptureKgd, file
     ? [...resolvedText(state, await kgd.call<ResolveResult>("kg_resolve", { terms: names })), ...(await namedDrafts(kgd, state, names)).lines]
     : [];
   const lookup: Tool<CaptureResult> = { spec: LOOKUP_TOOL, run: (args) => lookUp(kgd, state, args) };
-  const submit: Tool<CaptureResult> = { spec: SUBMIT_TOOL, run: (args) => file(complete, kgd, files, origin, state, args) };
+  const submit: Tool<CaptureResult> = { spec: submitTool(profile.types), run: (args) => file(complete, kgd, files, origin, state, args) };
   return runJob(complete, {
     system: `${CAPTURE_SYSTEM}${state.inSource ? "" : `\n\n${SIDE_SYSTEM}`}\n\n${typeText(profile)}`,
     user: [
@@ -505,7 +547,9 @@ async function file(complete: Complete, kgd: CaptureKgd, files: CaptureFiles, or
   if (label) {
     const statement = candidate?.gloss ?? (typeof args.statement === "string" ? args.statement.trim() : item);
     const kind = candidate?.kind ?? (typeof args.kind === "string" ? args.kind : "concept");
-    const relation = candidate ? candidate.class === "relation" : kind in state.profile.relation_kinds;
+    const chosen = chosenType(state.profile, args.type);
+    const relation = candidate ? candidate.class === "relation"
+      : typeof chosen === "string" ? state.profile.types.some((type) => kind in type.relation_kinds) : kind in chosen.relation_kinds;
     const judged = await judgeSelection(complete, {
       selection: state.input.selection,
       context: state.input.context ?? (state.inSource ? state.lines.slice(state.input.from! - 1, state.input.to).join("\n") : ""),
@@ -611,7 +655,11 @@ async function distinctLabel(kgd: CaptureKgd, draft: Draft, source: string): Pro
   return taken ? { ...draft, label: `${draft.label} (${labelSuffix(source)})` } : draft;
 }
 
-/** Write a draft, keeping it only when `kg_drafts` finds nothing `kgd accept` would refuse. */
+/**
+ * Write a draft, keeping it only when `kg_drafts` finds nothing `kgd accept`
+ * would refuse; a local draft then gets a marker naming it in its source
+ * (`kgd mark`), and a foreign one, citing a web page, none.
+ */
 async function writeDraft(kgd: CaptureKgd, files: CaptureFiles, state: CaptureState, path: string, uid: string, text: string,
   result: CaptureResult): Promise<string | { done: CaptureResult }> {
   await files.create(path, text);
@@ -621,7 +669,18 @@ async function writeDraft(kgd: CaptureKgd, files: CaptureFiles, state: CaptureSt
     await files.remove(path);
     return `error: kgd accept would refuse the record: ${problems.join("; ")}. Correct it and call submit again.`;
   }
-  return { done: result };
+  return { done: result.foreign ? result : { ...result, ...(await markSource(kgd, path)) } };
+}
+
+/** Mark a local draft in its source with `kgd mark`, which keeps the source's line count; a failure leaves the draft as it is. */
+async function markSource(kgd: CaptureKgd, path: string): Promise<Pick<CaptureResult, "marker" | "markError">> {
+  try {
+    const { report } = await kgd.command(["mark", path]);
+    if (Array.isArray(report.already)) return { marker: "its source already marks it" };
+    return typeof report.marker === "string" && typeof report.line === "number" ? { marker: `${report.marker} on line ${report.line}` } : {};
+  } catch (error) {
+    return { markError: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
@@ -659,11 +718,14 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): Draft | st
   if (!label || /[\r\n]/.test(label)) return "error: label must be one non-empty line";
   if (!statement) return "error: statement is required";
   if (/^##\s/m.test(statement)) return "error: statement must not contain level-2 headings";
-  const isNode = kind in profile.node_kinds;
-  const roleNames = profile.node_kinds[kind] ?? profile.relation_kinds[kind];
-  if (!roleNames) return `error: kind must be one of ${[...Object.keys(profile.node_kinds), ...Object.keys(profile.relation_kinds)].join(", ")}`;
+  const type = chosenType(profile, args.type);
+  if (typeof type === "string") return type;
+  const isNode = kind in type.node_kinds;
+  const roleNames = type.node_kinds[kind] ?? type.relation_kinds[kind];
+  const several = profile.types.length > 1 ? ` of type ${type.type}` : "";
+  if (!roleNames) return `error: kind must be one${several} of ${[...Object.keys(type.node_kinds), ...Object.keys(type.relation_kinds)].join(", ")}`;
   const epistemic = typeof args.epistemic === "string" && args.epistemic.trim() ? args.epistemic.trim() : undefined;
-  if (epistemic && !profile.epistemic.includes(epistemic)) return `error: epistemic must be one of ${profile.epistemic.join(", ")}`;
+  if (epistemic && !type.epistemic.includes(epistemic)) return `error: epistemic must be one${several} of ${type.epistemic.join(", ")}`;
   const rawRoles = args.roles && typeof args.roles === "object" && !Array.isArray(args.roles) ? args.roles as Record<string, unknown> : {};
   const roles: Record<string, string[]> = {};
   const errors: string[] = [];
@@ -705,7 +767,7 @@ function draftOf(state: CaptureState, args: Record<string, unknown>): Draft | st
   if (errors.length) return `error: ${errors.join("; ")}`;
   // A relation's label is a statement, so it takes no aliases.
   const aliases = isNode ? [...new Set(strings(args.aliases).filter((alias) => !/[\r\n]/.test(alias) && fold(alias) !== fold(label)))] : [];
-  return { label, kind, aliases, roles, requires, statement, evidence, epistemic };
+  return { label, kind, ...(several ? { type: type.type } : {}), aliases, roles, requires, statement, evidence, epistemic };
 }
 
 /** Each evidence quote placed in the source; a refusal shows the cited lines so the model can copy them. */

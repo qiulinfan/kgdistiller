@@ -25,7 +25,7 @@
   expansion) is the only environment variable for kgdistiller's own home and
   data; only `codex|claude link|doctor` also honor their runtime's `CODEX_HOME`
   or `CLAUDE_CONFIG_DIR`. It holds `config.json`
-  (`{"bases": {name: {"path", "sources"}}, "embedding"}`, written atomically by
+  (`{"bases": {name: {"path", "types"}}, "embedding"}`, written atomically by
   `base add|rm`), `types/<name>.md`, the `.gitignore` written when the home is
   created, the derived database `index.sqlite` (with `-wal`/`-shm`) and the
   dedicated `lock` file. No base root may be an ancestor or descendant of
@@ -44,20 +44,27 @@
   "Ingestion"). Agents, Skills and the plugin's agent write drafts only, new
   records and replacements alike, and never run `kgd accept` or edit an
   accepted record, except `kgd relocate`, which moves where a record cites
-  without changing what it says (owner, 2026-10-15: sources change and
-  nothing follows them; the relocate Skill moves a record to a passage the
-  owner gives; when the passage lies in another base it moves the record
-  there and rewrites every link to it), and the link rewrites a merge or a
-  split the owner accepted requires. `kgd find` (MCP `kg_find`) finds a text
-  in the registered sources, read-only and model-free. `kgd accept` creates a new record with `os.link`
+  without changing what it says (owner, 2026-10-23; docs/model.md "Finding
+  and relocating passages": a record is followed through its knowledge
+  markers, in its own file, then its base, then every other base; the
+  relocate Skill relocates a reworded passage by its meaning, and makes
+  unmarked knowledge that is found nowhere foreign; when the passage lies in
+  another base the record moves there and every link to it is rewritten),
+  `check --fix-lines`, and the link rewrites a merge or a split the owner
+  accepted requires. `kgd find` (MCP `kg_find`) finds a text in the sources,
+  read-only and model-free. `kgd accept` creates a new record with `os.link`
   then `os.unlink`, never overwriting, and moves a replacement over its record
   with `os.replace`, refusing it when the record's file is newer than the
-  draft. The home lock is held by `accept`, `relocate`, `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is ever locked or
-  truncated. The product never re-serializes frontmatter; `--fix-lines`
-  rewrites only the `lines:` line, `kgd edit` only the lines of the draft
-  field it sets, and `relocate` only `source:`, `lines:`, the Evidence
-  section and, when it moves a record across bases, the link values of that
-  record and of the records and drafts linking it.
+  draft. The home lock is held by `accept`, `relocate`, `mark`,
+  `check --fix-lines`, `base add|rm` and `embedding set|off`; no data file is
+  ever locked or truncated. The product never re-serializes frontmatter;
+  `--fix-lines` rewrites only the `lines:` line, and `source:` with it for a
+  record its markers followed within its base, `kgd edit` only the lines of
+  the draft field it sets, and `relocate` only `source:`, `lines:`, the
+  Evidence section and, when it moves a record across bases, the link values
+  of that record and of the records and drafts linking it. `kgd mark` is the
+  only command that writes a source file: it inserts one marker into one
+  line.
 - Embedding follows admission, not edits (owner, 2026-10-15). `kgd accept`
   ends with an index run that embeds only the records it created or replaced.
   After a hand edit of an accepted record the plugin runs
@@ -100,9 +107,10 @@
   that originates the concept, or a page explaining it) is foreign, has no
   `lines`, and quotes that page verbatim. Foreign is derived from `source`,
   never stored. `check` never fetches it and computes no freshness for it. Its
-  base is the base of the source being read, and its kind is one a type
-  registered for that base declares. Localization is `kgd relocate` to a
-  local passage, in any base, with no draft.
+  base is the base of the source being read, and its `type` one of that
+  base's types. It takes no knowledge marker. Localization is `kgd relocate`
+  to a local passage, in any base, with no draft; `kgd relocate UID --url URL`
+  with the page's own text makes a local record foreign.
 - `understanding` is `yes` or `no`, absent meaning `yes`; only the owner sets
   `no`.
 - Conflicts follow the owner's verbatim statements in docs/model.md
@@ -114,11 +122,13 @@
   - a changed meaning becomes a replacement draft keeping the id, reported as
     more general, a correction or a conflict; accepting it is the owner's
     decision.
-  Relocation is global: `kgd relocate` finds the passage in every base and
-  moves the record, with every link to it, into the passage's base. A
-  replacement lives in its record's base; one whose passage lies in another
-  base is reported, not drafted. Knowledge that disappears from its
-  source is reported; the agent deletes nothing and its fate is the owner's.
+  Relocation is global: `kgd relocate` finds the passage, or follows the
+  record's markers, in every base and moves the record, with every link to
+  it, into the passage's base. A replacement lives in its record's base; one
+  whose passage lies in another base is reported, not drafted. Knowledge that
+  disappears from its source is reported; the relocate Skill makes a record
+  that no marker names and no source states foreign; the agent deletes
+  nothing and its fate is the owner's.
 - 如无必要，勿增实体: delete whatever a decision makes unnecessary, outright and
   in the same change, with no fallback or compatibility path (docs/model.md
   principle 11).
@@ -139,31 +149,51 @@
   or reuse them for another concept. Ids come from meaning, never from section,
   figure, table, equation or theorem numbers; merges and splits rewrite the
   inbound links once.
-- Format agnosticism: a local knowledge source is any registered UTF-8 text
-  document.
-  Read it as numbered lines; never parse its syntax, scan for markers, pair
-  sibling formats, or convert it. `.md`, `.typ`, `.tex`, `.txt` and every other
-  extension are treated identically.
+- Sources by format (owner, 2026-10-23; docs/model.md "Sources"): a base's
+  sources are every file with the suffix `.md`, `.tex` or `.txt` (any case)
+  under its root, except hidden files, anything under a hidden directory and
+  files resolving outside the root through a symlink; nothing registers them.
+  Read a source as numbered UTF-8 lines; the only syntax the product reads in
+  it is knowledge markers. Never parse other syntax, pair sibling formats or
+  convert a source.
+- Knowledge markers (owner, 2026-10-23; docs/model.md "Knowledge markers",
+  `src/kgdistiller/markers.py`): `--[[NAME]]--` or `--[[NAME|TEXT]]--` in md
+  and txt, `\kn{NAME}` or `\kn[NAME]{TEXT}` in tex (after an unescaped `%`, a
+  comment), one line each, so a marker never changes a line count. NAME
+  resolves by name key to a label, a label without its `{scope}·` prefix, an
+  alias or an id among the records and drafts of every base, preferring the
+  record citing the marker's file, then one of its base. Markers are found by
+  reading the sources and never stored. The writing Skills and the plugin's
+  Capture write one per local draft with `kgd mark` (`--[[LABEL]]--:` on the
+  line of its first quote, `\kn[LABEL]{}` in tex) or wrap a name the source
+  already writes; a foreign record takes none. `check` follows a stale or
+  missing record's markers in three rounds (its file, its base, the other
+  bases) and reports `follow`; `kgd markers` lists them, CLI only.
 - Records come only from reviewed capture or compile through drafts, guided by
-  the source's user-registered document type. Never infer identity from
+  a user-registered document type of the source's base. Never infer identity from
   document order, headings, syntax or keyword co-occurrence; compare meanings
   before treating a record of the same name as the knowledge point.
 - Source document types are user-registered extraction profiles, independent
   of file format and knowledge domain: `$KGDISTILLER_HOME/types/<name>.md`, whose
   frontmatter (read with PyYAML `BaseLoader`) has `node_kinds` and optional
-  `relation_kinds` (each a mapping of kinds to ordered roles) and `epistemic`, and whose body is the guidance. A base's sources
-  are its `sources` glob→type map; each source has exactly one type. Do not
-  hardcode the owner's example types. `templates/document-types/` holds
+  `relation_kinds` (each a mapping of kinds to ordered roles) and `epistemic`, and whose body is the guidance. A base lists
+  in `types` the document types its records may use; each record declares the
+  one it follows in `type:`, which may be omitted when the base has one type,
+  and the agent drafting it chooses the type that fits the document (owner,
+  2026-10-23). Do not hardcode the owner's example types. `templates/document-types/` holds
   optional editable starting profiles; they are bundled as data, never
-  activated by installation or `base add`. Agents read a source's profile and
-  inventory through `kgd source SOURCE` and the text with their own tools.
+  activated by installation or `base add`. Agents read the profiles of a
+  source's base, its markers and its inventory through `kgd source SOURCE`
+  and the text with their own tools.
 - Tokens (`tokens`) and name keys (`name_key`) live in `index.py`; every
   tokenizer user imports them from there.
 - Hash-free consistency: no content-hash mechanism anywhere in the product
   (no hashing module, no stored or compared checksums), and ids are readable
   slugs, never hash-derived. `check` compares each record's Evidence quotes
-  with its cited lines by text and reports moved or stale records;
-  `check --fix-lines` rewrites only moved line ranges. The index detects
+  with its cited lines by text and reports moved or stale records, and where
+  their markers lead (`follow`); `check --fix-lines` rewrites only moved line
+  ranges and the `source:` and `lines:` of records followed within their
+  base. Markers, not stored fingerprints, are a record's stable place. The index detects
   changes by file stat. Staleness is reported, never used to hide knowledge
   from retrieval, MCP or the Obsidian sidebar. Vector writes are guarded by the
   row's text and `meta.embedding`, never by hashing; queries are encoded with
@@ -234,13 +264,17 @@
   record in focus, for a selection (in any view, the plugin's own included), a
   typed query or the file open in the editor, and the Capture view lists the
   drafts waiting for the owner by source (file name, parent folders added only
-  when names clash, foreign drafts under "foreign"). It reads
+  when names clash, foreign drafts under "foreign"). It draws the knowledge
+  markers of md, txt and (through latex-live's `registerTexEditorExtension`)
+  tex editors as chips that Cmd/Ctrl+click opens, resolved with
+  `kgd markers FILE`, and its jump command goes between a record and its
+  marker (docs/obsidian.md "Knowledge markers"). It reads
   knowledge and drafts only through a resident `kgd mcp` (`kg_drafts` for
   drafts), off until the vault's settings name a kgd executable,
   covering every base. With the configured executable and
   `KGDISTILLER_HOME` it also runs `kgd base list`, `kgd source SOURCE`,
-  `kgd edit`, `kgd accept`, `kgd relocate`, `kgd index`, `kgd index --no-embed`
-  and `kgd embedding`
+  `kgd markers`, `kgd mark`, `kgd edit`, `kgd accept`, `kgd relocate`,
+  `kgd index`, `kgd index --no-embed` and `kgd embedding`
   (`kgd embedding set` fills the Hugging Face model cache), and it writes and
   deletes draft files; the plugin never parses records, and never opens the
   home or the database itself. Capture's ids

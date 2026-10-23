@@ -3,12 +3,13 @@
 A base is normally one Obsidian vault, and its knowledge lives in the vault's
 hidden `.knowledge/` folder: accepted records in `entries/` and proposed
 records in `drafts/`. Obsidian itself is the
-editor. The kgdistiller plugin adds three things: it lets Obsidian index the
+editor. The kgdistiller plugin adds four things: it lets Obsidian index the
 hidden folder; once a kgd executable is configured, the lookup sidebar looks
 knowledge up in every registered base, for a selection, a typed query or the
 file open in the editor, with the record in focus and a typed graph of its
-neighbours; and the Capture view lists the drafts waiting for the owner, by
-source. Its
+neighbours; the Capture view lists the drafts waiting for the owner, by
+source; and the knowledge markers in md, txt and tex sources show as chips
+that open their records. Its
 optional agent runs inside the plugin and calls model and search APIs
 directly. `kgd check` stays the validator; Capture only drafts, and a draft
 becomes knowledge when the owner accepts it with `kgd accept`.
@@ -114,7 +115,7 @@ knowledge.
   copies the record into a draft with its id, opened there: edit it and accept
   it to replace the record. A draft already waiting under that id is kept.
 - **Localize here** appears on a foreign record when the lookup started from a
-  selection in a registered source: the agent localizes the record to that
+  selection in a source: the agent localizes the record to that
   passage in the Capture view ([Localization](#localization)).
 - The keyword index follows the record files without being asked: a record
   file of this vault created, saved, renamed or deleted is indexed with
@@ -164,8 +165,10 @@ other window and agent: it loads once (about 2 s for `BAAI/bge-m3` on Apple
 silicon) and later searches take tens of milliseconds. It stops the server after 15 minutes
 without a lookup, when either setting changes and when the plugin unloads.
 With the same executable and home it also runs `kgd base list` once per server
-to locate the bases, `kgd source SOURCE` for a source's document type,
-`kgd edit` and `kgd accept` from the Capture view, `kgd relocate` to localize
+to locate the bases, `kgd source SOURCE` for the document types of a source's
+base, `kgd markers` to open the record a marker names and for the jump
+command, `kgd mark` to mark a captured draft in its source, `kgd edit` and
+`kgd accept` from the Capture view, `kgd relocate` to localize
 a record (which changes where an accepted record cites, and may move it into
 another base), `kgd index --no-embed` for the keyword refresh, `kgd index`
 from Re-embed and `kgd embedding` from the Embedding settings, and it writes
@@ -278,18 +281,20 @@ while the owner keeps reading:
   inside the selection's block when the text occurs more than once. A
   selection made in the lookup sidebar or the Capture view, such as a concept
   a draft names, has no source lines: it is drafted only as foreign knowledge,
-  in the base and document type of the registered source open in the main
-  area, or found unchanged.
+  in the base of the source open in the main area, or found unchanged.
 - The plugin prepares everything deterministic: `kgd source SOURCE` for
-  the document type, the records and drafts already citing the source and the
-  base, the numbered paragraph around the selection with the nearest heading,
+  the document types of the source's base, the records and drafts already
+  citing the source and the base, the numbered paragraph around the selection with the nearest heading,
   the first `kg_search` results for the selection, and `kg_resolve` and
   `kg_drafts` of the Latin-script names in it.
 - The model may call `lookup` once for other names and phrases, then calls
   `submit` with what it takes the item to be, the decision (new, unchanged,
   superseding, conflicting, or borrowed for a concept the source only uses or
   credits to other work) and, for a record, its label, kind, roles, requires,
-  statement and evidence quotes with their lines.
+  statement and evidence quotes with their lines. In a base of several
+  document types it also names the type that fits the document, and the
+  draft declares it as `type:`; the kinds, roles and guidance are that
+  type's.
 - Before accepting a submission, a separate judgment compares its meaning
   with the exact selection. A broader or narrower item is refused and returned
   to the capture model to correct before any draft is written. Context may
@@ -319,8 +324,10 @@ while the owner keeps reading:
 - A new record is written as a draft with every frontmatter value a quoted
   string. It stays only when `kg_drafts` reports that `kgd accept` would take
   it with the drafts it links; otherwise it is removed and the refusal
-  returns to the model. Nothing is accepted or indexed. Unchanged writes
-  nothing.
+  returns to the model. A local draft that stays is then marked in its
+  source with `kgd mark`, which writes `--[[LABEL]]--:` (`\kn[LABEL]{}` in
+  tex) on the line of its first quote; when that fails, a notice says why and
+  the draft stays. Nothing is accepted or indexed. Unchanged writes nothing.
 - Superseding and conflicting write the record's replacement: a draft with the
   recorded id, keeping the record's understanding, which replaces it when the
   owner accepts it; the report says whether the passage generalizes, corrects
@@ -404,7 +411,7 @@ CC BY-SA 4.0 notice.
 base first and from papers and the web for what it does not hold. The
 deterministic results appear as for a selection; the agent starts from the
 first search results, the records named in the question and, when the active
-note is a registered source, that source and its document type (from
+note is a source, that source and its base's document types (from
 `kgd source`, which writes nothing). It reads more through read-only
 tools, called together where they are independent: `kg_search`, `kg_get` and
 `kg_neighbors` through `kgd mcp`; `paper_search`, which searches arXiv for
@@ -417,7 +424,7 @@ not publish; a 429 is reported as that limit. Search returns results directly
 without another model call. Each result supplies its title, HTTP(S) URL and at
 most 400 characters of its highlights to the model. Duplicate arXiv mirror
 URLs are collapsed. A paper search adds `site:arxiv.org` to the query, which
-Exa honours, and keeps the results that are arXiv papers. While the owner reads a registered source,
+Exa honours, and keeps the results that are arXiv papers. While the owner reads a source,
 which is research material, the agent is offered the paper search only, so
 an answer cites papers rather than encyclopedia or tutorial pages. Each step
 shows in the sidebar as it runs. The answer cites records as `[[uid]]` and
@@ -569,7 +576,7 @@ it at any time. Nothing in it is accepted until the owner presses Accept.
   or about 2 s when it must load the model.
   **Open draft** opens the draft file in a split beside the source for any
   edit. **Localize to selection**, on a foreign draft, localizes it to the
-  passage selected in a registered source. **Discard** asks first, then
+  passage selected in a source. **Discard** asks first, then
   deletes the draft; nothing remembers it, and a draft that linked it cannot
   be accepted until that link is edited.
 
@@ -589,12 +596,43 @@ its base, which rewrites only its `source`, `lines` and Evidence; a refusal
 goes back to the model. When the source lies in another base, the record moves
 into that base with its id and every link to it is rewritten. The record keeps
 everything else and stays accepted, or the draft stays a draft. A record whose
-kind the local source's type lacks is not localized.
+kind its document type lacks is not localized.
+
+## Knowledge markers
+
+A knowledge marker names a record where its source states it
+([model.md](model.md#knowledge-markers)): `--[[NAME]]--` or
+`--[[NAME|TEXT]]--` in md and txt, `\kn{NAME}` or `\kn[NAME]{TEXT}` in tex.
+The plugin draws them and follows them; which record a NAME means is always
+kgd's answer (`kgd markers FILE`, kept per file until the file or any record
+changes).
+
+- **Live preview.** In a Markdown or plain-text editor, a marker away from the
+  cursor shows as a purple chip with its TEXT (its NAME when it has none).
+  When the cursor or a selection touches it, the raw marker shows for
+  editing, with a purple mark. Source mode always shows the raw marker with
+  the mark.
+- **Reading view** shows the same chip.
+- **TeX.** latex-live's TeX editors get the same chips and clicks through its
+  `registerTexEditorExtension` API; the plugin registers the extension when
+  latex-live is loaded and again on its `latex-live:api-ready` event. A
+  marker after an unescaped `%` is a comment and is not drawn.
+- **Cmd/Ctrl+click** on a chip or a raw marker opens the record or draft it
+  names. A marker that names no record, or several, says so in a notice with
+  the candidates.
+- **Jump between knowledge and its marker** (`kgdistiller:jump-between-knowledge-and-marker`,
+  no default hotkey) goes from the record or draft open in the editor to its
+  marker, found as `kgd markers --uid` finds it (its own source first, then
+  its base, then the other bases), falling back to the first line it cites;
+  for a foreign record a notice names the page it cites. From a marker under
+  the cursor it opens the record.
+
+Markers in the `.knowledge` folder itself are not drawn.
 
 ## Not yet built
 
-Later owner-scheduled frontend work: editing commands, jump links from md/tex
-sources to records, a shipped `.base` file and a Bases view. For the Capture
+Later owner-scheduled frontend work: editing commands, a shipped `.base` file
+and a Bases view. For the Capture
 view: a graph view for editing a draft's links, asking the agent to revise a
 draft, and looking a draft's concepts up from its value chips. For the agent:
 linking the records that name a newly accepted concept, and compiling a whole
@@ -693,7 +731,8 @@ version; they do not establish behavior on all future app versions.
 The plugin's vitest suite verifies hidden indexing with a mocked adapter, the
 lookup's shaping of kgd's answers (the neighbour graph and its kind colours,
 the `requires` chain, inbound links, the open file's target and a source's
-records), the case folding, and the agent's tools and checks.
+records), the case folding, the scanning, resolution and caching of
+knowledge markers with the jump target, and the agent's tools and checks.
 
 Still to be checked by hand in Obsidian 1.14.4 on a real vault:
 
@@ -703,7 +742,9 @@ Still to be checked by hand in Obsidian 1.14.4 on a real vault:
   graph and its legend render in the light and dark themes;
 - **Open source** lands on the record's first line in the latex-live and
   tinymist views;
-- hidden indexing is on after `kgd obsidian install` without a manual toggle.
+- hidden indexing is on after `kgd obsidian install` without a manual toggle;
+- markers render as chips in live preview, reading view and latex-live's TeX
+  editors, and Cmd/Ctrl+click and the jump command open the right record.
 
 ## Source and distribution
 

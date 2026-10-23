@@ -104,6 +104,8 @@ def parse_args() -> argparse.Namespace:
     base_add = base_commands.add_parser("add", help="register a directory as a base, creating the home on first use")
     base_add.add_argument("path", type=Path)
     base_add.add_argument("--name", help="base name; defaults to the directory's basename")
+    base_add.add_argument("--type", action="append", default=[], dest="types", metavar="TYPE",
+                          help="a document type of types/ the base's records may use (repeatable)")
     base_rm = base_commands.add_parser(
         "rm", help="remove a base from the registry; files stay, and links into it are listed as dangling"
     )
@@ -129,12 +131,33 @@ def parse_args() -> argparse.Namespace:
         "check", help="validate the home, records and drafts and report moved or stale evidence"
     )
     check.add_argument("--base", action="append", default=[], metavar="B", help="check only this base (repeatable)")
-    check.add_argument("--fix-lines", action="store_true", help="rewrite the lines: of every record whose evidence moved")
+    check.add_argument("--fix-lines", action="store_true", help=(
+        "rewrite the lines: of every record whose evidence moved, and the source: and lines: of every record "
+        "its markers followed to another file of its base"))
 
     source = commands.add_parser(
         "source", help="print a source's extraction profile and the records and drafts citing it; writes nothing"
     )
-    source.add_argument("source", type=Path, help="a registered source file")
+    source.add_argument("source", type=Path, help="a source file: md, tex or txt inside a base")
+
+    markers = commands.add_parser(
+        "markers",
+        help="list the knowledge markers of sources, records or bases with the record each names; reads files only",
+        description="Markers name a record where its source states it: --[[NAME]]-- or --[[NAME|TEXT]]-- in md and txt, "
+        "\\kn{NAME} or \\kn[NAME]{TEXT} in tex. Without a source or uid, every source of the bases is read.",
+    )
+    markers.add_argument("sources", nargs="*", type=Path, metavar="SOURCE", help="a source file")
+    markers.add_argument("--uid", action="append", default=[], metavar="BASE:ID",
+                         help="the markers of this record, found round by round (repeatable)")
+    markers.add_argument("--base", action="append", default=[], metavar="B", help="read only this base (repeatable)")
+    markers.add_argument("--orphans", action="store_true", help="only markers that name no record or several")
+
+    mark = commands.add_parser(
+        "mark", help="write a marker naming a draft into its source, before its first quote; the line count stays"
+    )
+    mark.add_argument("draft", type=Path, help="a draft file")
+    mark.add_argument("--name", help="the NAME to write; defaults to the label, or the id when the label cannot be one")
+    mark.add_argument("--dry-run", action="store_true")
 
     find = commands.add_parser(
         "find", help="find a passage or a name in the registered sources, tolerant of line breaks and hidden markup"
@@ -152,7 +175,9 @@ def parse_args() -> argparse.Namespace:
         "into that passage's base when it lies in another",
     )
     relocate.add_argument("target", metavar="TARGET", help="base:id of an accepted record, or a record or draft file")
-    relocate.add_argument("text", help="the passage's text; - reads it from standard input")
+    relocate.add_argument("text", nargs="?", help=(
+        "the passage's text; - reads it from standard input; without it the record's markers are followed"))
+    relocate.add_argument("--url", help="make the record foreign, citing this web page; the text is the page's own")
     relocate.add_argument(
         "--source", action="append", default=[], metavar="PREFIX", help="look only in sources with this prefix"
     )
@@ -305,7 +330,7 @@ def _base(args: argparse.Namespace) -> int:
     from .home import add_base, home_directory, list_bases, load_home, remove_base
 
     if args.base_command == "add":
-        return _print(add_base(args.path, name=args.name))
+        return _print(add_base(args.path, name=args.name, types=args.types))
     if args.base_command == "rm":
         from .records import links_into
 
@@ -394,11 +419,20 @@ def _command(args: argparse.Namespace) -> int:
 
         bases = args.base or None
         report = fix_lines(bases=bases) if args.fix_lines else check(bases=bases)
-        return _print(report, failed=bool(report["errors"] or report["stale"] or report["moved"]))
+        return _print(report, failed=bool(report["errors"] or report["stale"] or report["moved"] or report["follow"]))
     if args.command == "source":
         from .write import source
 
         return _print(source(_cwd_path(args.source)))
+    if args.command == "markers":
+        from .markers import markers
+
+        return _print(markers([_cwd_path(path) for path in args.sources], args.uid, args.base, args.orphans))
+    if args.command == "mark":
+        from .markers import mark
+
+        report = mark(_cwd_path(args.draft), args.name, args.dry_run)
+        return _print(report)
     if args.command == "find":
         from .locate import find
 
@@ -407,7 +441,8 @@ def _command(args: argparse.Namespace) -> int:
         from .locate import relocate
 
         target = args.target if ":" in args.target and "/" not in args.target else str(_cwd_path(Path(args.target)))
-        report = relocate(target, _text(args.text), args.source, args.base, args.dry_run)
+        text = None if args.text is None else _text(args.text)
+        report = relocate(target, text, args.source, args.base, args.dry_run, args.url)
         return _print(report, failed="refused" in report)
     if args.command == "drafts":
         from .write import drafts

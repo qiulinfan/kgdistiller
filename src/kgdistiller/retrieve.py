@@ -421,7 +421,7 @@ def _source_text(home: Home, row: sqlite3.Row, around: int) -> str | None:
     source = row["source"]
     if base is None or not records.valid_source_path(source) or not base.holds(source):
         return None
-    if source not in base.source_types()[0]:
+    if not base.is_source(source):
         return None
     try:
         lines = records.source_lines(base.root / source)

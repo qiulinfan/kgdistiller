@@ -167,7 +167,7 @@ it("answers through the internal harness, direct model API and Exa's MCP search"
       expect(target).toBe(EXA_MCP_URL);
       return api.postText(`${url}/mcp`, headers, body, timeout);
     }), "What is MAE?",
-    { reading: { base: "papers", source: "mae.md", type: "research" } });
+    { reading: { base: "papers", source: "mae.md", types: ["research"] } });
   expect(answer.text).toContain("[W1]");
   expect(answer.web).toEqual([{ number: 1, title: "MAE", url: "https://arxiv.org/abs/2111.06377", snippet: "MAE reconstructs masked image patches." }]);
   expect(modelCalls).toBe(2);

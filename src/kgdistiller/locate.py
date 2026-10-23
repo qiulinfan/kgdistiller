@@ -1,10 +1,12 @@
 """Find text in the registered sources and relocate a record to a passage: ``kgd find`` and ``kgd relocate``.
 
-Sources change: lines shift, files are renamed, merged and split. Nothing
-follows them automatically. ``find`` locates a passage the owner gives, or
-every place a name occurs, in the registered sources; ``relocate`` moves one
-record's citation there, into another base with the record when the passage
-lies there. Both are deterministic and load no model.
+Sources change: lines shift, files are renamed, merged and split. ``find``
+locates a passage the owner gives, or every place a name occurs, in the
+sources; ``relocate`` moves one record's citation there, into another base with
+the record when the passage lies there. Without a passage, ``relocate`` follows
+the record's markers (see ``markers``); with ``--url`` it makes the record
+foreign, citing the web page whose text is given. Both are deterministic and
+load no model.
 
 Matching compares word tokens, not characters: the text and every source are
 read as NFKC-casefolded runs of letters and digits, each CJK character a token
@@ -169,11 +171,8 @@ def _matches(home: Home, text: str, bases: Iterable[str] = (), sources: Iterable
         base = home.bases[name]
         if (wanted and name not in wanted) or not files.available(name):
             continue
-        mapping, _ = files.sources(base)
-        for relative in sorted(mapping):
+        for relative in files.source_files(base):
             if prefixes and not relative.startswith(prefixes):
-                continue
-            if not base.holds(relative):
                 continue
             try:
                 lines = files.lines(base.root / relative)
@@ -221,9 +220,10 @@ def _target(home: Home, target: str) -> tuple[str, Path]:
     return base.name, real
 
 
-def _rewritten(raw: str, source: str, lines: str, quotes: list[str] | None) -> str:
+def _rewritten(raw: str, source: str, lines: str | None, quotes: list[str] | None) -> str:
     """The record text with its ``source:`` and ``lines:`` lines replaced (``lines:`` added after ``source:``
-    when missing) and, when ``quotes`` is given, its Evidence section replaced; every other character kept."""
+    when missing, removed when ``lines`` is None) and, when ``quotes`` is given, its Evidence section replaced;
+    every other character kept."""
     pieces = re.split(r"(\r\n|\r|\n)", raw)
     texts, endings = pieces[0::2], pieces[1::2] + [""]
     newline = endings[0] or "\n"
@@ -233,7 +233,10 @@ def _rewritten(raw: str, source: str, lines: str, quotes: list[str] | None) -> s
     if len(head) != 1 or len(found) > 1:
         raise KnowledgeError("the frontmatter must have one source: line and at most one lines: line to relocate")
     texts[head[0]] = f"source: {json.dumps(source, ensure_ascii=False)}"
-    if found:
+    if lines is None:
+        if found:
+            del texts[found[0]], endings[found[0]]
+    elif found:
         texts[found[0]] = f"lines: {lines}"
     else:
         texts.insert(head[0] + 1, f"lines: {lines}")
@@ -325,17 +328,26 @@ def _inbound(files: Files, old: str, new: str, skip: Path) -> list[tuple[Path, s
 
 
 def relocate(
-    target: str, text: str, sources: Iterable[str] = (), bases: Iterable[str] = (), dry_run: bool = False
+    target: str, text: str | None = None, sources: Iterable[str] = (), bases: Iterable[str] = (),
+    dry_run: bool = False, url: str | None = None,
 ) -> dict[str, Any]:
-    """Move one record's citation to the only passage of the registered sources that holds ``text``.
+    """Move one record's citation: to the only passage of the sources that holds ``text``; without ``text``, to
+    where its markers say it went; with ``url``, to that web page, whose text ``text`` gives.
 
     The record keeps everything but its ``source``, ``lines`` and, when its
     quotes do not all lie in the passage, its Evidence, which becomes the
-    passage's lines. A foreign record becomes local. When the passage lies in
-    another base, the record moves there with its id, its links are rewritten
-    for that base and every link to it is rewritten to its new uid. Refuses,
-    writing nothing, when the passage is not found exactly once.
+    passage's lines (or, for a web page, the given text). A foreign record
+    becomes local and a local one given ``url`` foreign. When the passage lies
+    in another base, the record moves there with its id, its links are
+    rewritten for that base and every link to it is rewritten to its new uid.
+    Refuses, writing nothing, when the passage is not found exactly once or no
+    marker leads to quotes that still hold.
     """
+    from .markers import Names, follow
+    from .records import is_foreign
+
+    if url is not None and (not is_foreign(url) or not text or not normalize_space(text)):
+        raise KnowledgeError("--url takes a web address and the page's own text as the passage")
     home = load_home(home_directory())
     with lock():
         name, path = _target(home, target)
@@ -343,14 +355,35 @@ def relocate(
         raw = path.read_bytes().decode("utf-8")
         record = parse_text(read_text(path), name, path.stem, path)
         files = Files(home)
-        found = _matches(home, text, bases, sources)
-        if len(found) != 1:
-            return {"refused": {
-                "message": (f"the passage occurs {len(found)} times; pass --base or --source to choose one"
-                            if found else "the passage does not occur in a registered source"),
-                "matches": [match.report() for match in found[:FIND_LIMIT]],
-            }}
-        match = found[0]
+        if url is not None:
+            match = Match(name, url, 0, 0, 0, text or "")
+        elif text is None:
+            followed = follow(files, Names(files), record)
+            if followed is None:
+                return {"refused": {
+                    "message": "no marker names the record; pass the passage's text, or --url and the page's text "
+                               "to make it foreign",
+                    "matches": [],
+                }}
+            if "lines" not in followed:
+                return {"refused": {
+                    "message": "markers name the record, but its quotes no longer hold where they are; pass the "
+                               "new passage's text",
+                    "markers": followed["markers"],
+                }}
+            match = Match(followed["base"], followed["source"], 0, 0, 0, "")
+            match_lines = followed["lines"]
+        else:
+            found = _matches(home, text, bases, sources)
+            if len(found) != 1:
+                return {"refused": {
+                    "message": (f"the passage occurs {len(found)} times; pass --base or --source to choose one"
+                                if found else "the passage does not occur in a source"),
+                    "matches": [match.report() for match in found[:FIND_LIMIT]],
+                }}
+            match = found[0]
+        if text is not None:
+            match_lines = None if url is not None else match.lines
         old = f"{name}:{fold(path.stem)}"
         new = f"{match.base}:{fold(path.stem)}"
         destination = path
@@ -370,14 +403,14 @@ def relocate(
                 raise KnowledgeError(f"a replacement draft of {old} waits; accept or discard it before moving the record")
             relinked = _inbound(files, old, new, path)
         span = normalize_space(match.text)
-        keep = all(normalize_space(quote) in span for quote in record.evidence)
+        keep = text is None or (url is None and all(normalize_space(quote) in span for quote in record.evidence))
         quotes = None if keep else _paragraphs(match.text)
-        if not keep:
+        if not keep and url is None:
             # The old quotes no longer lie in the passage; its own lines become the evidence.
             lines_text = "\n".join(files.lines(home.bases[match.base].root / match.source)[match.first - 1 : match.last])
             keep = all(normalize_space(quote) in normalize_space(lines_text) for quote in record.evidence)
             quotes = None if keep else quotes
-        relocated = _rewritten(raw, match.source, match.lines, quotes)
+        relocated = _rewritten(raw, match.source, match_lines, quotes)
         if match.base != name:
             relocated = _relinked(relocated, name, match.base, None)
         moved = parse_text(relocated.replace("\r\n", "\n").replace("\r", "\n").removeprefix("\ufeff"),
@@ -392,7 +425,7 @@ def relocate(
         report: dict[str, Any] = {
             "relocated": new, "path": str(destination),
             "from": {"source": record.source, "lines": record.lines_text},
-            "to": {"source": match.source, "lines": match.lines},
+            "to": {"source": match.source, "lines": match_lines or ""},
             "evidence": "kept" if keep else "replaced",
         }
         if match.base != name:

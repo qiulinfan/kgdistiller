@@ -30,11 +30,14 @@ kgd drafts --name "NAME" --name "CONCEPT" ...
 ```
 
 - `source` gives the source's base, its `source` path relative to the base
-  root (`REL` below: `--source` takes this value, never an absolute path) and
-  its document type: `node_kinds`, `relation_kinds` with their roles,
-  `epistemic` and the guidance, plus the records and drafts already citing
-  the source. An unregistered file is an
-  error: report the glob it asks for; do not register it.
+  root (`REL` below: `--source` takes this value, never an absolute path),
+  the profile of every document type the base allows (`types`: `node_kinds`,
+  `relation_kinds` with their roles, `epistemic` and the guidance; with one
+  type it is also given at the top level), the records and drafts already
+  citing the source, and its `markers`. Choose the type that fits the
+  document; in a base of several types the draft declares it as `type:`.
+  Every md, tex and txt file of a base outside hidden directories is a
+  source; any other file is an error to report, not to work around.
 - `resolve` takes the item's names, in the source's language and in English,
   and every concept the record will link as a participant or prerequisite.
   Per name it lists the `senses` (records with that name) and `mentions` in
@@ -101,6 +104,7 @@ mkdir -p ROOT/.knowledge/drafts && cat > ROOT/.knowledge/drafts/ID.md <<'RECORD'
 ---
 label: Measure space
 kind: definition
+type: math-notes
 aliases:
   - 测度空间
 source: notes/math/measure-theory/chapters/01-sigma-algebra.tex
@@ -114,6 +118,7 @@ A measure space is a triple $(X,\mathcal M,\mu)$ with a σ-algebra $\mathcal M$ 
 
 > 我们称 \((X,\mathcal{M},\mu)\) 为一个 measure space.
 RECORD
+kgd mark ROOT/.knowledge/drafts/ID.md
 kgd drafts --source REL
 ```
 
@@ -129,7 +134,8 @@ kgd drafts --source REL
   it has no `lines`, and each Evidence quote is copied verbatim from that
   page, which you fetch with your web tools. It lives in the base of the
   source being read and uses a kind of that source's type.
-- `kind` is one of the type's kinds. A record adds one key per role its kind
+- `type` is the chosen document type; leave it out only when the base has one.
+  `kind` is one of that type's kinds. A record adds one key per role its kind
   declares, each a list of values (a relation binds at least two values, and
   a node kind that declares roles links at least one); `requires` lists
   direct prerequisites.
@@ -145,6 +151,15 @@ kgd drafts --source REL
 - The complete format is
   [references/record-format.md](references/record-format.md).
 
+`kgd mark` writes a marker naming the local draft into its source, on the
+line of its first quote, without changing the line count: `--[[LABEL]]--:` in
+md and txt, `\kn[LABEL]{}` in tex. Markers let the record be found again
+after the file is edited, renamed or moved. When the source already writes the
+item's name where it defines it, wrap that name instead, in the source's own
+syntax (`--[[NAME]]--`, or `\kn{NAME}` in tex), where NAME is the label, its
+part after `·`, an alias or the id, and skip `kgd mark`; `kgd source` lists the
+markers and the record each resolves to. A foreign draft takes no marker.
+
 `kgd drafts --source REL` (for a foreign draft, `--name LABEL`) lists the
 draft with its `problems`, what `kgd accept` would refuse. Fix the draft until
 they are empty. The owner's capture request is the consent; do not ask again.
@@ -152,6 +167,6 @@ they are empty. The owner's capture request is the consent; do not ask again.
 ## 4. Report
 
 One short line: the classification, the draft's label and uid (and the record
-it replaces), the concepts left unlinked because nothing records them, and
+it replaces), where its marker went, the concepts left unlinked because nothing records them, and
 anything left to the owner, including connections reported instead of
 written. The owner accepts the draft.

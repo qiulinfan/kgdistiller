@@ -237,14 +237,16 @@ def _draft_value(files: Files, role: str, position: int, value: Value) -> dict[s
 
 
 def _choices(files: Files, base: Base, record: Record) -> dict[str, Any] | None:
-    """What a draft's kind, roles and epistemic may be: its source's type, or for a foreign draft every type
-    registered for its base, which `kgd check` keeps from declaring a kind differently; None when there is none."""
-    if record.foreign:
-        types = [files.home.types[name] for name in sorted(set(base.sources.values())) if name in files.home.types]
+    """What a draft's kind, roles and epistemic may be: its document type's, or, when it declares none and its
+    base has several, every type of its base, which `kgd check` keeps from declaring a kind differently; None
+    when there is none."""
+    declared = base.record_type(record.type)
+    if declared is not None:
+        types = [declared]
+    elif record.type is None:
+        types = [files.home.types[name] for name in base.type_names if name in files.home.types]
     else:
-        mapping, _ = files.sources(base)
-        name = mapping.get(record.source)
-        types = [files.home.types[name]] if name in files.home.types else []
+        types = []
     if not types:
         return None
     node_kinds: dict[str, list[str]] = {}
@@ -485,7 +487,7 @@ def edit(path: Path | str, key: str, values: Iterable[str]) -> dict[str, Any]:
 # ---------------------------------------------------------------- source
 
 
-def _source(home: Home, source: Path | str) -> tuple[Base, str, DocumentType]:
+def _source(home: Home, source: Path | str) -> tuple[Base, str]:
     real = _realpath(source)
     base = base_for_path(home.bases, real)
     if base is None:
@@ -494,7 +496,23 @@ def _source(home: Home, source: Path | str) -> tuple[Base, str, DocumentType]:
     relative = real.relative_to(base.root).as_posix()
     if not real.is_file():
         raise KnowledgeError(f"{source} is not a file")
-    return base, relative, base.type_of(relative)
+    if not base.is_source(relative):
+        raise KnowledgeError(f"{relative} is not a source of base {base.name}: sources are its md, tex and txt "
+                             "files outside hidden directories")
+    if not base.type_names:
+        raise KnowledgeError(f"base {base.name} registers no document type; add one under bases.{base.name}.types "
+                             "in $KGDISTILLER_HOME/config.json")
+    return base, relative
+
+
+def _profile(document_type: DocumentType) -> dict[str, Any]:
+    return {
+        "type": document_type.name,
+        "node_kinds": {kind: list(roles) for kind, roles in document_type.node_kinds.items()},
+        "relation_kinds": {kind: list(roles) for kind, roles in document_type.relation_kinds.items()},
+        "epistemic": list(document_type.epistemic),
+        "guidance": document_type.guidance,
+    }
 
 
 def _records(base: Base, folder: str, relative: str) -> list[Record]:
@@ -510,19 +528,29 @@ def _records(base: Base, folder: str, relative: str) -> list[Record]:
 
 
 def source(path: Path | str) -> dict[str, Any]:
-    """The extraction profile of one registered source and the records and drafts citing it; writes nothing."""
+    """The extraction profiles a source's records may follow, the records and drafts citing it and its markers;
+    writes nothing.
+
+    ``types`` lists the profile of every document type of the source's base: the writer chooses the one that
+    fits the document and declares it in each draft's ``type:`` (it may be left out when the base has one type,
+    whose profile is then also given at the top level).
+    """
+    from .markers import Names, file_markers
+
     home = load_home(home_directory())
-    base, relative, document_type = _source(home, path)
+    base, relative = _source(home, path)
     relations = base_relation_kinds(home)
+    profiles = [_profile(home.types[name]) for name in base.type_names if name in home.types]
+    files = Files(home)
+    names = Names(files)
     return {
         "base": base.name,
         "source": relative,
-        "type": document_type.name,
-        "node_kinds": {kind: list(roles) for kind, roles in document_type.node_kinds.items()},
-        "relation_kinds": {kind: list(roles) for kind, roles in document_type.relation_kinds.items()},
-        "epistemic": list(document_type.epistemic),
-        "guidance": document_type.guidance,
+        **(profiles[0] if len(profiles) == 1 else {}),
+        "types": profiles,
         "line_count": len(source_lines(base.root / relative)),
+        "markers": [{**marker.report(), "uid": names.resolve(marker.name, marker.base, marker.source)[0]}
+                    for marker in file_markers(files, base, relative)],
         "records": [{
             "uid": record.uid,
             "label": record.label,

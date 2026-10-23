@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("obsidian", () => ({ ItemView: class {}, Modal: class {}, SuggestModal: class {}, Notice: class {} }));
+const notices = vi.hoisted(() => [] as string[]);
+vi.mock("obsidian", () => ({ ItemView: class {}, Modal: class {}, SuggestModal: class {}, Notice: class { constructor(message: string) { notices.push(message); } } }));
 
 import { captureOutcome, KgdistillerCaptureView } from "../src/capture-view";
 import { captureSelection } from "../src/capture";
@@ -24,6 +25,7 @@ describe("Capture completion", () => {
   const fixture = () => new KgdistillerCaptureView(undefined as never, {
     originServices: () => ({}),
     readingPath: async () => undefined,
+    kgd: { configured: () => false },
   } as never);
 
   it("reports a failed job to the sidebar even though Capture displays the error itself", async () => {
@@ -38,5 +40,18 @@ describe("Capture completion", () => {
 
   it("reports that a side selection could not start without a source open", async () => {
     await expect(fixture().startCapture({ text: "autoencoders", context: "", side: true })).resolves.toBeUndefined();
+  });
+
+  it("keeps a draft whose source kgd mark could not mark, and says why", async () => {
+    notices.length = 0;
+    vi.mocked(captureSelection).mockResolvedValueOnce({
+      item: "autoencoders", decision: "new", uid: "papers:autoencoder", label: "Autoencoder", draft: true, report: "已收录。",
+      markError: "no line near mae.md:1 takes a marker; mark it by hand",
+    });
+    await fixture().startCapture(selection);
+    expect(notices).toEqual([
+      "kgdistiller drafted Autoencoder but could not mark it in its source: no line near mae.md:1 takes a marker; mark it by hand",
+      "kgdistiller: Drafted: Autoencoder; it waits for you in Capture.",
+    ]);
   });
 });

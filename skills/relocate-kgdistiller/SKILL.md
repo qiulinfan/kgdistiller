@@ -1,73 +1,107 @@
 ---
 name: relocate-kgdistiller
-description: Move one kgdistiller record's citation to a passage the owner gives — after a source was edited, renamed, merged or split, or to localize foreign knowledge — by finding the record from the knowledge's name and running kgd relocate with the passage's text, which finds the passage in the registered sources of every base and rewrites only the record's source, lines and, when needed, Evidence, moving the record with every link to it when the passage lies in another base. Use when the owner names a piece of knowledge (exactly or roughly) and pastes the new passage that states it.
+description: Find where kgdistiller records went after their sources were edited, renamed, moved, merged or split, and move their citations there — following each record's knowledge markers through its own file, then its base, then every other base, judging a reworded passage by its meaning, and making knowledge that is unmarked and nowhere to be found foreign, citing the outside page that states it. Use when kgd check reports stale, moved or followed records, when the owner names knowledge (exactly or roughly) that is no longer where it was, or pastes the passage that now states it.
 ---
 
-# Relocate one record
+# Relocate records
 
-The owner gives two things: the knowledge's name, exact or approximate, and
-the text of the passage that now states it. Sources change, and nothing
-follows them automatically; this Skill moves one record's citation to the
-passage the owner points at. Its meaning stays: only `source`, `lines` and,
-when the old quotes are not in the passage, the Evidence change. It works the
-same for a foreign record, which becomes local, and across bases: a passage
-in another base moves the record there.
+Sources change: lines shift, files are renamed and moved, passages are
+reworded. A record finds its way back through its markers, the places its
+source names it (`--[[NAME]]--` in md and txt, `\kn{NAME}` or `\kn[NAME]{TEXT}`
+in tex). This Skill moves each record's citation to where its knowledge now
+is. Its meaning never changes here: only `source`, `lines` and, when the old
+quotes are gone, the Evidence.
 
 Match the owner's language. Keep commands, uids, keys and raw errors
 unchanged.
 
-## 1. Find the record, in one turn
+## 1. Collect the records
+
+- When the owner names knowledge, find it in one turn:
+
+  ```sh
+  kgd resolve "NAME" "OTHER NAME"
+  kgd search "NAME" --limit 5 --no-dense
+  kgd drafts --name "NAME"
+  ```
+
+  The name may be a translation, an alias or a paraphrase. When several
+  records remain plausible, ask the owner which, listing their labels and
+  current `source:lines`.
+- Otherwise start from `kgd check`: its `moved` records (quotes shifted in the
+  same file), `follow` records (markers found them elsewhere) and `stale`
+  records (quotes gone), plus `source ... does not exist` errors.
+
+## 2. Let kgd follow what only moved, in one command
 
 ```sh
-kgd resolve "NAME" "OTHER NAME"
-kgd search "NAME" --limit 5 --no-dense
-kgd drafts --name "NAME"
+kgd check --fix-lines
+kgd relocate UID
 ```
 
-Pick the record or draft the owner means: the name may be a translation, an
-alias or a paraphrase. When several remain plausible, ask the owner which,
-listing their labels and current `source:lines`; do not guess.
+`--fix-lines` rewrites every record whose quotes only shifted lines, and
+every record whose markers lead to another file of its base where its quotes
+still hold. For each record it leaves, run `kgd relocate UID` (a draft by its
+file path, `ROOT/.knowledge/drafts/ID.md`): without a passage it searches the
+record's markers in its own file, then in every source of its base, then in
+every other base, and moves the record there when its quotes still hold,
+into the other base with every link to it when it lies there. Run the
+records of one batch together.
 
-## 2. Relocate, in one command
+## 3. Judge what was reworded
 
-Pass the passage on standard input, exactly as the owner gave it:
+`kgd relocate UID` refuses with the record's `markers` when they name it but
+its quotes no longer hold: the passage was rewritten. Read the lines around
+each marker with your own tools and compare them with the record:
+
+- **the same knowledge, reworded** (wording, notation, examples or context
+  changed, the meaning did not): relocate to the new passage, which replaces
+  the Evidence with its text:
+
+  ```sh
+  kgd relocate UID - <<'PASSAGE'
+  THE PASSAGE AS THE SOURCE NOW WRITES IT
+  PASSAGE
+  ```
+
+  Pass `--source REL` (the base-relative path) when the passage occurs more
+  than once.
+- **a changed meaning**: draft a replacement under the record's id from the
+  new passage, per the compile Skill's conflict rules, and report it; the
+  owner accepts it.
+
+When the owner pasted the passage themselves, relocate to it the same way.
+
+## 4. Make unmarked, lost knowledge foreign
+
+`kgd relocate UID` refuses with `no marker names the record` when the record
+has no marker. Look for its passage once with its most distinctive quote:
 
 ```sh
-kgd relocate UID - <<'PASSAGE'
-THE PASSAGE'S TEXT
+kgd find "A DISTINCTIVE PHRASE OF ITS EVIDENCE" --limit 5
+```
+
+When it is found, relocate to it as in step 3. When it is not, the knowledge
+has left the owner's files: find the page that states it, preferring the
+originating work (its arXiv or publisher page), then an encyclopedia article,
+read it with your web tools, and make the record foreign with that page's own
+text as its Evidence:
+
+```sh
+kgd relocate UID --url https://THE-PAGE - <<'PASSAGE'
+THE PAGE'S OWN SENTENCES THAT STATE IT, VERBATIM
 PASSAGE
 ```
 
-`UID` is `base:id` of an accepted record; a draft is given by its file path,
-`ROOT/.knowledge/drafts/ID.md`. `kgd relocate` finds the passage in the
-registered sources of every base the way `kgd find` does: by its words in
-order, ignoring line breaks and the markup a reading view hides. It needs
-exactly one match:
+A foreign record takes no marker. If no page states the knowledge, report the
+record instead.
 
-- `refused` with several matches: run it again with `--base NAME` or
-  `--source PREFIX` naming the right file, from the matches it lists;
-- `refused` with no match: say so.
+## 5. Report
 
-`--source` takes a base-relative path prefix, the `source` value `kgd source`
-prints, never an absolute path.
-
-When the passage lies in another base, the record moves there with its id (an
-accepted record into its `entries/`, a draft into its `drafts/`), and every
-role and `requires` link to it, in every base's records and drafts, is
-rewritten to its new uid; body-prose wikilinks are not. Any other refusal is
-an error: the target base already has a record or draft with the id, a
-replacement draft of the record waits, the draft is itself a replacement
-(it lives in its record's base), the result would not pass check, or a
-registered base is unavailable. Report it to the owner as `kgd` states it.
-
-On success it rewrites the files under the home lock, and refreshes the
-keyword index when it wrote an accepted record. The owner's request is the
-consent; do not ask again, and never edit the record yourself.
-
-## 3. Report
-
-One short line: the record's label, its old and new `source:lines`, whether
-the evidence was kept or replaced by the passage's text, and, for a move, its
-new uid (`relocated`) and how many files had their links rewritten
-(`relinked`). A kept evidence keeps the record's vector; a replaced one waits
-for the owner's re-embed like any edit.
+One line per record: its label, old and new `source:lines` (or URL), whether
+the Evidence was kept or replaced, and for a move to another base its new uid
+and how many files had links rewritten (`relinked`). List the replacement
+drafts written and the records left unresolved. `kgd relocate` refreshes the
+keyword index when it writes an accepted record; a replaced Evidence waits for
+the owner's re-embed like any edit. The owner's request is the consent; never
+edit a record by hand.

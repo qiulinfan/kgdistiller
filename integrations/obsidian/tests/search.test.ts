@@ -9,6 +9,7 @@ import {
   recordText,
   searchKnowledge,
   paperQuery,
+  readingGuidance,
   searchUser,
   stepText,
   type SearchKgd,
@@ -59,6 +60,20 @@ describe("the search prompt", () => {
       "Knowledge base search for the question:\n[papers:masked-autoencoder] Masked autoencoder · architecture node · papers — Masked autoencoder.",
       "Names in the question, looked up in every base:\n\"BEiT\":\n  - no record has this name",
     ].join("\n\n"));
+  });
+
+  it("names the document type of the source being read, or every type of its base", () => {
+    const first = { query: "", lanes: [], results: [], lag: {} as never };
+    expect(searchUser("Q", first, undefined, { base: "papers", source: "mae.md", types: ["ai-research"] }))
+      .toContain("The owner is reading mae.md in base papers, a source of document type ai-research.");
+    expect(searchUser("Q", first, undefined, { base: "notes", source: "a.tex", types: ["cs-notes", "math-notes"] }))
+      .toContain("The owner is reading a.tex in base notes, whose document types are cs-notes, math-notes.");
+  });
+
+  it("keeps a single type's guidance and names each type's guidance in a base of several", () => {
+    expect(readingGuidance([{ type: "ai-research", guidance: "Write in Chinese." }])).toBe("Write in Chinese.");
+    expect(readingGuidance([{ type: "cs-notes", guidance: "Use English terms." }, { type: "empty", guidance: " " }, { type: "math-notes", guidance: "Write in Chinese." }]))
+      .toBe("Document type cs-notes:\nUse English terms.\n\nDocument type math-notes:\nWrite in Chinese.");
   });
 
   it("shows whole records and links compactly", () => {
@@ -148,7 +163,7 @@ describe("searching", () => {
       [["web_search", { query: "BEiT" }], ["paper_search", { query: "why MAE needs no data augmentation" }]],
       [["answer", { answer: "Masking acts as augmentation [W1]." }]],
     );
-    const reading = { base: "papers", source: "papers/mae/mae_ch.md", type: "ai-research" };
+    const reading = { base: "papers", source: "papers/mae/mae_ch.md", types: ["ai-research"] };
     const steps: SearchStep[] = [];
     const answer = await searchKnowledge(complete, kgd, async (query) => { queries.push(query); return query.endsWith("site:arxiv.org") ? found : web; },
       "为什么 MAE 不需要 data augmentation？", { reading, onStep: (step) => steps.push(step) });

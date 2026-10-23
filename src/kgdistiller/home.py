@@ -1,15 +1,15 @@
-"""The kgdistiller home: the base registry, source globs, document types and the write lock.
+"""The kgdistiller home: the base registry, the document types and the write lock.
 
 ``$KGDISTILLER_HOME`` (default ``~/.knowledge``) is the only environment variable
 for kgdistiller's own home and data. Its ``config.json`` registers every base (a directory whose
-knowledge lives under ``<root>/.knowledge/``) with the globs that map its source
-files to document types, and ``types/<name>.md`` holds one document type each.
+knowledge lives under ``<root>/.knowledge/``) with the document types its records may use, and
+``types/<name>.md`` holds one document type each. A base's sources are every file of a supported
+format (``SOURCE_SUFFIXES``) under its root outside hidden directories; nothing registers them one by one.
 Reads never create anything; ``base add`` creates the home on first use.
 """
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 import re
@@ -17,7 +17,7 @@ import tempfile
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path, PurePath, PureWindowsPath
+from pathlib import Path, PurePath
 from typing import Any
 
 import yaml
@@ -31,11 +31,13 @@ LOCK_FILENAME = "lock"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 ROLE_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 FIXED_KEYS = frozenset({
-    "label", "kind", "source", "lines", "aliases", "understanding",
+    "label", "kind", "type", "source", "lines", "aliases", "understanding",
     "epistemic", "requires", "tags", "cssclasses",
 })
 CONFIG_KEYS = {"bases", "embedding"}
-BASE_KEYS = {"path", "sources"}
+BASE_KEYS = {"path", "types"}
+# The formats a base reads as sources: every such file under its root, outside hidden directories.
+SOURCE_SUFFIXES = (".md", ".tex", ".txt")
 TYPE_KEYS = {"node_kinds", "relation_kinds", "epistemic"}
 
 
@@ -97,44 +99,51 @@ class DocumentType:
         return self.node_kinds.get(kind, self.relation_kinds.get(kind))
 
 
+def source_format(relative: str) -> str | None:
+    """The supported format of a base-relative path (``md``, ``tex`` or ``txt``), or None."""
+    suffix = PurePath(relative).suffix.lower()
+    return suffix[1:] if suffix in SOURCE_SUFFIXES else None
+
+
 @dataclass(frozen=True)
 class Base:
     name: str
     path: str
     root: Path
-    sources: dict[str, str]
+    type_names: tuple[str, ...]
     types: dict[str, DocumentType]
 
-    def source_types(self) -> tuple[dict[str, str], dict[str, list[str]]]:
-        """Map every registered file (POSIX path relative to the root) to its type."""
-        found: dict[str, set[str]] = {}
-        for pattern, type_name in self.sources.items():
-            for match in glob.glob(pattern, root_dir=str(self.root), recursive=True):
-                if (self.root / match).is_file():
-                    found.setdefault(match.replace(os.sep, "/"), set()).add(type_name)
-        mapping = {path: next(iter(names)) for path, names in found.items() if len(names) == 1}
-        conflicts = {path: sorted(names) for path, names in found.items() if len(names) > 1}
-        return mapping, conflicts
+    def source_files(self) -> list[str]:
+        """Every source of the base: the POSIX root-relative path of each file of a supported format,
+        outside hidden directories and files, that resolves inside the root."""
+        found: list[str] = []
+        for directory, folders, names in os.walk(self.root):
+            folders[:] = sorted(folder for folder in folders if not folder.startswith("."))
+            for name in sorted(names):
+                if name.startswith(".") or source_format(name) is None:
+                    continue
+                relative = (Path(directory) / name).relative_to(self.root).as_posix()
+                if self.holds(relative):
+                    found.append(relative)
+        return sorted(found)
+
+    def is_source(self, relative: str) -> bool:
+        """Whether a base-relative path names a source: a supported format, no hidden segment, inside the root."""
+        segments = relative.split("/")
+        if not relative or any(not segment or segment == ".." or segment.startswith(".") for segment in segments):
+            return False
+        return source_format(relative) is not None and self.holds(relative)
 
     def holds(self, relative: str) -> bool:
         """Whether the base-relative path resolves, through any symlink, to a regular file inside the root."""
         real = _realpath(self.root / relative)
         return _contains(self.root, real) and real.is_file()
 
-    def type_of(self, path: str | PurePath) -> DocumentType:
-        relative = PurePath(path).as_posix()
-        mapping, conflicts = self.source_types()
-        if relative in conflicts:
-            raise KnowledgeError(
-                f"source {relative} of base {self.name} matches globs of several types: "
-                + ", ".join(conflicts[relative])
-            )
-        if relative not in mapping:
-            raise KnowledgeError(
-                f"{relative} is not a registered source of base {self.name}; add a glob for it "
-                f"under bases.{self.name}.sources in ${HOME_ENVIRONMENT}/{CONFIG_FILENAME}"
-            )
-        return self.types[mapping[relative]]
+    def record_type(self, declared: str | None) -> DocumentType | None:
+        """The document type of a record: the one it declares, or the base's only type; None when that is not
+        one of the base's types."""
+        name = declared if declared is not None else (self.type_names[0] if len(self.type_names) == 1 else None)
+        return self.types.get(name) if name in self.type_names else None
 
 
 @dataclass(frozen=True)
@@ -216,7 +225,7 @@ def base_relation_kinds(home: Home) -> dict[str, frozenset[str]]:
     found: dict[str, frozenset[str]] = {}
     for name, base in home.bases.items():
         kinds: set[str] = set()
-        for type_name in set(base.sources.values()):
+        for type_name in base.type_names:
             if type_name not in loaded:
                 loaded[type_name] = load_type(home.directory / TYPES_DIRECTORY / f"{type_name}.md")
             kinds.update(loaded[type_name].relation_kinds)
@@ -233,22 +242,8 @@ def _missing_home(home: Path) -> KnowledgeError:
     return KnowledgeError(f"no kgdistiller home at {home}; run `kgd base add PATH` to create it")
 
 
-def _check_glob(pattern: Any, where: str) -> None:
-    if not isinstance(pattern, str) or not pattern:
-        raise KnowledgeError(f"{where}: a source glob must be a non-empty string")
-    if "\\" in pattern:
-        raise KnowledgeError(f"{where}: source glob {pattern!r} must use '/' and no backslash")
-    if pattern.startswith("/") or PureWindowsPath(pattern).drive:
-        raise KnowledgeError(f"{where}: source glob {pattern!r} must be relative to the base root")
-    for segment in pattern.split("/"):
-        if segment == "..":
-            raise KnowledgeError(f"{where}: source glob {pattern!r} must not contain '..'")
-        if not segment or segment.startswith("."):
-            raise KnowledgeError(f"{where}: source glob {pattern!r} has an empty or hidden segment")
-
-
 def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType] | None) -> Home:
-    """Validate config.json; with ``types`` None the glob type names are not checked against types/."""
+    """Validate config.json; with ``types`` None the base type names are not checked against types/."""
     where = str(home / CONFIG_FILENAME)
     if not isinstance(payload, dict) or set(payload) != CONFIG_KEYS:
         raise KnowledgeError(f"{where}: the top level must have exactly the keys bases and embedding")
@@ -262,17 +257,19 @@ def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType] | Non
         if not SLUG_RE.fullmatch(name):
             raise KnowledgeError(f"{where}: base name {name!r} must match {SLUG_RE.pattern}")
         if not isinstance(entry, dict) or set(entry) != BASE_KEYS:
-            raise KnowledgeError(f"{where}: base {name} must have exactly the keys path and sources")
+            raise KnowledgeError(f"{where}: base {name} must have exactly the keys path and types")
         stored = entry["path"]
         if not isinstance(stored, str) or not (stored.startswith("~/") or Path(stored).is_absolute()):
             raise KnowledgeError(f"{where}: base {name} path must be '~/…' or absolute")
-        if not isinstance(entry["sources"], dict):
-            raise KnowledgeError(f"{where}: base {name} sources must map globs to type names")
-        for pattern, type_name in entry["sources"].items():
-            _check_glob(pattern, f"{where}: base {name}")
-            if not isinstance(type_name, str) or (types is not None and type_name not in types):
-                raise KnowledgeError(f"{where}: base {name} glob {pattern!r} names unknown type {type_name!r}")
-        bases[name] = Base(name, stored, _realpath(stored), dict(entry["sources"]), types or {})
+        names = entry["types"]
+        if not isinstance(names, list) or any(not isinstance(item, str) for item in names):
+            raise KnowledgeError(f"{where}: base {name} types must be a list of document type names")
+        if len(set(names)) != len(names):
+            raise KnowledgeError(f"{where}: base {name} types must not repeat a type")
+        for type_name in names:
+            if not SLUG_RE.fullmatch(type_name) or (types is not None and type_name not in types):
+                raise KnowledgeError(f"{where}: base {name} names unknown type {type_name!r}")
+        bases[name] = Base(name, stored, _realpath(stored), tuple(names), types or {})
     home_real = _realpath(home)
     for base in bases.values():
         for other in bases.values():
@@ -301,7 +298,7 @@ def _load_types(home: Path, names: Iterable[str]) -> dict[str, DocumentType]:
 
 def _parsed(home: Path, payload: Any) -> Home:
     """``payload`` validated with the document types its bases' sources name."""
-    named = [name for base in _parse_config(home, payload, None).bases.values() for name in base.sources.values()]
+    named = [name for base in _parse_config(home, payload, None).bases.values() for name in base.type_names]
     return _parse_config(home, payload, _load_types(home, named))
 
 
@@ -414,13 +411,14 @@ def _describe(base: Base) -> dict[str, Any]:
         "name": base.name,
         "path": base.path,
         "root": str(base.root),
+        "types": list(base.type_names),
         "available": available,
         "records": _count(knowledge / "entries") if available else None,
         "drafts": _count(knowledge / "drafts") if available else None,
     }
 
 
-def add_base(path: Path | str, name: str | None = None) -> dict[str, Any]:
+def add_base(path: Path | str, name: str | None = None, types: Iterable[str] = ()) -> dict[str, Any]:
     root = _realpath(path)
     if not root.is_dir():
         raise KnowledgeError(f"base root is not an existing directory: {path}")
@@ -448,8 +446,8 @@ def add_base(path: Path | str, name: str | None = None) -> dict[str, Any]:
                 raise KnowledgeError(f"{root} lies inside the root of base {other.name}")
             if _contains(root, other.root):
                 raise KnowledgeError(f"{root} contains the root of base {other.name}")
-        payload["bases"][base_name] = {"path": _stored_path(root), "sources": {}}
-        added = _parse_config(home, payload, current.types).bases[base_name]
+        payload["bases"][base_name] = {"path": _stored_path(root), "types": list(dict.fromkeys(types))}
+        added = _parsed(home, payload).bases[base_name]
         (knowledge / "entries").mkdir(parents=True, exist_ok=True)
         atomic_write_text(home / CONFIG_FILENAME, _render_config(payload))
     return {"home": str(home), "added": _describe(added)}

@@ -40,14 +40,16 @@ kgd source SOURCE
 ```
 
 It returns the base, the `source` path relative to the base root (`REL`
-below: `--source` takes this value, never an absolute path), the document
-type with its `node_kinds`, `relation_kinds` (kinds with ordered roles),
-`epistemic` list and guidance, `line_count`, and the accepted records and
-drafts that already cite this source. Follow the type's guidance; do not infer
-kinds from the file extension or impose a built-in catalog. Read the source
-text with your own tools. An unregistered file is an error that asks for a
-glob in `$KGDISTILLER_HOME/config.json`: propose the glob and its type to the
-owner instead of registering it.
+below: `--source` takes this value, never an absolute path), the profile of
+every document type the base allows (`types`, each with its `node_kinds`,
+`relation_kinds` (kinds with ordered roles), `epistemic` list and guidance;
+with one type also at the top level), `line_count`, the accepted records and
+drafts that already cite this source, and its `markers`. Choose the type that
+fits the document from what it is, and follow that type's guidance; in a base
+of several types every draft declares it as `type:`. Do not impose a built-in
+catalog. Read the source text with your own tools. Every md, tex and txt file
+of a base outside hidden directories is a source; report any other file
+instead of working around it.
 
 ## 3. Establish identity
 
@@ -131,22 +133,37 @@ scope:
 - ids from the meaning, without section, figure, table, equation or theorem
   numbers; a replacement keeps the recorded id and is written from a fresh
   read of the record;
-- Evidence quotes copied verbatim from the cited lines.
+- Evidence quotes copied verbatim from the cited lines;
+- `type:` the chosen document type, unless the base has only one.
 
 Drafts may link accepted records and each other. Leave `understanding` out
 (it is `yes`) unless the owner said they do not understand an item.
 
-## 5. Relocate moved citations and list the drafts, in one command
+## 5. Mark, relocate moved citations and list the drafts, in one command
 
 ```sh
+kgd mark ROOT/.knowledge/drafts/ID.md
+kgd relocate UID
 kgd relocate UID - <<'PASSAGE'
 THE PASSAGE THAT STATES IT
 PASSAGE
 kgd drafts --source REL
 ```
 
-Add one `kgd relocate` for each unchanged knowledge point whose citation no
-longer verifies, with the passage of this source that states it; it rewrites
+Add one `kgd mark` per new local draft: it writes a marker naming the draft
+into this source on the line of its first quote, without changing the line
+count (`--[[LABEL]]--:` in md and txt, `\kn[LABEL]{}` in tex), so the record is
+found again after the file is edited, renamed or moved. Where the source
+already writes an item's name at its definition, wrap that name in the
+source's own syntax instead (`--[[NAME]]--`, `\kn{NAME}`; NAME is the label,
+its part after `·`, an alias or the id) and skip its `kgd mark`. A replacement
+keeps the marker its record already has; a foreign draft takes none.
+
+For each unchanged knowledge point whose citation no longer verifies, run
+`kgd relocate UID` first: it follows the record's markers (its own file, its
+base, then the other bases) and needs no passage when the quotes still hold
+there. When it is refused, add one `kgd relocate` with the passage of this
+source that states it; it rewrites
 only the record's `source`, `lines` and, when needed, Evidence, and when the
 record lies in another base it moves the record into this source's base and
 rewrites every link to it. Pass `--base` or `--source REL` when the passage

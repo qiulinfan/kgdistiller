@@ -6,10 +6,13 @@ PyYAML ``BaseLoader`` followed by a Markdown body that ends with an
 ``## Evidence`` section of verbatim source quotes. A record is a relation when
 its document type declares its kind a relation kind, and a node otherwise. A record
 whose ``source`` is a web address is foreign: its evidence lies outside the
-owner's files, so it has no ``lines``.
+owner's files, so it has no ``lines``. A record's document type is its ``type``,
+or its base's only type when it declares none.
 
 ``check`` reads files only. Evidence freshness compares whitespace-normalized
 quote text with the cited source lines of a local record; nothing is hashed.
+When the quotes are gone from the cited file, the record's markers (see
+``markers``) show where it went, and ``check`` reports that file to follow.
 The product never re-serializes frontmatter: ``fix_lines`` rewrites the one
 ``lines:`` line textually.
 """
@@ -307,6 +310,7 @@ class Record:
     path: Path
     label: str
     kind: str
+    type: str | None
     source: str
     lines: Ranges
     aliases: tuple[str, ...]
@@ -442,6 +446,7 @@ def parse_text(text: str, base: str, identifier: str, path: Path) -> Record:
         path=path,
         label=scalars["label"],
         kind=scalars["kind"],
+        type=scalars.get("type") or None,
         source=scalars["source"],
         lines=ranges,
         aliases=aliases,
@@ -535,7 +540,7 @@ class Files:
         self.home = home
         self._folders: dict[tuple[str, str], dict[str, Path]] = {}
         self._records: dict[Path, Record | None] = {}
-        self._sources: dict[str, tuple[dict[str, str], dict[str, list[str]]]] = {}
+        self._sources: dict[str, list[str]] = {}
         self._lines: dict[Path, list[str]] = {}
         self._names: dict[str, dict[str, list[str]]] = {}
         self._labels: dict[tuple[str, str], dict[str, list[str]]] = {}
@@ -567,9 +572,10 @@ class Files:
         """The folded uid of every draft of the available bases."""
         return {f"{name}:{identifier}" for name in self.home.bases for identifier in self.ids(name, DRAFTS)}
 
-    def sources(self, base: Base) -> tuple[dict[str, str], dict[str, list[str]]]:
+    def source_files(self, base: Base) -> list[str]:
+        """Every source of an available base, read once."""
         if base.name not in self._sources:
-            self._sources[base.name] = base.source_types()
+            self._sources[base.name] = base.source_files() if base.root.is_dir() else []
         return self._sources[base.name]
 
     def lines(self, path: Path) -> list[str]:
@@ -619,8 +625,17 @@ def _dangling(files: Files, value: Value) -> str:
 
 
 def _base_types(home: Home, base: Base) -> list[DocumentType]:
-    """The document types a base's sources are registered with."""
-    return [home.types[name] for name in sorted(set(base.sources.values())) if name in home.types]
+    """The document types a base registers for its records."""
+    return [home.types[name] for name in base.type_names if name in home.types]
+
+
+def _type_problem(base: Base, record: Record) -> str:
+    registered = ", ".join(base.type_names)
+    if not base.type_names:
+        return f"base {base.name} registers no document type; add one under bases.{base.name}.types in {CONFIG_FILENAME}"
+    if record.type is None:
+        return f"base {base.name} has several document types ({registered}); declare the record's type: one of them"
+    return f"type {record.type!r} is not a document type of base {base.name} ({registered})"
 
 
 def _kind_problems(record: Record, types: list[DocumentType], where: str) -> list[tuple[str, str]]:
@@ -697,25 +712,24 @@ def record_problems(
     problems: list[tuple[str, str]] = []
     freshness: tuple[str, Ranges | None] | None = None
     base = files.home.bases[record.base]
-    mapping, conflicts = files.sources(base)
+    document_type = base.record_type(record.type)
+    if document_type is None:
+        problems.append(("type", _type_problem(base, record)))
     source = record.source
     if record.foreign:
-        problems.extend(_kind_problems(record, _base_types(files.home, base), f"the types of base {base.name}"))
+        pass
     elif not valid_source_path(source):
         problems.append(("source", f"source {source!r} must be a POSIX path relative to the base root or a web address"))
-    elif source in conflicts:
-        problems.append(("source", f"source {source} matches globs of several types: {', '.join(conflicts[source])}"))
-    elif source not in mapping and not (base.root / source).exists():
+    elif not (base.root / source).exists():
         problems.append(("source", f"source {source} does not exist in base {base.name}"))
-    elif source not in mapping:
-        problems.append(("source", (
-            f"{source} is not a registered source of base {base.name}; add a glob for it under "
-            f"bases.{base.name}.sources in {CONFIG_FILENAME}"
-        )))
-    elif not base.holds(source):
+    elif (base.root / source).is_file() and not base.holds(source):
         problems.append(("source", f"source {source} resolves outside the base root through a symlink"))
+    elif not base.is_source(source):
+        problems.append(("source", (
+            f"{source} is not a source of base {base.name}: sources are its md, tex and txt files "
+            "outside hidden directories"
+        )))
     else:
-        document_type = files.home.types[mapping[source]]
         try:
             lines = files.lines(base.root / source)
         except UnicodeDecodeError:
@@ -726,6 +740,7 @@ def record_problems(
             if record.last_line > len(lines):
                 problems.append(("source", f"lines {record.lines_text} exceed the {len(lines)} lines of {source}"))
             freshness = evidence_state(record.evidence, lines, record.lines)
+    if document_type is not None:
         problems.extend(_kind_problems(record, [document_type], f"type {document_type.name}"))
     problems.extend(_label_problems(files, record, draft))
     linkable = set(linkable_drafts)
@@ -759,7 +774,7 @@ def _load_for_check(home_dir: Path, errors: list[dict[str, str]]) -> Home | None
     """The home, or None after recording every type file's error and config.json's own error.
 
     config.json is validated without its type names even when a type file is
-    broken; a glob naming an unknown type (or a missing types/) is a type error.
+    broken; a base naming an unknown type (or a missing types/) is a type error.
     """
     config = str(home_dir / CONFIG_FILENAME)
     types = home_dir / TYPES_DIRECTORY
@@ -782,10 +797,13 @@ def _load_for_check(home_dir: Path, errors: list[dict[str, str]]) -> Home | None
         return None
 
 
-def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any], dict[Path, tuple[str, Ranges]]]:
+def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any], dict[Path, tuple[str, Any]]]:
+    from .markers import Names, follow
+
     errors: list[dict[str, str]] = []
-    report: dict[str, Any] = {"errors": errors, "stale": [], "moved": []}
-    moved_texts: dict[Path, tuple[str, Ranges]] = {}
+    report: dict[str, Any] = {"errors": errors, "stale": [], "moved": [], "follow": []}
+    moved_texts: dict[Path, tuple[str, Any]] = {}
+    marker_names: Names | None = None
     home = _load_for_check(home_dir, errors)
     if home is None:
         return report, moved_texts
@@ -806,9 +824,6 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
         if (base.root / KNOWLEDGE_DIRECTORY).is_symlink():
             error(base.root / KNOWLEDGE_DIRECTORY, "config", "the knowledge tree must not be a symlink")
             continue
-        _, conflicts = files.sources(base)
-        for relative, type_names in sorted(conflicts.items()):
-            error(base.root / relative, "source-type", f"{relative} matches globs of several types: {', '.join(type_names)}")
         shapes: dict[str, dict[tuple[bool, tuple[str, ...]], list[str]]] = {}
         for kind_type in _base_types(home, base):
             for kind in (*kind_type.node_kinds, *kind_type.relation_kinds):
@@ -847,6 +862,15 @@ def _check(home_dir: Path, bases: Iterable[str] | None) -> tuple[dict[str, Any],
                 )
                 for rule, message in problems:
                     error(path, rule, message)
+                missing = not record.foreign and any(
+                    rule == "source" and "does not exist" in message for rule, message in problems)
+                if (freshness is not None and freshness[0] == "stale") or missing:
+                    marker_names = Names(files) if marker_names is None else marker_names
+                    followed = follow(files, marker_names, record)
+                    if followed is not None:
+                        report["follow"].append({"path": str(path), **followed})
+                        if "lines" in followed and followed["base"] == record.base:
+                            moved_texts[path] = (text, followed)
                 if freshness is None:
                     continue
                 state, proposed = freshness
@@ -905,7 +929,8 @@ def _rewrite_lines(raw: str, proposed: Ranges) -> str | None:
 
 
 def fix_lines(bases: Iterable[str] | None = None) -> dict[str, Any]:
-    """Check, then rewrite the ``lines:`` of every moved file that did not change meanwhile."""
+    """Check, then rewrite the ``lines:`` of every moved record, and the ``source:`` and ``lines:`` of every record
+    its markers followed to another source of its base, when its file did not change meanwhile."""
     home_dir = home_directory()
     if not (home_dir / CONFIG_FILENAME).is_file():
         report, _ = _check(home_dir, bases)
@@ -930,5 +955,28 @@ def fix_lines(bases: Iterable[str] | None = None) -> dict[str, Any]:
             atomic_write_text(path, rewritten)
             fixed.append(str(path))
         report["moved"] = remaining
+        from .locate import _rewritten
+
+        followed: list[dict[str, Any]] = []
+        for item in report["follow"]:
+            path = Path(item["path"])
+            entry = moved_texts.get(path)
+            if entry is None or not isinstance(entry[1], dict) or "lines" not in item:
+                followed.append(item)
+                continue
+            text, target = entry
+            try:
+                raw = path.read_bytes().decode("utf-8")
+                rewritten = _rewritten(raw, target["source"], target["lines"], None) if read_text(path) == text else None
+            except (OSError, UnicodeDecodeError, KnowledgeError):
+                rewritten = None
+            if rewritten is None:
+                skipped.append(str(path))
+                followed.append(item)
+                continue
+            atomic_write_text(path, rewritten)
+            fixed.append(str(path))
+        report["follow"] = followed
+        report["stale"] = [path for path in report["stale"] if path not in fixed]
     return {**report, "fixed": fixed, "skipped": skipped}
 

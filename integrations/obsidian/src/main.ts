@@ -1,9 +1,21 @@
 import { promises as fs, realpathSync } from "fs";
 import { dirname } from "path";
-import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, TFile, requestUrl } from "obsidian";
+import type { EditorView } from "@codemirror/view";
+import {
+  editorInfoField,
+  editorLivePreviewField,
+  FileSystemAdapter,
+  MarkdownView,
+  Notice,
+  Platform,
+  Plugin,
+  TFile,
+  requestUrl,
+  type Events,
+} from "obsidian";
 
 import type { Selection } from "./agent-pane";
-import { locateSelection, type CaptureFiles } from "./capture";
+import { locateSelection, type CaptureFiles, type Profile } from "./capture";
 import { ModelClient, type ReasoningChoice } from "./model";
 import { ApiClient } from "./api";
 import {
@@ -19,7 +31,7 @@ import {
   type Provider,
   type ReasoningChoices,
 } from "./providers";
-import type { Reading } from "./search";
+import { readingGuidance, type Reading } from "./search";
 import type { LocalizeInput, LocalizeResult, LocalizeTarget } from "./localize";
 import type { Origin, OriginServices } from "./origin";
 import { readWebPage } from "./pages";
@@ -32,7 +44,22 @@ import { INDEX_TIMEOUT_MS, KgdServer } from "./kgd";
 import { lookupQuery } from "./lookup-model";
 import { KgdistillerCaptureView, VIEW_TYPE_KGDISTILLER_CAPTURE } from "./capture-view";
 import { KgdistillerLookupView, LOOKUP_ICON, VIEW_TYPE_KGDISTILLER_LOOKUP } from "./lookup-view";
-import { fold } from "./records";
+import { chipRenderedMarkers, markerAtCursor, markerEditorExtension, type MarkerEditorHost } from "./marker-editor";
+import {
+  jumpTarget,
+  MarkerCache,
+  markerAt,
+  markerFormat,
+  recordFilePath,
+  recordFileUid,
+  resolveName,
+  type MarkerFormat,
+  type MarkersResult,
+} from "./markers";
+import { openInBase } from "./open";
+import { entryPath, fold, KNOWLEDGE_DIRECTORY } from "./records";
+import type { DraftsResult } from "./drafts";
+import type { GetResult } from "./lookup-model";
 import { fetchError, USER_AGENT, type Fetch } from "./sources";
 
 import {
@@ -46,6 +73,9 @@ import {
 const ENTRIES_FOLDER = ".knowledge/entries/";
 /** Saves within this delay of each other index once. */
 const ENTRY_INDEX_DELAY_MS = 300;
+
+/** The plugin id of latex-live, whose TeX editors take the marker extension through its API. */
+const LATEX_LIVE = "latex-live";
 
 /** The reading-view elements whose text is a selection's block. */
 const READING_BLOCKS = "p, li, td, th, blockquote, h1, h2, h3, h4, h5, h6";
@@ -117,8 +147,9 @@ export default class KgdistillerPlugin extends Plugin {
   /** The registered source at an absolute path, from `kgd source`, which writes nothing; undefined for any other file. */
   async registeredSource(path: string): Promise<Reading | undefined> {
     try {
-      const { base, source, type, guidance } = (await this.kgd.command(["source", path])).report as unknown as Reading;
-      return { base, source, type, ...(guidance ? { guidance } : {}) };
+      const { base, source, types } = (await this.kgd.command(["source", path])).report as unknown as Pick<Profile, "base" | "source" | "types">;
+      const guidance = readingGuidance(types);
+      return { base, source, types: types.map((type) => type.type), ...(guidance ? { guidance } : {}) };
     } catch {
       return undefined;
     }
@@ -159,6 +190,13 @@ export default class KgdistillerPlugin extends Plugin {
    * page clears it here too.
    */
   private readingSelection: { text: string; block: string } | undefined;
+  /** `kgd markers FILE` per absolute path, forgotten when the file or any record changes. */
+  private readonly markers = new MarkerCache(async (path) =>
+    ((await this.kgd.command(["markers", path])).report as unknown as MarkersResult).markers);
+  /** The editor that last had focus, whose cursor the jump command reads, with its file's vault path. */
+  private markerEditor: { view: EditorView; path: string | undefined } | undefined;
+  /** Removes the TeX marker extension from latex-live. */
+  private texDisposer: (() => void) | undefined;
 
   async onload(): Promise<void> {
     await this.loadPluginSettings();
@@ -197,15 +235,34 @@ export default class KgdistillerPlugin extends Plugin {
       name: "Show drafts",
       callback: () => void this.captureView().then((view) => view?.listDrafts()),
     });
+    this.addCommand({
+      id: "jump-between-knowledge-and-marker",
+      name: "Jump between knowledge and its marker",
+      callback: () => void this.jump(),
+    });
+    // Markers in Markdown and plain-text editors, in reading view, and in latex-live's TeX editors.
+    this.registerEditorExtension(markerEditorExtension(this.markerHost((view) => {
+      const path = this.editorPath(view);
+      return path === undefined || path.startsWith(`${KNOWLEDGE_DIRECTORY}/`) ? undefined : markerFormat(path);
+    }, (view) => view.state.field(editorLivePreviewField, false) ?? false)));
+    this.registerMarkdownPostProcessor((element, context) => {
+      if (!context.sourcePath.startsWith(`${KNOWLEDGE_DIRECTORY}/`) && markerFormat(context.sourcePath) === "md") {
+        chipRenderedMarkers(element, (name) => void this.openMarker(context.sourcePath, name));
+      }
+    });
+    this.registerEvent((this.app.workspace as unknown as Events).on("latex-live:api-ready", (live: unknown) => this.attachLatexLive(live)));
     // A record file written, edited, renamed or removed in this vault is indexed again without embeddings.
-    this.registerEvent(this.app.vault.on("create", (file) => this.entryChanged(file.path)));
-    this.registerEvent(this.app.vault.on("modify", (file) => this.entryChanged(file.path)));
-    this.registerEvent(this.app.vault.on("delete", (file) => this.entryChanged(file.path)));
+    this.registerEvent(this.app.vault.on("create", (file) => this.fileChanged(file.path)));
+    this.registerEvent(this.app.vault.on("modify", (file) => this.fileChanged(file.path)));
+    this.registerEvent(this.app.vault.on("delete", (file) => this.fileChanged(file.path)));
     this.registerEvent(this.app.vault.on("rename", (file, old) => {
-      this.entryChanged(file.path);
-      this.entryChanged(old);
+      this.fileChanged(file.path);
+      this.fileChanged(old);
     }));
-    this.app.workspace.onLayoutReady(() => void this.indexer.refresh());
+    this.app.workspace.onLayoutReady(() => {
+      void this.indexer.refresh();
+      this.attachLatexLive();
+    });
     this.watchHold(document);
     this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, popout) => this.watchHold(popout.document)));
     this.settingsTab = new KgdistillerSettingTab(this.app, this);
@@ -216,6 +273,7 @@ export default class KgdistillerPlugin extends Plugin {
     this.unloaded = true;
     if (this.entriesTimer !== undefined) window.clearTimeout(this.entriesTimer);
     this.hold.reset();
+    this.detachLatexLive();
     this.kgd.stop();
     this.api.close();
     this.hiddenKnowledgeIndexer?.dispose();
@@ -314,7 +372,10 @@ export default class KgdistillerPlugin extends Plugin {
     return { text, context, ...(range ? { source: { path, from: range[0], to: range[1] } } : {}) };
   }
 
-  private entryChanged(path: string): void {
+  private fileChanged(path: string): void {
+    // A changed record or draft may change what any marker names; a changed source, only its own markers.
+    if (path.startsWith(`${KNOWLEDGE_DIRECTORY}/`)) this.markers.clear();
+    else this.markers.forget(this.absolute(path));
     if (!path.startsWith(ENTRIES_FOLDER)) return;
     window.clearTimeout(this.entriesTimer);
     this.entriesTimer = window.setTimeout(() => void this.indexer.refresh(), ENTRY_INDEX_DELAY_MS);
@@ -388,6 +449,179 @@ export default class KgdistillerPlugin extends Plugin {
 
   kgdSettingsChanged(): void {
     this.kgd.stop();
+    this.markers.clear();
+  }
+
+  /** The marker extension's host for editors of one kind: which format they write and whether markers become chips. */
+  private markerHost(format: (view: EditorView) => MarkerFormat | undefined, chips: (view: EditorView) => boolean): MarkerEditorHost {
+    return {
+      format,
+      chips,
+      open: (view, marker) => {
+        const path = this.editorPath(view);
+        if (path !== undefined) void this.openMarker(path, marker.name);
+      },
+      focused: (view) => { this.markerEditor = { view, path: this.editorPath(view) }; },
+    };
+  }
+
+  /** The vault path of an editor's file: Obsidian's own editors say it; another plugin's editor is the active file's. */
+  private editorPath(view: EditorView): string | undefined {
+    return view.state.field(editorInfoField, false)?.file?.path ?? this.app.workspace.getActiveFile()?.path;
+  }
+
+  private absolute(path: string): string {
+    return `${this.vaultRoot() ?? ""}/${path}`;
+  }
+
+  /**
+   * Register the TeX marker extension with latex-live, when it is loaded and
+   * offers `registerTexEditorExtension`; latex-live announces that API with
+   * "latex-live:api-ready", after which it is registered again.
+   */
+  private attachLatexLive(live?: unknown): void {
+    if (this.unloaded) return;
+    const plugins = (this.app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins;
+    const candidate = (live ?? plugins?.plugins?.[LATEX_LIVE]) as { registerTexEditorExtension?: unknown } | undefined;
+    const register = candidate?.registerTexEditorExtension;
+    if (typeof register !== "function") return;
+    this.detachLatexLive();
+    try {
+      // latex-live gives the extension to its TeX editors only.
+      const dispose: unknown = register.call(candidate, markerEditorExtension(this.markerHost(() => "tex", () => true)));
+      if (typeof dispose === "function") this.texDisposer = () => void dispose();
+    } catch (error) {
+      new Notice(`kgdistiller could not show knowledge markers in latex-live: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private detachLatexLive(): void {
+    const dispose = this.texDisposer;
+    this.texDisposer = undefined;
+    try {
+      dispose?.();
+    } catch {
+      // latex-live may already be unloaded; nothing of ours remains to remove.
+    }
+  }
+
+  /** Open the record a marker of a file (a vault path) names, through `kgd markers FILE`. */
+  async openMarker(path: string, name: string): Promise<void> {
+    if (!this.kgd.configured()) {
+      new Notice("Set the kgd executable in the kgdistiller settings to open knowledge from its markers.");
+      return;
+    }
+    const file = this.absolute(path);
+    let resolution;
+    try {
+      resolution = resolveName(await this.markers.get(file), name);
+      if (resolution.state === "unknown") {
+        // The marker was written after kgd last read the file.
+        this.markers.forget(file);
+        resolution = resolveName(await this.markers.get(file), name);
+      }
+    } catch (error) {
+      new Notice(`kgdistiller cannot read the markers of ${path}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    if (resolution.state === "unknown") {
+      new Notice(`kgd has not read the marker ${name} yet: save ${path}, then try again.`);
+      return;
+    }
+    if (resolution.state === "unresolved") {
+      new Notice(`The marker ${name} names no record or draft.`);
+      return;
+    }
+    if (resolution.state === "ambiguous") {
+      new Notice(`The marker ${name} names several records: ${resolution.candidates.join(", ")}. Write the id of one as its NAME.`);
+      return;
+    }
+    const colon = resolution.uid.indexOf(":");
+    const base = resolution.uid.slice(0, colon);
+    const record = (resolution.path ? recordFilePath(resolution.path) : undefined) ?? entryPath(resolution.uid.slice(colon + 1));
+    await openInBase(this.app, this.kgd, this.vaultRoot(), base, record);
+  }
+
+  /**
+   * One command both ways: in a record or draft of this vault it opens the
+   * record's source at its marker, or at the first line it cites when no
+   * marker names it; in a source with the cursor on a marker it opens the
+   * record the marker names.
+   */
+  async jump(): Promise<void> {
+    if (!this.kgd.configured()) {
+      new Notice("Set the kgd executable in the kgdistiller settings to jump between knowledge and its markers.");
+      return;
+    }
+    const path = this.app.workspace.getActiveFile()?.path;
+    if (!path) {
+      new Notice("Open a record, or put the cursor on a knowledge marker, to jump.");
+      return;
+    }
+    const base = await this.vaultBase();
+    const uid = base === undefined ? undefined : recordFileUid(path, base);
+    if (uid) {
+      await this.jumpToMarker(uid, path.startsWith(`${KNOWLEDGE_DIRECTORY}/drafts/`));
+      return;
+    }
+    const marker = this.cursorMarker(path);
+    if (!marker) {
+      new Notice("Put the cursor on a knowledge marker, or open a record, to jump.");
+      return;
+    }
+    await this.openMarker(path, marker.name);
+  }
+
+  /** The marker the cursor of the file's editor is on: Obsidian's editor, or the last focused one of another plugin. */
+  private cursorMarker(path: string): { name: string } | undefined {
+    const format = markerFormat(path);
+    if (!format) return undefined;
+    const active = this.app.workspace.activeEditor;
+    if (active?.editor && active.file?.path === path) {
+      const cursor = active.editor.getCursor();
+      return markerAt(active.editor.getLine(cursor.line), format, cursor.ch);
+    }
+    const remembered = this.markerEditor;
+    if (remembered && remembered.path === path && remembered.view.dom.isConnected) return markerAtCursor(remembered.view, format);
+    return undefined;
+  }
+
+  /** Open a record's source at its first marker, or at the first line it cites. */
+  private async jumpToMarker(uid: string, draft: boolean): Promise<void> {
+    const base = uid.slice(0, uid.indexOf(":"));
+    try {
+      const { markers } = (await this.kgd.command(["markers", "--uid", uid])).report as unknown as MarkersResult;
+      let cited: { base: string; source?: string; lines?: string } | undefined;
+      if (markers.length === 0) {
+        const found = draft
+          ? (await this.kgd.call<DraftsResult>("kg_drafts", { base: [base] })).drafts.find((other) => other.uid === uid)
+          : (await this.kgd.call<GetResult>("kg_get", { uids: [uid] })).records[0];
+        cited = found ? { base: found.base, source: found.source, lines: found.lines } : undefined;
+      }
+      const target = jumpTarget(markers, cited);
+      if (!target) {
+        new Notice(`kgdistiller cannot find where ${uid} is stated: no marker names it and it cites no source.`);
+      } else if ("url" in target) {
+        new Notice(`${uid} is foreign knowledge: it cites ${target.url}, where no marker lies.`);
+      } else {
+        await openInBase(this.app, this.kgd, this.vaultRoot(), target.base, target.source,
+          { ...(target.line === undefined ? {} : { line: target.line }), ...(target.column === undefined ? {} : { column: target.column }) });
+      }
+    } catch (error) {
+      new Notice(`kgdistiller cannot find the markers of ${uid}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The registered base whose root is this vault, if any. */
+  private async vaultBase(): Promise<string | undefined> {
+    const root = this.vaultRoot();
+    if (!root) return undefined;
+    try {
+      for (const [name, baseRoot] of await this.kgd.baseRoots()) if (baseRoot === root) return name;
+    } catch {
+      // Without the base list no file of this vault is known as a record.
+    }
+    return undefined;
   }
 
   agentSettingsChanged(): void {

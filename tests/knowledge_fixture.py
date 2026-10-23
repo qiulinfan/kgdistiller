@@ -1,4 +1,4 @@
-"""Build temporary knowledge bases: a home with source globs and types, plain text sources and record files.
+"""Build temporary knowledge bases: a home with document types, plain text sources and record files.
 
 Also a deterministic pure-Python fake encoder, so index and search tests never load a model.
 """
@@ -90,7 +90,10 @@ def write_record(
 
 
 class RecordHome:
-    """Bases registered in a temporary KGDISTILLER_HOME with record-format types and source globs."""
+    """Bases registered in a temporary KGDISTILLER_HOME with record-format types.
+
+    ``sources`` maps a glob to a type as the registry once did; each base now registers the types it names, and
+    every md, tex and txt file under its root is a source."""
 
     def __init__(
         self,
@@ -122,7 +125,8 @@ class RecordHome:
                 stale.unlink()
         for name, spec in self.types.items():
             (types / f"{name}.md").write_text(type_document(spec), encoding="utf-8")
-        bases = {name: {"path": str(root), "sources": self.sources[name]} for name, root in self.roots.items()}
+        bases = {name: {"path": str(root), "types": list(dict.fromkeys(self.sources[name].values()))}
+                 for name, root in self.roots.items()}
         config = {"bases": bases, "embedding": self.embedding}
         (self.home / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
         (self.home / ".gitignore").write_text(HOME_GITIGNORE, encoding="utf-8")

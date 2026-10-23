@@ -204,6 +204,7 @@ export class KgdistillerCaptureView extends ItemView {
       const result = await captureSelection((chat) => this.host.model.complete(chat), this.host.kgd, this.host.captureFiles,
         this.host.originServices(), { ...input, ...(origin ? { origin } : {}) });
       if (result.decision === "borrowed" && !result.draft) this.host.borrowed(selection);
+      if (result.markError) new Notice(`kgdistiller drafted ${result.label ?? "the item"} but could not mark it in its source: ${result.markError}`);
       return captureOutcome(result);
     });
   }

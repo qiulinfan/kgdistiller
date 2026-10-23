@@ -24,14 +24,16 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
    text in the source; re-embedding is decided by comparing stored text;
    concurrency uses one lock file, create-only moves and edit tools that refuse
    stale reads.
-4. **Format-agnostic sources.** A local source is any registered UTF-8 text
-   file, addressed by path, 1-based inclusive line ranges and verbatim quotes;
-   a foreign source is a web address, addressed by verbatim quotes of its text.
-   The product never parses source syntax and never downloads a source.
+4. **Sources by format.** A local source is any `.md`, `.tex` or `.txt` file
+   of a base outside hidden directories, read as UTF-8 text and addressed by
+   path, 1-based inclusive line ranges and verbatim quotes; a foreign source
+   is a web address, addressed by verbatim quotes of its text. The product
+   reads no source syntax but its knowledge markers, which name the records a
+   source states, and never downloads a source.
 5. **No owner vocabulary in product code.** The product fixes only the
    record's fixed keys, the understanding values, the section names
-   `Search terms` and `Evidence`, the folder names `entries` and `drafts`, and
-   the link grammar. Node kinds, relation kinds, roles and
+   `Search terms` and `Evidence`, the folder names `entries` and `drafts`, the
+   link grammar and the marker syntax. Node kinds, relation kinds, roles and
    epistemic labels are user data. Optional starting profiles live in
    `templates/document-types/`; they become active only when the owner copies
    and registers them in the home. The product activates no types and ships
@@ -66,8 +68,9 @@ Obsidian plugin in [obsidian.md](obsidian.md), installation and restore in
 The graph is the knowledge the reader selects from a source already judged
 worth studying: concepts, precise results and relations, rather than every
 paragraph of exposition or motivation. Capture and compilation follow the
-source's owner-defined document type. They preserve the conditions, formulas,
-limitations, counterexamples and experimental evidence that affect meaning;
+owner-defined document type that fits the source. They preserve the
+conditions, formulas, limitations, counterexamples and experimental evidence
+that affect meaning;
 section names and source syntax never determine admission.
 
 The knowledge is one graph. In the owner's words (2026-10-16):
@@ -166,8 +169,9 @@ files. In the owner's words (2026-10-15):
   foreign record is ordinary knowledge in every other way: it is accepted,
   linked, retrieved and marked understood or not like any local record.
 - **Its base** is the base of the source the owner was reading when they
-  captured it, and its kind is one that a document type registered for that
-  base declares.
+  captured it, and its `type` is one of that base's document types, the one
+  that fits that source. It takes no knowledge marker: its evidence lies on
+  the page, not in a file of the owner's.
 - **Localization** moves a record's evidence from the outside work to a local
   source once the owner holds that work, for example after translating the
   paper into their vault. Looking the concept up while reading the local
@@ -177,38 +181,117 @@ files. In the owner's words (2026-10-15):
   ([Finding and relocating passages](#finding-and-relocating-passages)).
   Localization is never required: a foreign record is complete knowledge.
 
+## Knowledge markers
+
+A record knows where its source states it through a knowledge marker: the
+record's name written into the source, at that place, in the source's own
+syntax. In the owner's words (2026-10-23):
+
+> 2. 这样之后, 我们标记就好找了. 如果我们想溯源一个东西, 我们就在 obsidian 的这个 vault 中所有的被支持的格式文件, 在全文用标记符号. 这样应该比全局 grep 要快一个数量级. 
+> 注意: 我们的知识是全局的, 并且一条知识应当知道它的 base vault 是什么. 因而可以跨 vault 找.
+
+A marker is found by reading the sources of every base, so a record of one
+base may be marked, and found, in a file of another. Reading the sources for
+markers is a scan of their text, about 0.6 s for the 64 files and 299 markers
+of one base; what markers add over a text search is an exact, stable name for
+each place, not an order-of-magnitude speedup.
+
+| Format | Marker |
+|---|---|
+| md, txt | `--[[NAME]]--`, or `--[[NAME\|TEXT]]--`, which shows TEXT |
+| tex | `\kn{NAME}`, or `\kn[NAME]{TEXT}`, which shows TEXT (it may be empty); a marker after an unescaped `%` is a comment |
+
+- A marker lies on one line, so writing one never changes a source's line
+  count and moves no other record's `lines`.
+- NAME resolves by name key to the record whose label, label without its
+  `{scope}·` prefix, alias or id it is, among the accepted records and the
+  drafts of every base. A label written `{scope}·{name}`, as the owner's
+  document types name statement nodes (theorems, findings, examples), is
+  also named by its `{name}` alone. When several records answer to NAME, the
+  one citing the marker's own file wins, then the only one of the file's base;
+  otherwise the marker names no record and lists its `candidates`.
+- Markers live only in the sources: nothing stores them, and the index does
+  not read them.
+- A foreign record takes no marker: its evidence lies on a web page.
+
+Who writes them, and which document type a record follows, in the owner's
+words (2026-10-23):
+
+> 1. 文档类型怎么定:  agent capture draft 时根据文档自动标注吧. 这个语义理解能力肯定还是有的. 你觉得呢? 
+> 2. 谁写标记: 也是 agent capture draft 时标记. 反正我不满意可以去掉, 没关系的 
+>
+> 3. 生成的文件会冲掉标记: 只要翻译 skill 改成兼容 kgdistiller 就行了
+
+And on how a marker sits in the text:
+
+> 对于描述性的知识, 接入为节点的时候在原文最好后面加一个冒号而不是直接蹦出来
+> (--[[Transformer·Learned vs sinusoidal positional encoding]]--): ....
+
+So the agent that drafts a record chooses its document type from what the
+document is and writes its marker:
+
+- The capture and compile Skills and the plugin's Capture run
+  `kgd mark DRAFT` after writing a local draft. It writes the marker on the
+  line of the draft's first Evidence quote: `--[[LABEL]]--:` in md and txt, a
+  colon introducing the passage it names and a space before the text, and
+  `\kn[LABEL]{}`, which prints nothing, in tex. When the source already writes
+  the item's name where it defines it, the agent wraps that name in the
+  source's own marker syntax instead.
+- The owner removes a marker they do not want, by hand; a record without a
+  marker is complete knowledge.
+- A file regenerated by another tool, such as a translation, keeps its
+  markers only when that tool writes them back; making the owner's
+  translation Skill write them is that Skill's concern, not kgdistiller's.
+
+`kgd markers` lists markers with the records they name, `kgd source` lists
+those of one source, and the Obsidian plugin draws them and opens their
+records ([obsidian.md](obsidian.md#knowledge-markers)).
+
 ## Finding and relocating passages
 
-Sources change: text is inserted, files are renamed, merged and split.
-Nothing follows them automatically. In the owner's words (2026-10-15):
+Sources change: text is inserted, passages are reworded, files are renamed,
+moved, merged and split. A record follows its knowledge through its markers.
+In the owner's words (2026-10-23):
 
-> * 知识源变了怎么办? 比如前面多了一撮导致段落不一致了, 文章改名了
-> * 很简单: 不要管它! 接受这个问题
-> * 并且加上一个小 skill: relocation
->
-> 什么是 relocation? 非常简单的一个小 skill.
-> 提供两个东西: 知识名(不一定要一模一样, agent 搜知识库就行); 新段落的内容
->
-> * 新段落位置太难找了. 但是我如果提供新段落内容, 那么直接在 vaults 里 grep 就能找到.
->
-> 然后, agent 快速地修改知识位置.
+> 3. relocation skill 这样就好做了: 首先, 对于非 foreign 的知识, 在它被声明所在的 vault 的所在的文件找标记, 如果找到就 ok, 找不到就记录缺失; 并行地对于所有确实的知识, 在它的 vault(vault 一定 canonical, 不需要考虑它被转移到其他 vault 的情况....吗? 实在找不到可以第三轮考虑) 通过 recursively 找支持格式文件的标记点 的方式来重定位它. 注意既然是 agentic 的, 那么也可以处理它变成了近似语义等等的情况. 顺便如上下文更新了, 也可以更新.  
 
-- `kgd find` (MCP `kg_find`) finds a text in the registered sources, read
-  live: a passage the owner pastes, or every place a name occurs, such as
-  where a concept is defined. It is read-only and deterministic, and loads no
-  model.
-- `kgd relocate` moves one record's citation to the only passage of the
-  registered sources that holds a given text. Only where the record cites
-  changes: its `source`, `lines` and, when its quotes are not in that
-  passage, its Evidence, which becomes the matched text. When the passage lies
-  in another base, the record moves into that base with its id, and every
-  link to it, in every base, is rewritten to its new uid. It is the one write
-  an agent makes to an accepted record without a draft, because it changes no
-  meaning.
-- The relocate-kgdistiller Skill takes the knowledge's name, exact or
-  approximate, and the new passage's text: it finds the record with a lookup
-  and runs `kgd relocate`. `kgd check` still reports what moved or went stale,
-  and `check --fix-lines` still fixes a quote that only shifted lines.
+> 4. 找不到就改成 foreign: 我觉得, 知识库主要是 agent 看的, 次要才是我看的. 如果我发现一个知识不在原位了, 我就主动发起一次查询 foreign 就能解决. 并且我认为本身知识易位就是少见的事情, 知识移位后找不到更是少见(因为同一个文档如果改名了或者换位置了, 他们肯定是一起的. 我们找到一个就能找到其他, 找不到一个其他也找不到, 这很明显的), 所以这种情况才是极少数事件. 我觉得你不应该过度防御. 
+
+The rules that follow:
+
+- **Markers are followed in three rounds.** For a local record whose quotes
+  are gone from its cited file, or whose file no longer exists, the record's
+  markers are searched first in its own source file, then in every other
+  source of its base, then in every source of the other bases; the first
+  round that finds any stops the search. When its markers lie in exactly one
+  file whose text holds each of its quotes exactly once, that file and those
+  lines are where it went. Otherwise the passage was reworded, and the
+  markers say where to read.
+- **`kgd check` reports what to follow** (`follow`,
+  [Validation](#validation-kgd-check---base-b---fix-lines)), and
+  `check --fix-lines` moves the records whose markers lead to another file of
+  their own base.
+- **`kgd relocate UID`** without a passage moves a record to where its
+  markers lead, into another base with every link to it when it lies there,
+  keeping its Evidence. Given a passage's text, it moves the record to the
+  only passage of the sources that holds the text, which becomes its
+  Evidence when the old quotes are not there. Given `--url` and a web page's
+  own text, it makes the record foreign. Only where the record cites changes;
+  it is the one write an agent makes to an accepted record without a draft,
+  because it changes no meaning.
+- **`kgd find`** (MCP `kg_find`) finds a text in the sources, read live: a
+  passage the owner pastes, or every place a name occurs, such as where a
+  concept is defined. It is read-only and deterministic, and loads no model.
+- **The relocate-kgdistiller Skill** judges what the commands cannot. It runs
+  `check --fix-lines` and `kgd relocate UID` for what only moved. Where the
+  markers name a record but its quotes no longer hold, it reads the marked
+  passage: the same knowledge reworded is relocated to the new passage with
+  its text, and a changed meaning gets a replacement draft. A record that no
+  marker names is looked for once with `kgd find`; when the passage is
+  nowhere in the owner's files, the Skill finds the outside page that states
+  the knowledge and makes the record foreign with `kgd relocate UID --url`
+  and the page's own text. It also relocates to a passage the owner pastes,
+  and finds the record from the knowledge's name, exact or approximate.
 
 ## Understanding
 
@@ -282,16 +365,20 @@ The rules that follow from these statements:
   included; accepting the replacement is the owner's decision in every case.
   A definition that the recorded one explicitly rules out, such as the error
   it corrected, is reported as a conflict, never as more general.
-- **Relocation is global.** `kgd relocate` finds the passage in every
-  registered base. When it lies in another base, the record moves there with
+- **Relocation is global.** `kgd relocate` finds the passage, or the
+  record's markers, in every base. When it lies in another base, the record moves there with
   its id and every link to it, in every base, is rewritten to the new uid; it
   refuses when that base already has a record or draft with the id.
 - **Knowledge that disappears is the owner's.** A record whose knowledge a
   re-admitted source no longer contains, or whose source file no longer
-  exists, is reported, and `kgd check` reports it stale or its source missing.
-  The agent deletes nothing: the owner decides whether it is re-established
-  from another source, local or foreign, through a replacement draft, or
-  deleted, together with the links to it.
+  exists, is reported, and `kgd check` reports it stale or its source missing,
+  with where its markers lead. The relocate Skill follows them, and makes a
+  record that no marker names and no source states foreign, citing the
+  outside page that states it
+  ([Finding and relocating passages](#finding-and-relocating-passages)).
+  The agent deletes nothing: the owner decides whether a record is
+  re-established from another source through a replacement draft, or deleted,
+  together with the links to it.
 - **Who writes what.** Agents write drafts only. The owner accepts them with
   `kgd accept` (the Obsidian Capture view runs it) and edits accepted records
   by hand. The only agent edits of accepted records are `kgd relocate`, which
@@ -303,11 +390,12 @@ The rules that follow from these statements:
 
 | Concept | Representation |
 |---|---|
-| Home | `$KGDISTILLER_HOME` (default `~/.knowledge`): base registry, source→type globs, document types, embedding model id, the database and the lock. |
+| Home | `$KGDISTILLER_HOME` (default `~/.knowledge`): base registry with each base's document types, the document types, embedding model id, the database and the lock. |
 | Base | A registered directory, normally one Obsidian vault, holding its own knowledge under `.knowledge/`. Its name is a slug that exists only in `config.json`. |
-| Source | Local: a file of a base that one of the base's globs matches, read as UTF-8 text with 1-based lines; it has exactly one document type. Foreign: a web address, the outside work or page whose text a foreign record quotes. |
+| Source | Local: an `.md`, `.tex` or `.txt` file of a base outside hidden directories, read as UTF-8 text with 1-based lines. Foreign: a web address, the outside work or page whose text a foreign record quotes. |
 | Document type | `types/<name>.md`: `node_kinds` and `relation_kinds`, each a mapping of kinds to their ordered roles (a node kind's may be empty), and optional `epistemic`; the body is guidance. |
-| Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. It is local or foreign by its `source`. |
+| Record | One file `.knowledge/entries/<id>.md`. Its global address is the uid `<base>:<id>`. It is local or foreign by its `source`, and follows the document type its `type` names, or its base's only type. |
+| Marker | `--[[NAME]]--` in md and txt, `\kn{NAME}` in tex: a record's name written into a source where the source states it. Found by reading the sources; never stored. |
 | Node | A record whose kind is a node kind: a concept, or a result a source states, such as a theorem, a finding or an example, whose roles link every record it concerns (at least one when its kind declares roles). |
 | Relation | A record whose kind is a relation kind: a connection between records, binding at least two values to that kind's roles. Arity is unbounded beyond that; a binary relation binds exactly two values, in two roles or in one symmetric role. A participant may repeat (self-relation) and may be a relation (a relation about relations). |
 | Application / example | A node of a kind the owner registers for it, such as `example: [uses, setting]`. |
@@ -327,7 +415,7 @@ or `foreign` fields.
 
 ```text
 $KGDISTILLER_HOME/                 default ~/.knowledge; absolute after ~ expansion
-├── config.json                    bases, their source→type globs, embedding model id
+├── config.json                    bases, their document types, embedding model id
 ├── types/<name>.md                one document type per file
 ├── .gitignore                     "index.sqlite*" and "lock", written when the home is created
 ├── index.sqlite (-wal, -shm)      derived database
@@ -344,13 +432,10 @@ and `drafts/`; other files there are ignored. The product writes no
 vault `.gitignore`.
 
 `config.json` has exactly the keys `bases` and `embedding`. Each base has
-exactly `path` and `sources`; base names match `^[a-z0-9][a-z0-9-]*$`. A path
+exactly `path` and `types`; base names match `^[a-z0-9][a-z0-9-]*$`. A path
 under the user's home is stored as `~/…`. No base root may contain another,
-and the home may not lie inside a base root. Each `sources` key is a glob
-relative to the base root, expanded with Python's
-`glob.glob(pattern, root_dir=root, recursive=True)`: `*` stays in one path
-segment, `**` spans directories, and hidden files and directories never match.
-A file matched by globs naming two different types is an error. `embedding` is
+and the home may not lie inside a base root. `types` lists the document types
+of `types/` that the base's records may use, each once. `embedding` is
 `null` or a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no revision pin; with `null`
 the index is lexical and name only. After a change, the next index run of any
 kind drops the old vectors, and a plain `kgd index` embeds every record with
@@ -366,6 +451,32 @@ records of this type may not carry `epistemic`). No kind is both a node kind
 and a relation kind, in one type or across the types of one base. The body,
 the guidance, is non-empty.
 
+### Sources
+
+A base's sources are found by their format, never registered one by one. In
+the owner's words (2026-10-23):
+
+> 1. 
+> 我其实希望支持文件类型: 意思就是, 一个 vault 下递归的所有的文件, 只要是这个格式(比如现在开始支持 md, tex 和 txt) -> 那就包括, 而不要有固定的文件形式, 这非常不灵活, 而且其实用处有限, 不是必需品. 我们不需要一个得频繁手操的设计来服务于一个不必要的用途. 
+> 不过与之对应的: 我们得修订每个格式的文件在 obsidian 中的标记的样式和编辑方法-> 比如说 tex 中如果有一个东西标注了 \kn{}, 那么就要给它设置cmd+点击, 跳转到知识源词条的链接; 知识词条一定是 md, 跳转回来统一快捷键; 并且不要在 
+> 并且注意2: 在 obsidian 中, 对于这些文件格式, 这些标记的词条全都可视化, 比如 \kn{} 在光标不在他周围的时候保持一个紫色的包裹而不是 \kn{}文字. 
+> 并且注意2: 和我的 obsidian-latex-live 兼容.
+> 并且注意3: 一个标记为 foreign 的知识是不需要标记的. 以及, 没有标记的知识如果重定位不到, 那么就改成 foreign. 这是我们下面修订 relocation skill 的一个准则
+
+So every file with the suffix `.md`, `.tex` or `.txt`, in any case, under a
+base root is a source of that base, except hidden files, anything under a
+hidden directory (`.knowledge/`, `.obsidian/`, `.git/`, `.trash/`) and a file
+that resolves outside the root through a symlink. Any other file is not a
+source, and `kgd source` and `check` say so. A source has no document type of
+its own: each record declares the type it follows in `type:`, one of its
+base's `types`, and may leave it out when the base has exactly one, which then
+applies. The agent drafting a record chooses the type that fits the document
+([Knowledge markers](#knowledge-markers)). The Obsidian side of the statement,
+markers drawn as chips, Cmd/Ctrl+click and one jump command, is in
+[obsidian.md](obsidian.md#knowledge-markers); unmarked knowledge that cannot
+be relocated becomes foreign
+([Finding and relocating passages](#finding-and-relocating-passages)).
+
 ## Record format
 
 A record is YAML frontmatter followed by a Markdown body. The file starts with
@@ -377,6 +488,7 @@ newlines.
 ---
 label: Sum of two subspaces is a subspace
 kind: theorem
+type: math-notes
 about:
   - "[[subspace]]"
   - "[[sum-of-subspaces]]"
@@ -419,8 +531,9 @@ learned code of lower dimension.
 | Key | Required | Value |
 |---|---|---|
 | `label` | yes | Non-empty single-line string in any language, unique by name key across every base (see [Research knowledge selection](#research-knowledge-selection)). |
-| `kind` | yes | A node kind or relation kind of the source's type. |
-| `source` | yes | A POSIX path relative to the base root, no leading `/`, no `..`, naming a registered source of this base; or a web address `http://…` or `https://…`, which makes the record foreign. |
+| `kind` | yes | A node kind or relation kind of the record's document type. |
+| `type` | when the base has several types | The record's document type, one of its base's `types`; absent means the base's only type. |
+| `source` | yes | A POSIX path relative to the base root, no leading `/`, no `..`, naming a source of this base (an `.md`, `.tex` or `.txt` file outside hidden directories); or a web address `http://…` or `https://…`, which makes the record foreign. |
 | `lines` | local only | One or more ranges `a` or `a-b`, comma-separated, ascending and disjoint, each with 1 ≤ a ≤ b ≤ the source's line count. A foreign record has none. |
 | `aliases` | no | List of single-line names in any language, symbols. Not unique. |
 | `understanding` | no | `yes` or `no`; empty or absent means `yes`. |
@@ -454,7 +567,8 @@ strings; an empty scalar on a list or role key reads as an empty list. An
 unquoted wikilink such as `premise: [[x]]` parses as a nested list and is
 reported as "quote wikilinks". The product never re-serializes frontmatter; the
 only product-side frontmatter edits are the textual `lines:` rewrite of
-`check --fix-lines`, `kgd edit`'s rewrite of one field of a draft, and
+`check --fix-lines` (with `source:` for a record its markers followed),
+`kgd edit`'s rewrite of one field of a draft, and
 `kgd relocate`'s rewrite of `source:` and `lines:` and, when it moves a record
 into another base, of the link values of that record and of every record and
 draft linking it.
@@ -577,7 +691,9 @@ default; `--base` (repeatable) narrows it. Its output is JSON:
 ```json
 {"errors": [{"path": "/abs/root/.knowledge/entries/x.md", "rule": "link", "message": "premise[0]: dangling link [[y]]"}],
  "stale": ["/abs/root/.knowledge/entries/z.md"],
- "moved": [{"path": "/abs/root/.knowledge/entries/w.md", "lines": "41-47"}]}
+ "moved": [{"path": "/abs/root/.knowledge/entries/w.md", "lines": "41-47"}],
+ "follow": [{"path": "/abs/root/.knowledge/entries/z.md", "round": "base", "base": "notes",
+             "source": "notes/renamed.md", "lines": "12-14"}]}
 ```
 
 Paths are absolute. The exit code is 1 when any list is non-empty. Each type
@@ -587,12 +703,11 @@ not hide a `config.json` error, and record rules run only once both are valid.
 | Rule | Checks |
 |---|---|
 | `config` | `config.json` shape, base names, root nesting, the home outside every root, every root available, no symlinked `.knowledge`, `entries/` or `drafts/`, an unknown `--base`. |
-| `type` | Each `types/*.md` obeys the type rules; every type named in `sources` exists. |
-| `source-type` | No registered file maps to two types. |
+| `type` | Each `types/*.md` obeys the type rules; every type a base names exists, and the types of one base declare a kind they share alike; a record's base registers a type, a record of a base of several types declares its `type`, and a declared `type` is one of its base's. |
 | `id` | The stem is a valid id; ids are unique within `entries/` and within `drafts/`, case-insensitively. |
 | `frontmatter` | The record file is a regular file, not a symlink; the frontmatter parses; required keys present with the right shapes (`lines` for a local record, none for a foreign one); every non-fixed key is a role of `kind`; `understanding` is `yes` or `no`. |
-| `source` | A local `source` is a registered, readable UTF-8 source of this base whose realpath stays inside the base root, and `lines` lies within it. A foreign one is a web address and is never fetched. |
-| `kind` | `kind` belongs to the source's type, or for a foreign record to a type registered for its base (all of those declaring it alike); a node kind that declares roles links at least one record in them ("a theorem links what it is about in about; capture a concept no record holds first"); a relation binds at least two values ("a result the source states is a node whose roles link what it is about"); `epistemic` is in the type's list. |
+| `source` | A local `source` exists, is a source of this base (an `.md`, `.tex` or `.txt` file outside hidden directories) whose realpath stays inside the base root, reads as UTF-8, and `lines` lies within it. A foreign one is a web address and is never fetched. |
+| `kind` | `kind` belongs to the record's document type; a node kind that declares roles links at least one record in them ("a theorem links what it is about in about; capture a concept no record holds first"); a relation binds at least two values ("a result the source states is a node whose roles link what it is about"); `epistemic` is in the type's list. |
 | `link` | Every value is a link matching the grammar; every link resolves to an accepted record (of this base or another, read from files); no self-link; a cross-base link to an unregistered base names it. |
 | `label` | No other accepted record, in any base, has a label with the same name key; for a draft, no other draft either, and no accepted record but the one it replaces. The message suggests `Label (source)`. |
 | `body` | The body obeys the body grammar. |
@@ -613,15 +728,35 @@ fresh, moved or stale. Quotes and source text are compared after
 
 Staleness never hides a record from the index or retrieval.
 
+**Following markers.** For a stale record, and a local record whose source
+file does not exist, `check` searches the record's markers in three rounds,
+its own source file, every other source of its base, then every source of the
+other bases ([Finding and relocating passages](#finding-and-relocating-passages)),
+and lists it in `follow` when a round finds any:
+
+- `{"path", "round", "base", "source", "lines"}` when the markers lie in
+  exactly one file whose text holds each quote exactly once: the record went
+  there, and `lines` are its quotes' lines in that file;
+- `{"path", "round", "evidence": "absent", "markers": [...]}` otherwise: the
+  markers found (as `kgd markers` reports them), whose passage no longer
+  holds the quotes.
+
+`round` is `source`, `base` or `bases`. A record no marker names is not
+listed in `follow`. A followed record stays in `stale`, or among the `source`
+errors, until it is moved.
+
 **`--fix-lines`** runs under the home lock. For each moved file it re-reads the
 file; if the text changed since the check read it, the file is skipped,
 otherwise only the frontmatter's `lines:` line is rewritten (every other byte,
 the byte-order mark and the newline style kept) through a temp file and an
-atomic replace. The output adds two lists and keeps in `moved` only the files
-not fixed:
+atomic replace. A `follow` record with `lines` whose file lies in its own base
+gets its `source:` and `lines:` lines rewritten the same way; one whose file
+lies in another base is left to `kgd relocate`, which also rewrites the links
+to it. The output adds two lists and keeps in `moved`, `follow` and `stale`
+only the files not fixed:
 
 ```json
-{"errors": [], "stale": [], "moved": [], "fixed": ["/abs/…/w.md"], "skipped": []}
+{"errors": [], "stale": [], "moved": [], "follow": [], "fixed": ["/abs/…/w.md"], "skipped": []}
 ```
 
 ## Writing knowledge
@@ -630,8 +765,8 @@ not fixed:
 
 `$KGDISTILLER_HOME/lock` is a dedicated lock file taken without waiting
 (`fcntl.flock`, or `msvcrt.locking` on Windows). It is held by `accept`,
-`relocate`, `check --fix-lines`, `base add`, `base rm`, `embedding set` and
-`embedding off`; a second writer fails
+`relocate`, `mark`, `check --fix-lines`, `base add`, `base rm`, `embedding set`
+and `embedding off`; a second writer fails
 at once. No data file is ever locked or truncated. `kgd index` relies on
 SQLite's own locking.
 
@@ -651,9 +786,10 @@ takes no lock and opens no database. Each draft has the record fields of
   drafts, which `kgd accept` must be given with it;
 - `linked_by`: the drafts, of any base, that link it;
 - `choices`: the `node_kinds`, `relation_kinds` and `epistemic` values its
-  source's type allows (for a foreign draft, every type registered for its
-  base; a kind two of them declare differently keeps the declaration of the
-  first type by name, and `kgd check` reports the conflict), or `null`;
+  document type allows (for a draft that declares no `type` in a base of
+  several, every type of its base, in their order in `config.json`; a kind two
+  of them declare differently keeps the first declaration, and `kgd check`
+  reports the conflict), or `null` when it has none;
 - `problems`: what `kgd accept` would refuse when given the draft and its
   `with`, empty when it would accept them.
 
@@ -736,28 +872,89 @@ together.
 
 ### `kgd source SOURCE`
 
-SOURCE is a registered source file, absolute or relative to the working
-directory; an unregistered file is an error that asks for a glob in
-`config.json`. It writes nothing and prints the extraction profile and
-inventory agents use:
+SOURCE is a source file, absolute or relative to the working directory. A
+file that is not a source of its base is an error: "is not a source of base
+B: sources are its md, tex and txt files outside hidden directories"; so is a
+base that registers no document type. It writes nothing and prints the
+extraction profiles and inventory agents use:
 
 ```json
-{"base": "notes", "source": "notes/math/…/01-review.tex", "type": "math-notes",
- "node_kinds": {"definition": [], "theorem": ["about"]}, "relation_kinds": {"implies": ["premise", "conclusion"]},
- "epistemic": ["proved", "stated"], "guidance": "…", "line_count": 77,
+{"base": "notes", "source": "notes/math/…/01-review.tex",
+ "types": [{"type": "math-notes", "node_kinds": {"definition": [], "theorem": ["about"]},
+            "relation_kinds": {"implies": ["premise", "conclusion"]}, "epistemic": ["proved", "stated"],
+            "guidance": "…"}],
+ "type": "math-notes", "node_kinds": {"definition": [], "theorem": ["about"]},
+ "relation_kinds": {"implies": ["premise", "conclusion"]}, "epistemic": ["proved", "stated"], "guidance": "…",
+ "line_count": 77,
+ "markers": [{"base": "notes", "source": "notes/math/…/01-review.tex", "line": 7, "column": 1,
+              "name": "Subspace", "text": "", "uid": "notes:subspace"}],
  "records": [{"uid": "notes:subspace", "label": "Subspace", "kind": "definition", "class": "node",
               "lines": "7-19", "understanding": "yes", "gloss": "…"}],
  "drafts": [{"id": "direct-sum-criterion", "label": "…", "kind": "theorem", "class": "node", "lines": "37-41"}]}
 ```
 
-Agents read the source text with their own tools; the inventory carries no
-lines. A foreign record is drafted with the profile of the source the owner
-was reading.
+`types` lists the profile of every document type of the base, in the order
+of its `types`; only when the base has one type are that profile's fields
+also given at the top level, as above. The agent chooses the type that fits
+the document and, in a base of several, declares it in each draft's `type:`.
+`markers` are the source's markers with the uid each names, `null` when it
+names no record or several. Agents read the source text with their own tools;
+the inventory carries no lines. A foreign record is drafted with a type of
+the base of the source the owner was reading.
+
+### `kgd markers [SOURCE]... [--uid BASE:ID]... [--base B]... [--orphans]`
+
+Lists knowledge markers with the records they name, read from files: it
+writes nothing, takes no lock and opens no database. With SOURCE files (each
+a source of a base), their markers; with `--uid` (repeatable), the markers of
+that record or draft, found round by round as `check` follows them; with
+neither, the markers of every source of the bases, or of those `--base`
+names. `--orphans` keeps the markers that name no record or several. It has
+no MCP tool.
+
+```json
+{"markers": [{"base": "papers", "source": "transformer/transformer_ch.md", "line": 120, "column": 1,
+              "name": "Transformer·Learned vs sinusoidal positional encoding",
+              "text": "Transformer·Learned vs sinusoidal positional encoding",
+              "uid": "papers:learned-vs-sinusoidal-positional-encoding", "candidates": ["papers:learned-vs-sinusoidal-positional-encoding"],
+              "path": "/abs/root/.knowledge/entries/learned-vs-sinusoidal-positional-encoding.md"}],
+ "total": 1}
+```
+
+`column` is 1-based; `text` is what the marker shows (its NAME unless it
+gives a TEXT; in tex the braces' content, possibly empty); `candidates` are
+every uid the NAME may mean, and `uid` and `path` the one it names, or
+`null`.
+
+### `kgd mark DRAFT [--name NAME] [--dry-run]`
+
+Writes a marker naming a local draft into its source, on the line of its
+first Evidence quote, under the home lock; it is the one command that writes
+a source file, and it changes only that line, never the line count.
+
+- In md and txt it writes `--[[NAME]]--:` where the quote starts (after any
+  list or quote prefix, and at the line's start when the quote starts inside
+  inline math), followed by a space when text follows, so the marker introduces the passage it names. When the quote
+  starts on a heading, table, fenced code, display math, HTML or frontmatter
+  line, the marker goes on the nearest blank line above instead.
+- In tex it writes `\kn[NAME]{}` where the quote starts, which prints
+  nothing.
+- NAME defaults to the draft's label, or its id when the label holds one of
+  `[ ] | { }`. It must name the draft (by the resolution rule of
+  [Knowledge markers](#knowledge-markers)); otherwise the command refuses and
+  asks for `--name` with the id.
+- It refuses a foreign draft, an accepted record, a first quote that does not
+  occur in the cited lines and a source that changed while it was written.
+  When the source already has a marker naming the draft, it writes nothing
+  and prints `{"marked": uid, "already": [...]}`.
+
+It prints `{"marked": uid, "source", "line", "column", "marker"}`, with
+`"dry_run": true` and nothing written under `--dry-run`.
 
 ### `kgd find TEXT [--base B]... [--source PREFIX]... [--limit 20]`
 
 TEXT is the text to find, or `-` to read it from standard input. It reads the
-registered sources of the available bases (narrowed by `--base` and by
+sources of the available bases (narrowed by `--base` and by
 `--source`, base-relative path prefixes) and writes nothing:
 
 ```json
@@ -778,21 +975,30 @@ that follows, cut at 2000 characters. Matches are listed by base, source and
 line, at most `--limit`; `total` counts them all. The MCP tool `kg_find`
 returns the same JSON.
 
-### `kgd relocate TARGET TEXT [--base B]... [--source PREFIX]... [--dry-run]`
+### `kgd relocate TARGET [TEXT] [--url URL] [--base B]... [--source PREFIX]... [--dry-run]`
 
 TARGET is `base:id` of an accepted record, or the path of a record or draft
 file; TEXT is the passage, or `-` to read it from standard input.
 
 1. Take the lock and parse the record.
-2. Find TEXT as `kgd find` does in the registered sources of every available
-   base, narrowed by `--base` and `--source` (both repeatable). Unless it
-   occurs exactly once, print `{"refused": {"message", "matches"}}`, exit 1
-   and write nothing.
-3. Rewrite the frontmatter's `source:` line, and its `lines:` line, added
-   after `source:` for a foreign record, to the match; every other byte stays.
-   When the record's quotes all lie in the matched text, or in its lines, the
-   Evidence stays; otherwise it becomes the matched text, one quote per run of
-   non-blank lines.
+2. Find where it goes:
+   - With TEXT, find it as `kgd find` does in the sources of every available
+     base, narrowed by `--base` and `--source` (both repeatable). Unless it
+     occurs exactly once, print `{"refused": {"message", "matches"}}`, exit 1
+     and write nothing.
+   - Without TEXT, follow the record's markers in three rounds as `check`
+     does. Refuse with "no marker names the record; pass the passage's text,
+     or --url and the page's text to make it foreign" when none does, and,
+     when the markers no longer lead to quotes that hold, with "pass the new
+     passage's text" and the `markers` found.
+   - With `--url URL` and TEXT, the page's own text, the record goes to that
+     web address and becomes foreign; no source is searched.
+3. Rewrite the frontmatter's `source:` line and its `lines:` line (added
+   after `source:` for a foreign record, removed for `--url`); every other
+   byte stays. Without TEXT the Evidence stays. With TEXT, when the record's
+   quotes all lie in the matched text, or in its lines, the Evidence stays;
+   otherwise it becomes the matched text, one quote per run of non-blank
+   lines. With `--url` the Evidence becomes TEXT.
 4. When the match lies in another base, the record moves there with its id:
    an accepted record into that base's `entries/`, a draft into its
    `drafts/`. Its own link values are rewritten for the new base (a link into
@@ -810,8 +1016,9 @@ file; TEXT is the passage, or `-` to read it from standard input.
    written, run `kgd index --no-embed`. Print `{"relocated": uid, "path",
    "from": {source, lines}, "to": {source, lines}, "evidence":
    "kept"|"replaced", "index": {...}}`, where `relocated` is the record's new
-   uid, plus, for a move, `moved: {from, to}` (the old and new uid) and
-   `relinked` (the files whose links were rewritten).
+   uid and `to.lines` is empty for a web address, plus, for a move,
+   `moved: {from, to}` (the old and new uid) and `relinked` (the files whose
+   links were rewritten).
 
 ### Changes, deletes and identity changes of accepted records
 
@@ -831,7 +1038,7 @@ this section is how such a change is written.
   wikilinks to it, which `kgd check` does not validate, become plain text.
   Run `kgd check` and `kgd index --no-embed`.
 - **Relocation.** `kgd relocate`, within one base or into another, where it
-  also rewrites every link to the record.
+  also rewrites every link to the record, or to a web page with `--url`.
 - **Identity change.** Ids are permanent, so a changed identity is a one-time
   link rewrite, never a rename. Merging true duplicates keeps one record;
   splitting a record that conflated two meanings drafts new records for them.
@@ -842,13 +1049,15 @@ this section is how such a change is written.
 
 ### Base registration
 
-`kgd base add PATH [--name N]` creates the home on first use (`config.json` as
-`{"bases": {}, "embedding": null}`, an empty `types/` and the `.gitignore`),
-registers the directory and creates `<root>/.knowledge/entries/`. The default
-name is the directory's basename, never transformed. `kgd base rm NAME` removes
+`kgd base add PATH [--name N] [--type T]...` creates the home on first use
+(`config.json` as `{"bases": {}, "embedding": null}`, an empty `types/` and
+the `.gitignore`), registers the directory with the document types `--type`
+names (each a file of `types/`; none leaves `types` empty, to fill in
+`config.json`) and creates `<root>/.knowledge/entries/`. The default name is
+the directory's basename, never transformed. `kgd base rm NAME` removes
 the registration only and adds `dangling`, the `[[NAME:…]]` values left in the
 other bases' entries and drafts as `{path, role, value}`. `kgd base list`
-prints each base's `name`, `path`, `root`, `available`, `records` and `drafts`
+prints each base's `name`, `path`, `root`, `types`, `available`, `records` and `drafts`
 (file counts, `null` when unavailable), `indexed` and `lag`. There is no
 `base rename`: a base name is a permanent citation key, and removing a base
 then adding the same directory under another name leaves every

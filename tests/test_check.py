@@ -63,7 +63,7 @@ class CheckTestCase(unittest.TestCase):
 
 class HomeRulesTest(CheckTestCase):
     def test_clean_bases(self) -> None:
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
 
     def test_missing_home_is_one_config_error(self) -> None:
         (self.kb.home / "config.json").unlink()
@@ -92,7 +92,7 @@ class HomeRulesTest(CheckTestCase):
         self.assertEqual([(str(bad), "type"), (str(config), "config")],
                          [(item["path"], item["rule"]) for item in report["errors"]])
 
-    def test_a_glob_naming_an_unknown_type_is_a_type_error(self) -> None:
+    def test_a_base_naming_an_unknown_type_is_a_type_error(self) -> None:
         self.kb.sources["kb"]["notes/*.typ"] = "missing"
         self.kb.write_config()
         report = self.run_check()
@@ -107,13 +107,17 @@ class HomeRulesTest(CheckTestCase):
         self.kb.write_config()
         self.assertEqual([("config.json", "config")], [item[:2] for item in self.errors()])
 
-    def test_a_file_matched_by_two_types_is_a_source_type_error(self) -> None:
+    def test_a_base_of_several_types_needs_each_records_type(self) -> None:
         self.kb.types["other"] = {"node_kinds": {"definition": []}, "guidance": "Other."}
-        self.kb.sources["kb"]["notes/a.*"] = "other"
+        self.kb.sources["kb"]["other"] = "other"
         self.kb.write_config()
+        self.kb.write_record("typed", node("Typed", "4", extra="type: other"), "Text.", ["A subspace is closed under addition."])
+        self.kb.write_record("unknown", node("Unknown", "4", extra="type: papers"), "Text.", ["A subspace is closed under addition."])
         found = self.errors("kb")
-        self.assertIn(("a.txt", "source-type"), [item[:2] for item in found])
-        self.assertIn(("subspace.md", "source"), [item[:2] for item in found])
+        several = "base kb has several document types (math, other); declare the record's type: one of them"
+        self.assertIn(("subspace.md", "type", several), found)
+        self.assertIn(("unknown.md", "type", "type 'papers' is not a document type of base kb (math, other)"), found)
+        self.assertNotIn("typed.md", [item[0] for item in found])
 
     def test_symlinked_knowledge_tree_is_refused(self) -> None:
         root = self.kb.roots["notes"]
@@ -152,19 +156,26 @@ class RecordRulesTest(CheckTestCase):
 
     def test_source_rules(self) -> None:
         (self.kb.root / "other").mkdir()
+        (self.kb.root / "other/a.pdf").write_text("Title line\n", encoding="utf-8")
+        (self.kb.root / ".hidden").mkdir()
+        (self.kb.root / ".hidden/a.md").write_text("Title line\n", encoding="utf-8")
         (self.kb.root / "other/a.md").write_text("Title line\n", encoding="utf-8")
-        self.kb.write_record("unregistered", node("U", "1").replace(SOURCE, "other/a.md"), "Text.", ["Title line"])
+        self.kb.write_record("unregistered", node("U", "1").replace(SOURCE, "other/a.pdf"), "Text.", ["Title line"])
+        self.kb.write_record("hidden", node("H", "1").replace(SOURCE, ".hidden/a.md"), "Text.", ["Title line"])
+        self.kb.write_record("any-markdown", node("M", "1").replace(SOURCE, "other/a.md"), "Text.", ["Title line"])
         self.kb.write_record("renamed", node("R", "1").replace(SOURCE, "notes/renamed.txt"), "Text.", ["Title line"])
         self.kb.write_record("escape", node("E", "1").replace(SOURCE, "../a.txt"), "Text.", ["Title line"])
         self.kb.write_record("past-end", node("P", "6-9"), "Text.", ["Unique sentence about dimension."])
         binary = self.kb.root / "notes/binary.txt"
         binary.write_bytes(b"\xff\xfe broken\n")
         self.kb.write_record("binary", node("B", "1").replace(SOURCE, "notes/binary.txt"), "Text.", ["broken"])
-        self.assert_error("unregistered.md", "source", "add a glob")
+        self.assert_error("unregistered.md", "source", "is not a source of base kb")
         self.assert_error("renamed.md", "source", "source notes/renamed.txt does not exist in base kb")
         self.assert_error("escape.md", "source", "POSIX path relative to the base root")
         self.assert_error("past-end.md", "source", "exceed the 6 lines")
         self.assert_error("binary.md", "source", "not UTF-8")
+        self.assert_error("hidden.md", "source", "is not a source of base kb")
+        self.assertNotIn("any-markdown.md", [item[0] for item in self.errors()])
 
     def test_a_source_must_not_resolve_outside_the_base(self) -> None:
         outside = self.kb.home.parent / "outside.txt"
@@ -231,7 +242,7 @@ class RecordRulesTest(CheckTestCase):
             "relation_kinds": relations,
         }
         self.kb.write_config()
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
 
     def test_link_rules(self) -> None:
         self.relation("dangling", 'premise: ["[[linear-subspace]]"]')
@@ -287,7 +298,7 @@ class DraftRulesTest(CheckTestCase):
             "A subspace is closed under addition and scaling.", ["A subspace is closed under addition."],
             folder="drafts",
         )
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
         self.kb.write_record("subspace", node("Subspace", "1", kind="lemma"), "Text.", ["Nowhere."], folder="drafts")
         report = self.run_check()
         self.assertEqual([str(self.kb.path("subspace", "drafts"))], report["stale"])
@@ -346,7 +357,7 @@ class ForeignRulesTest(CheckTestCase):
     def test_a_foreign_record_has_no_freshness(self) -> None:
         self.foreign("attention", quotes=("Not in any local source.",))
         self.foreign("draft-attention", quotes=("Nor this.",), folder="drafts")
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
 
     def test_fix_lines_leaves_a_foreign_record_alone(self) -> None:
         path = self.foreign("attention")
@@ -370,7 +381,7 @@ class ForeignRulesTest(CheckTestCase):
         self.foreign("bad-epistemic", kind="implies",
                      extra='premise: ["[[subspace]]"]\nconclusion: ["[[measure-space]]"]\nepistemic: rumoured')
         self.foreign("bad-role", kind="implies", extra='witness: ["[[subspace]]"]')
-        self.assert_error("lemma.md", "kind", "kind 'lemma' is not a node or relation kind of the types of base kb")
+        self.assert_error("lemma.md", "kind", "kind 'lemma' is not a node or relation kind of type math")
         self.assert_error("node-roles.md", "frontmatter", "premise is not a role of concept; it declares no roles")
         self.assert_error("bad-epistemic.md", "kind", "epistemic 'rumoured' is not allowed for implies (proved, stated)")
         self.assert_error("bad-role.md", "frontmatter", "witness is not a role of implies")
@@ -379,8 +390,8 @@ class ForeignRulesTest(CheckTestCase):
     def test_only_the_types_registered_for_the_base_count(self) -> None:
         self.kb.types["papers"] = {"node_kinds": {"model": []}, "guidance": "Papers."}
         self.kb.write_config()
-        self.foreign("unregistered-kind", kind="model")
-        self.assert_error("unregistered-kind.md", "kind", "kind 'model' is not a node or relation kind of the types of base kb")
+        self.foreign("unregistered-kind", kind="model", extra="type: papers")
+        self.assert_error("unregistered-kind.md", "type", "type 'papers' is not a document type of base kb (math)")
         self.kb.sources["kb"]["papers/*.pdf"] = "papers"
         self.kb.write_config()
         self.assertNotIn("unregistered-kind.md", [item[0] for item in self.errors()])
@@ -394,13 +405,13 @@ class ForeignRulesTest(CheckTestCase):
         }
         self.kb.sources["kb"]["papers/*.pdf"] = "papers"
         self.kb.write_config()
-        self.foreign("shared-node")
-        self.foreign("ambiguous", kind="implies", extra='premise: ["[[subspace]]"]')
-        self.foreign("claimed", kind="concept", extra="epistemic: claimed")
-        self.assert_error("ambiguous.md", "kind", "kind 'implies' is declared differently by the types math, papers")
+        self.foreign("shared-node", extra="type: math")
+        self.foreign("claimed", kind="concept", extra="type: papers\nepistemic: claimed")
+        self.foreign("because", kind="implies", extra='type: papers\nbecause: ["[[subspace]]", "[[measure-space]]"]')
         names = [item[0] for item in self.errors()]
         self.assertNotIn("shared-node.md", names)
         self.assertNotIn("claimed.md", names)
+        self.assertNotIn("because.md", names)
         self.assertIn(("config.json", "type", "kind 'implies' is declared differently by the types math, papers of base kb"),
                       self.errors())
 
@@ -409,7 +420,7 @@ class ForeignRulesTest(CheckTestCase):
         self.foreign("attention", extra='requires: ["[[subspace]]", "[[notes:sigma]]"]')
         self.kb.write_record("sigma", node("Sigma", "1"), "Text.", ["Title line"], base="notes")
         self.relation("uses-attention", 'premise: ["[[attention]]"]\nconclusion: ["[[notes:sigma]]"]')
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
         self.foreign("dangling", extra='requires: ["[[nowhere]]"]')
         self.assert_error("dangling.md", "link", "dangling link [[nowhere]]")
 
@@ -418,7 +429,9 @@ class BaseKindTest(CheckTestCase):
     """A base's document types must agree on each kind they share: node or relation, and its roles."""
 
     def type_errors(self) -> list[dict[str, Any]]:
-        return [item for item in self.run_check()["errors"] if item["rule"] == "type"]
+        """The type errors of the home: a record of a base of several types that declares none is not one."""
+        return [item for item in self.run_check()["errors"]
+                if item["rule"] == "type" and item["path"] == str(self.kb.home / "config.json")]
 
     def register(self, spec: dict[str, Any], base: str = "kb") -> None:
         self.kb.types["papers"] = {"guidance": "Papers.", **spec}
@@ -427,7 +440,7 @@ class BaseKindTest(CheckTestCase):
 
     def test_agreeing_types_are_clean(self) -> None:
         self.register({"node_kinds": {"concept": [], "model": []}, "relation_kinds": {"implies": ["premise", "conclusion"]}})
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual([], self.type_errors())
 
     def test_node_versus_relation_kind(self) -> None:
         self.register({"node_kinds": {"implies": []}})
@@ -454,7 +467,7 @@ class BaseKindTest(CheckTestCase):
 class FreshnessTest(CheckTestCase):
     def test_whitespace_is_normalized(self) -> None:
         self.kb.write_record("spaced", node("Spaced", "2-3"), "Text.", ["A  measure space\nis a triple (X, M, mu). It\textends"])
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
 
     def test_moved_proposes_the_covering_range(self) -> None:
         path = self.kb.write_record(
@@ -465,7 +478,7 @@ class FreshnessTest(CheckTestCase):
     def test_several_ranges_are_fresh_and_distant_quotes_move_to_separate_ranges(self) -> None:
         self.kb.write_record("apart", node("Apart", "2, 6"), "Text.",
                              ["A measure space is a triple", "Unique sentence about dimension."])
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
         path = self.kb.write_record("distant", node("Distant", "1"), "Text.",
                                     ["A measure space is a triple", "Unique sentence about dimension."])
         self.assertEqual([{"path": str(path), "lines": "2-2, 6-6"}], self.run_check()["moved"])
@@ -483,7 +496,7 @@ class FreshnessTest(CheckTestCase):
         source.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(LINES).encode() + b"\r\n")
         self.kb.write_record("windows", node("W", "6").replace(SOURCE, "notes/windows.txt"), "Text.", ["Unique sentence about dimension."])
         self.kb.write_record("bom-first", node("B", "1").replace(SOURCE, "notes/windows.txt"), "Text.", ["Title line"])
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
         self.kb.write_record("beyond", node("X", "7").replace(SOURCE, "notes/windows.txt"), "Text.", ["Title line"])
         self.assert_error("beyond.md", "source", "exceed the 6 lines")
 
@@ -499,7 +512,7 @@ class FixLinesTest(CheckTestCase):
         self.assertEqual([], report["moved"])
         self.assertEqual([], report["skipped"])
         self.assertEqual(original.replace(b"lines: 1\r\n", b"lines: 5\r\n"), path.read_bytes())
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
 
     def test_writes_a_range_when_the_quotes_span_lines(self) -> None:
         path = self.kb.write_record("span", node("Span", "1"), "Text.", ["closed under addition. The sum"])
@@ -511,7 +524,7 @@ class FixLinesTest(CheckTestCase):
                                     ["A measure space is a triple", "Unique sentence about dimension."])
         fix_lines()
         self.assertIn("lines: 2, 6\n", path.read_text(encoding="utf-8"))
-        self.assertEqual({"errors": [], "stale": [], "moved": []}, self.run_check())
+        self.assertEqual({"errors": [], "stale": [], "moved": [], "follow": []}, self.run_check())
 
     def test_a_file_changed_since_the_check_is_skipped(self) -> None:
         path = self.kb.write_record("moved", node("Moved", "1"), "Text.", ["The sum of two subspaces"])

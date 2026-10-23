@@ -15,7 +15,8 @@ from typing import Any
 from tests.knowledge_fixture import make_record_home, type_document, use_temporary_home
 
 COMMANDS = {
-    "base", "embedding", "check", "source", "find", "relocate", "drafts", "edit", "accept", "index", "search", "resolve", "get",
+    "base", "embedding", "check", "source", "markers", "mark", "find", "relocate", "drafts", "edit", "accept", "index",
+    "search", "resolve", "get",
     "neighbors", "browse", "pack", "obsidian", "claude", "codex", "mcp",
 }
 WEB = "https://example.com/sigma-algebra"
@@ -48,7 +49,7 @@ class BaseAddTest(unittest.TestCase):
     def register_papers(self) -> None:
         config_path = self.home / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        config["bases"]["papers"]["sources"] = {"papers/*.tex": "papers"}
+        config["bases"]["papers"]["types"] = ["papers"]
         config_path.write_text(json.dumps(config), encoding="utf-8")
         (self.home / "types/papers.md").write_text(
             type_document({"node_kinds": {"definition": []}, "guidance": "Named statements."}), encoding="utf-8")
@@ -63,15 +64,17 @@ class BaseAddTest(unittest.TestCase):
         self.assertEqual(list((root / ".knowledge/entries").iterdir()), [])
         self.assertEqual((self.home / ".gitignore").read_text(encoding="utf-8"), "index.sqlite*\nlock\n")
         self.register_papers()
-        self.assertEqual(output(kgdistiller("check", cwd=root / "papers")), {"errors": [], "stale": [], "moved": []})
+        self.assertEqual(output(kgdistiller("check", cwd=root / "papers")), {"errors": [], "stale": [], "moved": [], "follow": []})
         profile = output(kgdistiller("source", "paper.tex", cwd=root / "papers"))
         self.assertEqual((profile["base"], profile["source"], profile["type"], profile["line_count"]),
                          ("papers", "papers/paper.tex", "papers", 2))
         self.assertEqual(set(profile), {"base", "source", "type", "node_kinds", "relation_kinds", "epistemic",
-                                        "guidance", "line_count", "records", "drafts"})
+                                        "guidance", "types", "line_count", "markers", "records", "drafts"})
         self.assertEqual((profile["node_kinds"], profile["records"], profile["drafts"]), ({"definition": []}, [], []))
+        self.assertEqual([(item["name"], item["line"], item["uid"]) for item in profile["markers"]], [("Ignored", 1, None)])
         self.assertEqual(output(kgdistiller("source", str(root / "papers/paper.tex"), cwd=self.tmp)), profile)
-        unregistered = kgdistiller("source", "notes.txt", cwd=root)
+        (root / "notes.pdf").write_text("x\n", encoding="utf-8")
+        unregistered = kgdistiller("source", "notes.pdf", cwd=root)
         self.assertEqual(unregistered.returncode, 1)
         again = kgdistiller("base", "add", str(root), "--name", "other", cwd=self.tmp)
         self.assertEqual(again.returncode, 1)
@@ -210,7 +213,7 @@ class CheckJsonTest(unittest.TestCase):
         broken = self.kb.write_record("broken", node("Broken", "2", extra='requires: ["[[missing]]"]'),
                                       "Dangling.", ["A measure space"])
         report = output(kgdistiller("check", "--base", "kb", cwd=self.root.parent), status=1)
-        self.assertEqual(set(report), {"errors", "stale", "moved"})
+        self.assertEqual(set(report), {"errors", "stale", "moved", "follow"})
         self.assertEqual([(error["path"], error["rule"]) for error in report["errors"]], [(str(broken), "link")])
         self.assertIn("dangling link [[missing]]", report["errors"][0]["message"])
         self.assertEqual(report["stale"], [str(stale)])
@@ -220,7 +223,7 @@ class CheckJsonTest(unittest.TestCase):
         self.assertIn("\nlines: 3\n", moved.read_text(encoding="utf-8"))
         broken.unlink()
         stale.unlink()
-        self.assertEqual(output(kgdistiller("check", cwd=self.root)), {"errors": [], "stale": [], "moved": []})
+        self.assertEqual(output(kgdistiller("check", cwd=self.root)), {"errors": [], "stale": [], "moved": [], "follow": []})
 
     def test_unknown_base_is_a_config_error(self) -> None:
         report = output(kgdistiller("check", "--base", "nope", cwd=self.root), status=1)
@@ -288,7 +291,7 @@ class EndToEndTest(unittest.TestCase):
                  extra='premise: ["[[measure-space]]"]\nconclusion: ["[[measure]]"]\nepistemic: stated'),
             "Every measure space carries a measure.", ["A measure space", "A measure is"], folder="drafts",
         )
-        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": []})
+        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": [], "follow": []})
 
         listed = output(kgdistiller("drafts", "--name", "measure space", cwd=root))["drafts"]
         self.assertEqual([(item["uid"], item["with"], item["problems"]) for item in listed],
@@ -309,7 +312,7 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual((indexed["created"], indexed["bases"]["kb"]["parsed"], indexed["unembedded"]), (True, 4, 0))
         self.assertEqual(accepted, {"created": uids, "updated": []})
         self.assertFalse((root / ".knowledge/drafts/measure-space.md").exists())
-        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": []})
+        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": [], "follow": []})
 
         report = output(kgdistiller("index", "--no-embed", cwd=root))
         self.assertEqual((report["created"], report["bases"]["kb"]["parsed"], report["unembedded"]), (False, 0, 0))
@@ -378,7 +381,7 @@ class EndToEndTest(unittest.TestCase):
 
         kb.write_record("measure", node("Measure", "3", extra="aliases: [测度, mass, 质量]"), "Replaced by a draft.",
                         ["A measure is countably additive."], folder="drafts")
-        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": []})
+        self.assertEqual(output(kgdistiller("check", cwd=root)), {"errors": [], "stale": [], "moved": [], "follow": []})
         [replacing] = output(kgdistiller("drafts", cwd=root))["drafts"]
         self.assertEqual((replacing["replaces"], replacing["problems"]), ("kb:measure", []))
         self.assertEqual(output(kgdistiller("accept", ".knowledge/drafts/measure.md", "--dry-run", cwd=root)),

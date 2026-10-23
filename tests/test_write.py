@@ -426,8 +426,8 @@ class SourceTest(WriteTestCase):
         profile = source(self.source)
         self.assertEqual(before, self.snapshot())
         self.assertEqual(
-            ["base", "source", "type", "node_kinds", "relation_kinds", "epistemic", "guidance", "line_count",
-             "records", "drafts"],
+            ["base", "source", "type", "node_kinds", "relation_kinds", "epistemic", "guidance", "types", "line_count",
+             "markers", "records", "drafts"],
             list(profile),
         )
         self.assertEqual(("kb", SOURCE, "math", 6), (profile["base"], profile["source"], profile["type"], profile["line_count"]))
@@ -471,11 +471,12 @@ class SourceTest(WriteTestCase):
         self.source.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(LINES).encode() + b"\r\n")
         self.assertEqual(6, source(self.source)["line_count"])
 
-    def test_unregistered_source_asks_for_a_glob(self) -> None:
-        other = self.kb.write_source("other/c.md", "text\n")
-        with self.assertRaises(KnowledgeError) as caught:
-            source(other)
-        self.assertIn("add a glob", str(caught.exception))
+    def test_only_md_tex_and_txt_outside_hidden_directories_are_sources(self) -> None:
+        self.assertEqual("other/c.md", source(self.kb.write_source("other/c.md", "text\n"))["source"])
+        for relative in ("other/c.pdf", ".obsidian/c.md"):
+            with self.assertRaises(KnowledgeError) as caught:
+                source(self.kb.write_source(relative, "text\n"))
+            self.assertIn("is not a source of base kb", str(caught.exception))
         outside = self.kb.home.parent / "x.txt"
         outside.write_text("x", encoding="utf-8")
         with self.assertRaises(KnowledgeError):

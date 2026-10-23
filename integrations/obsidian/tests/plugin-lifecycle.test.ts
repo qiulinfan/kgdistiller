@@ -9,6 +9,7 @@ const controls = vi.hoisted(() => ({
   domEvents: [] as Array<{ target: unknown; type: string; callback: (event: unknown) => void }>,
   secrets: new Map<string, string>(),
   commands: [] as Array<{ id: string; callback: () => void }>,
+  editorExtensions: [] as unknown[], postProcessors: [] as unknown[],
   settings: [] as Array<{
     name: string; description?: string;
     toggleChange?: (value: boolean) => void | Promise<void>;
@@ -29,6 +30,8 @@ vi.mock("obsidian", () => {
     addRibbonIcon(icon: string, title: string): void { controls.ribbons.push({ icon, title }); }
     addCommand(command: { id: string; callback: () => void }): void { controls.commands.push(command); }
     addSettingTab(): void {}
+    registerEditorExtension(extension: unknown): void { controls.editorExtensions.push(extension); }
+    registerMarkdownPostProcessor(processor: unknown): void { controls.postProcessors.push(processor); }
     registerEvent(): void {}
     registerDomEvent(target: unknown, type: string, callback: (event: unknown) => void): void {
       controls.domEvents.push({ target, type, callback });
@@ -89,7 +92,7 @@ vi.mock("obsidian", () => {
   const debounce = (callback: () => void) => Object.assign(() => callback(), { cancel: () => undefined, run: () => undefined });
   class FileSystemAdapter {}
   class MarkdownView {}
-  return { Plugin, PluginSettingTab, Setting, SecretComponent, ItemView, Modal, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
+  return { editorInfoField: {}, editorLivePreviewField: {}, Plugin, PluginSettingTab, Setting, SecretComponent, ItemView, Modal, TFile, FileSystemAdapter, MarkdownView, debounce, setIcon: () => undefined,
     Platform: { isMacOS: true }, requestUrl: vi.fn(),
     Notice: class { constructor(message: string) { controls.notice(message); } }, normalizePath: (path: string) => path };
 });
@@ -188,7 +191,7 @@ function showSettings(plugin: KgdistillerPlugin): KgdistillerSettingTab {
   tab.display(); return tab;
 }
 beforeEach(() => {
-  controls.headings.length = 0; controls.commands.length = 0; controls.settings.length = 0; controls.ribbons.length = 0;
+  controls.headings.length = 0; controls.commands.length = 0; controls.editorExtensions.length = 0; controls.postProcessors.length = 0; controls.settings.length = 0; controls.ribbons.length = 0;
   controls.domEvents.length = 0; domSelection.text = ""; delete domSelection.anchor;
   controls.stored = null; controls.secrets.clear();
   vi.clearAllMocks();
@@ -216,7 +219,46 @@ describe("community lifecycle conventions", () => {
     expect(controls.ribbons).toEqual([{ icon: "scan-search", title: "Open kgdistiller" }]);
     expect(controls.commands.map((command) => command.id)).toEqual([
       "rescan-hidden-knowledge-folder", "look-up-selection", "capture-selection", "search-knowledge", "show-drafts",
+      "jump-between-knowledge-and-marker",
     ]);
+    // Markers are drawn in Markdown editors and in reading view.
+    expect(controls.editorExtensions).toHaveLength(1);
+    expect(controls.postProcessors).toHaveLength(1);
+  });
+
+  it("gives latex-live its TeX marker extension once its API is ready, and takes it back on unload", async () => {
+    const { plugin, handlers } = harness();
+    const workspace = plugin.app.workspace as unknown as { onLayoutReady: ReturnType<typeof vi.fn> };
+    const plugins = (plugin.app as unknown as { plugins: { plugins: Record<string, unknown> } }).plugins;
+    // Without latex-live, or with a latex-live that lacks the API, nothing is registered.
+    plugins.plugins["latex-live"] = {};
+    await plugin.onload();
+    for (const [ready] of workspace.onLayoutReady.mock.calls as Array<[() => void]>) ready();
+    const disposers = [vi.fn(), vi.fn()];
+    const live = { registerTexEditorExtension: vi.fn((_extension: unknown) => disposers[live.registerTexEditorExtension.mock.calls.length - 1]) };
+    handlers.get("workspace:latex-live:api-ready")![0]!(live);
+    expect(live.registerTexEditorExtension).toHaveBeenCalledOnce();
+    expect(live.registerTexEditorExtension.mock.calls[0]![0]).toBeDefined();
+    // A second announcement replaces the first registration.
+    handlers.get("workspace:latex-live:api-ready")![0]!(live);
+    expect(disposers[0]).toHaveBeenCalledOnce();
+    plugin.onunload();
+    expect(disposers[1]).toHaveBeenCalledOnce();
+    expect(live.registerTexEditorExtension).toHaveBeenCalledTimes(2);
+  });
+
+  it("registers the TeX marker extension when latex-live is already loaded with its API", async () => {
+    const { plugin } = harness();
+    const workspace = plugin.app.workspace as unknown as { onLayoutReady: ReturnType<typeof vi.fn> };
+    const dispose = vi.fn();
+    const live = { registerTexEditorExtension: vi.fn(() => dispose) };
+    (plugin.app as unknown as { plugins: { plugins: Record<string, unknown> } }).plugins.plugins["latex-live"] = live;
+    await plugin.onload();
+    expect(live.registerTexEditorExtension).not.toHaveBeenCalled();
+    for (const [ready] of workspace.onLayoutReady.mock.calls as Array<[() => void]>) ready();
+    expect(live.registerTexEditorExtension).toHaveBeenCalledOnce();
+    plugin.onunload();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("drafts captures in one Capture view below the lookup sidebar, and finds sources for a borrowed one", async () => {

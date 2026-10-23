@@ -42,8 +42,9 @@ Recommended order: `search` for candidates, then `browse` or `resolve` to see
 the source tree and every sense of a name, `neighbors` to follow dependency
 links and the records linking one, `get` to read complete records, and `pack`
 to deliver budgeted evidence with its gaps. `drafts` lists the drafts awaiting
-the owner, which are not knowledge, and `find` where a passage or a name
-occurs in the registered sources.
+the owner, which are not knowledge, `find` where a passage or a name
+occurs in the sources, and `markers` where the sources name records with
+knowledge markers (`kgd markers SOURCE` or `kgd markers --uid UID`, CLI only).
 
 Use the MCP tools of `kgd mcp` when they are available: `kg_search`,
 `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`, `kg_drafts`

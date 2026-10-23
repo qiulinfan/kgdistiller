@@ -4,14 +4,14 @@
 
 ```text
 $KGDISTILLER_HOME/            # default ~/.knowledge; owner data
-├── config.json               # bases, their source globs, embedding model id
+├── config.json               # bases, their document types, embedding model id
 ├── types/<USER_TYPE>.md      # one user-defined document type per file
 ├── .gitignore                # "index.sqlite*" and "lock"
 ├── index.sqlite (-wal, -shm) # derived database; deleting it loses nothing
 └── lock                      # writer lock; its contents are meaningless
 
 BASE_ROOT/
-├── notes/                    # registered source documents, any text format
+├── notes/                    # sources: every md, tex and txt file outside hidden directories
 └── .knowledge/
     ├── entries/<id>.md       # accepted records: nodes and relations
     └── drafts/<id>.md        # proposed records, new or replacements, same format
@@ -85,7 +85,7 @@ write `config.json` atomically. Base names match `^[a-z0-9][a-z0-9-]*$`.
 `records` and `drafts` (file counts), `indexed` (rows in the database) and
 `lag`.
 
-## Source globs and document types
+## Sources and document types
 
 Names, kinds and guidance come from the owner; the product ships no types.
 With placeholder values, `config.json`:
@@ -95,10 +95,7 @@ With placeholder values, `config.json`:
   "bases": {
     "NAME": {
       "path": "~/BASE_ROOT",
-      "sources": {
-        "notes/**/*.md": "USER_TYPE",
-        "notes/*/main.tex": "USER_TYPE"
-      }
+      "types": ["USER_TYPE", "OTHER_USER_TYPE"]
     }
   },
   "embedding": "BAAI/bge-m3"
@@ -121,7 +118,7 @@ The owner's rules for nodes, relations and examples.
 ```
 
 - The top level holds exactly `bases` and `embedding`; each base holds exactly
-  `path` and `sources`. `embedding` is a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no
+  `path` and `types`. `embedding` is a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, with no
   revision pin (`BAAI/bge-m3` is the recommended one; the device is chosen
   automatically) or `null` for lexical and name search only. It needs the
   package installed with the `retrieval` extra. `kgd embedding set` downloads
@@ -132,12 +129,14 @@ The owner's rules for nodes, relations and examples.
   new model. `kgd embedding`
   shows it, `kgd embedding set MODEL` downloads and checks a model and then
   writes it, and `kgd embedding off` writes `null`.
-- Each `sources` key is a glob relative to the base root with Python glob
-  semantics: `*` stays within one path segment, `**` spans directories, and
-  hidden files and directories (`.knowledge/`, `.obsidian/`, `.git/`) never
-  match.
-- Each value names an existing type file. Globs naming two different types for
-  one file are an error, so every source has exactly one type.
+- A base's sources are not registered: every file with the suffix `.md`,
+  `.tex` or `.txt` (any case) under its root is one, except hidden files and
+  anything under a hidden directory (`.knowledge/`, `.obsidian/`, `.git/`,
+  `.trash/`) and files that resolve outside the root through a symlink.
+- `types` lists the existing type files the base's records may use, each once.
+  A record names its type in its `type:`; in a base of one type it may leave
+  it out. The types of one base must declare every kind they share the same
+  way (node or relation, the same roles).
 - A type file has a slug stem and frontmatter read with PyYAML's `BaseLoader`.
   `node_kinds` is a required non-empty mapping of kind slugs to lists of
   unique role slugs, possibly empty; `relation_kinds` maps each kind to a
@@ -145,10 +144,13 @@ The owner's rules for nodes, relations and examples.
   carry `epistemic`. No kind is both a node kind and a relation kind. The
   non-empty body is the extraction guidance.
 
-Sources are format-agnostic: any UTF-8 text document is read as lines and
-never parsed or converted. `kgd source SOURCE` shows a source's base,
-type, kinds, roles, guidance and line count, so extraction reads the owner's
-policy before any record exists.
+Sources are read as UTF-8 lines and never parsed or converted, except for
+their knowledge markers (`--[[NAME]]--` in md and txt, `\kn{NAME}` or
+`\kn[NAME]{TEXT}` in tex), which name the record a source states there.
+`kgd source SOURCE` shows a source's base, the profile of every type of its
+base (kinds, roles, guidance), its line count and markers, so extraction reads
+the owner's policy before any record exists; `kgd markers` lists markers with
+the records they resolve to.
 
 ## Check
 
@@ -157,14 +159,21 @@ policy before any record exists.
 ```json
 {"errors": [{"path": "/abs/.knowledge/entries/x.md", "rule": "link", "message": "…"}],
  "stale": ["/abs/.knowledge/entries/y.md"],
- "moved": [{"path": "/abs/.knowledge/entries/z.md", "lines": "40-46"}]}
+ "moved": [{"path": "/abs/.knowledge/entries/z.md", "lines": "40-46"}],
+ "follow": [{"path": "/abs/.knowledge/entries/w.md", "round": "base", "base": "B",
+             "source": "notes/renamed.md", "lines": "12-14"}]}
 ```
 
-`rule` is one of `config`, `type`, `source-type`, `id`, `frontmatter`,
+`rule` is one of `config`, `type`, `id`, `frontmatter`,
 `source`, `kind`, `link`, `label`, `body`. The exit code is 1 when any list is
 non-empty. `moved` evidence (each quote found exactly once elsewhere in the
 source) is repaired by `--fix-lines`, which rewrites only the `lines:` line
-under the home lock and adds `fixed` and `skipped` lists. A `stale` record
+under the home lock and adds `fixed` and `skipped` lists. A record whose
+quotes are gone from its file but whose markers lead elsewhere is listed in
+`follow`: with `lines` when its quotes hold in the one file the markers lead
+to (`--fix-lines` rewrites its `source:` and `lines:` when that file is in its
+base; `kgd relocate UID` moves it in any case), or with `"evidence": "absent"`
+and the markers found when the passage was reworded. A `stale` record
 is moved to the passage that now states it with the relocate Skill
 (`kgd relocate`), or, when its meaning changed, gets a replacement draft.
 Staleness never

@@ -20,11 +20,13 @@ const lines = [
 const profile: Profile = {
   base: "papers",
   source: "papers/beit/beit.md",
-  type: "ai-research",
-  node_kinds: { definition: [], algorithm: [] },
-  relation_kinds: { property: ["subject", "uses"] },
-  epistemic: ["empirical", "stated"],
-  guidance: "",
+  types: [{
+    type: "ai-research",
+    node_kinds: { definition: [], algorithm: [] },
+    relation_kinds: { property: ["subject", "uses"] },
+    epistemic: ["empirical", "stated"],
+    guidance: "",
+  }],
   line_count: lines.length,
   records: [],
   drafts: [],
@@ -57,7 +59,7 @@ interface World {
  * kgd and the files for one localization; the first `refuse` relocations are
  * refused, and `fail`, when given, is the error every relocation then ends with.
  */
-function world(refuse = 0, fail?: string): World {
+function world(refuse = 0, fail?: string, source: Profile = profile): World {
   const commands: string[][] = [];
   let refusals = refuse;
   const kgd: CaptureKgd = {
@@ -66,7 +68,7 @@ function world(refuse = 0, fail?: string): World {
     },
     async command(args: string[]) {
       commands.push(args);
-      if (args[0] === "source" && args[1] === LOCAL) return { report: profile as unknown as Record<string, unknown>, failed: false };
+      if (args[0] === "source" && args[1] === LOCAL) return { report: source as unknown as Record<string, unknown>, failed: false };
       if (args[0] === "relocate") {
         if (refusals-- > 0) return { report: { refused: { message: "the passage does not occur in base papers", matches: [] } }, failed: true };
         if (fail) throw new KgdError(fail);
@@ -186,5 +188,17 @@ describe("localizing foreign knowledge", () => {
     await expect(localizeRecord(never, w.kgd, w.files, recordTarget({ ...record, kind: "theorem" }), input))
       .resolves.toMatchObject({ localized: false, report: "The kind theorem is not one of this source's document type ai-research." });
     expect(w.commands.filter((args) => args[0] === "relocate")).toEqual([]);
+  });
+
+  it("takes a kind any document type of the source's base declares", async () => {
+    const notes = { type: "math-notes", node_kinds: { theorem: ["about"] }, relation_kinds: {}, epistemic: ["proved"], guidance: "" };
+    const cs = { ...notes, type: "cs-notes", node_kinds: { method: [] } };
+    const never = async (): Promise<ChatReply> => { throw new Error("the model was asked"); };
+    const refused = world(0, undefined, { ...profile, types: [profile.types[0]!, cs] });
+    await expect(localizeRecord(never, refused.kgd, refused.files, recordTarget({ ...record, kind: "theorem" }), input))
+      .resolves.toMatchObject({ localized: false, report: "The kind theorem is not one of this source's document types ai-research, cs-notes." });
+    const w = world(0, undefined, { ...profile, types: [profile.types[0]!, notes] });
+    await expect(localizeRecord(model(same).complete, w.kgd, w.files, recordTarget({ ...record, kind: "theorem" }), input))
+      .resolves.toMatchObject({ localized: true });
   });
 });

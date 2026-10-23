@@ -575,3 +575,34 @@ SOFTWARE.
   height: 12px;
   width: 12px;
 }
+
+/* Knowledge markers: a purple chip naming a record, and the raw marker while it is edited. */
+.kgd-marker-chip {
+  background: rgba(var(--color-purple-rgb), 0.14);
+  border: 1px solid rgba(var(--color-purple-rgb), 0.45);
+  border-radius: var(--radius-s);
+  color: var(--color-purple);
+  cursor: text;
+  padding: 0 4px;
+  white-space: pre-wrap;
+}
+
+.kgd-marker-chip:hover {
+  background: rgba(var(--color-purple-rgb), 0.24);
+}
+
+.markdown-reading-view .kgd-marker-chip,
+.markdown-rendered .kgd-marker-chip {
+  cursor: default;
+}
+
+.kgd-marker-raw,
+.kgd-marker-raw .cm-hmd-internal-link,
+.kgd-marker-raw .cm-underline {
+  color: var(--color-purple);
+}
+
+.kgd-marker-raw {
+  background: rgba(var(--color-purple-rgb), 0.08);
+  border-radius: var(--radius-s);
+}

@@ -59,8 +59,8 @@ Then verify that:
 - an isolated environment installs the wheel and runs
   `scripts/smoke_installed_runtime.py` with `KGDISTILLER_HOME` and `HOME` set to
   temporary directories: `base add` creates the home and the base's
-  `entries/`; a type with node and relation kinds and a source glob are
-  registered; `source` and `accept` work on written records and a draft; `check` is clean, reports a shifted quote as moved, and
+  `entries/`; a type with node and relation kinds is registered in the
+  base's `types`; `source` and `accept` work on written records and a draft; `check` is clean, reports a shifted quote as moved, and
   `check --fix-lines` restores it; `index --no-embed` builds the database in
   the home and nowhere in the base; with `embedding` null, `search` and
   `search --no-dense` run only the lexical lane and the name lane, without
@@ -103,23 +103,32 @@ Then verify that:
   the MCP server exposes exactly the eight read-only tools;
 - the embedding adapter takes a model id only and has no reranker, default
   model or revision pin; at most one embedding process runs per user;
-- the home lock serializes `accept`, `relocate`, `check --fix-lines`, `base add|rm` and
-  `embedding set|off`: a held lock makes each fail without writing; `accept`
+- the home lock serializes `accept`, `relocate`, `mark`, `check --fix-lines`,
+  `base add|rm` and `embedding set|off`: a held lock makes each fail without writing; `accept`
   replaces a record only with the replacement draft it is given, and a refusal
   writes nothing; `relocate` moves a record or a draft whose passage lies in
   another base into that base with every link to it rewritten, and refuses
   when that base has the id or a replacement draft waits; and `--fix-lines`
   skips a file that changed during the run;
-- sources of any extension are read as text, and no command parses source
-  syntax or converts a source;
-- `check` reports every error and every moved or stale record and exits 1 for
-  any of them; staleness never hides a record from retrieval;
+- a base's sources are its md, tex and txt files outside hidden directories,
+  read as text; no command parses source syntax other than knowledge markers
+  or converts a source;
+- markers resolve by label, label without its `{scope}·` prefix, alias or id,
+  the marker's own file breaking a tie between bases; `kgd mark` writes
+  before the draft's first quote (on the blank line above a Markdown block),
+  `\kn[NAME]{}` in tex, keeps the line count and refuses foreign drafts and
+  accepted records; `check` follows a renamed file through its markers and
+  `--fix-lines` rewrites its `source:` and `lines:`; `relocate` follows
+  markers into another base, refuses without a marker or a passage, and with
+  `--url` makes a record foreign with the page's text;
+- `check` reports every error and every moved, stale or followed record and
+  exits 1 for any of them; staleness never hides a record from retrieval;
 - the Obsidian plugin (version 2.0.3, `isDesktopOnly: true`) passes its
   vitest suites (the `kgd` client and its MCP session, the lookup model, the
   keyword refresh on record saves, capture, drafts, evidence, the agent, its
   judgment, providers, web search and sources, records with every entry of
-  `case-folding.json`, hidden indexing, the manifest and the plugin
-  lifecycle), type checking and a production bundle build; the
+  `case-folding.json`, knowledge markers and the jump target, hidden
+  indexing, the manifest and the plugin lifecycle), type checking and a production bundle build; the
   `link-grammar.json` and `name-key.json` fixtures belong to the Python tests,
   which also check the plugin's `case-folding.json` against `unicodedata`; CI
   runs root `npm run build` and `npm test` on Linux, macOS and Windows;

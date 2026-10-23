@@ -4,6 +4,50 @@ All notable changes are documented here.
 
 ## Unreleased
 
+Upgrading: replace each base's `sources` in `config.json` with `types`, the
+list of the document types its records may use (`kgd check` refuses the old
+key). In a base of several types, add `type:` to every record and draft. Run
+`kgd claude link` or `kgd codex link` again for the updated Skills.
+
+- A base's sources are its files by format, never registered: every `.md`,
+  `.tex` and `.txt` file (any case) under its root, except hidden files,
+  anything under a hidden directory and files resolving outside the root
+  through a symlink. `config.json` bases are `{"path", "types"}`, and the
+  `sources` globs are removed. `kgd base add` takes `--type` (repeatable) and
+  `kgd base list` reports each base's `types`.
+- Records carry the fixed key `type:`, the document type they follow, one of
+  their base's types; it may be omitted when the base has one. `check` rule
+  `type` reports a base without types, a record of a base of several types
+  that declares none, and a type that is not its base's; the rule
+  `source-type` is removed. A foreign record is validated against its own
+  type.
+- `kgd source SOURCE` lists the profile of every type of the source's base
+  under `types` (and, for a base of one type, that profile at the top level),
+  with the source's `markers`; a file that is not a source is an error.
+- Knowledge markers name a record where its source states it:
+  `--[[NAME]]--` or `--[[NAME|TEXT]]--` in md and txt, `\kn{NAME}` or
+  `\kn[NAME]{TEXT}` in tex. NAME resolves to a label, a label without its
+  `{scope}·` prefix, an alias or an id across every base, the marker's own
+  file and then its base breaking ties. `kgd markers` lists them with the
+  records they name; `kgd mark DRAFT` writes one on the line of a local
+  draft's first quote (`--[[LABEL]]--:` or `\kn[LABEL]{}`) without changing
+  the line count. The capture and compile Skills choose the document type and
+  mark each local draft.
+- `kgd check` follows a stale record, or one whose source file is gone,
+  through its markers in three rounds (its own file, its base, every other
+  base) and reports `follow`; its output is
+  `{"errors", "stale", "moved", "follow"}`. `--fix-lines` also rewrites the
+  `source:` and `lines:` of records followed within their base.
+- `kgd relocate TARGET` without a passage follows the record's markers and
+  moves it where its quotes still hold; with `--url URL` and the page's text
+  it makes the record foreign. The relocate Skill follows markers, judges a
+  reworded passage by its meaning, and makes unmarked knowledge that is found
+  nowhere foreign.
+- The Obsidian plugin draws markers as purple chips in live preview, reading
+  view and latex-live's TeX editors (through `registerTexEditorExtension`),
+  opens the record of a marker on Cmd/Ctrl+click, and adds **Jump between
+  knowledge and its marker**. Capture chooses the type in a base of several
+  and marks each local draft with `kgd mark`.
 - `kgd relocate BASE:ID` names an unavailable base instead of reporting
   that the record is not accepted.
 - Find sources shows one reranked list of at most ten source links, each

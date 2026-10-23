@@ -31,8 +31,16 @@ export type SearchWeb = (query: string) => Promise<WebSource[]>;
 export interface Reading {
   base: string;
   source: string;
-  type: string;
+  /** The document types its base allows; one fits the document. */
+  types: string[];
+  /** Their writing-language and terminology guidance. */
   guidance?: string;
+}
+
+/** The guidance of a source's document types: its only type's, or each type's under its name. */
+export function readingGuidance(types: ReadonlyArray<{ type: string; guidance: string }>): string {
+  if (types.length === 1) return types[0]!.guidance;
+  return types.filter((type) => type.guidance.trim()).map((type) => `Document type ${type.type}:\n${type.guidance.trim()}`).join("\n\n");
 }
 
 export interface Citation {
@@ -155,7 +163,10 @@ class SearchState {
 
 export function searchUser(question: string, first: SearchResult, named: ResolveResult | undefined, reading?: Reading): string {
   const parts = [`Question: ${question}`];
-  if (reading) parts.push(`The owner is reading ${reading.source} in base ${reading.base}, a source of document type ${reading.type}.`);
+  if (reading) {
+    const types = reading.types.length === 1 ? `, a source of document type ${reading.types[0]}` : reading.types.length ? `, whose document types are ${reading.types.join(", ")}` : "";
+    parts.push(`The owner is reading ${reading.source} in base ${reading.base}${types}.`);
+  }
   parts.push(first.results.length
     ? `Knowledge base search for the question:\n${first.results.map(summaryLine).join("\n")}`
     : "A knowledge base search for the question finds no record.");

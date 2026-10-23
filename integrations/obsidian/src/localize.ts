@@ -97,8 +97,9 @@ export async function localizeRecord(complete: Complete, kgd: CaptureKgd, files:
   input: LocalizeInput): Promise<LocalizeResult> {
   const profile = (await kgd.command(["source", input.path])).report as unknown as Profile;
   const done = (localized: boolean, report: string): LocalizeResult => ({ localized, uid: target.uid, label: target.label, report });
-  if (!(target.kind in profile.node_kinds) && !(target.kind in profile.relation_kinds)) {
-    return done(false, `The kind ${target.kind} is not one of this source's document type ${profile.type}.`);
+  if (!profile.types.some((type) => target.kind in type.node_kinds || target.kind in type.relation_kinds)) {
+    const names = profile.types.map((type) => type.type).join(", ");
+    return done(false, `The kind ${target.kind} is not one of this source's document type${profile.types.length === 1 ? "" : "s"} ${names}.`);
   }
   const lines = (await files.read(input.path)).replace(/\r\n?/g, "\n").split("\n");
   const tool: Tool<LocalizeResult> = {

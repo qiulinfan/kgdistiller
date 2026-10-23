@@ -61,11 +61,11 @@ copies, discarding local edits to installed files.
 
 | Workflow | Skill | Mode | Steps |
 |---|---|---|---|
-| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (`kgd source`, the cited passage, one `kgd resolve` and one `kgd drafts --name` of the item and the concepts it links, `kgd search --no-dense --limit 5`); a decision by the conflict rules; one command that writes the draft (citing its lines verbatim, a foreign draft quoting the web page of the work it borrows from, or a replacement of the recorded item) and lists it with `kgd drafts`; report. The owner accepts it. |
-| `compile-knowledge` | `compile-kgdistiller` | write | Set the bounded scope; `kgd source FILE`; one lookup turn for the whole candidate batch in every base and in the drafts; new drafts and replacement drafts by the conflict rules in one write turn; in one command, `kgd relocate` for each recorded item whose citation moved and `kgd drafts --source` with the `source` value `kgd source` printed, every draft free of problems; report. The owner accepts them. |
-| `relocate-knowledge` | `relocate-kgdistiller` | write | One lookup turn for the record the owner names (`kgd resolve`, `kgd search --no-dense --limit 5`, `kgd drafts --name`); `kgd relocate UID -` with the passage the owner gives, which finds it in every registered base and rewrites only its `source`, `lines` and, when needed, Evidence, moving the record with every link to it when the passage lies in another base; report. |
-| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get`, `neighbors`, `browse`, `pack`, `drafts`, `find` across every base through the CLI or the MCP tools; bounded evidence with `source:lines`; identity classification; refresh on lag. |
-| `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add`; sources, types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
+| `capture-knowledge` | `capture-kgdistiller` with `capture-writer` | write | One lookup turn (`kgd source`, the cited passage, one `kgd resolve` and one `kgd drafts --name` of the item and the concepts it links, `kgd search --no-dense --limit 5`); a decision by the conflict rules and the document type that fits the source; one command that writes the draft (citing its lines verbatim, a foreign draft quoting the web page of the work it borrows from, or a replacement of the recorded item), marks a local one in its source with `kgd mark` and lists it with `kgd drafts`; report. The owner accepts it. |
+| `compile-knowledge` | `compile-kgdistiller` | write | Set the bounded scope; `kgd source FILE` and the document type that fits it; one lookup turn for the whole candidate batch in every base and in the drafts; new drafts and replacement drafts by the conflict rules in one write turn; in one command, `kgd mark` for each new local draft, `kgd relocate` for each recorded item whose citation moved (following its markers first, with the passage when that is refused) and `kgd drafts --source` with the `source` value `kgd source` printed, every draft free of problems; report. The owner accepts them. |
+| `relocate-knowledge` | `relocate-kgdistiller` | write | The records `kgd check` reports moved, followed or stale, or the one the owner names (one lookup turn: `kgd resolve`, `kgd search --no-dense --limit 5`, `kgd drafts --name`); `kgd check --fix-lines` and `kgd relocate UID`, which follow each record's markers through its own file, its base and every other base; a reworded passage judged by its meaning, relocated with `kgd relocate UID -` and its new text, or a replacement draft when the meaning changed; unmarked knowledge found nowhere made foreign with `kgd relocate UID --url URL -` and the page's own text; report. |
+| `query-knowledge` | `query-kgdistiller` with `query-reviewer` | read-only | `search`, `resolve`, `get`, `neighbors`, `browse`, `pack`, `drafts`, `find`, `markers` across every base through the CLI or the MCP tools; bounded evidence with `source:lines`; identity classification; refresh on lag. |
+| `deploy-kgdistiller` | `deploy-kgdistiller` | write | Install with the `retrieval` extra; `kgd base add` with the base's document types; types and `embedding` in the home; `kgd check`; `kgd index`; `kgd obsidian install` (enables the plugin and hidden indexing; report any newLinkFormat warning); `kgd claude link`/`kgd codex link` and both doctors. |
 
 Step modes mean:
 
@@ -82,8 +82,10 @@ scheduler.
 an accepted record says: a capture, a compile and a re-ingested source all
 end in drafts, new records or replacements of accepted ones. Moving where a
 record cites, a localization included, is the one direct write,
-`kgd relocate`, which also rewrites the links to a record it moves into
-another base.
+`kgd relocate` (and `kgd check --fix-lines` for what only moved), which also
+rewrites the links to a record it moves into another base. `kgd mark`, which
+the writing Skills run after a local draft, writes one marker into the
+draft's source and changes no record.
 The owner reviews, revises and accepts them in the Obsidian Capture view or
 with `kgd accept`, which indexes and embeds what it admits. Re-embedding a
 record edited by hand is the owner's call (`kgd index`, the plugin's
@@ -96,14 +98,18 @@ every read reports that lag.
 `$capture-kgdistiller` drafts one item the owner selected while reading: a
 concept, a result the source states (a theorem, a finding or an example, whose
 roles link what it is about), or a relation between records, in a short fixed
-pass. One lookup turn reads the type profile with `kgd source FILE` and compares existing senses with one
+pass. One lookup turn reads the profiles of the source's base with
+`kgd source FILE`, from which it chooses the type that fits the document, and
+compares existing senses with one
 `kgd resolve`, one `kgd drafts --name` and one `kgd search` of the item and
 the concepts it links, in every base. A label names one concept: a record of
 the same name and meaning is the same knowledge point, and a new concept of
 another meaning with a taken name adds its source's name, `Label (source)`.
-A new item becomes a draft that one shell command writes and lists with
-`kgd drafts`, whose `problems` must be empty (the capture request is the
-consent). A concept the passage only uses or credits to other work is drafted
+A new item becomes a draft that one shell command writes, marks in its
+source with `kgd mark` (or by wrapping a name the source already writes in its
+own marker syntax) and lists with `kgd drafts`, whose `problems` must be empty
+(the capture request is the consent). A draft in a base of several types
+declares its `type:`. A concept the passage only uses or credits to other work is drafted
 as foreign knowledge from the web page of the work that originates or
 explains it, in the base of the source being read. An item already recorded
 follows the conflict rules of [model.md](model.md) "Conflicts, updates and
@@ -126,14 +132,16 @@ lexical lanes with the item's names in both languages.
 
 ## Compile a source
 
-`$compile-kgdistiller` extracts a bounded scope of one registered source, up
+`$compile-kgdistiller` extracts a bounded scope of one source, up
 to the whole file when the owner asks for full distillation, typically for the
 owner's own notes or familiar material; re-admitting a rewritten note is the
 same request. It works in batches: one lookup turn looks up the whole
 candidate batch in every base and in the drafts, and one write turn writes
-every draft. It applies the conflict rules of [model.md](model.md)
+every draft, of the document type that fits the source, each new local one
+marked with `kgd mark`. It applies the conflict rules of [model.md](model.md)
 "Conflicts, updates and relocation": new knowledge becomes new drafts,
-recorded knowledge whose citation moved is relocated with `kgd relocate`, into
+recorded knowledge whose citation moved is relocated with `kgd relocate`
+(following its markers, or to the passage when that is refused), into
 this source's base when the record lies in another, and recorded knowledge
 whose meaning changed becomes a replacement draft in its record's base (a
 record of another base is reported with the proposed replacement).
@@ -158,26 +166,44 @@ problem. Deleting a draft rejects it and leaves no trace.
 
 ## Relocate a record
 
-Sources change, and nothing follows them. `$relocate-kgdistiller` takes the
-knowledge's name, exact or approximate, and the text of the passage that now
-states it. One lookup turn finds the record (asking the owner when several
-remain plausible), and `kgd relocate UID -` with the passage on standard input
-finds it in the registered sources of every base, by its words in order
-whatever the line breaks and hidden markup, and rewrites only the record's
-`source`, `lines` and, when its quotes are not in the passage, Evidence,
-refreshing the keyword index when it wrote an accepted record. A passage
-found several times needs `--base` or `--source`. When the passage lies in
-another base, the record moves there with its id, and every role and
-`requires` link to it, in every base's records and drafts, is rewritten to
-its new uid. A foreign record relocated this way becomes local. `kgd find`
-(MCP `kg_find`) is the same search on its own, read-only: where a passage or
-a name occurs in the registered sources.
+Sources change, and records follow them through their knowledge markers
+([model.md](model.md) "Finding and relocating passages").
+`$relocate-kgdistiller` starts from what `kgd check` reports (`moved`,
+`follow` and `stale` records, and missing source files) or from the
+knowledge the owner names, exactly or roughly, found in one lookup turn
+(asking the owner when several records remain plausible).
+
+- `kgd check --fix-lines` rewrites the records whose quotes only shifted, and
+  those whose markers lead to another file of their base where the quotes
+  still hold.
+- `kgd relocate UID`, without a passage, follows each remaining record's
+  markers through its own file, then its base, then every other base, and
+  moves it where its quotes still hold, into another base with every role
+  and `requires` link to it rewritten to its new uid when it lies there.
+- Where the markers name a record but its quotes no longer hold, the Skill
+  reads the marked passage and judges it by meaning: the same knowledge
+  reworded is relocated with `kgd relocate UID -` and the new passage on
+  standard input, which finds it in the sources of every base by its words
+  in order whatever the line breaks and hidden markup and replaces the
+  Evidence with it; a changed meaning gets a replacement draft. A passage the
+  owner pastes is relocated the same way, and one found several times needs
+  `--base` or `--source`.
+- A record no marker names is looked for once with `kgd find`; when it is
+  nowhere in the owner's files, the Skill finds the outside page that states
+  it, preferring the originating work, and makes the record foreign with
+  `kgd relocate UID --url URL -` and the page's own text.
+
+`kgd relocate` rewrites only the record's `source`, `lines` and, when needed,
+Evidence, and refreshes the keyword index when it wrote an accepted record. A
+foreign record relocated to a local passage becomes local. `kgd find` (MCP
+`kg_find`) is the passage search on its own, read-only: where a passage or a
+name occurs in the sources.
 
 ## Query
 
 `$query-kgdistiller` and the `query-reviewer` preset read through
 `kgd search`, `kgd resolve`, `kgd get`, `kgd neighbors`, `kgd browse`,
-`kgd pack`, `kgd drafts` and `kgd find`, or the MCP tools `kg_search`,
+`kgd pack`, `kgd drafts`, `kgd find` and `kgd markers` (CLI only), or the MCP tools `kg_search`,
 `kg_resolve`, `kg_get`, `kg_neighbors`, `kg_browse`, `kg_pack`, `kg_drafts`
 and `kg_find` of `kgd mcp`, across every registered base. `neighbors` gives
 prerequisite closures and, with `--dir in`, the statement nodes and relations
@@ -197,8 +223,8 @@ and a record marked `understanding: no` is one the owner has not mastered. Ident
 ## Set up, check and restore
 
 `$deploy-kgdistiller` installs the package with the `retrieval` extra,
-registers bases (`kgd base add`), writes source globs, document types and the
-`embedding` model id into the home, runs `kgd check` (`--fix-lines` after a
+registers bases with their document types (`kgd base add --type`), writes the
+types and the `embedding` model id into the home, runs `kgd check` (`--fix-lines` after a
 source edit moves cited lines), builds the index (`kgd index`; delete
 `index.sqlite*` and rerun it to restore, which re-embeds every record),
 installs the Obsidian plugin and links the agent runtimes. Git initialization,
@@ -214,11 +240,11 @@ notice alone does not justify blocking ordinary local reading. Keep full source
 copies local, separate from original knowledge notes and short necessary
 excerpts.
 
-Local evidence needs a registered source: a UTF-8 text file inside a base,
-matched by one of its globs, whose lines the record cites and quotes verbatim.
-To capture from a paper, keep its text (an extracted Markdown, a translation
-or the LaTeX source) in the base and register a glob for it, or capture into
-an authored reading note that is itself a registered source. A concept from a
+Local evidence needs a source: an `.md`, `.tex` or `.txt` file of a base
+outside hidden directories, read as UTF-8, whose lines the record cites and
+quotes verbatim. To capture from a paper, keep its text (an extracted
+Markdown, a translation or the LaTeX source) in the base, or capture into an
+authored reading note. A concept from a
 work the owner does not hold is foreign knowledge: its record cites the web
 page (preferably the work's arXiv page, otherwise an encyclopedia article)
 and quotes it verbatim; it can be localized with `kgd relocate` once the

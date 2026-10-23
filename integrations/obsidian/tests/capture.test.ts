@@ -44,11 +44,13 @@ const lines = [
 const profile: Profile = {
   base: "papers",
   source: "papers/mae/mae_ch.md",
-  type: "ai-research",
-  node_kinds: { definition: [], algorithm: [], architecture: [], finding: ["about"] },
-  relation_kinds: { compares: ["baseline", "candidate", "setting"], property: ["subject", "uses"] },
-  epistemic: ["empirical", "stated"],
-  guidance: "Nodes are noun-like objects.",
+  types: [{
+    type: "ai-research",
+    node_kinds: { definition: [], algorithm: [], architecture: [], finding: ["about"] },
+    relation_kinds: { compares: ["baseline", "candidate", "setting"], property: ["subject", "uses"] },
+    epistemic: ["empirical", "stated"],
+    guidance: "Nodes are noun-like objects.",
+  }],
   line_count: lines.length,
   records: [{ uid: "papers:masked-autoencoder", label: "Masked autoencoder", kind: "architecture", class: "node", lines: "3", gloss: "MAE." }],
   drafts: [],
@@ -98,6 +100,8 @@ interface WorldOptions {
   records?: Array<Partial<FullRecord> & { uid: string }>;
   /** The origin judge's answers, in turn. */
   judged?: Array<Record<string, unknown>>;
+  /** `kgd mark` fails with this message. */
+  unmarkable?: string;
   /** The web results of the origin search. */
   results?: WebSource[];
 }
@@ -155,6 +159,10 @@ function world(options: WorldOptions = {}): World {
     async command(args: string[]) {
       commands.push(args);
       if (args[0] === "source") return { report: { ...profile, ...source } as unknown as Record<string, unknown>, failed: false };
+      if (args[0] === "mark") {
+        if (options.unmarkable) throw new Error(options.unmarkable);
+        return { report: { marked: "papers:x", source: "papers/mae/mae_ch.md", line: 5, column: 1, marker: "--[[X]]--" }, failed: false };
+      }
       return { report: {}, failed: false };
     },
     async baseRoots() {
@@ -306,7 +314,7 @@ describe("capturing a selection", () => {
     const result = await capture(w, complete);
     expect(result).toEqual({
       item: "Random sampling is best for MAE.", decision: "new", uid: "papers:random-sampling-is-best-for-mae-2",
-      label: "Random sampling is best for MAE", draft: true, report: "已收录。",
+      label: "Random sampling is best for MAE", draft: true, report: "已收录。", marker: "--[[X]]-- on line 5",
     });
     expect(w.written.get("/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md")).toBe([
       "---", "label: \"Random sampling is best for MAE\"", "kind: \"compares\"",
@@ -314,7 +322,8 @@ describe("capturing a selection", () => {
       "candidate:", "  - \"[[random-patch-sampling]]\"", "setting:", "  - \"[[masked-autoencoder]]\"",
       "---", "简单的 random sampling 对 MAE 最好。", "", "## Evidence", "", "> 简单的 random sampling 对 MAE 最好", "",
     ].join("\n"));
-    expect(w.commands).toEqual([["source", SOURCE]]);
+    // The local draft is marked in its source.
+    expect(w.commands).toEqual([["source", SOURCE], ["mark", "/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md"]]);
     expect(w.listed.at(-1)).toEqual({ base: ["papers"] });
     expect(requests[0]).toMatchObject({ tool_choice: "required", reasoning_effort: "low" });
     const user = requests[0]!.messages[1]!.content as string;
@@ -454,7 +463,7 @@ describe("a changed meaning of a recorded item", () => {
     const result = await capture(w, model(superseding).complete);
     expect(result).toEqual({
       item: comparison.item, decision: "superseding", uid: "papers:random-patch-sampling", label: "Random sampling is best for MAE",
-      draft: true, replaces: true, report: "更一般。",
+      draft: true, replaces: true, report: "更一般。", marker: "--[[X]]-- on line 5",
     });
     expect(w.got).toEqual([["papers:random-patch-sampling"]]);
     expect(drafts(w).map(([path]) => path)).toEqual(["/vaults/papers/.knowledge/drafts/random-patch-sampling.md"]);
@@ -533,7 +542,7 @@ describe("a borrowed concept", () => {
 
   it("cites a cached non-arXiv primary page and follows the profile's language without translating Evidence", async () => {
     const guidance = "Write descriptions and reports in Chinese, keeping technical terms in English. Never translate Evidence.";
-    const w = world({ source: { guidance } });
+    const w = world({ source: { types: [{ ...profile.types[0]!, guidance }] } });
     const work = { title: "Original masking work", url: "https://publisher.example/masking.pdf" };
     const origin = { choice: "web" as const, work, page: { ...work, text: BEIT_ABSTRACT }, reason: "已核实原文。" };
     const read = vi.spyOn(w.origin, "readPage");
@@ -594,6 +603,8 @@ describe("a borrowed concept", () => {
     expect(shown).toContain(`Where "Block-wise masking" comes from, by page:\n\n[1] BEiT: BERT Pre-Training of Image Transformers — ${BEIT_URL}\n`);
     expect(shown).toContain(BEIT_ABSTRACT);
     expect(w.fetched.filter((url) => url.startsWith("https://export.arxiv.org/"))).toEqual([]);
+    // A foreign draft cites a web page and takes no marker.
+    expect(w.commands).toEqual([["source", SOURCE]]);
     expect(w.written.get("/vaults/papers/.knowledge/drafts/block-wise-masking.md")).toBe([
       "---", "label: \"Block-wise masking\"", "kind: \"algorithm\"", "aliases:", "  - \"分块掩码\"", `source: "${BEIT_URL}"`,
       "epistemic: \"stated\"", "requires:", "  - \"[[masked-autoencoder]]\"", "---", "Block-wise masking masks a block of image patches at a time.", "",
@@ -661,3 +672,50 @@ describe("results stated about records", () => {
   });
 });
 
+
+describe("marking a local draft in its source", () => {
+  it("keeps the draft and says why when kgd mark fails", async () => {
+    const w = world({ unmarkable: "no line near papers/mae/mae_ch.md:5 takes a marker; mark it by hand" });
+    const result = await capture(w, model(comparison).complete);
+    expect(result).toMatchObject({ decision: "new", draft: true, markError: "no line near papers/mae/mae_ch.md:5 takes a marker; mark it by hand" });
+    expect(result.marker).toBeUndefined();
+    expect(drafts(w).map(([path]) => path)).toEqual(["/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md"]);
+  });
+});
+
+describe("a base of several document types", () => {
+  const notes = {
+    type: "math-notes", node_kinds: { definition: [], theorem: ["about"] }, relation_kinds: {}, epistemic: ["proved"], guidance: "Write in Chinese.",
+  };
+  const source = { types: [profile.types[0]!, notes] };
+
+  it("shows every type, and writes the type the submission chose, checking its kind against that type", async () => {
+    const w = world({ source });
+    const { complete, requests } = model(comparison, { ...comparison, type: "math-notes" }, { ...comparison, type: "ai-research" });
+    const result = await capture(w, complete);
+    expect(result).toMatchObject({ decision: "new", uid: "papers:random-sampling-is-best-for-mae-2", draft: true });
+    expect(seen(requests)).toEqual([
+      "error: type must be one of ai-research, math-notes: the document type that fits papers/mae/mae_ch.md",
+      "error: kind must be one of type math-notes of definition, theorem",
+    ]);
+    const system = requests[0]!.messages[0]!.content as string;
+    expect(system).toContain("The base papers has the document types ai-research, math-notes. Choose the one that fits the document being read");
+    expect(system).toContain("Document type ai-research:\nNode kinds and their roles: definition; algorithm; architecture; finding (about)");
+    expect(system).toContain("Document type math-notes:\nNode kinds and their roles: definition; theorem (about)");
+    const submit = requests[0]!.tools!.find((tool) => tool.function.name === "submit")!;
+    const properties = Object.keys(submit.function.parameters.properties as Record<string, unknown>);
+    expect(properties.indexOf("type")).toBe(properties.indexOf("kind") - 1);
+    expect((submit.function.parameters.properties as Record<string, { enum?: string[] }>).type!.enum).toEqual(["ai-research", "math-notes"]);
+    expect(w.written.get("/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md")).toContain(
+      "label: \"Random sampling is best for MAE\"\nkind: \"compares\"\ntype: \"ai-research\"\nsource:");
+  });
+
+  it("asks for no type and writes none in a base of one type", async () => {
+    const w = world();
+    const { complete, requests } = model(comparison);
+    await capture(w, complete);
+    const submit = requests[0]!.tools!.find((tool) => tool.function.name === "submit")!;
+    expect(Object.keys(submit.function.parameters.properties as Record<string, unknown>)).not.toContain("type");
+    expect(w.written.get("/vaults/papers/.knowledge/drafts/random-sampling-is-best-for-mae-2.md")).not.toContain("type:");
+  });
+});

@@ -111,7 +111,7 @@ class RelocateTest(LocateTestCase):
         self.assertIn("2 times", several["refused"]["message"])
         self.assertEqual(2, len(several["refused"]["matches"]))
         none = relocate("kb:token", "No source holds this sentence.")
-        self.assertEqual("the passage does not occur in a registered source", none["refused"]["message"])
+        self.assertEqual("the passage does not occur in a source", none["refused"]["message"])
         self.assertEqual(before, path.read_bytes())
         narrowed = relocate("kb:token", "mask token", sources=["notes/paper.txt"], dry_run=True)
         self.assertIn("refused", narrowed)

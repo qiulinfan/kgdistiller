@@ -1,13 +1,13 @@
 ---
 name: deploy-kgdistiller
-description: Set up, register and verify kgdistiller bases in the ~/.knowledge home — install with the retrieval extra, register source globs, user-defined document types and the embedding model, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes. Use when setting up kgdistiller on a machine, registering a base, its sources or document types, checking a base after a clone or source edit, restoring the index, or installing the Obsidian plugin.
+description: Set up, register and verify kgdistiller bases in the ~/.knowledge home — install with the retrieval extra, register bases with their user-defined document types and the embedding model, check records against their sources, build or restore the derived index, install the Obsidian plugin and link the agent runtimes. Use when setting up kgdistiller on a machine, registering a base or its document types, checking a base after a clone or source edit, restoring the index, or installing the Obsidian plugin.
 ---
 
 # Deploy kgdistiller
 
 kgdistiller has one global home, `$KGDISTILLER_HOME` (default `~/.knowledge`),
-and any number of bases. The home registers the bases in `config.json`, maps
-each base's source globs to user-defined document types in `types/<name>.md`,
+and any number of bases. The home registers the bases in `config.json`, each
+with the user-defined document types (`types/<name>.md`) its records may use,
 and holds the derived database `index.sqlite` and the writer `lock`. A base is
 a directory (normally one Obsidian vault) whose knowledge lives in
 `.knowledge/entries/` (accepted records) and `.knowledge/drafts/` (proposed
@@ -41,7 +41,7 @@ the dense lane; without it `embedding` must stay `null`.
 ## 2. Register a base
 
 ```sh
-kgd base add BASE_ROOT --name NAME
+kgd base add BASE_ROOT --name NAME --type TYPE
 kgd base list
 ```
 
@@ -51,12 +51,14 @@ Base roots never nest, and the home never lies inside a base root.
 `kgd base rm NAME` removes only the registration and lists the links other
 bases still hold into it.
 
-## 3. Register sources, types and the embedding model
+## 3. Register types and the embedding model
 
-Edit `$KGDISTILLER_HOME/config.json` by hand:
+Sources need no registration: every md, tex and txt file of a base outside
+hidden directories is one. Edit `$KGDISTILLER_HOME/config.json` by hand:
 
-- `bases.NAME.sources`: each key is a glob relative to the base root, each
-  value a type name. Every matched file has exactly one type.
+- `bases.NAME.types`: the document types the base's records may use (also
+  `kgd base add … --type TYPE`). A writer chooses one per record and declares
+  it as `type:` when the base has several.
 - `embedding`: set it with `kgd embedding set BAAI/bge-m3` (the
   recommended model; `kgd embedding off` for none) rather than by hand: it
   downloads and checks the model before writing it. A model id only, with no
@@ -90,9 +92,10 @@ kgd check
 kgd check --base NAME --fix-lines
 ```
 
-`check` prints `{"errors", "stale", "moved"}` and exits 1 when any is
+`check` prints `{"errors", "stale", "moved", "follow"}` and exits 1 when any is
 non-empty. `--fix-lines` rewrites the `lines:` of records whose evidence moved
-after a source edit. A `stale` record is moved to the passage that now
+after a source edit, and the `source:` and `lines:` of records whose markers
+followed them to another file of their base. A `follow` or `stale` record is moved to the passage that now
 states it with the relocate Skill (`kgd relocate`), or, when its meaning
 changed, gets a replacement draft; never force a line range. Errors after a clone mean the checkout differs from
 what was committed: restore a known-good revision or repair the source on its

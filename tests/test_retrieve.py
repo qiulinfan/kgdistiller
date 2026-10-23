@@ -424,12 +424,12 @@ class GetTest(RetrieveTestCase):
         outside = self.kb.home.parent / "private.txt"
         outside.write_text("secret line\nsecond secret\n", encoding="utf-8")
         (self.kb.root / "notes/link.txt").symlink_to(outside)
-        (self.kb.root / "unregistered.md").write_text("Title line\n", encoding="utf-8")
+        (self.kb.root / "unregistered.pdf").write_text("Title line\n", encoding="utf-8")
         for identifier, source in (
             ("traversal", "../private.txt"),
             ("absolute", str(outside)),
             ("escaping-link", "notes/link.txt"),
-            ("unregistered", "unregistered.md"),
+            ("unregistered", "unregistered.pdf"),
         ):
             self.kb.write_record(identifier, node(identifier, "1", source=source), "Text.", ["secret line"])
         index()

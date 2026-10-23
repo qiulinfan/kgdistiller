@@ -9,7 +9,7 @@ and every read reports that lag, but it never differs from what a rebuild would
 produce. Drafts are never indexed.
 
 The retrieval units are accepted knowledge records, both nodes and relations,
-selected under the owner's source-type policy. Original articles are not
+selected under the owner's document types. Original articles are not
 independently split into ranked paragraphs. A retrieved record supplies its
 base, source path, lines and evidence; `get --source-lines` reads surrounding
 source text live when the agent needs more detail. Wider context can be read
@@ -435,7 +435,7 @@ by several bases is an error listing them. `out` lists roles first, then
 `requires`. `--source-lines N` adds `source_text`: each cited range widened by
 N lines on each side, overlapping windows joined, read live from the source
 with line numbers, or `null` when the record is foreign, or the source cannot
-be read or is not a registered source of its base that resolves inside the
+be read or is not a source of its base that resolves inside the
 base root (so a
 hand-written `../` path, an absolute path or a symlink leaving the root is
 never read). This is the only read of source text; no passages are stored.
@@ -607,7 +607,7 @@ Inputs are bounded and unknown arguments are rejected. Each retrieval call
 opens a fresh read-only connection, so it sees every `kgd index` that
 committed since the previous call; `kg_drafts` reads the draft files instead,
 which the database never holds, and takes no lock, and `kg_find` reads the
-registered sources. The server loads no
+sources. The server loads no
 model: `kg_search`'s dense lane asks the user's one embedding process.
 `no_dense` skips the dense lane, as `--no-dense` does. A missing database is a
 tool error that says to run `kgd index`. Responses are capped at 8 MiB; the

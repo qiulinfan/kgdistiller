@@ -1,10 +1,10 @@
 # Local-first deployment and recovery
 
 kgdistiller has one global home and any number of bases. The home,
-`$KGDISTILLER_HOME` (default `~/.knowledge`), registers every base, maps each
-base's source documents to user-defined document types, holds those types, and
-keeps the derived database and the write lock. A base is a directory, normally
-one Obsidian vault, that owns its source documents and its knowledge under
+`$KGDISTILLER_HOME` (default `~/.knowledge`), registers every base with the
+user-defined document types its records may use, holds those types, and keeps
+the derived database and the write lock. A base is a directory, normally one
+Obsidian vault, that owns its source documents and its knowledge under
 `.knowledge/`; it is the backup unit of its knowledge. The product checkout
 owns engine code, the Obsidian plugin bundle, Skills, presets, workflow
 definitions and optional document-type starter templates. kgdistiller has no
@@ -19,14 +19,14 @@ the database and reads in [retrieval.md](retrieval.md), the plugin in
 
 ```text
 $KGDISTILLER_HOME/                 # default ~/.knowledge
-├── config.json                    # bases, their source globs, embedding
+├── config.json                    # bases, their document types, embedding
 ├── types/<name>.md                # one user-defined document type per file
 ├── .gitignore                     # "index.sqlite*" and "lock"
 ├── index.sqlite (-wal, -shm)      # derived database; rebuilt by `kgd index`
 └── lock                           # writer lock; its contents are meaningless
 
 BASE_ROOT/
-├── notes/                         # source documents, any text format
+├── notes/                         # sources: every md, tex and txt file outside hidden directories
 └── .knowledge/
     ├── entries/<id>.md            # accepted records: nodes and relations
     └── drafts/<id>.md             # proposed records, new or replacements, same format
@@ -53,16 +53,19 @@ cd kgdistiller
 npm run build                     # builds integrations/obsidian/main.js
 uv tool install '.[retrieval]'    # or --editable '.[retrieval]'
 uv tool update-shell
-kgd base add BASE_ROOT --name research
+kgd base add BASE_ROOT --name research --type research-notes
 kgd base list
 ```
 
 The extra brings NumPy, PyTorch, transformers and sentencepiece; without it,
 keep `embedding` `null`.
 
-`kgd base add PATH [--name N]` creates the home on first use (`config.json` as
-`{"bases": {}, "embedding": null}`, an empty `types/` and the `.gitignore`),
-registers the directory and creates `PATH/.knowledge/entries/`. The default
+`kgd base add PATH [--name N] [--type T]...` creates the home on first use
+(`config.json` as `{"bases": {}, "embedding": null}`, an empty `types/` and
+the `.gitignore`), registers the directory with the document types `--type`
+names (each must exist in `types/`, so on a new home write the type file
+first, or add the types to `config.json` afterwards) and creates
+`PATH/.knowledge/entries/`. The default
 name is the directory's basename; a name must match `^[a-z0-9][a-z0-9-]*$`, so
 pass `--name` otherwise. `kgd base rm NAME` removes only the registration,
 never touches the directory, and lists under `dangling` the `[[NAME:…]]` links
@@ -74,6 +77,7 @@ other bases still hold. `base add` and `base rm` hold the home lock and write
 | Field | Meaning |
 |---|---|
 | `name`, `path`, `root` | Registered name, stored path and resolved root. |
+| `types` | The document types its records may use. |
 | `available` | Whether the root exists. |
 | `records`, `drafts` | Files in `entries/` and `drafts/` (`null` when unavailable). |
 | `indexed` | Rows of this base in the database (0 before the first `kgd index`). |
@@ -94,10 +98,7 @@ search for a `.knowledge` directory.
   "bases": {
     "research": {
       "path": "~/research",
-      "sources": {
-        "notes/**/*.md": "research-notes",
-        "papers/*/main.tex": "research-notes"
-      }
+      "types": ["research-notes", "paper-notes"]
     }
   },
   "embedding": "BAAI/bge-m3"
@@ -105,7 +106,7 @@ search for a `.knowledge` directory.
 ```
 
 - The top level has exactly `bases` and `embedding`; each base has exactly
-  `path` and `sources`.
+  `path` and `types`.
 - `embedding` is a Hugging Face id of an XLM-RoBERTa sentence encoder that ships `sentencepiece.bpe.model`, such as `BAAI/bge-m3`, or `null`. The recommended
   value is `"BAAI/bge-m3"`: a model id only, with no revision pin, and the
   device chosen automatically. It runs with int8 weights in about 1 GB
@@ -116,13 +117,14 @@ search for a `.knowledge` directory.
   user's home, otherwise as an absolute path.
 - No base root may be equal to, an ancestor of or a descendant of another, and
   the home may not lie inside a base root.
-- Each `sources` key is a glob relative to the base root, expanded with
-  Python's `glob.glob(pattern, root_dir=root, recursive=True)`: `*` stays within
-  one path segment, `**` spans directories, and hidden files and directories
-  (`.knowledge/`, `.obsidian/`, `.git/`) never match. Globs are non-empty,
-  relative, use `/`, and contain no `..` or hidden segment.
-- Each value names a type in `types/`. Globs naming two different types for one
-  file are an error, so every source has exactly one type.
+- `types` lists document types of `types/`, each once. A record declares the
+  one it follows in its `type:`, and may leave it out when the base has
+  exactly one. The types of one base must declare every kind they share the
+  same way (node or relation, the same roles).
+- Sources are not registered: every file with the suffix `.md`, `.tex` or
+  `.txt` (any case) under a base root is a source, except hidden files,
+  anything under a hidden directory (`.knowledge/`, `.obsidian/`, `.git/`,
+  `.trash/`) and files that resolve outside the root through a symlink.
 
 ### Changing the embedding model
 
@@ -160,14 +162,15 @@ Hugging Face progress bars are off by default; set
 ### Document types
 
 The owner defines which knowledge to retain from each kind of source. Capture
-and compilation read the assigned profile before extraction; file extensions
-do not select a policy. The engine validates the declared kinds and roles.
+and compilation read the profiles of the source's base before extraction and
+choose the one that fits the document; file extensions do not select a
+policy. The engine validates the declared kinds and roles.
 
 Optional editable profiles are supplied in
 `templates/document-types/{math-notes,ai-research,cs-notes}.md`, also bundled
 under `kgdistiller/product/templates/document-types/` in the installed package.
-Copy a selected profile into the home's `types/`, review and edit it, and map
-the relevant source globs to its file stem. Neither installation nor
+Copy a selected profile into the home's `types/`, review and edit it, and add
+its file stem to the `types` of the bases that use it. Neither installation nor
 `kgd base add` activates these templates or overwrites the owner's profiles.
 
 A type file `types/<name>.md` has a slug stem, YAML frontmatter read with
@@ -195,10 +198,12 @@ at least one record there; a relation kind declares at least one, and each of
 its records binds at least two values. A kind's section
 decides its records' class, so moving a kind between the sections reclassifies
 them without re-indexing. Edit
-`sources` and the types by hand; `kgd check` validates the result, and
-`kgd source SOURCE` shows the profile a source resolves to. Sources are
-UTF-8 text documents of any format; kgdistiller reads them as numbered lines
-and never parses or converts them.
+`types` and the type files by hand; `kgd check` validates the result, and
+`kgd source SOURCE` shows the profiles a source's records may follow, with its
+knowledge markers. kgdistiller reads sources as numbered UTF-8 lines and
+never parses or converts them; the only syntax it reads is their knowledge
+markers (`--[[NAME]]--` in md and txt, `\kn{NAME}` in tex), which the writing
+Skills add with `kgd mark` ([model.md](model.md#knowledge-markers)).
 
 ## Check
 
@@ -214,20 +219,27 @@ with its cited lines. It reads files only and prints JSON:
 ```json
 {"errors": [{"path": "/abs/…/entries/x.md", "rule": "link", "message": "…"}],
  "stale": ["/abs/…/entries/y.md"],
- "moved": [{"path": "/abs/…/entries/z.md", "lines": "41-47"}]}
+ "moved": [{"path": "/abs/…/entries/z.md", "lines": "41-47"}],
+ "follow": [{"path": "/abs/…/entries/y.md", "round": "base", "base": "research",
+             "source": "notes/renamed.md", "lines": "12-14"}]}
 ```
 
 The exit code is 1 when any list is non-empty. `rule` is one of `config`,
-`type`, `source-type`, `id`, `frontmatter`, `source`, `kind`, `link`,
-`label` and `body` ([model.md](model.md) lists what each covers).
+`type`, `id`, `frontmatter`, `source`, `kind`, `link`, `label` and `body`
+([model.md](model.md) lists what each covers).
 
 After a source edit shifts cited lines, `check --fix-lines` rewrites the
 `lines:` of each moved record (every quote found exactly once elsewhere in the
 source) under the home lock and adds `fixed` and `skipped` lists; a file that
 changed during the run is skipped. A stale record (a quote no longer found, or
-found several times) is moved to the passage that now states it with the
-relocate Skill (`kgd relocate`); when its meaning changed, it gets a
-replacement draft. Staleness is reported only; it never hides a record from
+found several times), or one whose source file is gone, is followed through
+its knowledge markers: its own file, then its base, then every other base.
+`follow` lists where they lead, with the new `source` and `lines` when its
+quotes hold there, which `--fix-lines` also writes when the file lies in the
+record's base, or `"evidence": "absent"` and the markers when the passage was
+reworded. The relocate Skill moves the rest (`kgd relocate`), drafts a
+replacement when the meaning changed, and makes unmarked knowledge found
+nowhere foreign. Staleness is reported only; it never hides a record from
 retrieval.
 
 ## Index and restore
@@ -280,7 +292,7 @@ loads no model.
 Initialize a private Git repository, commit, add a remote or push only when
 the owner explicitly authorizes that action. A base tracks:
 
-- every registered source document and required authored asset;
+- every source document, with its knowledge markers, and required authored asset;
 - `.knowledge/entries/` and `.knowledge/drafts/`, so drafts awaiting the owner
   travel between machines.
 
@@ -309,7 +321,7 @@ commit or remote synchronization happened.
 `kg_drafts` and `kg_find` ([retrieval.md](retrieval.md#mcp-server-kgd-mcp)).
 It takes no arguments, opens a fresh read-only connection for every retrieval
 call and reports lag like the CLI; `kg_drafts` reads the draft files and
-`kg_find` the registered sources. It loads no
+`kg_find` the sources. It loads no
 model: `kg_search`'s dense lane asks the user's one embedding process, which
 every `kgd` command shares; `kg_search` takes `no_dense` to skip the dense
 lane. Register it in an agent runtime as the command `kgd` with the argument `mcp`,

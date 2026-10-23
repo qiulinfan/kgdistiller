@@ -71,8 +71,9 @@ learned code of lower dimension.
 | Key | Required | Value |
 |---|---|---|
 | `label` | yes | Non-empty single-line name in any language, unique by name key across every base: a concept of another meaning whose name is taken adds its source's name, `Label (source)`. |
-| `kind` | yes | A node kind or relation kind of the source's document type; for a foreign record, of a type registered for its base. |
-| `source` | yes | A POSIX path relative to the base root (no leading `/`, no `..`) naming a registered source of this base; or a web address `http://…` or `https://…`, which makes the record foreign. |
+| `kind` | yes | A node kind or relation kind of the record's document type. |
+| `type` | when the base has several types | The record's document type, one of the types its base registers; absent means the base's only type. |
+| `source` | yes | A POSIX path relative to the base root (no leading `/`, no `..`) naming a source of this base: an md, tex or txt file outside hidden directories; or a web address `http://…` or `https://…`, which makes the record foreign. |
 | `lines` | local only | One or more ranges `a` or `a-b`, 1-based and inclusive, comma-separated, ascending and disjoint, within the source, such as `126-140, 878-884`. A foreign record has none. |
 | `aliases` | no | List of other names and symbols, any language. Not unique. |
 | `understanding` | no | `yes` or `no`; absent means `yes`. |
@@ -82,6 +83,27 @@ learned code of lower dimension.
 
 There is no `id`, `schema` or `foreign` key: the id is the file stem, and a
 record is foreign when its `source` is a web address.
+
+## Markers
+
+A marker names a record where its source states it, in the source's own
+syntax, and lies on one line, so writing one moves no other record's lines:
+
+| Format | Marker |
+|---|---|
+| md, txt | `--[[NAME]]--`, or `--[[NAME\|TEXT]]--` to show TEXT |
+| tex | `\kn{NAME}`, or `\kn[NAME]{TEXT}` to show TEXT (it may be empty); a marker after an unescaped `%` is a comment |
+
+NAME resolves by name key to the record whose label, label after its
+`{scope}·` prefix, alias or id it is, among the accepted records and drafts of
+every base; when several answer, the one citing the marker's file wins, then
+one of the file's base. `kgd mark DRAFT` writes `--[[LABEL]]--:` or
+`\kn[LABEL]{}` on the line of the draft's first quote (the id when the label
+holds `[ ] | { }`); `kgd markers` lists markers and what they resolve to. A
+foreign record takes no marker. `kgd check` follows a record whose quotes are
+gone through its markers (its own file, its base, every other base) and
+reports where it went in `follow`; `--fix-lines` applies the follows within
+its base, and `kgd relocate UID` without a passage applies any.
 
 ## Role keys and the class rule
 

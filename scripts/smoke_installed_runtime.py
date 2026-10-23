@@ -74,7 +74,7 @@ The study of set functions on measurable spaces.
 
 > 测度论研究可测空间上的集合函数。
 """
-CLEAN = {"errors": [], "stale": [], "moved": []}
+CLEAN = {"errors": [], "stale": [], "moved": [], "follow": []}
 
 
 def executable() -> Path:
@@ -143,7 +143,7 @@ def register(runtime: Runtime, root: Path, outside: Path) -> None:
     require(not (runtime.user / ".knowledge").exists(), "state was created in the default user home")
     config_path = runtime.home / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    config["bases"]["smoke"]["sources"] = {"notes/*.txt": "smoke-notes"}
+    config["bases"]["smoke"]["types"] = ["smoke-notes"]
     staged = config_path.with_name(".config.json.smoke")
     staged.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(staged, config_path)
@@ -253,8 +253,7 @@ def main() -> int:
 
         profile = runtime.object("source", "measure.txt", cwd=root / "notes")
         require(profile["type"] == "smoke-notes" and profile["line_count"] == 4, f"source profile: {profile}")
-        require(sorted(profile) == ["base", "drafts", "epistemic", "guidance", "line_count", "node_kinds",
-                                    "records", "relation_kinds", "source", "type"], f"source profile keys: {profile}")
+        require(sorted(profile) == ["base", "drafts", "epistemic", "guidance", "line_count", "markers", "node_kinds", "records", "relation_kinds", "source", "type", "types"], f"source profile keys: {profile}")
         require(profile["node_kinds"] == {"definition": [], "concept": []}, f"source node kinds: {profile}")
         require([row["class"] for row in profile["records"]] == ["node", "relation"], "source records mismatch")
         require([row["id"] for row in profile["drafts"]] == ["measure-theory"], "source drafts mismatch")

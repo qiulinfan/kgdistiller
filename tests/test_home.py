@@ -143,7 +143,7 @@ class ConfigValidationTest(HomeTestCase):
         self.root = self.directory("kb")
 
     def base_config(self, **changes: Any) -> dict[str, Any]:
-        entry = {"path": str(self.root), "sources": {"notes/*.md": "notes-type"}, **changes}
+        entry = {"path": str(self.root), "types": ["notes-type"], **changes}
         return {"bases": {"kb": entry}, "embedding": None}
 
     def assert_invalid(self, payload: Any, message: str) -> None:
@@ -155,7 +155,7 @@ class ConfigValidationTest(HomeTestCase):
         self.write_config(self.base_config())
         loaded = load_home(self.home)
         self.assertEqual(loaded.bases["kb"].root, self.root)
-        self.assertEqual(loaded.bases["kb"].sources, {"notes/*.md": "notes-type"})
+        self.assertEqual(loaded.bases["kb"].type_names, ("notes-type",))
         self.assertEqual(loaded.types["notes-type"].node_kinds, {"definition": (), "theorem": ()})
         self.assertIsNone(loaded.embedding)
 
@@ -163,19 +163,22 @@ class ConfigValidationTest(HomeTestCase):
         self.assert_invalid({**self.base_config(), "extra": 1}, "exactly the keys bases and embedding")
         self.assert_invalid({"bases": {}}, "exactly the keys bases and embedding")
         self.assert_invalid({"bases": {}, "embedding": ""}, "embedding")
-        self.assert_invalid(self.base_config(extra=True), "exactly the keys path and sources")
+        self.assert_invalid(self.base_config(extra=True), "exactly the keys path and types")
+        self.assert_invalid(self.base_config(types="notes-type"), "types must be a list")
+        self.assert_invalid(self.base_config(types=["notes-type", "notes-type"]), "must not repeat")
         self.assert_invalid({"bases": {"My Notes": self.base_config()["bases"]["kb"]}, "embedding": None},
                             "base name")
         self.assert_invalid(self.base_config(path="relative/kb"), "path must be")
 
-    def test_bad_globs(self) -> None:
-        for pattern in ("/abs/*.md", "../x/*.md", "notes/../x.md", "a\\b.md", "", ".knowledge/entries/*.md",
-                        "notes//a.md", "./notes/*.md"):
-            with self.subTest(pattern=pattern):
-                self.assert_invalid(self.base_config(sources={pattern: "notes-type"}), "glob")
+    def test_the_old_source_globs_are_refused(self) -> None:
+        payload = self.base_config()
+        del payload["bases"]["kb"]["types"]
+        payload["bases"]["kb"]["sources"] = {"notes/*.md": "notes-type"}
+        self.assert_invalid(payload, "exactly the keys path and types")
 
     def test_unknown_type(self) -> None:
-        self.assert_invalid(self.base_config(sources={"notes/*.md": "missing"}), "unknown type 'missing'")
+        self.assert_invalid(self.base_config(types=["missing"]), "unknown type 'missing'")
+        self.assert_invalid(self.base_config(types=["Not A Slug"]), "unknown type")
 
     def test_invalid_json(self) -> None:
         self.create_home()
@@ -186,7 +189,7 @@ class ConfigValidationTest(HomeTestCase):
     def test_nested_roots_and_home_inside_a_root(self) -> None:
         inner = self.directory("kb/inner")
         payload = self.base_config()
-        payload["bases"]["inner"] = {"path": str(inner), "sources": {}}
+        payload["bases"]["inner"] = {"path": str(inner), "types": []}
         self.assert_invalid(payload, "lies inside base kb")
         payload = self.base_config(path=str(self.tmp))
         self.assert_invalid(payload, "home .* lies inside base kb")
@@ -264,9 +267,9 @@ class TypeLoadingTest(HomeTestCase):
         root = self.directory("notes")
         self.write_type("good")
         self.write_type("broken", "---\nnode_kinds: [a]\n---\nBody.\n")
-        self.write_config({"bases": {"notes": {"path": str(root), "sources": {"*.md": "good"}}}, "embedding": None})
+        self.write_config({"bases": {"notes": {"path": str(root), "types": ["good"]}}, "embedding": None})
         self.assertEqual(["good"], sorted(load_home(self.home).types))
-        self.write_config({"bases": {"notes": {"path": str(root), "sources": {"*.md": "broken"}}}, "embedding": None})
+        self.write_config({"bases": {"notes": {"path": str(root), "types": ["broken"]}}, "embedding": None})
         with self.assertRaisesRegex(KnowledgeError, "broken"):
             load_home(self.home)
 
@@ -276,9 +279,9 @@ class BaseAddTest(HomeTestCase):
         root = self.directory("notes")
         result = add_base(root)
         self.assertEqual(result["home"], str(self.home))
-        self.assertEqual(result["added"], {"name": "notes", "path": root.as_posix(), "root": str(root),
+        self.assertEqual(result["added"], {"name": "notes", "path": root.as_posix(), "root": str(root), "types": [],
                                            "available": True, "records": 0, "drafts": 0})
-        self.assertEqual(self.config(), {"bases": {"notes": {"path": root.as_posix(), "sources": {}}},
+        self.assertEqual(self.config(), {"bases": {"notes": {"path": root.as_posix(), "types": []}},
                                          "embedding": None})
         self.assertTrue((root / ".knowledge/entries").is_dir())
         self.assertEqual([path.name for path in (root / ".knowledge").iterdir()], ["entries"])
@@ -429,51 +432,40 @@ class BaseLookupTest(HomeTestCase):
             resolve_base("missing", self.root)
 
 
-class GlobTypeTest(HomeTestCase):
+class SourceFilesTest(HomeTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.root = self.directory("kb")
-        for relative in ("notes/a.md", "notes/sub/b.md", "notes/sub/deep/c.md", "notes/.hidden.md",
-                         "notes/.obsidian/d.md", ".knowledge/entries/e.md", "top.md"):
+        for relative in ("notes/a.md", "notes/sub/b.tex", "notes/sub/deep/c.txt", "notes/d.MD", "notes/.hidden.md",
+                         "notes/.obsidian/d.md", ".knowledge/entries/e.md", "top.md", "notes/x.pdf", "notes/y.typ"):
             path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("text\n", encoding="utf-8")
         self.directory("kb/notes/folder.md")
         guidance = "Guidance."
-        self.types = {name: DocumentType(name, ("concept",), {}, (), guidance) for name in ("t", "u")}
+        self.types = {name: DocumentType(name, {"concept": ()}, {}, (), guidance) for name in ("t", "u")}
 
-    def base(self, sources: dict[str, str]) -> Base:
-        return Base("kb", str(self.root), self.root, sources, self.types)
+    def base(self, names: tuple[str, ...] = ("t",)) -> Base:
+        return Base("kb", str(self.root), self.root, names, self.types)
 
-    def test_star_stays_in_one_segment(self) -> None:
-        mapping, conflicts = self.base({"notes/*.md": "t"}).source_types()
-        self.assertEqual(mapping, {"notes/a.md": "t"})
-        self.assertEqual(conflicts, {})
+    def test_every_supported_file_outside_hidden_directories_is_a_source(self) -> None:
+        self.assertEqual(self.base().source_files(),
+                         ["notes/a.md", "notes/d.MD", "notes/sub/b.tex", "notes/sub/deep/c.txt", "top.md"])
 
-    def test_double_star_spans_directories_but_never_hidden_ones(self) -> None:
-        mapping, _ = self.base({"notes/**/*.md": "t"}).source_types()
-        self.assertEqual(sorted(mapping), ["notes/a.md", "notes/sub/b.md", "notes/sub/deep/c.md"])
-        mapping, _ = self.base({"**/*": "t"}).source_types()
-        self.assertEqual(sorted(mapping), ["notes/a.md", "notes/sub/b.md", "notes/sub/deep/c.md", "top.md"])
+    def test_is_source_follows_the_same_rule(self) -> None:
+        base = self.base()
+        for relative in ("notes/a.md", "notes/sub/b.tex", "top.md"):
+            self.assertTrue(base.is_source(relative), relative)
+        for relative in ("notes/.hidden.md", "notes/.obsidian/d.md", ".knowledge/entries/e.md", "notes/x.pdf",
+                         "notes/missing.md", "notes/folder.md", "../kb/top.md", "notes//a.md", ""):
+            self.assertFalse(base.is_source(relative), relative)
 
-    def test_same_type_twice_is_fine(self) -> None:
-        base = self.base({"notes/*.md": "t", "notes/a.md": "t"})
-        self.assertEqual(base.source_types(), ({"notes/a.md": "t"}, {}))
-        self.assertEqual(base.type_of("notes/a.md").name, "t")
-
-    def test_two_types_conflict(self) -> None:
-        base = self.base({"notes/**/*.md": "t", "notes/a.md": "u"})
-        mapping, conflicts = base.source_types()
-        self.assertEqual(conflicts, {"notes/a.md": ["t", "u"]})
-        self.assertNotIn("notes/a.md", mapping)
-        self.assertEqual(base.type_of(Path("notes/sub/b.md")).name, "t")
-        with self.assertRaisesRegex(KnowledgeError, "several types: t, u"):
-            base.type_of("notes/a.md")
-
-    def test_unregistered_file_names_the_config(self) -> None:
-        with self.assertRaisesRegex(KnowledgeError, r"not a registered source of base kb; .*bases\.kb\.sources"
-                                    r" in \$KGDISTILLER_HOME/config\.json"):
-            self.base({"notes/*.md": "t"}).type_of("top.md")
+    def test_a_record_type_is_declared_or_the_only_type(self) -> None:
+        self.assertEqual(self.base().record_type(None).name, "t")
+        self.assertIsNone(self.base(("t", "u")).record_type(None))
+        self.assertEqual(self.base(("t", "u")).record_type("u").name, "u")
+        self.assertIsNone(self.base().record_type("u"))
+        self.assertIsNone(self.base(()).record_type(None))
 
 
 LOCK_HOLDER = """
@@ -566,7 +558,7 @@ class BaseCommandTest(HomeTestCase):
         self.assertEqual(status, 0, err)
         listed = {item["name"]: item for item in json.loads(out)["bases"]}
         self.assertEqual(
-            {"name", "path", "root", "available", "records", "drafts", "indexed", "lag"}, set(listed["kb"])
+            {"name", "path", "root", "types", "available", "records", "drafts", "indexed", "lag"}, set(listed["kb"])
         )
         self.assertEqual((listed["kb"]["records"], listed["kb"]["drafts"], listed["kb"]["indexed"]), (1, 1, 0))
         self.assertEqual(listed["kb"]["lag"], {"changed_files": 1, "unavailable_bases": [], "unembedded": 0,
@@ -602,7 +594,7 @@ class BaseCommandTest(HomeTestCase):
             (root / "notes/a.md").write_text("Title\nA measure is additive.\n", encoding="utf-8")
         payload = self.config()
         for name in roots:
-            payload["bases"][name]["sources"] = {"notes/*.md": "notes-type"}
+            payload["bases"][name]["types"] = ["notes-type"]
         self.write_config(payload)
         record = "---\nlabel: {label}\nkind: definition\nsource: notes/a.md\nlines: 2\n{extra}---\nProse.\n\n## Evidence\n\n> A measure\n"
         (roots["kb"] / ".knowledge/entries/measure.md").write_text(record.format(label="Measure", extra=""), encoding="utf-8")
