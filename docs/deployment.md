@@ -125,6 +125,10 @@ search for a `.knowledge` directory.
   `.txt` (any case) under a base root is a source, except hidden files,
   anything under a hidden directory (`.knowledge/`, `.obsidian/`, `.git/`,
   `.trash/`) and files that resolve outside the root through a symlink.
+- Sources may be placed at any non-hidden directory depth. On Windows, source
+  enumeration and UTF-8 reads use extended filesystem paths so long paper names
+  work without changing machine policy; stored source paths and CLI results
+  remain ordinary base-relative paths.
 
 ### Changing the embedding model
 

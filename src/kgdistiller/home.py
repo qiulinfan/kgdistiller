@@ -78,8 +78,23 @@ def home_directory() -> Path:
     return path
 
 
-def _realpath(path: Path | str) -> Path:
-    return Path(os.path.realpath(Path(path).expanduser()))
+def filesystem_path(path: Path | str) -> Path:
+    """Use Windows extended paths for I/O, without storing the prefix in source names."""
+    path = Path(path).expanduser().absolute()
+    text = str(path)
+    if os.name == "nt" and not text.startswith("\\\\?\\"):
+        text = "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
+    return Path(text)
+
+
+def real_path(path: Path | str) -> Path:
+    text = os.path.realpath(filesystem_path(path))
+    if os.name == "nt":
+        if text.startswith("\\\\?\\UNC\\"):
+            text = "\\\\" + text[8:]
+        elif text.startswith("\\\\?\\"):
+            text = text[4:]
+    return Path(text)
 
 
 def _contains(root: Path, path: Path) -> bool:
@@ -117,12 +132,13 @@ class Base:
         """Every source of the base: the POSIX root-relative path of each file of a supported format,
         outside hidden directories and files, that resolves inside the root."""
         found: list[str] = []
-        for directory, folders, names in os.walk(self.root):
+        root = filesystem_path(self.root)
+        for directory, folders, names in os.walk(root):
             folders[:] = sorted(folder for folder in folders if not folder.startswith("."))
             for name in sorted(names):
                 if name.startswith(".") or source_format(name) is None:
                     continue
-                relative = (Path(directory) / name).relative_to(self.root).as_posix()
+                relative = (Path(directory) / name).relative_to(root).as_posix()
                 if self.holds(relative):
                     found.append(relative)
         return sorted(found)
@@ -136,8 +152,8 @@ class Base:
 
     def holds(self, relative: str) -> bool:
         """Whether the base-relative path resolves, through any symlink, to a regular file inside the root."""
-        real = _realpath(self.root / relative)
-        return _contains(self.root, real) and real.is_file()
+        real = real_path(self.root / relative)
+        return _contains(self.root, real) and filesystem_path(real).is_file()
 
     def record_type(self, declared: str | None) -> DocumentType | None:
         """The document type of a record: the one it declares, or the base's only type; None when that is not
@@ -269,13 +285,13 @@ def _parse_config(home: Path, payload: Any, types: dict[str, DocumentType] | Non
         for type_name in names:
             if not SLUG_RE.fullmatch(type_name) or (types is not None and type_name not in types):
                 raise KnowledgeError(f"{where}: base {name} names unknown type {type_name!r}")
-        bases[name] = Base(name, stored, _realpath(stored), tuple(names), types or {})
-    home_real = _realpath(home)
+        bases[name] = Base(name, stored, real_path(stored), tuple(names), types or {})
+    home_real = real_path(home)
     for base in bases.values():
         for other in bases.values():
             if other is not base and _contains(base.root, other.root):
                 raise KnowledgeError(f"{where}: base {other.name} root lies inside base {base.name} root")
-        if _contains(base.root, home_real) or _realpath(base.root / KNOWLEDGE_DIRECTORY) == home_real:
+        if _contains(base.root, home_real) or real_path(base.root / KNOWLEDGE_DIRECTORY) == home_real:
             raise KnowledgeError(f"{where}: the home {home} lies inside base {base.name} root {base.root}")
     return Home(home, bases, embedding, types or {})
 
@@ -317,7 +333,7 @@ def registered_bases() -> dict[str, Base]:
 
 def base_for_path(bases: dict[str, Base], path: Path | str) -> Base | None:
     """The registered base whose root contains the path's realpath; no upward walk."""
-    real = _realpath(path)
+    real = real_path(path)
     return next((base for base in bases.values() if _contains(base.root, real)), None)
 
 
@@ -394,7 +410,7 @@ def lock() -> Iterator[Path]:
 
 
 def _stored_path(root: Path) -> str:
-    user_home = _realpath(Path.home())
+    user_home = real_path(Path.home())
     if root != user_home and user_home in root.parents:
         return "~/" + root.relative_to(user_home).as_posix()
     return root.as_posix()
@@ -419,7 +435,7 @@ def _describe(base: Base) -> dict[str, Any]:
 
 
 def add_base(path: Path | str, name: str | None = None, types: Iterable[str] = ()) -> dict[str, Any]:
-    root = _realpath(path)
+    root = real_path(path)
     if not root.is_dir():
         raise KnowledgeError(f"base root is not an existing directory: {path}")
     base_name = Path(os.path.abspath(os.path.expanduser(os.fspath(path)))).name if name is None else name
@@ -430,7 +446,7 @@ def add_base(path: Path | str, name: str | None = None, types: Iterable[str] = (
     if knowledge.is_symlink():
         raise KnowledgeError(f"{knowledge} must not be a symlink")
     home = home_directory()
-    if _contains(root, _realpath(home)):
+    if _contains(root, real_path(home)):
         raise KnowledgeError(f"the kgdistiller home {home} must not lie inside the base root {root}")
     home.mkdir(parents=True, exist_ok=True)
     with lock():

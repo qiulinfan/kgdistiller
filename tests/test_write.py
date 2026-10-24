@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import os
+import shutil
 import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 from kgdistiller import write
-from kgdistiller.home import KnowledgeError, LockConflict, lock
+from kgdistiller.home import (
+    KnowledgeError,
+    LockConflict,
+    filesystem_path,
+    load_home,
+    lock,
+)
 from kgdistiller.index import index, open_read_only
 from kgdistiller.records import parse_record
 from kgdistiller.write import accept, drafts, edit, source
@@ -470,6 +477,21 @@ class SourceTest(WriteTestCase):
     def test_line_count_reads_bom_and_crlf_like_check(self) -> None:
         self.source.write_bytes(b"\xef\xbb\xbf" + "\r\n".join(LINES).encode() + b"\r\n")
         self.assertEqual(6, source(self.source)["line_count"])
+
+    def test_deep_source_exceeds_windows_path_limit_without_changing_its_identity(self) -> None:
+        self.addCleanup(shutil.rmtree, filesystem_path(self.kb.root / "deep-sources"), True)
+        relative = "/".join(["deep-sources", *[f"topic-{i}-" + "x" * 45 for i in range(5)], "paper_ch.md"])
+        path = self.kb.root / relative
+        self.assertGreater(len(str(path)), 260)
+        physical = filesystem_path(path)
+        physical.parent.mkdir(parents=True)
+        physical.write_bytes(b"\xef\xbb\xbfTitle\r\nA theorem.\r\n")
+        base = load_home(self.kb.home).bases["kb"]
+        self.assertIn(relative, base.source_files())
+        self.assertTrue(base.is_source(relative))
+        profile = source(path)
+        self.assertEqual(("kb", relative, "math", 2),
+                         (profile["base"], profile["source"], profile["type"], profile["line_count"]))
 
     def test_only_md_tex_and_txt_outside_hidden_directories_are_sources(self) -> None:
         self.assertEqual("other/c.md", source(self.kb.write_source("other/c.md", "text\n"))["source"])

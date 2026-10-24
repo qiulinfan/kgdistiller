@@ -41,6 +41,7 @@ from .home import (
     Home,
     KnowledgeError,
     atomic_write_text,
+    filesystem_path,
     home_directory,
     load_home,
     load_type,
@@ -85,7 +86,7 @@ class RecordError(ValueError):
 
 def read_text(path: Path | str) -> str:
     """Read UTF-8 text with a leading BOM dropped and universal newlines."""
-    with open(path, encoding="utf-8-sig", newline=None) as handle:
+    with open(filesystem_path(path), encoding="utf-8-sig", newline=None) as handle:
         return handle.read()
 
 
@@ -720,9 +721,9 @@ def record_problems(
         pass
     elif not valid_source_path(source):
         problems.append(("source", f"source {source!r} must be a POSIX path relative to the base root or a web address"))
-    elif not (base.root / source).exists():
+    elif not filesystem_path(base.root / source).exists():
         problems.append(("source", f"source {source} does not exist in base {base.name}"))
-    elif (base.root / source).is_file() and not base.holds(source):
+    elif filesystem_path(base.root / source).is_file() and not base.holds(source):
         problems.append(("source", f"source {source} resolves outside the base root through a symlink"))
     elif not base.is_source(source):
         problems.append(("source", (

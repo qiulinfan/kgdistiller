@@ -28,9 +28,11 @@ from .home import (
     atomic_write_text,
     base_for_path,
     base_relation_kinds,
+    filesystem_path,
     home_directory,
     load_home,
     lock,
+    real_path,
     record_class,
 )
 from .index import index, name_key
@@ -57,10 +59,6 @@ from .records import (
 )
 
 
-def _realpath(path: Path | str) -> Path:
-    return Path(os.path.realpath(Path(path).expanduser()))
-
-
 def _knowledge(base: Base) -> Path:
     knowledge = base.root / KNOWLEDGE_DIRECTORY
     if knowledge.is_symlink():
@@ -73,7 +71,7 @@ def _knowledge(base: Base) -> Path:
 
 def _locate_draft(home: Home, path: Path | str) -> tuple[Base | None, str, str | None]:
     """(base, id, problem) for one DRAFT argument."""
-    real = _realpath(path)
+    real = real_path(path)
     base = base_for_path(home.bases, real)
     if base is None:
         return None, "", f"{path} is not inside a registered base"
@@ -81,7 +79,7 @@ def _locate_draft(home: Home, path: Path | str) -> tuple[Base | None, str, str |
         return base, "", f"{path} is not a {KNOWLEDGE_DIRECTORY}/{DRAFTS}/<id>.md file of base {base.name}"
     if (base.root / KNOWLEDGE_DIRECTORY).is_symlink():
         return base, "", f"{base.root / KNOWLEDGE_DIRECTORY} must not be a symlink"
-    if not real.is_file():
+    if not filesystem_path(real).is_file():
         return base, "", f"{path} does not exist"
     return base, real.stem, None
 
@@ -141,7 +139,7 @@ def accept(paths: Iterable[Path | str], dry_run: bool = False) -> dict[str, Any]
     for argument in paths:
         base, identifier, problem = _locate_draft(home, argument)
         if problem is not None:
-            refused.append({"path": str(_realpath(argument)), "message": problem})
+            refused.append({"path": str(real_path(argument)), "message": problem})
             continue
         assert base is not None
         path = base.root / KNOWLEDGE_DIRECTORY / DRAFTS / f"{identifier}.md"
@@ -488,13 +486,13 @@ def edit(path: Path | str, key: str, values: Iterable[str]) -> dict[str, Any]:
 
 
 def _source(home: Home, source: Path | str) -> tuple[Base, str]:
-    real = _realpath(source)
+    real = real_path(source)
     base = base_for_path(home.bases, real)
     if base is None:
         raise KnowledgeError(f"{source} is not inside a registered base")
     _knowledge(base)
     relative = real.relative_to(base.root).as_posix()
-    if not real.is_file():
+    if not filesystem_path(real).is_file():
         raise KnowledgeError(f"{source} is not a file")
     if not base.is_source(relative):
         raise KnowledgeError(f"{relative} is not a source of base {base.name}: sources are its md, tex and txt "
